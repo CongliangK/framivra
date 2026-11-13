@@ -1,0 +1,9 @@
+{
+  "name": "synth-demo",
+  "meta": {"spec_version": "1", "bpm": 120, "sr": 44100, "channels": 2},
+  "sections": [{"name": "demo", "start_beat": 0, "length_beat": 8}],
+  "tracks": [
+    {"name": "keys", "engine": "synth", "instrument": "fm_ep", "clip": {"start_beat": 0, "end_beat": 8}, "notes": [[60, 0, 1, 90], [64, 1, 1, 90], [67, 2, 1, 90], [72, 3, 1, 90], [67, 4, 1, 90], [64, 5, 1, 90], [60, 6, 2, 90]]}
+  ],
+  "master": {"chain": "loudnorm", "target_lufs": -14, "true_peak_db": -1}
+}

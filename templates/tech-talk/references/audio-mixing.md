@@ -1,7 +1,7 @@
 # audio-mixing · 混音 / 响度 / 避让（项目无关基准）
 
 > **来源**：`~/文档/04_bilibili视频/_library/reports/音频资产与混音惯例调查.md`（8 条头部视频逐帧实证+国际/中文圈调研）+ `编排方法论-科技口播视频.md` §五（D32-D39 响度链）+ 工作区 AGENTS.md §五「音频」。提炼日期：2026-10-03。D 号溯源见决策台账。
-> 机制细节（vtx audio 参数、timeline 键写法）在内核 `docs/skill/references/edit.md`；BGM 产线路由 music skill。本文固化**口径与验证门**。
+> 机制细节（vtx audio 参数、timeline 键写法）在内核 `docs/skill/references/edit.md`；BGM 生成见[仓内 bgm](../../../apps/bgm/README.md)。本文固化**口径与验证门**。
 
 ## 一、响度链（-14 LUFS 终态）
 
@@ -40,10 +40,10 @@
 
 ## 六、授权与资产（D17）
 
-- **商业音乐绝对不用**（唯一红线——音频指纹执法唯一真正瞄准的类别）；音效宽松获取；AI 生成积极使用（无指纹库匹配，恰是 BGM 天然安全来源）。
+- **商业音乐绝对不用**；音效与 AI 生成仍须核验来源、素材/模型许可及输出权利，不以「没有音频指纹匹配」代替授权审查。
 - 音效获取主路线=现成库（Kenney CC0/Mixkit 免署名，~15 文件标准套件覆盖全场景：whoosh/riser/pop/click/叮/键盘床/impact）；AI 生成用于风格化定制与避撞库。
 - 陷阱清单：BBC RemArc 商用需付费、YouTube Audio Library 限 YouTube 内、freesound.cn 山寨、Epidemic 清权不对接 B 站、互传音效包来源不明。
-- BGM 产线（AI 生成/公有领域改编/代码合成）→ 外部 `music` skill，先确认当前会话技能目录列有该 skill 且入口链接可读；不可用则明确报告生成受阻，请用户修复挂载或提供符合本节授权规则的已有资产，不虚构调用成功。BGM CLI/插件可用不代表 skill 已安装；已有音频资产仍可按内核 edit 配方入轨，挂载后必做**分轨审计包**（R6，用户逐轨审听=交付门）。
+- BGM 生成（代码合成/公有领域改编/可选模型）→ [仓内 bgm](../../../apps/bgm/README.md)，CLI 为 `python3 <video_tools>/apps/bgm/bgm.py`。基础依赖 NumPy + FFmpeg；音源、模型及第三方素材自行准备并逐项核验[许可](../../../docs/third-party-licenses.md)，不捆绑、不自动下载，不把 AI 生成当作授权保证。缺所选能力时明确报告受阻，或使用已有授权资产，不虚构成功。音频按内核 edit 配方入轨，挂载后必做**分轨审计包**（R6，用户逐轨审听=交付门）。
 
 ## 七、验证门汇总
 

@@ -44,7 +44,7 @@ python3 vtx/vtx.py -t "$PROJECT/timeline.json" all
 ## 三层路由
 
 - **创作**：[Skill](docs/skill/SKILL.md) → [编辑与修改配方](docs/skill/references/edit.md) / [HTML 创作组织](docs/skill/references/gfx.md#html-创作组织)。纯 MG 从 [风格集合](templates/mg-styles/README.md) 选起点；科技口播从 [tech-talk](templates/tech-talk/SKILL.md) 起步。
-- **组件**：[catalog](docs/catalog.md) 找 app/plugin，再读其 README。BGM、配乐与分轨混音由姊妹仓 music_tools 产出，`apps/bgm` 负责路由；挂入 timeline 后可用 [Blender 分轨审计](apps/blender-bridge/README.md#分轨审计包-audit_bundlepy人机协作交付门)参与混音裁决。
+- **组件**：[catalog](docs/catalog.md) 找 app/plugin，再读其 README。BGM、配乐与分轨混音由仓内 [bgm](apps/bgm/README.md) 生成，不依赖旧音乐源码仓或外部 music skill；挂入 timeline 后可用 [Blender 分轨审计](apps/blender-bridge/README.md#分轨审计包-audit_bundlepy人机协作交付门)参与混音裁决。
 - **工作流**：[templates](templates/README.md) 包含完整流程、纯内核示例与开发范本；`python3 vt.py templates list|check` 检查工作流模板，doctor JSON 对应字段为 `skills`。
 
 ## 依赖矩阵
@@ -55,6 +55,7 @@ python3 vtx/vtx.py -t "$PROJECT/timeline.json" all
 | 默认 CDP gfx | NumPy；显式 `VTX_GFX=cli` 不要求 NumPy，但有独立[环境身份与支持边界](docs/cache-provenance.md#gfx-environment) |
 | 正式 AAC 封装 | 强烈建议 libfdk_aac；缺失回落并告警，交付仍须复测编码后解码真峰 |
 | 可选媒体工具 | Blender、SoX；`video --gpu` 可用 NVIDIA NVENC，探测失败回落 x264 |
+| 可选音乐生成 | [bgm](apps/bgm/README.md)：NumPy + FFmpeg；运行环境外置，音源/模型自行安装，不捆绑、不自动下载；普通视频不要求音乐环境 |
 | 默认关闭的模型/服务 | [ASR](apps/asr/README.md)、[TTS](apps/tts/README.md)、[生图 API](apps/imgen/README.md)、[抠像/ComfyUI](apps/matting/README.md)、[降噪](plugins/denoise/README.md)：各 owner 维护解释器、服务、权重、配置与启用要求 |
 
 默认标准库策略不代表所有后端只需标准库。模型与第三方资产的下载/许可限制见[第三方许可](docs/third-party-licenses.md)，不能把探测已有资产当作允许自动下载。

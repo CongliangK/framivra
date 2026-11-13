@@ -20,15 +20,15 @@
   ⑨ v1.2.0（R1-F 修复批）：目录型 extra_deps 递归内容签名（伴生件豁免 + 护栏
     降级 DIRL 清单签名）；marker 完好但产物残缺（缺文件/空文件）自愈覆盖重渲
     （错轨名不触发白渲）；gc 键级回收陈旧 render_digest 目录（在用保活、实删后
-    重跑零渲染）；config bgm.cli 指向不存在/不可执行路径落下一通道不裸崩。
+    重跑零渲染）；仓内 CLI/python/runtime 解析，缺组件/解释器 fail-hard。
   ⑩ CLI 机器 stdout 严格 UTF-8：有效 Unicode 路径/换行无损；非法成功输出
     不写完整标记、不记 probe memo；非零退出保 stderr 优先与安全替换诊断。
 
 伪 bgm CLI：bash 桩（show structure 打 duration；render 用 ffmpeg sine 产
 mix_master/mix_premaster.wav + tracks.txt 每轨的 stems/<轨>.bus.wav（48k f32，
 对齐 music_tools mixer 总线分轨规格）+ 引擎级 stems 映射的结果 JSON），经
-VTX_CONFIG 的 bgm.cli 注入——不依赖真 music_tools（集成验证另有
-VTX_TEST_BGM_INTEG=1 门控例，本机 bgm 在盘时跑真链）。
+patch 插件 bgm_cmd 注入，保留真实代码/环境身份扫描；解析测试直测生产解析，
+真实集成使用仓内原创 synth 工程，无外仓/音源依赖。
 运行：repo 根 `bash scripts/run_all_tests.sh`；本插件内独立跑：
 cd plugins/bgm-render && env python3 -m unittest discover -s tests -t . -v
 （本机 ZCode 环境必须 env python3 前缀：AppImage 劫持 argv[0]，见全局 AGENTS.md）。
@@ -111,6 +111,8 @@ def _context(root: Path, tl: dict):
 
 
 class _Base(unittest.TestCase):
+    FAKE_CLI = True
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -123,12 +125,21 @@ class _Base(unittest.TestCase):
         fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
         cfg = self.root / "vt_config.json"
         argv = [sys.executable, str(fake)]
-        command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
-        cfg.write_text(json.dumps({"bgm": {"cli": command}}), encoding="utf-8")
+        cfg.write_text(json.dumps({"bgm": {"python": sys.executable}}), encoding="utf-8")
+        runtime = self.root / "runtime.json"
+        runtime.write_text("{}", encoding="utf-8")
         env = mock.patch.dict(os.environ, {"VTX_CONFIG": str(cfg),
+                                          "MUSIC_RUNTIME": str(runtime),
                                           "FAKE_LOG": str(self.log)})
         env.start()
         self.addCleanup(env.stop)
+        if self.FAKE_CLI:
+            # Patch the plugin boundary only. Keep real producer identity/code
+            # scanning, and observe each call's current PATH/runtime environment.
+            command = mock.patch.object(_bgm, "bgm_cmd",
+                                        side_effect=lambda _: (argv, dict(os.environ)))
+            command.start()
+            self.addCleanup(command.stop)
         # 音乐工程（含 $ref 拆分件）+ 时长标记
         self.ref_file = self.root / "music" / "strings_part.json"
         self.ref_file.write_text('{"notes": [1, 2, 3]}', encoding="utf-8")
@@ -678,98 +689,97 @@ class StaleDigestGc(_Base):
 
 
 class CliResolution(_Base):
-    """CLI 三通道解析（R1-F F4）：config 通道指向不存在/不可执行路径 = 该通道
-    不可用落下一通道；三通道全败文案列出具体坏路径（不裸栈崩）。"""
+    """Real production resolver: only the built-in app and selected Python."""
+    FAKE_CLI = False
 
     def _cfg(self, **bgm):
         cfg = self.root / "cfg_case.json"
         cfg.write_text(json.dumps({"bgm": bgm}), encoding="utf-8")
         os.environ["VTX_CONFIG"] = str(cfg)
 
-    def test_config_cli_nonexistent_falls_through_and_reports(self):
-        self._cfg(cli="/nonexistent/fakebgm", repo="/nonexistent/repo")
-        fakehome = self.root / "home"                # 无 ~/.local/bin/bgm
-        fakehome.mkdir()
-        with mock.patch("pathlib.Path.home", return_value=fakehome):
-            cmd, why = _bgm.bgm_cmd(_bgm.cfg_get)
-            self.assertIsNone(cmd)
-            self.assertIn("config bgm.cli 指向不存在", why,
-                          "全败文案须列 config 通道具体原因")
-            self.assertIn("/nonexistent/fakebgm", why)
-            buf = io.StringIO()
-            with contextlib.redirect_stderr(buf):
-                with self.assertRaises(SystemExit) as cm:
-                    _bgm._run_bgm(None, ["show"], "探测")
-        self.assertEqual(cm.exception.code, 1, "全败 fail-hard 退出码 1（非 traceback）")
-        self.assertIn("config bgm.cli 指向不存在", buf.getvalue())
-
-    def test_config_cli_nonexecutable_falls_through(self):
-        plain = self.root / "plain.txt"             # 在盘但不可执行
-        plain.write_text("not executable", encoding="utf-8")
-        self._cfg(cli=str(plain), repo="/nonexistent/repo")
-        fakehome = self.root / "home"
-        fakehome.mkdir()
-        with mock.patch("pathlib.Path.home", return_value=fakehome):
-            cmd, why = _bgm.bgm_cmd(_bgm.cfg_get)
-        self.assertIsNone(cmd)
-        self.assertIn("不可执行", why)
-
+    # Historical inventory IDs are retained; their retired fallback contract is
+    # now deliberately tested as fixed built-in dispatch, not reintroduced.
     def test_config_cli_nonexistent_falls_to_wrapper(self):
-        self._cfg(cli="/nonexistent/fakebgm")       # 不写 repo：wrapper 通道优先接住
-        fakehome = self.root / "home"
-        (fakehome / ".local" / "bin").mkdir(parents=True)
-        wrapper = fakehome / ".local" / "bin" / "bgm"
-        wrapper.write_text("#!/bin/sh\n", encoding="utf-8")
-        with mock.patch("pathlib.Path.home", return_value=fakehome):
-            cmd, env = _bgm.bgm_cmd(_bgm.cfg_get)
-        self.assertEqual(cmd, [str(wrapper)], "坏 config 通道须落 ~/.local/bin/bgm")
-
-
-    def test_health_and_runtime_command_matrix(self):
-        import ctypes
-        from types import SimpleNamespace
-
         health = importlib.import_module("plugins.bgm-render.health_check")
         home = self.root / "home"
         wrapper = home / ".local/bin/bgm"
         wrapper.parent.mkdir(parents=True)
-        repo = home / "文档/01_活跃项目/music_tools"
-        repo.mkdir(parents=True)
-        plain = self.root / "plain file"
-        plain.write_text("not executable", encoding="utf-8")
-        windows = [r"C:\Program Files\Music\bgm.exe", r"C:\music\score.json"]
-        shell, kernel = mock.Mock(), mock.Mock()
-        def windows_argv(command, count):
-            self.assertEqual(command, subprocess.list2cmdline(windows))
-            count._obj.value = len(windows)
-            return windows
-        shell.CommandLineToArgvW.side_effect = windows_argv
+        wrapper.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        self._cfg(cli=str(wrapper), repo=str(self.root / "missing-music-repo"))
+        before = dict(os.environ)
+        with mock.patch.object(Path, "home", return_value=home), \
+             mock.patch.object(health.shutil, "which", return_value=sys.executable) as which:
+            cmd, env = _bgm.bgm_cmd(_bgm.cfg_get)
+        self.assertEqual(cmd, [sys.executable, str(REPO / "apps/bgm/bgm.py")])
+        which.assert_called_once_with(sys.executable if os.name == "nt" else "python3")
+        self.assertEqual(env, dict(before, PYTHONIOENCODING="utf-8"))
+        self.assertEqual(dict(os.environ), before)
+        self.assertNotIn(str(wrapper), cmd)
+
+    def test_config_cli_nonexecutable_falls_through(self):
+        for python in (str(self.root / "missing-python"), str(self.root / "plain.txt")):
+            with self.subTest(python=python):
+                (self.root / "plain.txt").write_text("not executable", encoding="utf-8")
+                self._cfg(python=python, cli=sys.executable, repo=str(REPO))
+                cmd, why = _bgm.bgm_cmd(_bgm.cfg_get)
+                self.assertIsNone(cmd)
+                self.assertIn("音乐解释器不可执行", why)
+                self.assertIn(python, why)
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors):
+                    with self.assertRaises(SystemExit) as stopped:
+                        _bgm._run_bgm(None, ["show"], "探测")
+                self.assertEqual(stopped.exception.code, 1)
+                self.assertIn("音乐解释器不可执行", errors.getvalue())
+
+    def test_config_cli_nonexistent_falls_through_and_reports(self):
+        health = importlib.import_module("plugins.bgm-render.health_check")
+        relocated = self.root / "missing-install/plugins/bgm-render/health_check.py"
+        output, errors = io.StringIO(), io.StringIO()
+        with mock.patch.object(health, "__file__", str(relocated)), \
+             mock.patch.object(subprocess, "run") as run, \
+             contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            cmd, why = _bgm.bgm_cmd(_bgm.cfg_get)
+            self.assertIsNone(cmd)
+            self.assertIn("内置音乐组件缺失", why)
+            self.assertIn("完整 Framivra 源码安装", why)
+            self.assertEqual(health.main(), 1)
+            with self.assertRaises(SystemExit) as stopped:
+                _bgm._run_bgm(None, ["--help"], "探测")
+        self.assertEqual(stopped.exception.code, 1)
+        self.assertIn("内置音乐组件缺失", output.getvalue())
+        self.assertIn("内置音乐组件缺失", errors.getvalue())
+        run.assert_not_called()
+
+    def test_health_and_runtime_command_matrix(self):
+        from types import SimpleNamespace
+
+        health = importlib.import_module("plugins.bgm-render.health_check")
+        app = str(REPO / "apps/bgm/bgm.py")
         cases = (
-            ("configured", '"/owned/bgm cli" --quiet', False, str(repo), "posix", ["/owned/bgm cli", "--quiet"]),
-            ("bad-config-wrapper", "/missing/bgm", True, str(repo), "posix", [str(wrapper)]),
-            ("nonexecutable-repo", str(plain), False, str(repo), "posix", ["/owned/python3", "-m", "bgm_gen"]),
-            ("default-repo", "", False, None, "posix", ["/owned/python3", "-m", "bgm_gen"]),
-            ("missing-all", "/missing/bgm", False, str(self.root / "absent"), "posix", None),
-            ("windows-quoted", subprocess.list2cmdline(windows), False, str(repo), "nt", windows),
-            ("windows-repo", "", False, str(repo), "nt", [sys.executable, "-m", "bgm_gen"]),
+            ("default-posix", "", "", "posix", "/owned/python3"),
+            ("configured-posix", "/owned/Python with spaces", "", "posix", "/owned/Python with spaces"),
+            ("expanded-python", "$OWNED_PYTHON", "", "posix", "/owned/Python with spaces"),
+            ("relative-runtime", "python3", "settings/music.json", "posix", "/owned/python3"),
+            ("absolute-runtime", "python3", str(self.root / "音乐运行.json"), "posix", "/owned/python3"),
+            ("missing-python", "/missing/python", "", "posix", None),
+            ("default-windows", "", "", "nt", sys.executable),
+            ("configured-windows", r"C:\Program Files\Python\python.exe", "", "nt", r"C:\Program Files\Python\python.exe"),
         )
-        for name, cli, has_wrapper, configured_repo, platform, expected in cases:
+        for name, python, runtime, platform, expected in cases:
             with self.subTest(case=name):
-                if has_wrapper:
-                    wrapper.write_text("owned fixture, never executed", encoding="utf-8")
-                else:
-                    wrapper.unlink(missing_ok=True)
-                self._cfg(**({"cli": cli, "repo": configured_repo} if configured_repo else {"cli": cli}))
-                env = {"HOME": str(home), "USERPROFILE": str(home), "VTX_CONFIG": os.environ["VTX_CONFIG"],
-                       "PYTHONPATH": "/owned/prior", "OWNED_BGM": "kept"}
-                separator = ";" if platform == "nt" else os.pathsep
-                platform_os = SimpleNamespace(name=platform, path=os.path, pathsep=separator, environ=env)
+                self._cfg(python=python, runtime=runtime, cli="/ignored/cli", repo="/ignored/repo")
+                env = {"VTX_CONFIG": os.environ["VTX_CONFIG"], "PYTHONPATH": "/owned/prior",
+                       "OWNED_BGM": "kept", "OWNED_PYTHON": "/owned/Python with spaces",
+                       "MUSIC_RUNTIME": "/owned/inherited-runtime.json"}
+                platform_os = SimpleNamespace(name=platform, path=os.path, environ=os.environ)
                 def which(command):
-                    return command if command in ("/owned/bgm cli", windows[0]) else (
-                        "/owned/python3" if command == "python3" and platform != "nt" else None)
-                with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(Path, "home", return_value=home), \
-                     mock.patch.object(health, "os", platform_os), mock.patch.object(health.shutil, "which", side_effect=which), \
-                     mock.patch.object(ctypes, "WinDLL", side_effect=[shell, kernel, shell, kernel], create=True), \
+                    return None if command == "/missing/python" else (
+                        "/owned/python3" if command == "python3" else command)
+                with mock.patch.dict(os.environ, env, clear=True), \
+                     mock.patch.object(health, "os", platform_os), \
+                     mock.patch.object(health.shutil, "which", side_effect=which), \
                      mock.patch.object(subprocess, "run", return_value=mock.Mock(returncode=0, stdout=b"ok")) as run, \
                      contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     self.assertEqual(health.main(), 0 if expected else 1)
@@ -778,10 +788,11 @@ class CliResolution(_Base):
                             _bgm._run_bgm(None, ["--help"], "探测")
                         self.assertEqual(stopped.exception.code, 1)
                         run.assert_not_called()
+                        self.assertEqual(dict(os.environ), env)
                         continue
                     probe = run.call_args
                     self.assertEqual(_bgm._run_bgm(None, ["--help"], "探测"), "ok")
-                    self.assertEqual(probe.args[0], expected + ["--help"])
+                    self.assertEqual(probe.args[0], [expected, app, "--help"])
                     self.assertEqual(run.call_args.args, probe.args)
                     self.assertEqual(run.call_args.kwargs["env"], probe.kwargs["env"])
                     self.assertEqual(run.call_args.kwargs, {"capture_output": True,
@@ -791,10 +802,14 @@ class CliResolution(_Base):
                     self.assertNotIn("text", probe.kwargs)
                     self.assertNotIn("encoding", probe.kwargs)
                     self.assertNotIn("errors", probe.kwargs)
-                    expected_env = dict(env, PYTHONPATH=str(repo) + separator + env["PYTHONPATH"]) if expected[-2:] == ["-m", "bgm_gen"] else None
+                    expected_env = dict(env, PYTHONIOENCODING="utf-8")
+                    if runtime:
+                        path = Path(runtime)
+                        if not path.is_absolute():
+                            path = Path(env["VTX_CONFIG"]).parent / path
+                        expected_env["MUSIC_RUNTIME"] = str(path.resolve())
                     self.assertEqual(probe.kwargs["env"], expected_env)
                     self.assertEqual(dict(os.environ), env)
-        kernel.LocalFree.assert_called_with(windows)
 
     def test_health_binary_output_preserves_returncode(self):
         """Real controlled children emit arbitrary bytes; health uses only exit status."""
@@ -835,7 +850,7 @@ class CliResolution(_Base):
                     status = "OK" if returncode == 0 else "MISS"
                     detail = "" if returncode == 0 else f"——--help 退出码 {returncode}"
                     self.assertEqual(output.getvalue(),
-                                     f"[{status}] bgm CLI（经 {cmd[0]}）{detail}\n")
+                                     f"[{status}] 内置音乐 CLI（{cmd[1]}）{detail}\n")
 
     def test_health_execution_errors_remain_unhealthy(self):
         """Keep the original OSError/15-second timeout handling, without waiting 15s."""
@@ -854,7 +869,7 @@ class CliResolution(_Base):
                 run.assert_called_once_with(cmd + ["--help"], capture_output=True,
                                             timeout=15, env=env)
                 self.assertEqual(output.getvalue(),
-                                 f"[MISS] bgm CLI（{cmd[0]}）不可执行：{error}\n")
+                                 f"[MISS] 内置音乐 CLI 不可执行：{error}\n")
 
 
 class ValidateHook(_Base):
@@ -931,15 +946,12 @@ class InvariantsAndBranches(_Base):
 
 
 class RealChainIntegration(_Base):
-    """真 music_tools 链（本机 bgm CLI 在盘时跑；否则 skip）。"""
+    """Built-in synth chain: real NumPy/FFmpeg, no third-party assets or skip gate."""
+    FAKE_CLI = False
 
     def test_real_minimal_project_end_to_end(self):
-        if os.environ.get("VTX_TEST_BGM_INTEG") != "1":
-            self.skipTest("VTX_TEST_BGM_INTEG=1 门控（真 bgm render，需 music_tools）")
-        src = Path("~/文档/01_活跃项目/music_tools/examples/minimal.json").expanduser()
-        if not src.is_file():
-            self.skipTest(f"minimal 示例不在盘：{src}")
-        os.environ.pop("VTX_CONFIG", None)
+        src = REPO / "apps/bgm/examples/synth.json"
+        self.assertTrue(src.is_file(), "仓内原创 synth 示例必须存在")
         proj = self.root / "minimal.json"
         proj.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
         tl = {"version": 2,
@@ -956,13 +968,9 @@ class RealChainIntegration(_Base):
             self.assertEqual((w.getframerate(), w.getnchannels()), (48000, 2))
 
     def test_real_stem_end_to_end(self):
-        """真链分轨：minimal 工程首轨 stem → bus.wav 派生 48k s16（VTX_TEST_BGM_INTEG=1）。"""
-        if os.environ.get("VTX_TEST_BGM_INTEG") != "1":
-            self.skipTest("VTX_TEST_BGM_INTEG=1 门控（真 bgm render，需 music_tools）")
-        src = Path("~/文档/01_活跃项目/music_tools/examples/minimal.json").expanduser()
-        if not src.is_file():
-            self.skipTest(f"minimal 示例不在盘：{src}")
-        os.environ.pop("VTX_CONFIG", None)
+        """真链分轨：仓内 synth 工程首轨 stem → bus.wav 派生 48k s16（无外置音源）。"""
+        src = REPO / "apps/bgm/examples/synth.json"
+        self.assertTrue(src.is_file(), "仓内原创 synth 示例必须存在")
         proj = self.root / "minimal.json"
         proj.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
         first_track = next(t["name"] for t in json.loads(

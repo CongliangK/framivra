@@ -1,0 +1,284 @@
+{
+ "_meta": {
+  "root": "$MUSIC_ASSETS_ROOT",
+  "generated": "2026-08-22",
+  "provenance_note": "合并自内部 R1 资产快照；内部材料未随开源版发布",
+  "count": 19
+ },
+ "items": [
+  {
+   "name": "sfizz",
+   "version": "1.2.3-4.fc44",
+   "relpath": "tools/sfizz/",
+   "license": "BSD-2-Clause",
+   "size_bytes": 5079211,
+   "sha256": "caa9b3104beaa0059cd00e3deab697f2ddb2423d0e4b777b9fe0598c3e46ddd5",
+   "sha256_note": "主二进制 usr/bin/sfizz_render；源 rpm sha256=eea0d632eb8ea4cf60d9c776dcff2f1f33bd50ce8b5e413f4e62b58578208df9（rpms/sfizz-1.2.3-4.fc44.x86_64.rpm）",
+   "source": "audinux COPR https://download.copr.fedorainfracloud.org/results/ycollet/audinux/ fedora-44-x86_64 sfizz-1.2.3-4.fc44 rpm 直链（复用审查员已下载的 /tmp/sf.rpm）",
+   "driver": "子进程调用包装脚本 $MUSIC_ASSETS_ROOT/tools/sfizz/sfizz_render.sh（内部 export LD_LIBRARY_PATH=<dir>/usr/lib64 后 exec usr/bin/sfizz_render）；旗标式 CLI：--sfz <file> --midi <file> --wav <out> [-s/--samplerate N（默认 48000） -q/--quality -p/--polyphony -b/--blocksize --use-eot --log]",
+   "smoke": {
+    "cmd": "$MUSIC_ASSETS_ROOT/tools/sfizz/sfizz_render.sh --sfz out/smoke/sfizz_tool/sine.sfz --midi out/smoke/sfizz_tool/test.mid --wav out/smoke/sfizz_tool/sine_test.wav --log out/smoke/sfizz_tool/render.log",
+    "result": "exit=0；产物 sine_test.wav 48000Hz/2ch/2.027s，ffmpeg astats RMS -15.03dB（> -40dB 非静音）；另验证 -s 44100 生效"
+   },
+   "status": "ok"
+  },
+  {
+   "name": "pugixml (sfizz 运行时依赖)",
+   "version": "1.16-1.fc44",
+   "relpath": "tools/sfizz/usr/lib64/libpugixml.so.1.16",
+   "license": "MIT",
+   "size_bytes": 290296,
+   "sha256": "d88e4e64b8487dc90d3adb0597ddee0c3a5a453de30fc19fbe0843565db5525b",
+   "source": "Fedora 44 官方仓库 `dnf download pugixml`（免 sudo，x86_64.rpm 已归档 tools/sfizz/rpms/）",
+   "driver": "LD_LIBRARY_PATH 依赖（libpugixml.so.1 → libpugixml.so.1.16），由 sfizz_render.sh 注入，无独立入口",
+   "smoke": {
+    "cmd": "LD_LIBRARY_PATH=$MUSIC_ASSETS_ROOT/tools/sfizz/usr/lib64 ldd usr/bin/sfizz_render | grep -c 'not found'",
+    "result": "=0（此前唯一缺失 libpugixml.so.1，补齐后全绿）"
+   },
+   "status": "ok"
+  },
+  {
+   "name": "system-packages-sudo",
+   "version": "fluidsynth=2.5.4-1.fc44;yoshimi=2.3.0-9.fc44;calf=0.90.9-3.fc44;jalv=1.8.0-1.fc44;lv2=1.18.10-4.fc44;lmms=1.2.2-20.fc44;amsynth=1.13.4-5.fc44;synthv1=0.9.91-4.fc42;drumkv1=1.4.2-1.fc44;samplv1=0.9.91-5.fc42;zam-plugins=4.4-7.fc44",
+   "relpath": null,
+   "abs_path": "/usr/bin/ (系统 dnf 安装，不在 $MUSIC_ASSETS_ROOT)",
+   "license": "fluidsynth: LGPL-2.1-or-later; yoshimi: GPL-2.0-or-later; calf: GPL-2.0-or-later AND LGPL-2.0-or-later; jalv: MIT; lv2: ISC; lmms: GPLv2+ and GPLv2 and (GPLv2+ or MIT) and GPLv3+ and MIT and LGPLv2+ and (LGPLv2+ with exceptions) and Copyright only; amsynth: GPL-2.0-or-later; synthv1: GPL-2.0-or-later; drumkv1: GPL-2.0-or-later; samplv1: GPL-2.0-or-later; zam-plugins: GPL-2.0-or-later AND ISC",
+   "size_bytes": null,
+   "sha256": null,
+   "source": "sudo dnf install -y fluidsynth yoshimi calf jalv lv2 lmms amsynth synthv1 drumkv1 samplv1 zam-plugins（经 SUDO_ASKPASS zenity 密码框授权，一次通过，22 包含依赖 48.5MiB 下载）",
+   "driver": "fluidsynth: CLI: fluidsynth -ni -F out.wav -r 44100 -g 0.5 <sf2> <mid>; yoshimi: CLI 可选引擎（/usr/bin/yoshimi）; calf: calfjackhost + LV2 效果器; jalv: LV2 宿主 CLI（/usr/bin/jalv）; lv2: LV2 插件规范/资源包; lmms: CLI 渲染：lmms -r（/usr/bin/lmms）; amsynth: CLI+LV2 合成器（/usr/bin/amsynth）; synthv1: JACK/LV2（/usr/bin/synthv1_jack）; drumkv1: JACK/LV2（/usr/bin/drumkv1_jack）; samplv1: JACK/LV2（/usr/bin/samplv1_jack）; zam-plugins: LADSPA/LV2（/usr/bin/ZamComp 等 Za* 系列）",
+   "smoke": {
+    "cmd": "fluidsynth -ni -F out/smoke/sf2_cli/test.wav -r 44100 -g 0.5 /usr/share/soundfonts/FluidR3_GM.sf2 out/smoke/sf2_cli/test.mid && fluidsynth --version && which lmms",
+    "result": "fluidsynth 2.5.4 exit=0，test.wav 44100Hz/2ch/4.856s RMS -33.40dB（> -40dB 非静音）；lmms=/usr/bin/lmms；11 个请求包全部安装成功，无一跳过"
+   },
+   "status": "ok",
+   "status_note": "sudo 段成功（zenity 密码框授权）；全为可选引擎，GPL/LGPL/MIT/ISC 系工具许可"
+  },
+  {
+   "name": "demucs",
+   "version": "4.1.0",
+   "relpath": null,
+   "abs_path": "conda env site-packages（<独立环境>/site-packages/demucs/）",
+   "license": "MIT",
+   "size_bytes": 100567,
+   "sha256": "4916a804702033ce934a6cdfa7e38dde03f7a7a6e85f41d0120eefe9e2966758",
+   "sha256_note": "sha256 为 pip wheel 文件（py3-none-any）",
+   "source": "pip install --no-deps demucs -i https://pypi.tuna.tsinghua.edu.cn/simple（METADATA 审核后安装；非 darwin 平台仅要求 torch>=2.1，满足 2.11.0；torchaudio 仅 train extra，运行时不需要）",
+   "driver": "comfyui env python -m demucs（CLI）；python -m demucs -n htdemucs -o <outdir> <in.wav>；库级 API：demucs.apply / demucs.pretrained（4.1.0 的 demucs.separate 模块没有 separate() 函数名，只有 main()）",
+   "smoke": {
+    "cmd": "export HF_HOME=$MUSIC_ASSETS_ROOT/models/hf HF_HUB_OFFLINE=1; $MUSIC_TORCH_PYTHON -m demucs -n htdemucs -o /tmp/demucs_out /tmp/demucs_in.wav",
+    "result": "两组 10s 输入（44100Hz 立体声）均 GPU 分离成功 exit=0。组1 gm_lofi（纯器乐）：bass -52.9dB / drums -47.0dB / other -39.5dB / vocals -101.2dB（vocals 近无声=无人声输入的正确路由）；组2 ace15_synthwave（含人声 AI 生成）：bass -19.2dB / drums -18.4dB / other -24.1dB / vocals -43.7dB（四 stem 全部非静音）。产物 44100Hz/2ch/10.000s，已存 out/smoke/demucs/{gm_lofi,synthwave}/"
+   },
+   "status": "ok"
+  },
+  {
+   "name": "htdemucs 权重",
+   "version": "repo adefossez/HTDemucs @ bf35a81b663819a8255c8fefee17f9d812b786b5",
+   "relpath": "models/htdemucs/",
+   "license": "MIT",
+   "size_bytes": 84025440,
+   "sha256": "d9fa14133cfcc034a6758923bb3a8ca9f8dfd0b582134643bbf83f72c17576dd",
+   "sha256_note": "955717e8.safetensors（84MB）；htdemucs.yaml sha256=239c445d0b14454d541ad8bd9bb271c9e536d267e8a4625208744cbb2e7bb66c（21B，内容 models: ['955717e8']）；另含 955717e8.json（12087B，模型结构元数据）与 README.md",
+   "source": "huggingface_hub.snapshot_download（hub 1.14.0）。坑：hf-mirror.com 本机直连被墙（HTTP 000）且其 resolve 链路 308 回源 huggingface.co 导致 FileMetadataError；实际可用通道=代理 HTTPS_PROXY（由使用者自行配置） + HF_ENDPOINT=https://huggingface.co。原始缓存：$MUSIC_ASSETS_ROOT/models/hf/hub/models--adefossez--HTDemucs/snapshots/bf35a81b663819a8255c8fefee17f9d812b786b5/（demucs 运行时读这里，sha256 已比对一致）",
+   "driver": "demucs CLI -n htdemucs（运行时需 export HF_HOME=$MUSIC_ASSETS_ROOT/models/hf；已验证 HF_HUB_OFFLINE=1 纯缓存可用，无网可跑）。坑（实测）：不设 HF_HOME 且无网时 demucs 会静默回退 torch.hub 下载旧格式 .th（~80MB）到 ~/.cache/torch/hub/ 形成第二份权重——R2 引擎必须始终注入 HF_HOME；库级 get_model('htdemucs')+apply_model 亦实测可用，sources 顺序 ['drums','bass','other','vocals']",
+   "smoke": {
+    "cmd": "同 demucs 条目（HF_HUB_OFFLINE=1 下命中本地缓存完成分离）",
+    "result": "权重加载+GPU 推理成功，两组 4 stems RMS 见 demucs 条目"
+   },
+   "status": "ok"
+  },
+  {
+   "name": "matchering",
+   "version": "2.0.6",
+   "relpath": null,
+   "abs_path": "conda env site-packages（.../site-packages/matchering/）",
+   "license": "GPLv3",
+   "size_bytes": 41132,
+   "sha256": "eb9bce4e123e9d515d5365fdd93df465398f69e0a530d51f3a57d976b757b032",
+   "sha256_note": "sha256 为 pip wheel 文件（py3-none-any）",
+   "source": "pip install --no-deps matchering（METADATA 全部下限式约束：numpy>=1.23.4 / scipy>=1.9.2 / soundfile>=0.11.0 / resampy>=0.4.2 / statsmodels>=0.13.2，env 已有或随叶子补装，无版本冲突）",
+   "driver": "comfyui env python 库级 API：import matchering as mx; mx.process(target=<wav>, reference=<wav>, results=[mx.pcm16(<out.wav>)], config=mx.Config())（2.0.6 没有 match()/master() 函数，入口是 process；结果格式 mx.pcm16/pcm24）",
+   "smoke": {
+    "cmd": "合成 3s 双正弦 target/ref → mx.process → pcm16 输出",
+    "result": "exit=0，matched.wav 132300 帧 @44100Hz（=3.000s）；pandas 3.0.5 兼容性实测通过；产物存 out/smoke/master_matchering/"
+   },
+   "status": "ok"
+  },
+  {
+   "name": "pretty_midi",
+   "version": "0.2.11.post0",
+   "relpath": null,
+   "abs_path": "conda env site-packages",
+   "license": "MIT",
+   "size_bytes": 5597222,
+   "sha256": "a3e2321736245a9c92259716d85a4762f16b7bde2f591fb0dba95bdb6e793d8a",
+   "sha256_note": "sha256 为 pip wheel 文件",
+   "source": "pip install pretty_midi（正常安装；依赖 numpy 已有，mido 1.3.3 / six 1.17.0 环境原已存在，仅新拉 importlib_resources 7.1.0）",
+   "driver": "comfyui env python 库级 API：pretty_midi.PrettyMIDI / Instrument(program=N) / add_note；audio→MIDI 转写闸口（BG-D10）与 SMF 读取",
+   "smoke": {
+    "cmd": "python -c: pm=PrettyMIDI(); pm.instruments.append(Instrument(program=0))",
+    "result": "构造成功（功能冒烟通过；完整渲染链路由 R2/R3 覆盖）"
+   },
+   "status": "ok"
+  },
+  {
+   "name": "midiutil",
+   "version": "1.2.1",
+   "relpath": null,
+   "abs_path": "conda env site-packages",
+   "license": "MIT",
+   "size_bytes": 54612,
+   "sha256": "1a226b83417ba19e8a8eef00887917346b574299fa042602b3a0ccb96e19c353",
+   "sha256_note": "sha256 为本地构建 wheel（setup.py bdist_wheel）；源 sdist=MIDIUtil-1.2.1.tar.gz（PKG-INFO：MIT，零依赖纯 Python）",
+   "source": "pip install sdist 路径踩 pip 26.0.1 bug（pyproject_hooks 子进程 OSError output.json，加 --no-build-isolation 亦复现；手动执行同一 hook 却成功→pip 侧问题）。绕法：curl 下 sdist→解包→env python setup.py bdist_wheel→pip install --no-deps --only-binary 本地 wheel",
+   "driver": "comfyui env python 库级 API：from midiutil import MIDIFile; mf=MIDIFile(n); mf.addNote(track, channel, pitch, time, duration, volume)",
+   "smoke": {
+    "cmd": "python -c: mf=MIDIFile(1); mf.addNote(0,0,60,0.0,1.0,100)",
+    "result": "API 功能冒烟通过"
+   },
+   "status": "ok"
+  },
+  {
+   "name": "demucs 叶子依赖（julius/lameenc/sphn）",
+   "version": "julius=0.2.8; lameenc=1.8.4; sphn=0.2.1",
+   "relpath": null,
+   "abs_path": "conda env site-packages",
+   "license": "julius: MIT; lameenc: LGPL-3.0-or-later; sphn: Apache-2.0（sphn 的 METADATA 无 License 字段，取自 wheel 内 LICENSE 文件全文）",
+   "size_bytes": 18356562,
+   "sha256": "julius=6891235cbc355e629d839f87489bff8ca46e57a0e7cc35abb909c7a2aa538c25; lameenc=7e08ab42b8b6c2467c386e1ebb62fec8dae00cbb25d803d25e14bffd46fc9087; sphn=8903d581e0bf93efd777e042e414a364c7ea804f9864692d3af6599c315ff192",
+   "sha256_note": "均为 pip wheel 文件 sha256；size=三 wheel 合计",
+   "source": "pip install julius lameenc sphn（正常安装：julius 唯一依赖 torch>=1.13 已满足；lameenc/sphn 零依赖）",
+   "driver": "demucs 运行时依赖（julius=DSP、sphn=音频解码、lameenc=MP3 输出路径，默认 wav 输出不触发）；无独立入口",
+   "smoke": {
+    "cmd": "import demucs.separate（模块级导入）+ python -m demucs --help",
+    "result": "全部通过；demucs 分离冒烟即端到端证据"
+   },
+   "status": "ok",
+   "status_note": "lameenc 为 LGPL-3.0-or-later：可商用、满足 BGM 产线许可红线（PLAN §0 红线①为禁 NC，GPL/LGPL 同 Fedora 系统包惯例允许）；且默认 wav 输出不走其代码路径"
+  },
+  {
+   "name": "matchering 叶子依赖（resampy/statsmodels/pandas/patsy）+ importlib_resources（pretty_midi 叶子）",
+   "version": "resampy=0.4.3; statsmodels=0.14.6; pandas=3.0.5; patsy=1.0.2; importlib_resources=7.1.0",
+   "relpath": null,
+   "abs_path": "conda env site-packages",
+   "license": "resampy: ISC; statsmodels: BSD-3; pandas: BSD-3-Clause; patsy: BSD-2-Clause; importlib_resources: Apache-2.0",
+   "size_bytes": 24432740,
+   "sha256": "resampy=ad2ed64516b140a122d96704e32bc0f92b23f45419e8b8f478e5a05f83edcebd; statsmodels=730f3297b26749b216a06e4327fe0be59b8d05f7d594fb6caff4287b69654589; pandas=4b11c36e218331d0387cbe3a0a5f75162357a1d92d57b2b08a336ff94b19b2be; patsy=37bfddbc58fcf0362febb5f54f10743f8b21dd2aa73dec7e7ef59d1b02ae668a; importlib_resources=1bd7b48b4088eddb2cd16382150bb515af0bd2c70128194392725f82ad2c96a1",
+   "sha256_note": "均为 pip wheel 文件 sha256；size=五 wheel 合计",
+   "source": "pip install resampy statsmodels（正常安装，resolver 自动补 pandas/patsy；resampy 依赖 numpy/numba 均已在）；pip install pretty_midi 时自动补 importlib_resources",
+   "driver": "matchering/pretty_midi 运行时依赖；无独立入口",
+   "smoke": {
+    "cmd": "import resampy, statsmodels, pandas, patsy + matchering.process 冒烟",
+    "result": "全部导入成功；matchering 端到端冒烟通过（pandas 3.0.5 新版实测兼容）"
+   },
+   "status": "ok",
+   "status_note": "resolver 全程零改动 numpy 2.4.4 / scipy 1.17.1（statsmodels 约束 numpy<3,>=1.22.3、scipy>=1.8,!=1.9.2 均被现版本满足，未触发升级）"
+  },
+  {
+   "name": "GeneralUser GS v2.0.3 (sf2)",
+   "relpath": "sf2/GeneralUser_GS.sf2",
+   "license": "GeneralUser GS License v2.0：整体作品私用/商用音乐创作不限，可修改可随软件分发；所含样本继承各自权利，均允许含盈利的音乐制作。唯一限制：若在自己网站展示请勿直链作者下载文件（本地拷贝分发 OK）。副本存 sf2/GeneralUser_GS.LICENSE.txt",
+   "size_bytes": 32319396,
+   "sha256": "9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe",
+   "driver": "fluidsynth ctypes",
+   "smoke": "文件级通过：RIFF/sfbk 头合法，RIFF size 与实际字节一致；phdr 288 条（287 预设+终端 EOP），GM 命名正常（Grand Piano 起步）；sdta 32MB/pdta 223KB 结构完整",
+   "status": "ok",
+   "source": "https://github.com/mrbumpy409/GeneralUser-GS（clone --depth 1，sf2 取自仓库；许可见 sf2/GeneralUser_GS.LICENSE.txt）"
+  },
+  {
+   "name": "VSCO 2 CE (SFZ, branch SFZ)",
+   "relpath": "sfz/VSCO2_CE/",
+   "license": "CC0 1.0 Universal（仓库根 LICENSE 即 CC0 全文；Readme.txt 明示教育/商用均可）",
+   "size_bytes": 5517932564,
+   "sha256": "4591e212cccf1cbcff0c78cf8429a8221bb0820b70cb7c8dd6685f470ace4eaa",
+   "sha256_of": "ViolinEnsSusVib.sfz（代表乐器入口；整库 75 个 sfz 清单见 index.json）",
+   "driver": "sfizz_render",
+   "smoke": "完整性通过：75 个 .sfz、3163 条 sample= 引用在顺序解析 default_path（含反斜杠归一）后 100% 命中树内 wav（3168 个）；sfz 与 wav 未分家，无需补 master 分支。乐器族入口索引：sfz/VSCO2_CE/index.json（strings 32 / winds 16 / brass 14 / perc 7 / keys 6）",
+   "status": "ok",
+   "source": "https://github.com/sgossner/VSCO-2-CE branch SFZ commit 6dd651d（git clone --depth 1 -b SFZ；master 分支无 sfz 勿用）"
+  },
+  {
+   "name": "Karoryfer x bigcat cello v1.001",
+   "relpath": "sfz/karoryfer/bigcat_cello/Karoryfer_Bigcat_cello/",
+   "license": "CC0 1.0 Universal（包内 LICENSE 为 CC0 全文；与官网 free-samples 页声明一致）",
+   "size_bytes": 145398147,
+   "size_bytes_zip": 132605500,
+   "sha256": "e3eba9a133e4afeafdc5ad5d891ded46ad5a79b21423a71e61ae14c6e8dc4dd3",
+   "sha256_of": "Programs/01- Bowed (velocity layer).sfz（主入口，经 #include 聚合各演奏法）",
+   "driver": "sfizz_render",
+   "smoke": "完整性通过：39 个 sfz、4087 条 sample= 引用 0 缺失；Programs/01-…04- 为 #include 聚合入口（sfizz 支持），vc_*_map.sfz 为实际映射",
+   "status": "ok",
+   "source": "https://github.com/sfzinstruments/karoryfer-bigcat.cello（releases zip，CC0）"
+  },
+  {
+   "name": "Karoryfer Meatbass v1.001",
+   "relpath": "sfz/karoryfer/meatbass/Meatbass/",
+   "license": "CC0 1.0 Universal（包内 LICENSE 为 CC0 全文）",
+   "size_bytes": 296405063,
+   "size_bytes_zip": 255425351,
+   "sha256": "55ea0ebe13b2b9639515090dee809eb938739314b8c032f710bf8ba763e50af1",
+   "sha256_of": "Programs/01_arco_modwheel.sfz（主入口）",
+   "driver": "sfizz_render",
+   "smoke": "完整性通过：39 个 sfz、14928 条 sample= 引用 0 缺失",
+   "status": "ok",
+   "source": "https://github.com/sfzinstruments/karoryfer.meatbass（releases zip，CC0）"
+  },
+  {
+   "name": "Karoryfer War Tuba v1.002",
+   "relpath": "sfz/karoryfer/war_tuba/War_tuba/",
+   "license": "CC0 1.0 Universal（包内 LICENSE 为 CC0 全文）",
+   "size_bytes": 140171711,
+   "size_bytes_zip": 109135588,
+   "sha256": "c83685d2ece824781881c8146bbf7e1fd03a84741bcbeebdff7871585a81ec86",
+   "sha256_of": "Programs/1-solo-legato.sfz（主入口，顶层 7 个入口之一）",
+   "driver": "sfizz_render",
+   "smoke": "数据完整：顶层 Programs/1-solo-legato…7-tubaborg 共 7 个入口 sfz 引用 0 缺失。注意：Programs/{dbl_,}legato|poly|tri_* 等 70 个嵌套子目录 sfz 为上游打包瑕疵——其 '..\\Samples\\' 相对路径少一层（正确应为 ../../Samples），23769 条引用全部可由补一层 ../ 命中 Samples/ 内真实 wav，实际缺失 wav 数为 0，非下载不完整；使用时以顶层 7 个入口为准",
+   "status": "ok",
+   "source": "https://github.com/sfzinstruments/karoryfer.war-tuba（releases zip，CC0；嵌套 Programs 子目录 sfz 有上游相对路径瑕疵，只用顶层 Programs/*.sfz）"
+  },
+  {
+   "name": "drums_gdc 鼓组 one-shot 集（12 件）",
+   "relpath": "samples/drums_gdc",
+   "license": "Sonniss GDC 2026 bundle：条款未官方复核（官方页不可达）；按业界通行口径推定免署名 royalty-free，投产前须自行核验最新条款",
+   "size_bytes": 1774498,
+   "sha256": null,
+   "driver": "sample 引擎（notes+instrument 绝对路径）",
+   "smoke": "out/v2smoke/drums_preview.wav 全条 -11.6dB，逐 hit kick_sub -7.4/kick_punch -8.5/snare -10.4/hat -29.4 dBFS",
+   "status": "ok",
+   "source": "assets_audio/_raw/sonniss/ GDC2026 5 卷内筛选（152 候选程序化打分入选 12）；明细见 samples/drums_gdc/manifest.json"
+  },
+  {
+   "name": "Salamander Grand Piano V3 (SFZ)",
+   "relpath": "sfz/SalamanderGrand",
+   "license": "CC-BY 3.0（作者 Alexander Holm；SFZ 化 kinwie）——**视频简介需署名**",
+   "size_bytes": 748451483,
+   "sha256": null,
+   "driver": "sfz 引擎（sfizz_render）",
+   "smoke": "test_multi.mid 四音 36/48/60/72 = -32.9/-33.5/-32.1/-35.1 dBFS 全域出声；sfizz 加载 1121 regions 无报错",
+   "status": "ok",
+   "source": "https://github.com/sfzinstruments/SalamanderGrandPiano（官方源 archive.org/details/SalamanderGrandPianoV3）；48k/24bit flac 668 文件"
+  },
+  {
+   "name": "Virtual Playing Orchestra 3.2.1.1",
+   "relpath": "sfz/VPO",
+   "license": "CC-BY-SA 组件 + 自由使用许可（用库制音乐完全自由、含商用；再分发采样需署名，作者 Paul Battersby；全文=库内 Documentation/license.htm）",
+   "size_bytes": 728844204,
+   "sha256": null,
+   "driver": "sfz 引擎（sfizz_render）",
+   "smoke": "violin-SEC-sustain 60/72 = -36.4/-40.7 dBFS（36/48 低于 lokey 静音属预期）；454 sfz/30027 引用零缺失",
+   "status": "ok",
+   "source": "https://github.com/open-soundfonts/Virtual_Playing_Orchestra_3（官网 Google Drive 替代直链）"
+  },
+  {
+   "name": "sonicpi_drums 鼓 one-shot（25 件）",
+   "relpath": "samples/sonicpi_drums/",
+   "license": "CC0 1.0（sonic-pi 仓库 etc/samples/README.md 声明原文：'All other samples in this directory are from http://freesound.org and have also been placed in the public domain via the Creative Commons 0 License'；逐件 freesound 溯源见目录内 SOURCES.txt）",
+   "size_bytes": 726853,
+   "sha256": null,
+   "driver": "sample 引擎（绝对路径 one-shot）",
+   "smoke": "out/ab_drumtest A/B 盲测轮实用于 hat 轻/重档+开镲轮替（2026-08-25）",
+   "status": "ok",
+   "source": "GitHub sonic-pi/sonic-pi etc/samples/ 逐件 raw 取回（代理 HTTPS_PROXY（由使用者自行配置），未整仓下载）"
+  }
+ ]
+}

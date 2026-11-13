@@ -1,0 +1,160 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://local/bgm_gen/schema/project_v1.json",
+  "title": "bgm_gen project.json schema v1（PLAN.md §5 R3 / BG-D7）",
+  "description": "本文件是工程格式的规范性文档（文档级 schema）。运行期校验由 core/project.py 手写实现（系统 python3 无 jsonschema 依赖，PLAN BG-D3），两者语义必须保持一致；schema 变更走协作协议第 3 条（spec_version bump + 最小示例回归重跑）。",
+  "type": "object",
+  "required": ["meta", "tracks"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "工程名；缺省 = project.json 文件名去扩展名。决定默认输出目录 out/<name>/（BG-D9）"
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spec_version"],
+      "properties": {
+        "spec_version": {"type": "string", "enum": ["1"], "description": "工程 schema 版本；缺失按 \"1\" 处理，非 \"1\" 拒绝"},
+        "sr": {"type": "integer", "minimum": 8000, "maximum": 384000, "default": 44100, "description": "全局权威采样率（BG-D5），所有 stem 归一到此值"},
+        "channels": {"type": "integer", "enum": [1, 2], "default": 2, "description": "全局声道数（BG-D5）"},
+        "bpm": {"type": "number", "exclusiveMinimum": 0, "default": 120, "description": "全局速度；beat→秒 = beat*60/bpm"},
+        "key": {"type": ["string", "null"], "description": "目标调性（如 \"D minor\"）；null/缺省 = QC 不做调性断言（info 项）"},
+        "timesig": {"type": "string", "pattern": "^[0-9]+/[0-9]+$", "description": "拍号标注（如 \"4/4\"），当前仅记录不参与渲染"},
+        "seed": {"type": ["integer", "null"], "description": "随机种子（传递给需要的引擎；v1 确定性引擎均不消费）"},
+        "duration_hint": {"type": ["number", "null"], "exclusiveMinimum": 0, "description": "时长提示（秒）。工程时长 = max(duration_hint, 所有轨 clip 窗结束秒)；全体 stem 补零/截断到该时长"}
+      }
+    },
+    "sections": {
+      "type": "array",
+      "description": "段落时间窗标注（仅命名/审读用，渲染不依赖）",
+      "items": {
+        "type": "object",
+        "required": ["name", "start_beat", "length_beat"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "start_beat": {"type": "number", "minimum": 0},
+          "length_beat": {"type": "number", "exclusiveMinimum": 0}
+        }
+      }
+    },
+    "tracks": {
+      "type": "array",
+      "minItems": 1,
+      "description": "音轨列表。每轨一个引擎、一份局部记谱；轨内 notes 时间基准=轨道局部 beat（beat 0 = clip.start_beat 对齐的全局位置）",
+      "items": {
+        "type": "object",
+        "required": ["name", "engine", "instrument", "notes"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "minLength": 1, "description": "轨名，全局唯一；stem 文件名与 automation/sidechain 引用它"},
+          "engine": {"type": "string", "enum": ["synth", "sf2", "sfz", "sample"], "description": "v1 编排只接受确定性引擎；ai/demucs 走 bgm stem / ai 产线（BG-D10 扩散=整段素材非音色引擎）"},
+          "instrument": {"type": "string", "minLength": 1, "description": "synth=synthlib 音色函数名(kick/snare/hat/fm_ep/bass/lead)；sf2=sf2 名或绝对路径，可带 :bank:program 后缀（默认 :0:0）；sfz=SFZ 引用（engines/sfz.py resolve 规则）；sample=采样文件（相对 assets_audio/）"},
+          "bank": {"type": "integer", "minimum": 0, "maximum": 128, "default": 0, "description": "仅 sf2：bank（128=GM 打击）"},
+          "program": {"type": "integer", "minimum": 0, "maximum": 127, "default": 0, "description": "仅 sf2：program"},
+          "notes": {
+            "type": "array",
+            "minItems": 1,
+            "description": "[pitch(MIDI 0-127), beat(局部, 浮点), dur(浮点 beat), vel(0-127)]，BG-D7 统一记谱；鼓=GM 打击位",
+            "items": {
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 4,
+              "prefixItems": [
+                {"type": "number", "minimum": 0, "maximum": 127},
+                {"type": "number", "minimum": 0},
+                {"type": "number", "exclusiveMinimum": 0},
+                {"type": "number", "minimum": 0, "maximum": 127}
+              ]
+            }
+          },
+          "gain_db": {"type": "number", "minimum": -80, "maximum": 24, "default": 0, "description": "静态轨道增益（自动化在其上叠加，相乘关系）"},
+          "pan": {"type": "number", "minimum": -1, "maximum": 1, "default": 0, "description": "静态声像 -1 全左 .. 1 全右（lg=1-pan*0.5, rg=1+pan*0.5）"},
+          "clip": {
+            "type": "object",
+            "required": ["start_beat", "end_beat"],
+            "additionalProperties": false,
+            "description": "轨道在全局时间线上的窗口（beat）。缺省 = {start_beat:0, end_beat: max(note 结束)+4（释放尾巴）}。stem 渲染后截断/补零到窗长，整体平移到 start_beat",
+            "properties": {
+              "start_beat": {"type": "number", "minimum": 0},
+              "end_beat": {"type": "number", "exclusiveMinimum": 0}
+            }
+          },
+          "bus": {
+            "type": "array",
+            "default": [],
+            "description": "轨道级 ffmpeg 滤镜直传链（如 [\"lowpass=f=8000\"]）。禁止 ; [ ] 与标签（保持单链嵌入）；lowpass_hz 自动化由编排层 numpy OLA 频域扫描原地施加（asendcmd 方案因拉链噪声已弃用，见 core/mixer.py docstring）",
+            "items": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "automation": {
+      "type": "array",
+      "default": [],
+      "description": "参数自动化（时间基准=全局 beat）。v1 支持参数：gain_db / pan / lowpass_hz；curve=linear 直线插值参数原值（dB 直线、Hz 直线），exp 按感知几何插值（增益在线性域几何插值=等 dB 斜率，频率在对数域=音高线性）；pan 仅 linear",
+      "items": {
+        "type": "object",
+        "required": ["target_track", "param", "points"],
+        "additionalProperties": false,
+        "properties": {
+          "target_track": {"type": "string", "description": "必须命中 tracks[].name"},
+          "param": {"type": "string", "enum": ["gain_db", "pan", "lowpass_hz"]},
+          "points": {
+            "type": "array",
+            "minItems": 2,
+            "description": "[全局beat, value]，beat 严格递增；首点前恒持首值、末点后恒持末值",
+            "items": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [{"type": "number", "minimum": 0}, {"type": "number"}]
+            }
+          },
+          "curve": {"type": "string", "enum": ["linear", "exp"], "default": "linear"}
+        }
+      }
+    },
+    "sidechain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trigger_track", "targets"],
+      "description": "侧链 ducking：trigger 轨（自动化后信号）经确定性 numpy 包络跟随器（阈值/比率/attack/release，1kHz 包络分析）压低 targets（core/mixer.py B 段；ffmpeg sidechaincompress 因位级非确定已弃用）",
+      "properties": {
+        "trigger_track": {"type": "string", "description": "必须命中 tracks[].name；同一轨可同时为 target（自避让）"},
+        "targets": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+        "threshold_db": {"type": "number", "minimum": -90, "maximum": 0, "default": -24, "description": "触发阈值（dB，包络跟随器增益计算）"},
+        "ratio": {"type": "number", "minimum": 1, "maximum": 20, "default": 4},
+        "attack_ms": {"type": "number", "minimum": 0.01, "maximum": 1000, "default": 20},
+        "release_ms": {"type": "number", "minimum": 1, "maximum": 10000, "default": 300}
+      }
+    },
+    "master": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "description": "工程级母带与 QC 目标",
+      "properties": {
+        "target_lufs": {"type": "number", "minimum": -40, "maximum": 0, "default": -14, "description": "EBU R128 综合响度（B 站标准 -14，AGENTS.md D16）"},
+        "true_peak_db": {"type": "number", "maximum": 0, "default": -1, "description": "真峰值上限 dBTP"},
+        "chain": {"type": "string", "enum": ["loudnorm", "matchering"], "default": "loudnorm"},
+        "ref": {"type": "string", "description": "matchering 模式必填：参考音频路径"},
+        "lufs_tol": {"type": "number", "exclusiveMinimum": 0, "default": 1.0, "description": "QC 判定容差（|实测-目标|<=tol）"},
+        "qc": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "QC 目标；null/缺省 = 该项降级为 info（不判 pass/fail）",
+          "properties": {
+            "silent_window_max_s": {"type": ["number", "null"], "exclusiveMinimum": 0, "default": 1.5, "description": "最长无声窗上限（分帧 50ms、帧 RMS<-60dB 计无声）"},
+            "bpm_tol_pct": {"type": ["number", "null"], "description": "BPM 检测容差百分比；top-3 候选含 1/2/2 倍频内命中即过；null=info"},
+            "key_top2": {"type": ["boolean", "null"], "description": "true = top-1 r>=0.70 或 meta.key 入 top-2；null/false = info"},
+            "hf_ratio_max": {"type": ["number", "null"], "description": ">8kHz 能量占比上限（削平/噪声异常检测）；null=info"},
+            "duration_min_s": {"type": ["number", "null"], "exclusiveMinimum": 0, "description": "最短时长闸（秒）；null=info（实现 core/project.py 已支持，本行 2026-08-23 v3 R1-W2 文档级补正）"}
+          }
+        }
+      }
+    }
+  }
+}

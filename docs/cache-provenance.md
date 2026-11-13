@@ -40,6 +40,12 @@
 不是原子目录快照或防篡改证明，命令期间插件文件应保持不变。
 旧算法升级的重建要求见[固定迁移记录](https://github.com/CongliangK/framivra/blob/6f93f4aea95b59e52f8be04b6d4ac74be384aa79/docs/cache-provenance.md#插件代码身份与升级说明86)。
 
+## 音乐组件输入身份
+
+生效插件可通过只读、确定性的 `input_identity(c)` 向回执插件摘要贡献 JSON；这是[不变量入口](ARCHITECTURE.md#21-三不变量)，不是新 hook。贡献失败或无法规范序列化必须显式失败，不以空身份继续；未实现该入口的插件保持原身份行为。
+
+bgm-render 的源缓存与阶段回执共享音乐输入身份，覆盖仓内 BGM 实现、所选运行配置及执行环境，不再通过旧音乐源码仓或包装器推断版本。工程、`$ref` 与显式 `extra_deps` 仍遵循[源与缓存契约](ARCHITECTURE.md#25-协议-12虚拟源与收尾)，`master` / `premaster` / `stem:<轨名>` 不改变共享渲染规则。身份匹配不证明选装服务、未声明资产或远端模型的完整闭包；外置资产仍须按工程声明依赖与核验许可。升级后不自动删除旧缓存，也不能补签旧成功回执。
+
 ## HTML 依赖
 
 本地 CSS、JavaScript、图片、字体等依赖通过 `project.cache_dependencies` 或 gfx clip 的

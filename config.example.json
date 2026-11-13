@@ -41,10 +41,10 @@
   },
   "bgm": {
     "enabled": true,
-    "repo": "~/文档/01_活跃项目/music_tools",
-    "cli": "~/.local/bin/bgm",
-    "purpose": "BGM/配乐产线（本体姊妹仓 music_tools；apps/bgm/ 为路由声明）：①路由与分轨审计包（apps/blender-bridge/audit_bundle.py）；②plugins/bgm-render 插件——timeline sources[] 直接引用音乐工程 JSON 自动渲染（bgm.cli 缺省解析序：bgm.cli > ~/.local/bin/bgm > bgm.repo + python3 -m bgm_gen）",
-    "howto": "路由见 apps/bgm/README.md；音轨直引工程 JSON 见 plugins/bgm-render/README.md；BGM 生成/响度 QC 入口：music skill（~/.agents/skills/music）"
+    "python": null,
+    "runtime": null,
+    "purpose": "仓内音乐组件 apps/bgm：编排、合成、分轨与 QC；plugins/bgm-render 将音乐工程接入视频 sources[].bgm。普通视频不依赖音乐环境；音源/模型/第三方素材由用户自备，不捆绑、不自动下载。",
+    "howto": "入口 python3 apps/bgm/bgm.py --help；说明见 apps/bgm/README.md。bgm.python 可选解释器，bgm.runtime 可选外置运行配置；默认数据在 XDG_DATA_HOME/framivra/music（缺省 ~/.local/share/framivra/music）。旧 bgm.repo/cli 不再使用，不查旧音乐仓或本机 bgm 包装脚本。"
   },
   "denoise": {
     "enabled": false,

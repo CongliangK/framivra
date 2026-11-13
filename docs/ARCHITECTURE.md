@@ -90,6 +90,8 @@ HTML strict 依赖闭包**仅适用 CDP**；环境身份/资源闭包不承诺�
 
 **② 回执指纹。** 保留 timeline 字节、源 stat、gfx HTML 与声明依赖成分，纳入生效插件的**名称+版本+全部生效参数实例摘要+代码内容摘要**。安装/卸载/升级/改参/改默认值或代码使对应身份变化，不能用旧回执放行陈旧产物。**空生效清单只省略插件段**，不恢复历史整体指纹；音频实现始终纳入唯一当前身份，材料与升级恢复见 [回执语义](cache-provenance.md)。有段录制的旧回执与卸载后的无段重算仍失配。
 
+可选 `input_identity(c) -> JSON` 向 `active_plugins_digest` 贡献额外输入身份；它与 `contribute_keys` 一样是不变量入口，**不是新 hook**，不扩展 manifest 协议。贡献须只读、确定性、可规范 JSON 序列化；调用或序列化失败（含 NaN/Inf）必须 fail-hard，不回落空身份；错误不回显配置或异常链。返回 `None` 是合法 `null` 贡献，不等于没有函数。未提供该函数的插件保持原行为，空生效清单仍省略插件段。BGM 用同一身份实现绑定仓内业务代码及所选运行配置/执行环境，同时进入源缓存与阶段回执，不能只让缓存失效而沿用旧成功回执。
+
 生效要求 installed+enabled、声明钩子，且 timeline 含插件任一注册键；**无键声明的钩子插件全局生效**，不是“没写键就不执行”。键扫描、生效判断、参数摘要共用 scope：`root`、`project`、`sources[]`、`audio_tracks[]`、`audio_tracks[].events[]`。
 
 **③ 安装态与键注册表。** `plugins/registry.json` 汇总全量官方 manifest 的键声明，并提供缺失插件的安装提示；官方实体只认 `plugins/<name>/`，目录缺失即 not_installed，不允许同名 external 顶替。对 timeline 中的插件键：
@@ -142,7 +144,7 @@ plugin 还声明 `extends.schema_keys: [{path, key}]` 与 `extends.hooks`。path
 
 ### 2.5 协议 1.2：虚拟源与收尾
 
-**缝 C `probe_source(c, sid) -> {has_audio, has_video, nb_frames, fps, w, h} | None`** 返回与 Ctx.probe 同构的 facts；None 回落 ffprobe。validate 源检查与音频事件时长校验必须同走该缝，允许 music_tools 工程 JSON 等非媒体源。
+**缝 C `probe_source(c, sid) -> {has_audio, has_video, nb_frames, fps, w, h} | None`** 返回与 Ctx.probe 同构的 facts；None 回落 ffprobe。validate 源检查与音频事件时长校验必须同走该缝，允许 BGM 工程 JSON 等非媒体源。
 
 **缝 D `finish(c) -> list[str]`** 在完整 `all` 或 `all --until qc` 的 mux/qc 后触发，空列表成功。qc 判定失败不阻断 finish；qc/finish 任一失败最终 exit 1，正式产物已就绪不等于验收通过。draft、dry-run、终点早于 qc 的截断链不触发；单独 mux/qc 不触发，`all --until video` 在线性模式还未运行 audio。Blender 插件顶层 `blender_bridge: true|{out, verify}` 表示收尾直接导出审片工程，不需另行补隐式动作。
 
@@ -153,7 +155,7 @@ plugin 还声明 `extends.schema_keys: [{path, key}]` 与 `extends.hooks`。path
 3. 同工程共享一次渲染到 `cache/bgm/<render_digest>/`；render_digest 含工程字节、`$ref`、extra_deps 与代码，**不含输出选择和轨名**。成功以 tmp+os.replace 原子写 `_complete.json`，`<digest>.lock` 跨进程互斥；命中直接派生，不重复渲染。marker 完好但目标 WAV 缺失/空文件时覆盖重渲一次；不存在轨名等工程问题不触发自愈。
 4. extra_deps 文件做 sha256[:16] 内容签名，目录按排序的相对路径与文件内容摘要递归签名；跳过 `__pycache__`、`.lock`、`.tmp`。文件数 >5000 或累计 >2GiB 时降级为 `(相对路径, size, mtime_ns)` 清单签名，`DIRC:` / `DIRL:` 前缀进入 digest JSON，降级可观测但不是全内容证明。
 5. registry `cache_dirs: ["bgm"]` 与 `cache_dir_keys` 保留当前 render_digest、回收陈旧目录，弃用 bgm 后可作 legacy 回收；派生 WAV 仍经 contribute_keys。锁伴生件不得被 gc 删掉，破坏跨进程互斥。
-6. CLI 按 config `bgm.cli` → 用户 `.local/bin/bgm` → 配置 bgm.repo 的 `python3 -m bgm_gen` 解析；config 路径不存在/不可执行时尝试下一通道，全败列每通道原因，不能假成功或回落未处理产物。
+6. 默认执行仓内 `apps/bgm/bgm.py`，解释器可由 `bgm.python` 指定；运行配置 JSON 由 `MUSIC_RUNTIME` 或宿主 `bgm.runtime` 指定，默认 XDG 数据根下 `framivra/music/runtime.json`（未设 XDG 时为 `~/.local/share/framivra/music/runtime.json`），资产同根 `assets/`；默认文件不存在仍可代码合成，显式缺文件则报错。旧 `bgm.repo` / `bgm.cli` 已废弃，不再消费或选择外仓/用户包装器；缺解释器、运行依赖或所选引擎资产必须明确失败，不假成功或回落未处理产物。
 
 ## 3. 应用边界（apps/）
 
@@ -163,7 +165,7 @@ plugin 还声明 `extends.schema_keys: [{path, key}]` 与 `extends.hooks`。path
 
 ### 3.2 职责特例
 
-- **bgm** 是纯路由声明 app，entry.cli 可空，把配乐需求与分轨审计知识路由到 music_tools，不含执行本体。
+- **bgm** 在 `apps/bgm/` 自包含完整 `bgm_gen`、CLI、JSON 工作流/schema 与编目元数据；基础音乐依赖 NumPy + FFmpeg，不使普通视频依赖音乐运行环境。音源、采样、乐谱、模型与第三方预览不随仓分发、不自动下载；运行资产外置，重服务按所选引擎显式启用。视频接入仍由 bgm-render 三 hooks 与 `sources[].bgm` 承接，分轨审计归 Blender app。
 - **gates** 负责 G1/G2/G7/G10/项目门的发布前复检；G3 是同阈值复检，内核 qc/TP 不可关。
 - **sync** 是管线前置素材工具，sync/repack 邻接源替换与 conform 写操作，必须幂等并遵守备份纪律。
 - **Blender 审片/分轨审计**与 **publish 4K** 是可卸载的审阅/发布增强，不回写主线可信度；其具体交付门由组件 README 定义。

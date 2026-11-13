@@ -12,6 +12,8 @@
 # hooks._load_plugin_module 同一路径，测试即对账）。
 # 批次四（P4 起）：templates/<name>/tests/ 逐范本发现（同批次三式；skill-demo 无
 # tests 目录——expected_check.sh 真渲染脚本即其验收，不入 unittest 批次）。
+# 批次五：apps/bgm/bgm_gen/tests 由独立 pytest 子进程执行（默认档由组件
+# conftest 管理，-ra 保留 optional skip 原因；无测试收集 exit 5 也算失败）。
 # 任一批次失败 → exit 非零（CI 可用）；本机纪律：一律 env python3（AppImage
 # argv[0] 劫持，裸 python3 的 sys.executable 指向错误解释器，见全局 AGENTS.md）。
 set -euo pipefail
@@ -29,4 +31,7 @@ for d in apps/*/tests plugins/*/tests templates/*/tests; do
   [ -d "$d" ] || continue
   env python3 -m unittest discover -s "$d" -t "${d%/tests}" -v || rc=$?
 done
+# unittest cannot discover pytest function/fixture tests. Keep every legacy
+# batch above intact and run the music suite in its own interpreter/process.
+env python3 -m pytest apps/bgm/bgm_gen/tests -ra || rc=$?
 exit $rc

@@ -1,0 +1,176 @@
+{
+  "binary_pin": {
+    "additional_pins": [
+      {
+        "name": "ffmpeg",
+        "note": "解码/重采样兜底（系统包）",
+        "sha256": null,
+        "version": "8.1.2"
+      }
+    ],
+    "note": "无独立二进制：numpy 时间线混合（wave 直读 PCM）；非 PCM/异 sr 采样经 ffmpeg 解码重采样（_wavio.read_audio 兜底）；解释器=runtime.json python_system",
+    "sha256": null,
+    "size": null,
+    "version": null
+  },
+  "coverage": {
+    "evidence": [
+      "bgm_gen/engines/sample.py（payload 双入口读取行为——收割第一事实源 C12）",
+      "bgm_gen/engines/_wavio.py（解码/写盘路径）"
+    ],
+    "gaps": [
+      "采样根 samples_root 为跨项目指针（runtime.json，doctor 校验；改挪需用户拍板）",
+      "hits[] 逐条 at/gain_db 类型在描述符 schema 覆盖，但 hits 内 file 存在性逐条由引擎循环守卫",
+      "notes 入口 pitch 仅记录用（不驱动任何合成）",
+      "hits=[]（伴合法 notes）旧引擎回退 notes 入口，现被 minItems 1 拒——合理 bugfix 收紧（R1 审查 E-2 记录）",
+      "bpm 收紧 min=1（同 synth；R1 审查 E-1 记录）"
+    ],
+    "probes": [
+      "bgm_gen/tests/test_descriptors.py [fast] sample_hits（hits+gain_db+length_s）+ sample_notes（instrument/notes/bpm 入口二）+ determinism 双渲"
+    ],
+    "tier": "A"
+  },
+  "engine": "sample",
+  "events_supported": [],
+  "formats": [
+    "wav（pcm_s16le）"
+  ],
+  "input_ports": [
+    {
+      "description": "入口一：命中列表",
+      "id": "hits",
+      "type": "hit_list"
+    },
+    {
+      "description": "入口二：BG-D7 记谱",
+      "id": "notes",
+      "type": "note_array"
+    },
+    {
+      "description": "入口二的采样文件",
+      "id": "instrument",
+      "type": "asset_path"
+    }
+  ],
+  "invariants": [
+    {
+      "check": true,
+      "id": "sample_hits_or_notes_entry",
+      "rule": "hits 与 notes 至少一种入口且非空（hits 优先，与引擎一致）；走 notes 入口必须带 instrument（非空路径字符串）"
+    },
+    {
+      "check": false,
+      "id": "sample_length_s_required",
+      "rule": "length_s 无条件必填（parameters flags=required 已表达；引擎内 n_out<=0 双保险守卫）"
+    },
+    {
+      "check": false,
+      "id": "sample_gain_mapping",
+      "rule": "notes 入口 vel→gain_db=20*log10(max(vel,1)/100)；hits 入口 gain_db 直用"
+    },
+    {
+      "check": false,
+      "id": "sample_hit_at_nonneg",
+      "rule": "hit.at 负值引擎循环内拒绝（hits[i].at 非法（负值））；start>=n_out 的 hit 跳过不报错"
+    }
+  ],
+  "parameters": [
+    {
+      "description": "入口一（hits 优先）：[{file, at(秒,默认0), gain_db(默认0)}, ...]；numpy 等功率叠加",
+      "id": "hits",
+      "schema": {
+        "items": {
+          "properties": {
+            "at": {
+              "description": "触发时刻（秒，默认 0）",
+              "minimum": 0,
+              "type": "number"
+            },
+            "file": {
+              "description": "采样文件（绝对路径直通；相对 samples_root 严格拼接）",
+              "type": "str"
+            },
+            "gain_db": {
+              "description": "触发增益（dB，默认 0；10^(db/20) 线性）",
+              "type": "number"
+            }
+          },
+          "required": [
+            "file"
+          ],
+          "type": "object"
+        },
+        "minItems": 1
+      },
+      "type": "array"
+    },
+    {
+      "description": "入口二（notes 记谱法）的采样文件（file 解析规则同 hits[].file；走 notes 入口时必填——invariant sample_hits_or_notes_entry 强制）",
+      "id": "instrument",
+      "type": "path"
+    },
+    {
+      "description": "入口二（BG-D7 记谱法）：[[pitch(仅记录用), beat, dur, vel], ...]；at=beat*60/bpm；gain_db=20*log10(max(vel,1)/100)",
+      "id": "notes",
+      "schema": {
+        "items": {
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            }
+          ],
+          "type": "array"
+        },
+        "minItems": 1
+      },
+      "type": "tuple"
+    },
+    {
+      "default": 120.0,
+      "description": "notes 入口的 beat→秒换算",
+      "id": "bpm",
+      "min": 1,
+      "type": "float",
+      "unit": "bpm"
+    },
+    {
+      "description": "输出总时长（秒；混合结果不足补零、超出截断）——无条件必填（两种入口同）",
+      "exclusive_min": true,
+      "flags": [
+        "required"
+      ],
+      "id": "length_s",
+      "min": 0,
+      "type": "float",
+      "unit": "s"
+    }
+  ],
+  "track_projection": {
+    "bpm": "meta.bpm",
+    "hooks": [
+      "② sample length_s 派生量（clip×spb）"
+    ],
+    "instrument": "track.instrument",
+    "length_s": "track.window_s（clip×spb 派生量——钩子②）",
+    "note": "R1 锁 core/project.py track_engine_spec 的 if/elif 原样；数据化=R2",
+    "notes": "track.notes"
+  },
+  "version": "1.0.0"
+}

@@ -1,0 +1,93 @@
+{
+  "binary_pin": {
+    "note": "ComfyUI comfyui_version（GET /system_stats 实测；doctor 交叉核验）",
+    "sha256": null,
+    "size": null,
+    "version": "0.33.0"
+  },
+  "coverage": {
+    "evidence": [
+      "bgm_gen/engines/ai.py（提交/轮询/取回行为——收割第一事实源 C12）",
+      "ComfyUI /system_stats 实测 comfyui_version=0.33.0（binary_pin 来源）",
+      "ComfyUI /object_info 实测（params 点路径注入面；service 探针交叉核验）"
+    ],
+    "gaps": [
+      "params 点路径覆盖集随 workflow 文件变化（描述符不枚举具体节点/字段——workflow 文件本身是事实源）",
+      "determinism=nondeterministic（GPU 扩散采样，seed 固定亦不保证逐位一致；冻结复现协议=生成物落盘后工程按绝对路径引用）",
+      "底层模型版本（ACE-Step 1.5/Music3 等）不在描述符内（workflow 文件事实，非引擎契约面）"
+    ],
+    "probes": [
+      "bgm_gen/tests/test_descriptors.py [service] ai 探针（8188 不可达 skip；探针=参数注入点被 /object_info 接受，非每参数全渲）"
+    ],
+    "tier": "A"
+  },
+  "engine": "ai",
+  "events_supported": [],
+  "formats": [
+    ".wav",
+    ".flac",
+    ".mp3",
+    ".ogg",
+    ".m4a",
+    ".opus"
+  ],
+  "input_ports": [
+    {
+      "description": "ComfyUI API 格式 workflow",
+      "id": "workflow",
+      "type": "json_path"
+    },
+    {
+      "description": "点路径覆盖（节点id.inputs.字段）",
+      "id": "params",
+      "type": "override_map"
+    }
+  ],
+  "invariants": [
+    {
+      "check": false,
+      "id": "ai_params_value_types",
+      "rule": "params 覆盖值仅限 int/float/str/bool（引擎守卫 _apply_overrides；其余类型 EngineError）"
+    },
+    {
+      "check": false,
+      "id": "ai_params_path_exists",
+      "rule": "点路径必须命中 workflow 顶层节点与其 inputs 字段（引擎守卫；路径不存在即报错）"
+    },
+    {
+      "check": false,
+      "id": "ai_service_dependency",
+      "rule": "ComfyUI base_url 可达才执行（service 档语义；不可达 EngineError，pytest 显式 skip 绝不静默当绿）"
+    }
+  ],
+  "parameters": [
+    {
+      "description": "ComfyUI API 格式 workflow JSON 文件路径（同 legacy/gen.py 用法；文件存在性由引擎守卫）",
+      "flags": [
+        "required"
+      ],
+      "id": "workflow",
+      "type": "path"
+    },
+    {
+      "default": {},
+      "description": "点路径覆盖：{节点id.inputs.字段: 值}（如 94.inputs.duration/104s.inputs.filename_prefix）；值限 int/float/str/bool；路径不存在即报错（引擎守卫 _apply_overrides）",
+      "id": "params",
+      "type": "object"
+    },
+    {
+      "default": 600.0,
+      "description": "完成等待上限（超时抛 EngineError，任务仍在队列/执行）",
+      "id": "timeout_s",
+      "min": 1,
+      "type": "float",
+      "unit": "s"
+    },
+    {
+      "description": "输出文件（音频扩展名结尾→首个输出写入该路径）或目录；缺省 <仓库根>/out/smoke/ai/（多音频全落盘，第一个为出参 path）",
+      "id": "out",
+      "type": "path"
+    }
+  ],
+  "version": "1.0.0"
+}

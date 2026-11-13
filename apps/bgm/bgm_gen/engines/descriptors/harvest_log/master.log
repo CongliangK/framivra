@@ -1,0 +1,24 @@
+# master 描述符收割证据日志（harvest.py 生成）
+generated: 2026-08-23
+tool: python3 -m bgm_gen.engines.harvest log master
+descriptor: bgm_gen/engines/descriptors/master.json（v1.0.0 · tier A）
+harvest_method: A=程序化收割（第一事实源=引擎源码 payload 读取行为）
+sources:
+  - bgm_gen/engines/master.py（loudnorm 两遍法参数组装 + matchering mx.process 调用——收割第一事实源）
+  - ffmpeg loudnorm 过滤器文档（参数语义/单位参考；第一事实源=源码）
+  - comfyui env 实测：matchering 2.0.6（mx.process，入口形态 W1B RUNBOOK §3）
+binary_facts:
+  version = '8.1.2'（ffmpeg（系统包；loudnorm 两遍法 + ebur128 复测，`ffmpeg -version` 探测交叉核验））
+  matchering = '2.0.6'（comfyui env python 子进程跑 mx.process(target, reference, results=[pcm16])（无 CLI；doctor 经 env import 探测））
+params（参数名表；类型/单位/短语义 ≤1 行/参数）:
+  input | path | required | 输入音频路径（文件存在性由引擎守卫）
+  mode | enum | - | 默认loudnorm | 枚举loudnorm/matchering | 母带策略：loudnorm=ffmpeg 两遍法（-14LUFS/-1dBTP）；matchering=参考匹配（mx.process）
+  target_lufs | float | - | 默认-14.0 | LUFS | 目标综合响度（仅 loudnorm；EBU R128，B 站标准）
+  true_peak | float | - | 默认-1.0 | dBTP | 真峰值上限（仅 loudnorm；linear=true 优先，约束不满足时 ffmpeg 自动回退 dynamic 并在 summary 说明）
+  ref | path | - | matchering 模式必填：参考音频路径（invariant master_matchering_ref_required 强制非空；文件存在性由引擎守卫）
+  out | path | - | 输出 wav 路径；缺省 <仓库根>/out/smoke/master/{mode}_{track}.wav（track=输入文件名去扩展名）
+events_supported: （无——synth/sample 拒任何事件）
+coverage.gaps:
+  - matchering Config() 未参数化（仅 ref 暴露；mx 全参数面未展开）
+  - loudnorm LRA 恒 11、print_format/linear 固定（引擎内硬编码，非 payload 参数）
+  - matchering 无 CLI（mx.process 子进程脚本由引擎生成）——描述符覆盖 payload 面，不覆盖 mx 内部 config

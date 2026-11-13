@@ -1,6 +1,6 @@
 ---
 name: video
-description: "Framivra v2 内核 skill：时间线契约与 vtx 帧精确渲染 CLI（validate/diff/subs/audit/prepare/gfx/video/audio/mux/qc/gc/snapshot）+ HTML 帧驱动 gfx 动效协议 + 缓存治理 + 混音响度链与验证门。Use whenever 用户要求剪辑视频、合成动效与实拍、制作纯 MG/Motion Graphics/视频动效/动态图表/字幕条/片头片尾/透明图层、切分素材、烧字幕、混音轨、渲染成片、新建视频项目、缓存治理，或提到 timeline.json / vtx / gfx 页面 / 帧驱动动画 / 修改配方 / runbook / sync_audio / denoise_voice / content_gates / A-roll，或要求处理实拍素材/双系统音视频同步/口播降噪/音频响度/混音验证门，或要求视频调研、对标分析、选题池、B 站科技口播制作（→ 先读 templates/tech-talk/）。选题调研/01-brief/选题可行性、B 站投稿封面、BGM/配乐路由、科技口播全流程 SOP 等产线任务先读 templates/tech-talk/（本仓 templates/ 工作流模板）——封面（make_cover）、调研（research 六件）、BGM（按可用性路由 music skill 或现成资产）的完整配方在彼处。"
+description: "Framivra v2 内核 skill：时间线契约与 vtx 帧精确渲染 CLI（validate/diff/subs/audit/prepare/gfx/video/audio/mux/qc/gc/snapshot）+ HTML 帧驱动 gfx 动效协议 + 缓存治理 + 混音响度链与验证门。Use whenever 用户要求剪辑视频、合成动效与实拍、制作纯 MG/Motion Graphics/视频动效/动态图表/字幕条/片头片尾/透明图层、切分素材、烧字幕、混音轨、渲染成片、新建视频项目、缓存治理，或提到 timeline.json / vtx / gfx 页面 / 帧驱动动画 / 修改配方 / runbook / sync_audio / denoise_voice / content_gates / A-roll，或要求处理实拍素材/双系统音视频同步/口播降噪/音频响度/混音验证门，或要求视频调研、对标分析、选题池、B 站科技口播制作（→ 先读 templates/tech-talk/）。选题调研/01-brief/选题可行性、B 站投稿封面、BGM/配乐路由、科技口播全流程 SOP 等产线任务先读 templates/tech-talk/（本仓 templates/ 工作流模板）——封面（make_cover）、调研（research 六件）、BGM（仓内 apps/bgm 或已有授权资产）的完整配方在彼处。"
 ---
 # video · Framivra v2 内核 skill（路由索引 + 迭代回路）
 
@@ -52,7 +52,7 @@ export VIDEO_TOOLS
 | 新选题、调研 research 可行性、对标分析、生成 01-brief | 先读 `templates/tech-talk/SKILL.md`，再 `templates/tech-talk/references/research.md` | R0-R6 多智能体调研 |
 | 制作/修改 B 站投稿封面 cover、封面文案、封面裁切预览 | `templates/tech-talk/references/cover.md` | B 站封面产线 |
 | 实拍怎么拍、拍摄规范（机位/打光/录音/双系统） | `templates/tech-talk/references/shooting.md` | 实拍规范 |
-| BGM/配乐生成、音色、乐谱 | **先检查当前技能清单是否提供 `music`** | 可用才加载；不可用时使用已有且授权明确的音频文件，或说明生成能力缺失，不假定外部 skill/CLI 已安装。挂载后审计见 `templates/tech-talk/references/runbook-r5r6r7.md` R6 |
+| BGM/配乐生成、音色、乐谱 | [仓内 bgm](../../apps/bgm/README.md) | `python3 <video_tools>/apps/bgm/bgm.py`；运行环境与可选资产按组件说明准备，不依赖外部 music skill、不自动下载。也可使用已有授权音频；挂载后审计见 `templates/tech-talk/references/runbook-r5r6r7.md` R6 |
 
 ## 推荐方式与全局铁律
 1. **委派模式**：复杂任务按 [HTML 创作组织](references/gfx.md#html-创作组织) 定模块边界后拆分；按任务需要保留结论与证据，交接要求见 [编辑与交接配方](references/edit.md#主控-子智能体棒次协议)；长命令按执行环境支持的后台会话与轮询机制运行。
@@ -79,7 +79,7 @@ export VIDEO_TOOLS
 | B 站投稿封面 | `env python3 <video_tools>/apps/cover/make_cover.py all --out <项目>/cover --bg-src <imgen原图> --title "…" --sub "…"`（规格/QC 见 `templates/tech-talk/references/cover.md`） |
 | Blender 审片工程 | `blender --background --factory-startup --python <video_tools>/apps/blender-bridge/json2blend.py -- <项目>/timeline.json <项目>/preview.blend`（json2blend/verify_blend 须由 blender 解释器运行，python3 直跑会 ModuleNotFoundError） |
 | Blender 自动导出（v1.2） | timeline 顶层 `"blender_bridge": true`（或 `{out, verify}`）→ `vtx all` 收尾自动导出 `<项目>/preview.blend`（plugins/blender-bridge，免手敲命令；blender 缺失收尾报错不吞） |
-| BGM 音轨直引工程 JSON（v1.2） | sources[] 加 `{"id":"bgm_main","path":"<music_tools 工程>.json","bgm":{"output":"master"}}`（output 双档：`master` 母带终态 / `premaster` 母前档，plugins/bgm-render `OUTPUTS`；亦可 `stem:<轨名>` 取分轨总线 bus.wav，各 stem 挂独立轨自行混音）→ validate/prepare 自动 `bgm render` → 48k stereo 入内容寻址缓存（plugins/bgm-render；一工程共享缓存只渲一次多源派生，工程/$ref/参数变更自动重渲） |
+| BGM 音轨直引工程 JSON（v1.2） | sources[] 加 `{"id":"bgm_main","path":"<BGM 工程>.json","bgm":{"output":"master"}}`（output 双档：`master` 母带终态 / `premaster` 母前档，plugins/bgm-render `OUTPUTS`；亦可 `stem:<轨名>` 取分轨总线 bus.wav，各 stem 挂独立轨自行混音）→ validate/prepare 自动 `bgm render` → 48k stereo 入内容寻址缓存（plugins/bgm-render；一工程共享缓存只渲一次多源派生，工程/$ref/参数变更自动重渲） |
 | BGM 分轨审计包 | `python3 <video_tools>/apps/blender-bridge/audit_bundle.py -t <项目>/timeline.json` |
 | 音视频同步 / 降噪 | `env python3 <video_tools>/apps/sync/sync_audio.py …` / `env python3 <video_tools>/plugins/denoise/denoise_voice.py …`（响度限幅已并入 vtx audio，无独立步骤） |
 | 缓存治理 | `... gc --dry-run` / `gc` / `df` / `snapshot` |
@@ -90,5 +90,5 @@ export VIDEO_TOOLS
 
 ## 产线衔接
 - 科技口播产线（调研→实拍→动效→渲染→发布）完整 SOP → `templates/tech-talk/SKILL.md`；视频项目工作区在 `~/文档/04_bilibili视频/`（各期项目文件夹 + `_library/` 方法论/资产 + `_archive/`）。
-- 音频/BGM 产线：当前清单提供 `music` 时才路由其外部产线；不可用时可把已有且授权明确的 wav/mp3 等资产作为普通 `sources[]` 入音轨，不需要 music 工程 JSON 或生成插件。现成资产是否存在、可用及授权须逐项核对；正式版仍按工作流完成适用的分轨审听与内容门。
+- 音频/BGM 产线从 [仓内 bgm](../../apps/bgm/README.md) 起步；也可把已有且授权明确的 wav/mp3 作为普通 `sources[]` 入音轨，不要求音乐工程、生成插件或音乐环境。资产存在不等于授权；正式版仍按工作流完成适用的分轨审听与内容门。
 - 环境初始化与依赖矩阵 → 本仓 README（`env python3 vt.py init` 自检）。

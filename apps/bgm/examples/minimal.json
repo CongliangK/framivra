@@ -1,0 +1,250 @@
+{
+  "name": "minimal",
+  "meta": {
+    "spec_version": "1",
+    "sr": 44100,
+    "channels": 2,
+    "bpm": 120,
+    "key": "D minor",
+    "timesig": "4/4",
+    "seed": 7,
+    "duration_hint": 4.0
+  },
+  "sections": [
+    {
+      "name": "A",
+      "start_beat": 0,
+      "length_beat": 8
+    }
+  ],
+  "tracks": [
+    {
+      "name": "kick",
+      "engine": "synth",
+      "instrument": "kick",
+      "notes": [
+        [
+          36,
+          0,
+          0.25,
+          120
+        ],
+        [
+          36,
+          1,
+          0.25,
+          110
+        ],
+        [
+          36,
+          2,
+          0.25,
+          120
+        ],
+        [
+          36,
+          3,
+          0.25,
+          110
+        ],
+        [
+          36,
+          4,
+          0.25,
+          120
+        ],
+        [
+          36,
+          5,
+          0.25,
+          110
+        ],
+        [
+          36,
+          6,
+          0.25,
+          120
+        ],
+        [
+          36,
+          7,
+          0.25,
+          110
+        ]
+      ],
+      "gain_db": -3,
+      "pan": 0,
+      "clip": {
+        "start_beat": 0,
+        "end_beat": 8
+      },
+      "bus": []
+    },
+    {
+      "name": "strings",
+      "engine": "sf2",
+      "instrument": "FluidR3_GM:0:48",
+      "notes": [
+        [
+          50,
+          0,
+          8,
+          88
+        ],
+        [
+          53,
+          0,
+          8,
+          80
+        ],
+        [
+          57,
+          0,
+          8,
+          84
+        ]
+      ],
+      "gain_db": -6,
+      "pan": 0,
+      "clip": {
+        "start_beat": 0,
+        "end_beat": 8
+      },
+      "bus": []
+    },
+    {
+      "name": "click",
+      "engine": "sample",
+      "instrument": "_raw/kenney/kenney_ui-audio/Audio/click1.ogg",
+      "notes": [
+        [
+          70,
+          0.5,
+          0.1,
+          90
+        ],
+        [
+          70,
+          1.5,
+          0.1,
+          70
+        ],
+        [
+          70,
+          2.5,
+          0.1,
+          90
+        ],
+        [
+          70,
+          3.5,
+          0.1,
+          70
+        ],
+        [
+          70,
+          4.5,
+          0.1,
+          90
+        ],
+        [
+          70,
+          5.5,
+          0.1,
+          70
+        ],
+        [
+          70,
+          6.5,
+          0.1,
+          90
+        ],
+        [
+          70,
+          7.5,
+          0.1,
+          70
+        ]
+      ],
+      "gain_db": -10,
+      "pan": 0.3,
+      "clip": {
+        "start_beat": 0,
+        "end_beat": 8
+      },
+      "bus": []
+    }
+  ],
+  "automation": [
+    {
+      "target_track": "strings",
+      "param": "gain_db",
+      "points": [
+        [
+          0,
+          -24
+        ],
+        [
+          2,
+          0
+        ]
+      ],
+      "curve": "linear"
+    },
+    {
+      "target_track": "strings",
+      "param": "lowpass_hz",
+      "points": [
+        [
+          0,
+          400
+        ],
+        [
+          4,
+          16000
+        ]
+      ],
+      "curve": "exp"
+    },
+    {
+      "target_track": "click",
+      "param": "pan",
+      "points": [
+        [
+          0,
+          -0.6
+        ],
+        [
+          2,
+          0.6
+        ],
+        [
+          4,
+          0.0
+        ]
+      ],
+      "curve": "linear"
+    }
+  ],
+  "sidechain": {
+    "trigger_track": "kick",
+    "targets": [
+      "strings"
+    ],
+    "threshold_db": -20,
+    "ratio": 6,
+    "attack_ms": 10,
+    "release_ms": 350
+  },
+  "master": {
+    "target_lufs": -14,
+    "true_peak_db": -1,
+    "chain": "loudnorm",
+    "qc": {
+      "silent_window_max_s": 1.0,
+      "bpm_tol_pct": null,
+      "key_top2": null,
+      "hf_ratio_max": null
+    }
+  }
+}

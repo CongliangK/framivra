@@ -855,9 +855,10 @@ class ShellDefaultContract(unittest.TestCase):
             result = subprocess.run(['bash', str(root / 'scripts/run_all_tests.sh')], env=env)
             self.assertEqual(result.returncode, 7)
             calls = log.read_text().splitlines()
-            self.assertEqual(len(calls), 4)
-            for batch, call in zip(roots, calls):
+            self.assertEqual(len(calls), 5)
+            for batch, call in zip(roots, calls[:4]):
                 self.assertIn('-m unittest discover -s ' + batch + ' -t ', call)
+            self.assertEqual(calls[4], '-m pytest apps/bgm/bgm_gen/tests -ra')
             result = subprocess.run(['bash', str(root / 'scripts/run_all_tests.sh'), '--inventory'], env=env)
             self.assertEqual(result.returncode, 0)
             self.assertEqual(log.read_text().splitlines()[-1], 'scripts/ci_partition.py --inventory')

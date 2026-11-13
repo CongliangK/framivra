@@ -1,0 +1,113 @@
+{
+  "binary_pin": {
+    "additional_pins": [
+      {
+        "name": "matchering",
+        "note": "comfyui env python 子进程跑 mx.process(target, reference, results=[pcm16])（无 CLI；doctor 经 env import 探测）",
+        "sha256": null,
+        "version": "2.0.6"
+      }
+    ],
+    "note": "ffmpeg（系统包；loudnorm 两遍法 + ebur128 复测，`ffmpeg -version` 探测交叉核验）",
+    "sha256": null,
+    "size": null,
+    "version": "8.1.2"
+  },
+  "coverage": {
+    "evidence": [
+      "bgm_gen/engines/master.py（loudnorm 两遍法参数组装 + matchering mx.process 调用——收割第一事实源 C12）",
+      "ffmpeg loudnorm 过滤器文档（参数语义/单位参考；第一事实源=源码）",
+      "comfyui env 实测：matchering 2.0.6（mx.process，入口形态 W1B RUNBOOK §3）"
+    ],
+    "gaps": [
+      "matchering Config() 未参数化（仅 ref 暴露；mx 全参数面未展开）",
+      "loudnorm LRA 恒 11、print_format/linear 固定（引擎内硬编码，非 payload 参数）",
+      "matchering 无 CLI（mx.process 子进程脚本由引擎生成）——描述符覆盖 payload 面，不覆盖 mx 内部 config"
+    ],
+    "probes": [
+      "bgm_gen/tests/test_descriptors.py [fast] master_loudnorm（target_lufs=-16/true_peak=-1.5 边界近点）+ determinism 双渲",
+      "bgm_gen/tests/test_descriptors.py [slow] master_matchering（mode=matchering+ref 条件组合）"
+    ],
+    "tier": "A"
+  },
+  "engine": "master",
+  "events_supported": [],
+  "formats": [
+    "wav（pcm_s16le，输出保持输入 sr）"
+  ],
+  "input_ports": [
+    {
+      "description": "待母带音频",
+      "id": "input",
+      "type": "audio_path"
+    },
+    {
+      "description": "matchering 参考音频",
+      "id": "ref",
+      "type": "audio_path"
+    }
+  ],
+  "invariants": [
+    {
+      "check": true,
+      "id": "master_matchering_ref_required",
+      "rule": "mode=matchering → ref 必填（非空字符串）；文件存在性由引擎守卫（master payload.ref 不存在）"
+    },
+    {
+      "check": false,
+      "id": "master_loudnorm_only_fields",
+      "rule": "target_lufs/true_peak 仅 loudnorm 模式生效；loudnorm 内部 LRA 恒 11、linear=true 固定（参数面未展开）"
+    },
+    {
+      "check": false,
+      "id": "master_output_keeps_input_sr",
+      "rule": "loudnorm 第二遍 -ar 输入 sr（输出保持输入 sr）；matchering pcm16 结果同源 sr"
+    }
+  ],
+  "parameters": [
+    {
+      "description": "输入音频路径（文件存在性由引擎守卫）",
+      "flags": [
+        "required"
+      ],
+      "id": "input",
+      "type": "path"
+    },
+    {
+      "default": "loudnorm",
+      "description": "母带策略：loudnorm=ffmpeg 两遍法（-14LUFS/-1dBTP）；matchering=参考匹配（mx.process）",
+      "enum": [
+        "loudnorm",
+        "matchering"
+      ],
+      "id": "mode",
+      "stepped": true,
+      "type": "enum"
+    },
+    {
+      "default": -14.0,
+      "description": "目标综合响度（仅 loudnorm；EBU R128，B 站标准）",
+      "id": "target_lufs",
+      "type": "float",
+      "unit": "LUFS"
+    },
+    {
+      "default": -1.0,
+      "description": "真峰值上限（仅 loudnorm；linear=true 优先，约束不满足时 ffmpeg 自动回退 dynamic 并在 summary 说明）",
+      "id": "true_peak",
+      "type": "float",
+      "unit": "dBTP"
+    },
+    {
+      "description": "matchering 模式必填：参考音频路径（invariant master_matchering_ref_required 强制非空；文件存在性由引擎守卫）",
+      "id": "ref",
+      "type": "path"
+    },
+    {
+      "description": "输出 wav 路径；缺省 <仓库根>/out/smoke/master/{mode}_{track}.wav（track=输入文件名去扩展名）",
+      "id": "out",
+      "type": "path"
+    }
+  ],
+  "version": "1.0.0"
+}
