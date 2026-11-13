@@ -4,9 +4,15 @@ This optional DSH integration lives in `integrations/dsh-sidebar/`, the source h
 
 ## Implementation and evidence boundaries
 
-The current target is the **unmodified official** DSH `0.2.1-rc.2` (revision `687f282e8625c6b8d11ff58211a90524be2e4317`), plugin version `0.2.0`. The adapter requires no DSH source modification, no Host edits, no installer extension and no `@deepseek-ai/dsh-client-modules/build` dependency: the client bundle is produced by this package's own builder over the public `tsdown` API, and the host runs against the installed core `vtx` **2.2.0**, whose own POSIX main-stdio normalizer clears inherited descriptor state — no DSH-side fcntl patch or host upgrade is required. Engine declarations: Node `^22.19.0 || >=24.0.0`, DSH exactly `0.2.1-rc.2`, six client-injected namespaces.
+The current target is **unmodified npm DSH `0.2.2-rc.1`**, plugin version `0.2.1`. This is the installed prerelease, **not a compatibility claim for a future stable `0.2.2`**. The adapter requires no DSH source modification, no Host edits, no installer extension and no `@deepseek-ai/dsh-client-modules/build` dependency: its own builder uses the public `tsdown` API. The host uses installed core `vtx` **2.2.0**, whose POSIX main-stdio normalizer clears inherited descriptor state. Engines: Node `>=24.9.0`, DSH exactly `0.2.2-rc.1`; five client-bundle injection declarations. Cordis `4.1.0` and Schemastery `3.19.0` match the tested SDK. Published `dsh-client-ui-slots` remains a development/test supplier; it is not a standalone client-bundle injection.
 
-Current status: the visual workbench has passed the scoped official-runtime acceptance below. The conversation-draft bridge uses the official `InputActions` facade + publicly exported `ConversationController` `createDrafts`/`releaseDraftAttachment`; its regression tests and the own-builder contracts run against the public built official modules. Evidence remains tied to exact suppliers and artifacts, not a version label alone. The **earlier custom-host evidence** below is historical, not a certificate for an arbitrary official-runtime ZIP. Its agent-loop fixtures use a clearly labelled deterministic scripted model, not an external AI service or billing account.
+The conversation-draft bridge uses official `InputActions` plus public `ConversationController` methods. `createDrafts(sessionId, files, false)` explicitly disables service-owned image uploads. The Guide retains the **tab-scoped boolean** `replaceTab: true`; the separate controller-level API takes a TabId. The builder rejects undeclared DSH/React-family runtime imports before resolution, even when a development dependency could otherwise be silently inlined. The release includes exported English/Chinese metadata and an SVG icon.
+
+Evidence remains supplier- and artifact-specific. Acceptance sections dated before this upgrade are preserved historical evidence for their original DSH and ZIP, **not certificates for the current release**. Agent-loop fixtures use a clearly labelled deterministic scripted model, not an external AI service or billing account.
+
+### npm 0.2.2-rc.1 migration verification (2026-11-13, Linux x64)
+
+An independent DSH home/profile on loopback port 3180 exercised official local-directory installation, localized plugin details, saved configuration and actual read/store capability checks, folder/file opening, the five-track view, text references and a verified 1920×1080 current-composite PNG added to the real conversation draft. Original draft text and its earlier reference were preserved; no prompt or upload request was issued. Anonymous control access returned 401. Missing warm inputs were explicitly refused before preparation was performed outside the UI. This three-second fixture is a **mechanism smoke test, not a performance baseline or final-video QC**. Exact final archive digest, executed regression counts, restart checks and remaining UNRUN scope are recorded with the upgrade PR; the old evidence below remains unchanged. Production port 3080 is not the test instance and is not deployed by this change.
 
 ### Icon-first and stability acceptance (2026-11-09, Linux x64)
 
@@ -138,9 +144,9 @@ The Host also emits one sanitized, rate-capped line (`[framivra-dsh-sidebar] con
 
 ## Development
 
-This section and relative links to `src/`, `tests/` and `scripts/` describe the **source checkout**, not members of the current fifteen-file candidate ZIP. The ZIP deliberately omits those development resources; these source links are not self-contained installation instructions. Installation/configuration and lifecycle checks are independent of source test success; use the extract → official local-directory install flow below and this bundle's configuration page.
+This section and relative links to `src/`, `tests/` and `scripts/` describe the **source checkout**, not members of the current eighteen-file candidate ZIP. The ZIP deliberately omits those development resources; these source links are not self-contained installation instructions. Installation/configuration and lifecycle checks are independent of source test success; use the extract → official local-directory install flow below and this bundle's configuration page.
 
-Host/source-view tests require Node `^22.19.0 || >=24.0.0` (as declared in `engines`) and native lossless JSON; `tsdown` requires Node `^22.18` or `>=24`. The client builder needs no DSH SDK package: it resolves the public `tsdown` bundler from this package's devDependencies, or — when `SIDEBAR_DSH_ROOT` points at a DSH checkout with dependencies installed — from that checkout (build-time tool path only, never a runtime dependency). Install this package's declared public-version `devDependencies` in an isolated development environment before running the complete tests; React, ReactDOM, Cordis, ui-slots and jsdom are test/platform suppliers, not plugin runtime copies.
+Host/source-view tests require Node `>=24.9.0` (as declared in `engines`) and native lossless JSON; the tested `tsdown` is `0.22.2`. The client builder needs no DSH SDK package: it resolves the public `tsdown` bundler from this package's devDependencies, or — when `SIDEBAR_DSH_ROOT` points at a DSH checkout with dependencies installed — from that checkout (build-time tool path only, never a runtime dependency). Install this package's declared public-version `devDependencies` in an isolated development environment before running the complete tests; React, ReactDOM, Cordis, ui-slots and jsdom are test/platform suppliers, not plugin runtime copies.
 
 From the repository root, enter `integrations/dsh-sidebar/` (`cd integrations/dsh-sidebar`), with those build/test dependencies available:
 
@@ -152,9 +158,10 @@ npm test
 Opt-in real integrations (writes only test evidence and isolated fixtures, never changes a user's timeline or live GUI):
 
 ```sh
-SIDEBAR_DSH_ROOT=/absolute/reviewed/dsh-checkout \
+SIDEBAR_DSH_ROOT=/absolute/npm-install/node_modules/@deepseek-ai/dsh \
 SIDEBAR_REAL_VTX=/absolute/trusted/venv/bin/vtx \
-SIDEBAR_EVIDENCE_DIR=/absolute/existing/evidence node --test --test-concurrency=1 tests/real-runtime.test.mjs tests/manual-real.test.mjs
+SIDEBAR_MANUAL_ZIP=/absolute/fresh/framivra-dsh-sidebar-candidate.zip \
+SIDEBAR_EVIDENCE_DIR=/absolute/existing/evidence node --test tests/*.test.mjs
 SIDEBAR_DSH_ROOT=/absolute/reviewed/conversation-draft-checkout \
 SIDEBAR_EVIDENCE_DIR=/absolute/existing/evidence node scripts/verify-conversation.mjs
 ```
@@ -165,7 +172,7 @@ The mock CLI returns a fixed envelope; it deliberately does not implement frame/
 
 ## Packaging / upstream requirements
 
-The release ZIP must have `package.json`, `cordis.patch.yml`, ESM `lib/index.js`, `lib/client.js`, and `LICENSE` at its root, with no lifecycle scripts, dependencies, node_modules, checkout paths or second React/ReactDOM/Cordis copy. Browser third-party dependencies must be bundled except platform-shared peers. Runtime must work without a DSH source checkout.
+The release ZIP must have `package.json`, `cordis.patch.yml`, ESM `lib/index.js`, `lib/client.js`, `LICENSE`, third-party notices, `icon.svg` and exported `locale/en.json` / `locale/zh.json`, with no lifecycle scripts, dependencies, node_modules, checkout paths or second React/ReactDOM/Cordis copy. Browser third-party dependencies must be bundled except platform-shared peers. Runtime must work without a DSH source checkout.
 
 The own builder receives this package directory, `src/client/index.mjs` and an output directory; `package.json.name` is the module ID. `npm run build:client` emits `lib/client.js` and its debug map. React remains a platform-shared request and is declared as an exact `18.3.1` peer (the tested version, not a broader compatibility claim); no other external Client module is emitted unless explicitly declared in `dsh.client.external`. Local JSON presentation code is bundled. The separate packaging command builds again in a fresh staging directory, copies the Host's ESM closure with relative `.js` imports, and strips the debug-map trailer (the production ZIP omits maps/source paths). It never requires a DSH SDK package or source checkout at runtime.
 

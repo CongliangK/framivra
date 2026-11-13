@@ -2,20 +2,17 @@
 /**
  * Standalone client-bundle builder for the OFFICIAL DSH loader contract.
  *
- * The official `@deepseek-ai/dsh-client-modules` package (dsh-v0.2.1-rc.2)
- * documents — but does not export — a build API, so this file implements the
- * same documented contract directly with the public `tsdown` bundler API:
+ * Implements the public `@deepseek-ai/dsh-client-modules` lazy-factory
+ * contract (validated with dsh-v0.2.2-rc.1) using the public `tsdown` API:
  *
  *   - Output is one lazy CommonJS factory registered through the host-injected
  *     facade `window.__ModuleLoader__.load({ id, factory })`
  *     (packages/client/modules/src/client/manifest.ts: ClientBundleRegistration).
  *     Executing the script only registers the factory; every module-body side
  *     effect stays inside the closure and runs at materialization.
- *   - Externals are EXACT module-table words only: the official web shell seed
- *     table PLATFORM_MODULES (packages/client/web/src/platform.ts: react, cordis,
- *     zod, … — React implicit for every web/client plugin) plus this package's
- *     `dsh.client.external` declarations. React therefore stays one shared
- *     module-table row; the bundle never carries a second React.
+ *   - Only this adapter's required implicit baseline (React) and explicitly
+ *     declared `dsh.client.external` requests stay external. No copied list of
+ *     private shell modules: React stays shared and is never bundled twice.
  *   - Undeclared `@deepseek-ai/*` runtime imports fail the build (fail closed:
  *     cross-plugin value imports are forbidden; type-only imports are erased).
  *
@@ -62,20 +59,8 @@ export function computeSourceStamp(dir) {
   return composeBuildStamp('src:', createHash('sha256').update(digests.join('\n')).digest('hex'))
 }
 
-/**
- * Exact module-table words the official web shell seeds as shared platform
- * modules (dsh-v0.2.1-rc.2 packages/client/web/src/platform.ts: PLATFORM_MODULES).
- * Copied verbatim — the official package does not export this list — so a web
- * client plugin resolves React & co. against the single shell instance.
- */
-export const PLATFORM_MODULES = [
-  'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
-  'zod', '@tanstack/react-virtual',
-  '@deepseek-ai/dsh-client-store',
-  '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-ui-dockkit',
-]
+/** Minimal implicit client baseline consumed by this adapter; other requests must be declared. */
+export const PLATFORM_MODULES = ['react']
 
 /**
  * The exact module-table words one client bundle may request: the official
@@ -225,6 +210,17 @@ export async function clientPluginConfig(options = {}) {
       alwaysBundle: specifier => !requested.has(specifier),
     },
     inputOptions: {
+      plugins: [{
+        name: 'framivra-client-import-contract',
+        resolveId(specifier) {
+          // Check before resolution: an installed devDependency must not make
+          // an undeclared Host/Client namespace silently inline a private copy.
+          if ((specifier.startsWith('@deepseek-ai/') || /^(react|react-dom)(\/|$)/.test(specifier)) && !requested.has(specifier)) {
+            throw new Error(`client bundle purity: "${specifier}" is not an implicit baseline or declared dsh.client.external request`)
+          }
+          return null
+        },
+      }],
       resolve: { conditionNames: [mode === 'development' ? 'development' : 'production', 'browser', 'import', 'module', 'default'] },
     },
     define: {

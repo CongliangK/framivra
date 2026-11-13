@@ -5,7 +5,10 @@
 //   - conversation.input.for(binding.ctx) -> {state:{getSnapshot()}} — for()
 //     throws unless the scope is retained (official hub.ts:55);
 //   - ConversationController.createDrafts / resolveDraftAttachments /
-//     releaseDraftAttachment (public, exported class client/index.ts:37);
+//     releaseDraftAttachment (public, exported class client/index.ts);
+//     createDrafts is the official THREE-argument form (dsh-v0.2.2-rc.1
+//     lib/types/client/service.d.ts) and the bridge must pass
+//     uploadImages: false (no service-owned background upload);
 //   - uiSession.adapter.current.getSnapshot() -> SessionFace {key};
 //   - sessions.list.getSnapshot().byId[id].cwd;
 //   - slot InputActions (removeAttachment returns void).
@@ -76,8 +79,8 @@ function makeWorld(overrides = {}) {
         return { state: { getSnapshot: () => ({ draft: state.text, attachmentIds: [...state.order], draftRev: state.rev, phase: state.phase }) } }
       },
     },
-    createDrafts(sessionId, files) {
-      state.calls.push({ op: 'createDrafts', sessionId, files })
+    createDrafts(sessionId, files, uploadImages) {
+      state.calls.push({ op: 'createDrafts', sessionId, files, uploadImages })
       if (state.createThrows) throw new Error('boom')
       return files.map(file => {
         const id = `att-${++state.seq}`
@@ -145,6 +148,8 @@ test('text+PNG append preserves existing text and appends exactly one image draf
   assert.deepEqual(state.calls.map(call => call.op), ['createDrafts'])
   assert.equal(state.calls[0].sessionId, 's1')
   assert.equal(state.calls[0].files[0].type, 'image/png')
+  // Official 3-arg contract (dsh-v0.2.2-rc.1): explicit uploadImages:false.
+  assert.equal(state.calls[0].uploadImages, false)
 })
 
 test('image-only stage (empty text) applies the attachment without touching text', () => {
@@ -417,8 +422,8 @@ test('REGRESSION (expected RED): draft created by ORIGINAL controller is release
     releaseDraftAttachment: id => { replacementReleases.push(id) },
   }
   const originalCreate = original.createDrafts.bind(original)
-  original.createDrafts = (sessionId, files) => {
-    const drafts = originalCreate(sessionId, files)
+  original.createDrafts = (sessionId, files, uploadImages) => {
+    const drafts = originalCreate(sessionId, files, uploadImages)
     // Synchronous reentrant swap: services now expose a different controller.
     state.conversationRef = replacement
     return drafts

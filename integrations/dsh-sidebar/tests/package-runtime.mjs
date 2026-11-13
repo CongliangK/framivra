@@ -144,9 +144,21 @@ const fetchControl = async (path, init) => {
 }
 sandbox.fetch = fetchControl
 const tab = new AbortController()
-let openedKind
-const useTabInfo = () => ({ tab: { signal: tab.signal, actions: {
-  openTab(kind, options) { openedKind = { kind, options } },
+// Tab fixture mirrors the INSTALLED @deepseek-ai/dsh-client-ui-sidebar-right
+// (0.2.2-rc.1) runtime contract exactly as verified in its lib/client.js
+// (TabDomain tabActions -> place()): the tab-scoped actions' openTab accepts
+// a BOOLEAN replaceTab and the runtime itself resolves `true` to the CURRENT
+// occurrence TabId for the controller-level openTabIn; a raw TabId passed by
+// a tab is silently dropped by that translation, so only the boolean spelling
+// can produce a replace here. useTabInfo() carries the tab record (id, signal)
+// plus the actions face, per the shipped tabInfoFactory shape.
+const TAB_ID = 'tab-guide-current'
+let openedTab, rawOpenOptions
+const useTabInfo = () => ({ tab: { id: TAB_ID, signal: tab.signal, actions: {
+  openTab(kind, options = {}) {
+    rawOpenOptions = options
+    openedTab = { kind, options: { ...(options.replaceTab === true ? { replaceTab: TAB_ID } : {}) } }
+  },
 } } })
 const root = createRoot(document.getElementById('preview'))
 const configuration = core.entries('plugins.bundle.config')[0]
@@ -163,8 +175,11 @@ assert.equal(configSubscribers.size, 0)
 const guide = core.entries('sidebar.right.tab.guide.entry')[0]
 await act(async () => root.render(React.createElement(guide.component, { useTabInfo })))
 await act(async () => document.querySelector('button').click())
-assert.equal(openedKind.kind, 'framivra')
-assert.equal(openedKind.options.replaceTab, true)
+assert.equal(openedTab.kind, 'framivra')
+// The plugin sends the tab-scoped BOOLEAN placement (strict true, never a raw
+// TabId), and the runtime translation above resolves it to the CURRENT tab id.
+assert.equal(rawOpenOptions.replaceTab, true)
+assert.equal(openedTab.options.replaceTab, TAB_ID)
 const entry = core.entries('sidebar.right.pane.tab')[0]
 assert.equal(entry.options.key, manifest.name)
 await act(async () => root.render(React.createElement(entry.component, { useTabInfo, ...entry.inject('one') })))

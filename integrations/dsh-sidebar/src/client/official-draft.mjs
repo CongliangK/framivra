@@ -1,5 +1,7 @@
 // Plugin-owned safe draft-append bridge for the OFFICIAL DSH composer
-// (dsh-v0.2.1-rc.2 = 687f282e) of @deepseek-ai/dsh-client-ui-conversation.
+// (dsh-v0.2.2-rc.1) of @deepseek-ai/dsh-client-ui-conversation
+// (lib/types/client/service.d.ts; the historical target dsh-v0.2.1-rc.2 =
+// 687f282e declared the same seam without the uploadImages parameter).
 //
 // ATOMICITY GAP (public API, recorded deliberately): the official composer has
 // NO single atomic text+image append API. This bridge sequences the public
@@ -33,11 +35,16 @@
 //     The actions object identity is pinned at capture time: a re-staged
 //     session whose InputActions face was replaced is refused/compensated
 //     even when every scalar fact still matches.
-//   - ConversationController (publicly exported class, client/index.ts:37):
-//       createDrafts(sessionId, files) — may throw or half-create; a throw
-//       is reported 'partial' (mutation state unknown), never 'refused'.
-//       An image-MIME File becomes an image draft sent as base64 with the
-//       prompt; any other MIME becomes a file draft with a background
+//   - ConversationController (publicly exported class, client/index.ts):
+//       createDrafts(sessionId, files, uploadImages) — may throw or
+//       half-create; a throw is reported 'partial' (mutation state
+//       unknown), never 'refused'. The third official parameter
+//       (dsh-v0.2.2-rc.1 lib/types/client/service.d.ts: "whether the
+//       Session accepts image uploads") is passed as literal false by this
+//       bridge: an image draft then sends its bytes with the prompt, while
+//       a truthy value would start a service-owned background upload the
+//       bridge must never leave behind. An image-MIME File becomes an
+//       image draft; any other MIME becomes a file draft with a background
 //       upload, which this bridge must never leave behind, so a non-image
 //       result is released immediately.
 //       releaseDraftAttachment(id) — may throw; a throw during cleanup is
@@ -330,9 +337,12 @@ export function createDraftBridge({ readLive, conversation, log }) {
     // --- mutation section: sequential public calls with fresh gates between
     // them; results are verified, never assumed. ---
 
-    // Step 1: createDrafts may throw OR half-create — both 'partial'.
+    // Step 1: createDrafts may throw OR half-create — both 'partial'. The
+    // official third parameter (uploadImages, boolean) is pinned to literal
+    // false: the image draft keeps sending its bytes with the prompt, and no
+    // service-owned background upload is ever created to leak across the bridge.
     let drafts
-    try { drafts = conversation.createDrafts(intent.sessionId, [file]) } catch (error) {
+    try { drafts = conversation.createDrafts(intent.sessionId, [file], false) } catch (error) {
       warn(`official-draft: createDrafts threw ${error}`)
       return partial('create-drafts-threw')
     }

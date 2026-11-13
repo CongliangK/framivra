@@ -3,9 +3,11 @@
  *
  * Unlike tools.test.mjs (direct tool.execute with a synthetic exec) and
  * manual-real.test.mjs (UI control ops only), this file mounts the actual
- * public DSH ToolRuntime service from SIDEBAR_DSH_ROOT (built lib) with a real
- * Cordis Context + LocalSubprocessRuntime, registers the tools exactly as the
- * plugin does, and drives them through ctx.tools.execute with a live agent
+ * public DSH ToolRuntime service with its native executor (the same registry +
+ * tool-executor-native pairing dsh-base ships) from SIDEBAR_DSH_ROOT (built
+ * lib) with a real Cordis Context + LocalSubprocessRuntime, registers the tools
+ * exactly as the plugin does, and drives them through ctx.tools.execute with a
+ * live agent
  * Session — no fake agent callbacks, no mocked kernel responses. The vtx
  * processes are the real installed kernel from SIDEBAR_REAL_VTX.
  *
@@ -68,11 +70,17 @@ async function runtime(t, label) {
   const { LocalSubprocessRuntime } = await dsh('subprocessLocal')
   const SystemPrompt = (await dsh('systemPrompt')).default
   const ToolRuntime = (await dsh('tools')).default
+  // dsh 0.2.2 moved batch execution out of the ToolRuntime registry into a
+  // mounted executor plugin; ctx.tools.execute dispatches through whatever
+  // executor the composition selects. dsh-base ships the registry and
+  // @deepseek-ai/dsh-tool-executor-native side by side, so this mirrors that
+  // public composition instead of bypassing the new dispatch contract.
+  const nativeToolExecutor = await dsh('toolExecutorNative')
   const { ToolCallId } = await dsh('llm')
 
   const ctx = new Context()
   const fibers = []
-  for (const plugin of [LocalSubprocessRuntime, SystemPrompt, ToolRuntime]) {
+  for (const plugin of [LocalSubprocessRuntime, SystemPrompt, ToolRuntime, nativeToolExecutor]) {
     const fiber = ctx.plugin(plugin)
     fibers.push(fiber)
     await fiber.await()
@@ -109,12 +117,18 @@ async function runtime(t, label) {
   const transcript = []
   let sequence = 0
   async function call(name, args, session = sessionOne) {
-    const result = await ctx.tools.execute({
-      name, arguments: args,
-      callId: ToolCallId(`agent-runtime-${label}-${sequence++}`),
+    // dsh 0.2.2 batch contract: calls carry raw model JSON text (exactly what
+    // an assistant emits) and settle per call; the single-call batch here keeps
+    // the same one-call-per-execute shape the previous per-call API had.
+    const callId = ToolCallId(`agent-runtime-${label}-${sequence++}`)
+    const batch = await ctx.tools.execute({
+      calls: [{ id: callId, name, arguments: stringifyJSON(args) }],
       signal: new AbortController().signal,
       agent: { session },
     })
+    assert.equal(batch.results.length, 1, `expected exactly one settled call for ${name}`)
+    assert.equal(batch.results[0].callId, callId, 'results must be keyed by the submitted call id')
+    const result = batch.results[0].result
     const text = result.isError ? JSON.stringify(result.error) : result.value
     transcript.push({ kind: 'tool', name, args, isError: result.isError, result: text })
     return result

@@ -47,8 +47,8 @@ class ConversationController extends Service {
       },
     }
   }
-  createDrafts(sessionId, files) {
-    this.state.calls.push({ op: 'createDrafts', sessionId })
+  createDrafts(sessionId, files, uploadImages) {
+    this.state.calls.push({ op: 'createDrafts', sessionId, uploadImages })
     return files.map(file => {
       const id = `att-${++this.state.seq}`
       this.state.attachments.set(id, { id, kind: 'image', file })
@@ -211,6 +211,9 @@ test('REGRESSION (RED until pinned): actual apply props — same provider, conse
   assert.deepEqual(world.order, ['att-1'], 'exactly one PNG attachment, in stage order')
   assert.equal(world.attachments.get('att-1').kind, 'image')
   assert.deepEqual(world.calls.map(call => call.op), ['createDrafts'], 'no send/submit/upload/persist surface was called')
+  // Official 3-arg contract (dsh-v0.2.2-rc.1 service.d.ts): uploadImages is
+  // an explicit boolean; the bridge pins literal false (no background upload).
+  assert.equal(world.calls[0].uploadImages, false)
 })
 
 test('REGRESSION: provider disposed — old lifetime inactive, old target refused, old slots disposed', async t => {

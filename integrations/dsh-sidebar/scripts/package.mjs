@@ -65,7 +65,9 @@ const stampedClientSource = clientSource.split(placeholderLiteral).join(JSON.str
 for (const [name, content] of libContents) await writeFile(join(stage, 'lib', `${name}.js`), content)
 await writeFile(join(stage, 'package.json'), `${JSON.stringify(release, null, 2)}\n`)
 await writeFile(join(stage, 'lib', 'client.js'), stampedClientSource)
-for (const name of ['cordis.patch.yml', 'LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md']) await copyFile(join(packageDir, name), join(stage, name))
+for (const name of ['cordis.patch.yml', 'LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md', 'icon.svg']) await copyFile(join(packageDir, name), join(stage, name))
+await mkdir(join(stage, 'locale'))
+for (const language of ['en', 'zh']) await copyFile(join(packageDir, 'locale', `${language}.json`), join(stage, 'locale', `${language}.json`))
 // Self-check: the packaged host must report exactly the artifact stamp from
 // its frozen BAKED_BUILD_STAMP, and the client bundle must carry the same
 // value — the two sides of the handshake can never ship disagreeing.
