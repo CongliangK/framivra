@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ..runtime import fstxn
 from .cache_state import InputIdentityError, verify_input_identity
+from .cleanup_protection import protection
 from ..media.encoders import seg_encoder_kind, seg_needs_alpha
 from ..pipeline.infra import ProjectPathError, ensure_inside_project
 from ..pluginlib import hooks as _plugin_hooks
@@ -75,6 +76,12 @@ def cleanup_allowed(c, path: Path, *, nuke=False) -> bool:
             # 危险 clean 仅允许直接删除保护件，不允许链接绕过保护边界。
             if protected and (not nuke or target != path.absolute()):
                 reason = "解析目标属于不可再生交付件保护集（issue #21）"
+            # Runtime-owned orphan cleanup also uses this low-level gate after
+            # inputs may have moved. Full clean/gc plans explicitly require all
+            # declared inputs; this path still protects their declared locations.
+            elif not nuke and (protection(c, allow_missing=True).protects(path) or
+                               protection(c, allow_missing=True).protects(target)):
+                reason = "作者源/证据或时间线显式引用，保守保留"
             elif any(root.is_symlink() for root in (c.cache, c.out)
                      if path == root or root in path.parents):
                 reason = "拒绝清理符号链接根"
@@ -96,6 +103,7 @@ class CleanupPlan(dict):
         super().__init__(items)
         self.root = Path(os.path.abspath(c.root))
         self.nuke = nuke
+        self.protection = None if nuke else protection(c)
         self.worker_runs = tuple(Path(os.path.abspath(p)) for p in worker_runs)
         self.identities = {}
         for entries in self.values():
@@ -112,6 +120,7 @@ class CleanupPlan(dict):
     def preserve(self, path):
         relative = path.relative_to(self.root)
         return (path.name.endswith('.lock') or
+                (self.protection is not None and self.protection.protects(path)) or
                 (not self.nuke and relative.parts[0] == 'out' and
                  len(relative.parts) > 1 and out_protected(relative.parts[1])))
 
@@ -563,8 +572,43 @@ def _current_keys(c):
     return gfx, seg, audio
 
 
+def passes_plan(c, keep_days: int = 0):
+    """Explicit reclamation of regenerable passes, not stale-key detection.
+
+    No gfx/BGM keys or producer metadata are evaluated. Missing external inputs
+    do not prevent reclamation; rebuilding later still requires those inputs.
+    """
+    if keep_days < 0:
+        raise ValueError('keep_days 必须 ≥0')
+    protection(c, refresh=True, allow_missing=True)
+    directory = c.cache / 'vseg_pass'
+    plan = {'passes': []}
+    if directory.is_symlink() or not directory.is_dir() or c.cache.is_symlink():
+        return CleanupPlan(c, plan)
+    families = {}
+    pattern = re.compile(r'(p[0-9]+_[0-9a-f]{12}\.mkv)(?:\.n|\.complete\.json)?')
+    for path in sorted(directory.iterdir()):
+        match = pattern.fullmatch(path.name)
+        if match is None:
+            continue
+        info = path.lstat()
+        if stat.S_ISREG(info.st_mode):
+            families.setdefault(match[1], []).append((path, info))
+    cutoff = time.time() - keep_days * 86400
+    for entries in families.values():
+        if keep_days and any(info.st_mtime > cutoff for _, info in entries):
+            continue
+        # A directly referenced member retains its exact companions too.
+        if not all(cleanup_allowed(c, path) for path, _ in entries):
+            continue
+        for path, info in entries:
+            plan['passes'].append((path, info.st_size, '可重算 pass 定向回收（非旧键判定）'))
+    return CleanupPlan(c, plan)
+
+
 def gc_plan(c, keep_days: int = 0):
     """返回 {类别: [(路径, 字节, 原因)]}。只计算，不删除。"""
+    protection(c, refresh=True)
     plan = {"gfx": [], "seg": [], "audio": [], "plugin_cache": [], "legacy": [],
             "tmp": [], "out_intermediate": [], "vseg": []}
     gk, sk, ak = _current_keys(c)
@@ -1054,15 +1098,26 @@ def budget_gate(c, stage: str):
     """VTX_CACHE_BUDGET_GB（默认不设）：阶段开始前 cache 超预算 → 跑 gc 清单提示；
     VTX_GC_AUTO=1 时直接回收。"""
     budget = os.environ.get("VTX_CACHE_BUDGET_GB", "")
-    if not budget or not budget.replace(".", "", 1).isdigit(): return
+    action = os.environ.get("VTX_CACHE_BUDGET_ACTION", "warn")
+    if action not in ("warn", "stop"):
+        raise ValueError("VTX_CACHE_BUDGET_ACTION must be warn or stop")
+    if not budget or not budget.replace(".", "", 1).isdigit():
+        if action == "stop":
+            raise ValueError("VTX_CACHE_BUDGET_ACTION=stop requires a non-negative VTX_CACHE_BUDGET_GB")
+        return
     limit = float(budget) * 1024**3
     size = dir_size(c.cache)
     if size <= limit: return
     print(f"⚠ 体积预算：cache {gb(size)} > 预算 {budget}G（{stage} 阶段前）")
     auto = os.environ.get("VTX_GC_AUTO", "") == "1"
+    if action == "stop" and not auto:
+        raise ValueError("缓存超过阶段预算，已停止；先用 gc --dry-run 审查，未自动删除文件")
     gc(c, do=auto)
+    remaining = dir_size(c.cache)
     if auto:
-        print(f"✓ VTX_GC_AUTO=1 已自动回收，cache 现 {gb(dir_size(c.cache))}")
+        print(f"✓ VTX_GC_AUTO=1 已自动回收，cache 现 {gb(remaining)}")
     else:
         print("  上面为回收清单（--dry-run 预览）；执行 `vtx gc` 回收，或设 VTX_GC_AUTO=1 自动回收")
+    if action == "stop" and remaining > limit:
+        raise ValueError("回收后缓存仍超过阶段预算，已停止；不会继续扩大回收范围")
 

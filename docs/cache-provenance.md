@@ -16,7 +16,7 @@
   Inkscape/fontconfig 身份、运行库及实现摘要共同成键；生成器只记录、不执行。
   完成凭据绑定该输入记录与逐帧 PNG SHA256，不沿用 HTML 环境证明。
 - **环境边界**：CDP/CLI/CEF 见[渲染环境身份](#gfx-environment)，Electron/SVG 各有独立身份；
-  身份匹配不证明跨后端像素等价。段中间物 `vseg_pass` 属 gc 白名单。
+  身份匹配不证明跨后端像素等价。段中间物 `vseg_pass` 不进入普通 gc，定向回收见[容量与保留](#容量与保留)。
 - **seg 预编码** `cache/seg/<key>.mov|mp4` 与 **抽音频** `cache/audio/<key>.wav`：
   键 = sha1(源 stat 身份 + 切片/窗口/fade/编码参数)。源 stat 身份 = path + size +
   mtime_ns + **首/尾 64KB 采样哈希**；这是 Fast 采样身份，首尾不变且恢复 mtime 的中间字节修改不受保证。
@@ -210,8 +210,11 @@ mux 的历史轮转/旧版核对在替换前回调中执行，VERSIONS 记账在
 原媒体，但已发生的历史清理/提示状态不撤销；替换后回调失败会报错，已发布媒体
 不回滚，也不会记阶段成功。dry-run 不调用生产者或提交回调。
 
-普通 `clean` 清理 cache/（含其中证据与快照）及 out/ 可再生条目，默认保护 final、VERSIONS、
-history、reports、FREEZE 与 final_4k 等交付件；保护清单以 [`out_protected`](../vtx/cache/hygiene.py) 为准。
+普通 `clean` 清理 cache/ 与 out/ 可再生条目，默认保护 final、VERSIONS、history、reports、
+FREEZE 与 final_4k 等交付件；保护清单以 [`out_protected`](../vtx/cache/hygiene.py) 为准。
+普通 clean/gc（含 --all）另保留[作者源/证据后缀](../vtx/cache/cleanup_protection.py)，以及当前时间线、项目根
+`timeline*.json` 的显式 sources、gfx src、cache_dependencies、subtitles_src 引用；缺失源/坏声明拒绝回收。
+这不是所有历史版本缓存键的并集，也不发现未声明的 HTML/BGM 传递依赖或根外冻结时间线；不得据此一键清历史工程。
 只有显式危险旗标 `clean --i-know-this-nukes-everything` 将交付件纳入删除，锁与拒绝路径仍保留。
 普通 clean/gc（含 gc --all）按各自模式和年龄规则决定媒体去留，再保留其精确
 完成凭据：owner 必须是 cache/ 或 out/ 下现存、路径链无符号链接的普通媒体文件，
@@ -219,6 +222,23 @@ history、reports、FREEZE 与 final_4k 等交付件；保护清单以 [`out_pro
 孤儿凭据、相似前缀与事务临时件不据此豁免。危险全清理不采用此配对保留规则。
 凭据不是签名，不覆盖有权限的主动篡改，亦不承诺断电 fsync 持久性；不要同时
 运行同项目写命令或把 gc 与渲染并发。
+
+## 容量与保留
+
+- **合成 pass**：`VTX_PASS_CACHE=checkpoint`（默认）每段保留最后一个认证无损检查点；成功后继替代本轮新建的更早前驱，通常至多两个本轮中间视频同时存在。`all` 保留全部，`none` 在最终段成功后也释放最后一个本轮检查点。媒体/旁车仍须完整验证，失败保留最近成功检查点；续算从最新有效检查点开始。最终段温命中不遍历 pass，最终段缺失时 checkpoint 模式通常只补最后一轮编码；改更早图层可能增加重建成本。
+- 渲染不删除进入该链前已有的文件，失败重试遗留或历史键仍需显式回收。上述限制按一条段链计，不是整个项目的容量硬上限；多段、正式/QC 域、预编码、音频和历史缓存另计。同 seed 的链使用共享事务锁，不同段仍并行；GC 不具备与渲染并发的排他保证。
+- **静态 PNG**：CDP 静态跨度复用头帧时优先 Linux reflink/COW，目标保持独立 inode；不支持时复制原字节，真实 I/O 错误不当作不支持。不是硬链接，不改变帧数、PNG 摘要或消费校验；跨页相同内容、动态重复帧及旧副本不自动去重。`du`/st_blocks 可能重复计共享 extent，不能据此判断物理收益。其他平台的字节回落不承诺同等空间收益。
+- **阶段预算**：现有 `VTX_CACHE_BUDGET_GB` 单位为 GiB、按逻辑长度计。`VTX_CACHE_BUDGET_ACTION=warn` 保持原提示行为；显式 `stop` 在现有 gfx/video 预算检查点发现超限时停止，要求有效预算；不是 prepare/audio/mux/qc 的统一准入门，也不保证并行波中的预编码尚未启动。没有 `VTX_GC_AUTO=1` 时 stop 不删除；已有显式 auto 模式回收后仍超限也停止，不扩大为深度回收。未配置预算不自行选上限；阶段内增长、并发写者及物理剩余空间不受此门强制限制，**不是 OS 硬配额**。
+
+升级合成实现及静态帧实现会保守改变对应代码/环境身份，首次使用可能重建；旧缓存和冻结证据不自动迁移。
+
+以下只预演已知 pass 的定向回收，不重算浏览器/BGM身份；先停止该项目渲染。它只识别 `cache/vseg_pass/p<数字>_<12位hex>.mkv` 及精确旁车，保留锁、未知文件和显式引用，按整个家族最年轻 mtime 应用 keep-days。缺外部源仍可预演，不代表源足够重建；JSON 解析或显式引用声明错误仍拒绝，但不执行完整 timeline/schema/媒体校验，空对象也不等于可渲染工程。逻辑回收数不是物理释放承诺。
+
+```bash
+python3 -m vtx -t /path/to/timeline.json gc --passes-only --keep-days 7 --dry-run
+```
+
+去掉 `--dry-run` 是**实际删除且不可撤销**，只在审核清单并确认可重建后执行；`--passes-only` 与 `--all` 互斥。它不自动清空真实项目，也不等于清理所有无用缓存。
 
 ## 回归
 
