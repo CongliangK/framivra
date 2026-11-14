@@ -56,6 +56,12 @@ class AdversarialBase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="fix141-test-")
         self.home = Path(self.tmp.name) / "home"
         self.home.mkdir(parents=True)
+        # HOME isolates models/state, but the default venv is checkout-relative.
+        # Never import the operator's installed runtime in missing-asset tests.
+        own_env = mock.patch.object(independence, "project_env_root",
+                                    return_value=Path(self.tmp.name) / "absent-own-env")
+        own_env.start()
+        self.addCleanup(own_env.stop)
         self._real_home = os.environ.get("HOME")
         os.environ["HOME"] = str(self.home)
         self._saved_env = {}
@@ -86,10 +92,14 @@ class AdversarialBase(unittest.TestCase):
         os.kill = self._real_kill
         subprocess.Popen = self._real_popen
         subprocess.run = self._real_run
-        if self._real_home:
+        if self._real_home is None:
+            os.environ.pop("HOME", None)
+        else:
             os.environ["HOME"] = self._real_home
         for k, v in self._saved_env.items():
-            if v is not None:
+            if v is None:
+                os.environ.pop(k, None)
+            else:
                 os.environ[k] = v
         self.tmp.cleanup()
 
@@ -605,7 +615,11 @@ class TestProcessOwnership(AdversarialBase):
                    dict(valid, start_time="700"), dict(valid, start_time=0),
                    dict(valid, port=19000), dict(valid, port=True),
                    {"pid": self.FAKE_PID, "start_time": 700}]
-        with self._fake_proc():
+        # Process-record unit test supplies explicit matching socket metadata;
+        # real listener/FD attribution has independent endpoint regressions.
+        with self._fake_proc(), \
+                mock.patch.object(independence, "endpoint_listeners", return_value={900}), \
+                mock.patch.object(independence, "_pid_socket_inodes", return_value={900}):
             for record in records:
                 with self.subTest(record=record):
                     pf.write_text(json.dumps(record))
@@ -795,7 +809,11 @@ class TestOnboardingGuidance(AdversarialBase):
         self.assertIn("BLOCKED（退出码 4）", readme)
         self.assertIn("scripts/policy/model_license_policy.py plan qwen-asr-1.7b", readme)
         self.assertIn("固定快照下载不安装 qwen-asr/torch 运行环境", readme)
-        self.assertIn("独立安装与真实转写 UNRUN", readme)
+        self.assertIn("独立 CPU 验收（#140）", readme)
+        self.assertIn("GPU 实测仍为 UNRUN", readme)
+        self.assertIn("不是识别质量基准", readme)
+        self.assertIn("5eb144179a02acc5e5ba31e748d22b0cf3e303b0", readme)
+        self.assertIn("c7cbfc2048c462b0d63a45797104fc9db3ad62b7", readme)
         self.assertNotIn("一键探测/补齐", readme)
         self.assertNotIn("CPU 推理不支持", readme)
 

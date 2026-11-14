@@ -32,6 +32,7 @@ import json
 import os
 import subprocess
 import sys
+import socket
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -110,8 +111,12 @@ def check_path_independent(path, what):
         resolved = resolved.resolve()
     except OSError as exc:
         raise AsrIndependenceError("%s：路径无法解析（%s）：%s" % (what, exc, path)) from None
+    # Check the invocation path too: a venv's python symlink may resolve out
+    # of an IME environment into the system interpreter.
+    lexical = Path(os.path.abspath(os.path.expanduser(str(path))))
     for anchor in ime_anchor_roots():
-        if resolved == anchor or _is_relative_to(resolved, anchor):
+        if (resolved == anchor or _is_relative_to(resolved, anchor)
+                or lexical == anchor or _is_relative_to(lexical, anchor)):
             raise AsrIndependenceError(
                 "%s 指向语音输入法资产，已拒绝（任何情况下禁止复用输入法）：%s\n"
                 "  迁移：删除配置中的 IME 路径，仅配置已独立准备的 Framivra "
@@ -147,26 +152,31 @@ def reject_legacy_config(cfg=None):
 # ---------------------------------------------------------------- base_url 校验（请求前）
 
 def validate_base_url(base_url):
-    """请求/绑定前校验 base_url：scheme 合法、不指向 IME 端口 18081。
-    只做 urlparse 静态校验，零 HTTP 请求、零 DNS 探测——绝不能靠试错发请求
-    验证身份（localhost 别名/hosts 重定向指到 18081 一律按端口拒绝，不依赖
-    域名形态）。违规 raise。"""
+    """Offline local-channel normalization; never resolve localhost through DNS."""
     if not base_url or not isinstance(base_url, str):
         raise AsrIndependenceError("asr.base_url 缺失或非字符串")
-    u = urlparse(base_url)
-    if u.scheme != "http" or not u.hostname:
-        raise AsrIndependenceError(
-            "asr.base_url 必须是 http://host:port 形式：%s" % base_url)
     try:
-        port = u.port or 80
+        # urlparse silently strips some control characters; reject them first.
+        if any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in base_url):
+            raise ValueError("whitespace/control character")
+        u = urlparse(base_url)
+        port = u.port if u.port is not None else 80
     except ValueError as exc:
-        raise AsrIndependenceError("asr.base_url 端口非法（%s）：%s" % (exc, base_url)) from None
+        raise AsrIndependenceError("asr.base_url 非法（%s）：%s" % (exc, base_url)) from None
     if port == IME_PORT:
         raise AsrIndependenceError(
             "asr.base_url 指向端口 %d——这是语音输入法 sidecar 专用端口，"
             "任何情况下禁止复用；本项目 sidecar 默认 127.0.0.1:18085（%s）"
             % (IME_PORT, base_url))
-    return base_url
+    if (u.scheme != "http" or u.hostname not in ("127.0.0.1", "localhost")
+            or u.username is not None or u.password is not None
+            or u.path not in ("", "/") or u.params or u.query or u.fragment
+            or "?" in base_url or "#" in base_url or "\\" in base_url
+            or not 0 < port < 65536 or u.netloc.endswith(":")):
+        raise AsrIndependenceError(
+            "asr.base_url 必须是本地 http://127.0.0.1:port（或 localhost），"
+            "禁止远程地址、凭据、路径、query/fragment：%s" % base_url)
+    return "http://127.0.0.1:%d" % port
 
 
 # ---------------------------------------------------------------- 解释器（依赖来源验证）
@@ -181,10 +191,16 @@ def sandbox_env():
 
 
 def interpreter_module_origin(py_bin, module):
-    """在 py_bin 内 import module 并返回其文件真实路径；失败 None。
-    依赖来源验证的底料：不仅看 import 成功，还要看模块来自哪里。"""
-    code = ("import %s,sys;sys.stdout.buffer.write("
-            "(%s.__file__ or '').encode('utf-8'))" % (module, module))
+    """Return a top-level module spec's real origin without importing it.
+    Runs isolated in py_bin; lookup/decoding failure returns None.
+    """
+    # Top-level spec lookup does not execute the package before its provenance
+    # is checked. Only the fixed top-level dependencies are accepted here.
+    if not module.isidentifier():
+        return None
+    code = ("import importlib.util,sys;"
+            "spec=importlib.util.find_spec(%r);sys.stdout.buffer.write("
+            "((spec.origin or '') if spec else '').encode('utf-8'))" % module)
     try:
         r = subprocess.run([str(py_bin), "-I", "-c", code],
                            capture_output=True, timeout=30, env=sandbox_env())
@@ -200,9 +216,10 @@ def interpreter_module_origin(py_bin, module):
 
 
 def verify_interpreter(py_bin, what="asr.python"):
-    """解释器路径独立性 + 依赖来源双重校验，返回 resolve 路径。
-    依赖来源：qwen_asr 必须装在该解释器自身的环境根内（venv/conda 环境边界），
-    而不是 user-site、外部 PYTHONPATH 或 IME site-packages。"""
+    """Validate interpreter path independence/executability, preserving entry path.
+    Module provenance is checked separately by verify_module_from_own_env before
+    imports; resolving the returned invocation would discard a symlinked venv.
+    """
     resolved = check_path_independent(py_bin, what)
     p = Path(resolved)
     if not p.exists():
@@ -210,7 +227,9 @@ def verify_interpreter(py_bin, what="asr.python"):
                                    % (what, resolved))
     if not os.access(str(p), os.X_OK):
         raise AsrIndependenceError("%s 不可执行：%s" % (what, resolved))
-    return resolved
+    # Keep the entry path so Python can find this venv's pyvenv.cfg. Resolving
+    # bin/python to /usr/bin/python discards the isolated environment.
+    return os.path.abspath(os.path.expanduser(str(py_bin)))
 
 
 def verify_module_from_own_env(py_bin, module, what="解释器"):
@@ -220,7 +239,7 @@ def verify_module_from_own_env(py_bin, module, what="解释器"):
         raise AsrIndependenceError(
             "%s 内 %s 不可导入（旧 --download 为 BLOCKED；独立依赖须另行审核和准备，"
             "见 apps/asr/README.md「开启步骤」，绝不借用输入法环境）：%s" % (what, module, py_bin))
-    env_root = Path(py_bin).resolve().parent.parent
+    env_root = Path(py_bin).expanduser().absolute().parent.parent.resolve()
     origin_path = Path(origin)
     for anchor in ime_anchor_roots():
         if origin_path == anchor or _is_relative_to(origin_path, anchor):
@@ -787,6 +806,73 @@ def pid_owns_sidecar(pid, port, start_time=None):
     except (OSError, ValueError):
         return False
     return state not in ("Z", "X", "x") and started == start_time
+
+
+# ---------------------------------------------------------------- owned local HTTP endpoint (Linux /proc metadata only)
+
+def _pid_socket_inodes(pid):
+    inodes = set()
+    with os.scandir(Path("/proc") / str(pid) / "fd") as entries:
+        for entry in entries:
+            try:
+                target = os.readlink(entry.path)
+            except FileNotFoundError:
+                continue  # A different descriptor closed during the snapshot.
+            if target.startswith("socket:[") and target.endswith("]"):
+                inodes.add(int(target[8:-1]))
+    return inodes
+
+
+def endpoint_listeners(base_url):
+    """Offline LISTEN inode set; failure to inspect is not an empty/free port."""
+    base_url = validate_base_url(base_url)
+    port = urlparse(base_url).port
+    try:
+        inodes = set()
+        for name, family in (("tcp", socket.AF_INET), ("tcp6", socket.AF_INET6)):
+            for line in (Path("/proc/net") / name).read_text().splitlines()[1:]:
+                fields = line.split()
+                host, local_port = fields[1].split(":")
+                if fields[3] != "0A" or int(local_port, 16) != port:
+                    continue
+                raw = bytes.fromhex(host)
+                # proc prints native-endian 32-bit words, including IPv6.
+                if sys.byteorder == "little":
+                    raw = b"".join(raw[i:i + 4][::-1] for i in range(0, len(raw), 4))
+                address = socket.inet_ntop(family, raw)
+                if address in ("127.0.0.1", "0.0.0.0", "::",
+                               "::ffff:127.0.0.1", "::ffff:0.0.0.0"):
+                    inodes.add(int(fields[9]))
+        return inodes
+    except (OSError, ValueError, IndexError) as exc:
+        raise AsrIndependenceError("无法读取本地 LISTEN socket 归属：%s" % exc) from None
+
+
+def attribute_endpoint(base_url, expected_record=None):
+    """Offline URL + pid/start/script + LISTEN inode/FD ownership proof.
+
+    This is a pre-request snapshot, NOT race-proof authentication: the listener
+    can change between checking and connecting. New local TOCTOU hardening is
+    outside repository policy (CONTRIBUTING.md, signal-experiment isolation).
+    """
+    base_url = validate_base_url(base_url)
+    port = urlparse(base_url).port
+    rec = read_pid_record(port)
+    if rec is None or (expected_record is not None and rec != expected_record):
+        raise AsrIndependenceError("本地端点无匹配的本项目 pid/start 记录：%s" % base_url)
+    pid, started = rec["pid"], rec["start_time"]
+    if not pid_owns_sidecar(pid, port, start_time=started):
+        raise AsrIndependenceError("本地端点进程身份无法归属到本项目 sidecar：%s" % base_url)
+    try:
+        owned = _pid_socket_inodes(pid)
+        listeners = endpoint_listeners(base_url)
+        if not listeners or not listeners.issubset(owned):
+            raise AsrIndependenceError("本地 LISTEN socket 不属于本项目 sidecar：%s" % base_url)
+        if not pid_owns_sidecar(pid, port, start_time=started):
+            raise AsrIndependenceError("端点检查期间 sidecar 进程身份已变化")
+    except (OSError, ValueError, IndexError) as exc:
+        raise AsrIndependenceError("无法证明本地端点 socket 归属：%s" % exc) from None
+    return {"base_url": base_url, "port": port, "record": rec}
 
 
 # ---------------------------------------------------------------- 总 preflight

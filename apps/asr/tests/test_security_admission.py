@@ -175,7 +175,7 @@ class MatrixBase(unittest.TestCase):
         if env:
             e.update(env)
         pr = subprocess.Popen(
-            [sys.executable, str(ASR_DIR / "sidecar_server.py"),
+            [sys.executable, "-I", str(ASR_DIR / "sidecar_server.py"),
              "--port", str(port), "--model", str(self.clean_model),
              "--no-aligner", "--device-map", "cpu"] + list(extra),
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=e)
@@ -261,9 +261,8 @@ class TestEnabledGate(MatrixBase):
                 r = self.run_cli(args, cfg)
                 self.assertNotEqual(r.returncode, 2, "只读/回收入口不得被门禁拒绝：%s"
                                     % (r.stdout + r.stderr,))
-        # health/status 允许只读探测自有 base_url（GET /health）；stop 无记录零信号
-        self.assertTrue(all(r[0] == "GET" for r in self.rec.requests),
-                        "只读入口只允许 GET")
+        # Read-only exemption is not permission to probe an unrelated service.
+        self.assertEqual(self.rec.requests, [], "未归属服务必须零 HTTP，包括 health/status/stop")
         self.assertEqual(self.rec.posts(), [])
 
     def test_direct_server_longrun_requires_enabled(self):
@@ -342,12 +341,11 @@ class TestOwnership(MatrixBase):
         rec = Recorder()
         self.addCleanup(rec.close)
         cfg = self.enabled_cfg(rec.base_url)
-        # 无本项目 pid 记录 → 拒绝复用；只允许 GET /health，零 POST
+        # 无本项目 pid 记录 → 拒绝复用；零 HTTP（包括 health）。
         self.assertFalse(client.ensure_sidecar(cfg=cfg, base_url=rec.base_url,
                                                verbose=False))
         self.assertEqual(rec.posts(), [])
-        self.assertTrue(all(r[0] == "GET" and r[1] == "/health"
-                            for r in rec.requests))
+        self.assertEqual(rec.requests, [], "外部 listener 不得收到任何 health 请求")
 
     def test_own_healthy_service_reused_zero_spawn(self):
         port = free_port()
@@ -581,7 +579,10 @@ class TestResourceAdmission(MatrixBase):
             self.assertFalse(decision["allowed"])
             # 资产缺失（无专属解释器）时 ensure 同样零拉起返回 False；两条路径
             # 都必须先于 Popen——哨兵即证明。
-            self.assertFalse(client.ensure_sidecar(cfg=cfg, verbose=False))
+            with mock.patch.object(client, "probe_python", return_value=sys.executable), \
+                    mock.patch.object(client, "pick_model", return_value=str(self.clean_model)), \
+                    mock.patch.object(client, "probe_aligner", return_value=None):
+                self.assertFalse(client.ensure_sidecar(cfg=cfg, verbose=False))
         finally:
             subprocess.Popen = real_popen
 
@@ -1084,6 +1085,9 @@ class TestModelPlacement(unittest.TestCase):
 
         namespace = dict(vars(sidecar_server),
                          Qwen3ASRModel=SimpleNamespace(from_pretrained=load),
+                         # Native provenance is covered by dedicated boundary
+                         # tests; this constructor is a pure-memory synthetic one.
+                         _verify_runtime_independence=lambda: None,
                          companion_path=lambda path: None)
         exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), "exec"), namespace)
         holder._model, holder._loaded_path, holder._on_gpu = None, "", False

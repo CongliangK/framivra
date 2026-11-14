@@ -30,6 +30,7 @@
 来源：https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.2/§3.3/§7.2/§9.1。
 """
 import json
+import http.client
 import os
 import signal
 import socket
@@ -137,12 +138,14 @@ def probe_python(cfg=None):
             p = independence.verify_interpreter(_expand(c), "asr.python")
         except independence.AsrIndependenceError:
             continue
+        try:
+            # Inspect both dependency locations before importing either package.
+            independence.verify_module_from_own_env(p, "qwen_asr")
+            independence.verify_module_from_own_env(p, "torch")
+        except independence.AsrIndependenceError:
+            continue
         if _py_imports(p, "qwen_asr"):
-            try:
-                independence.verify_module_from_own_env(p, "qwen_asr")
-                return str(p)
-            except independence.AsrIndependenceError:
-                continue
+            return str(p)
     return None
 
 
@@ -193,38 +196,47 @@ def pick_model(cfg=None):
 
 # ---------------------------------------------------------------- HTTP
 
-def health(base_url, timeout=2.0):
-    """GET /health → dict；不通返回 None。"""
+def _request_json(base_url, path, payload=None, timeout=2.0, expected_record=None):
+    """Single owned HTTP channel: no environment proxies, no redirect following.
+
+    Each call proves the configured local listener before connecting; identity
+    is never cached. This precheck does not eliminate check/connect races.
+    """
+    endpoint = independence.attribute_endpoint(base_url, expected_record=expected_record)
+    conn = http.client.HTTPConnection("127.0.0.1", endpoint["port"], timeout=timeout)
     try:
-        req = urllib.request.Request(base_url.rstrip("/") + "/health", method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read().decode("utf-8"))
+        body = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers = {} if payload is None else {"Content-Type": "application/json; charset=utf-8"}
+        conn.request("GET" if payload is None else "POST", path, body=body, headers=headers)
+        response = conn.getresponse()
+        raw = response.read()
+        if not 200 <= response.status < 300:
+            try:
+                msg = json.loads(raw.decode("utf-8")).get("error", "")
+            except (ValueError, AttributeError):
+                msg = ""
+            # Includes redirects: Location is never followed, even on loopback.
+            raise ClientError(response.status, msg or ("HTTP %d" % response.status))
+        return json.loads(raw.decode("utf-8"))
+    except (TimeoutError, socket.timeout) as exc:
+        raise TranscribeTimeout("sidecar 请求超时（%.0fs）：%s" % (timeout, exc)) from None
+    except (OSError, http.client.HTTPException) as exc:
+        raise ConnectionError("sidecar 连接失败（%s）——先 asr_cli sidecar start" % exc) from None
+    finally:
+        conn.close()
+
+
+def health(base_url, timeout=2.0, *, expected_record=None):
+    """GET owned /health only; absent/unattributed/unreachable returns None."""
+    independence.validate_base_url(base_url)
+    try:
+        return _request_json(base_url, "/health", timeout=timeout, expected_record=expected_record)
     except Exception:
         return None
 
 
 def _post_json(base_url, path, payload, timeout):
-    req = urllib.request.Request(base_url.rstrip("/") + path,
-                                 data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                                 headers={"Content-Type": "application/json; charset=utf-8"},
-                                 method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        try:
-            body = json.loads(exc.read().decode("utf-8"))
-            msg = body.get("error", "")
-        except Exception:
-            msg = ""
-        raise ClientError(exc.code, msg or ("HTTP %d" % exc.code)) from None
-    except (TimeoutError, socket.timeout) as exc:
-        # urlopen 超时在部分路径裸抛 socket.timeout（不经 URLError 包装）
-        raise TranscribeTimeout("sidecar 请求超时（%.0fs）：%s" % (timeout, exc)) from None
-    except urllib.error.URLError as exc:
-        if isinstance(getattr(exc, "reason", None), TimeoutError) or "timed out" in str(exc):
-            raise TranscribeTimeout("sidecar 请求超时（%.0fs）：%s" % (timeout, exc)) from None
-        raise ConnectionError("sidecar 连接失败（%s）——先 asr_cli sidecar start" % exc) from None
+    return _request_json(base_url, path, payload, timeout)
 
 
 def transcribe(base_url, wav_path, timestamps=False, language=None,
@@ -232,7 +244,9 @@ def transcribe(base_url, wav_path, timestamps=False, language=None,
     """POST /transcribe。长音频不切分直接透传（库内建分块，方案 §3.3 红队 P1-1）。
     issue #142：转写=计算入口，受 asr.enabled 门禁约束（禁用态不发请求）。"""
     cfg = cfg if cfg is not None else load_config()
+    preflight(cfg)
     independence.require_enabled(cfg, "转写（transcribe）")
+    independence.validate_base_url(base_url)
     payload = {"audio": str(wav_path)}
     if language:
         payload["language"] = language
@@ -244,7 +258,9 @@ def transcribe(base_url, wav_path, timestamps=False, language=None,
 def warm(base_url, timeout=600.0, cfg=None):
     """POST /warm。issue #142：预热=计算入口，受 asr.enabled 门禁约束。"""
     cfg = cfg if cfg is not None else load_config()
+    preflight(cfg)
     independence.require_enabled(cfg, "预热（warm）")
+    independence.validate_base_url(base_url)
     return _post_json(base_url, "/warm", {}, timeout)
 
 
@@ -263,19 +279,12 @@ def _port_of(base_url):
 
 
 def _sidecar_attribution(base_url):
-    """端口上的健康服务是否可归属到本项目 sidecar（三因子，issue #142）：
-    pid 记录存在、pid 存活、/proc cmdline 同时含 sidecar_server.py 与端口、
-    记录的启动时刻与 /proc 实测一致（PID 重用防御）。无法证明即 False——
-    绝不复用「恰好健康」的任意服务（issue #140 铁律）。"""
+    """Offline URL/process/LISTEN proof; never probe HTTP to learn ownership."""
     try:
-        port = _port_of(base_url)
-    except Exception:
+        independence.attribute_endpoint(base_url)
+        return True
+    except independence.AsrIndependenceError:
         return False
-    rec = independence.read_pid_record(port)
-    if rec is None:
-        return False
-    return independence.pid_owns_sidecar(rec["pid"], port,
-                                         start_time=rec.get("start_time"))
 
 
 def preflight(cfg=None):
@@ -308,16 +317,16 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
     preflight(cfg)
     independence.require_enabled(cfg, "启动/复用 sidecar（ensure_sidecar）")
     base_url = base_url or cfg_get(cfg, "asr.base_url", DEFAULT_BASE_URL)
-    independence.validate_base_url(base_url)
-    if health(base_url, timeout=1.0):
-        if _sidecar_attribution(base_url):
-            if verbose:
-                print("✓ sidecar 已在运行：%s（本项目 pid 记录三因子归属通过）" % base_url,
-                      file=sys.stderr)
-            return True
-        print("✗ %s 端口上已有健康服务但无法归属到本项目 sidecar（无本项目 pid 记录、"
-              "进程 cmdline 不符或启动时刻不符/PID 已被复用）——拒绝复用任意健康服务"
-              "（issue #140 铁律）。若是遗留进程请手动清理后重试" % base_url, file=sys.stderr)
+    base_url = independence.validate_base_url(base_url)
+    if _sidecar_attribution(base_url) and health(base_url, timeout=1.0):
+        if verbose:
+            print("✓ sidecar 已在运行：%s（本项目进程与 socket 归属通过）" % base_url,
+                  file=sys.stderr)
+        return True
+    if independence.endpoint_listeners(base_url):
+        print("✗ %s 端口已有 listener，但无法证明是健康的本项目 sidecar——"
+              "拒绝复用/重复启动；未向未归属服务发送 HTTP（issue #140）" % base_url,
+              file=sys.stderr)
         return False
     py = probe_python(cfg)
     model = pick_model(cfg)
@@ -356,9 +365,13 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
         proc = subprocess.Popen(cmd, stdout=log, stderr=log, start_new_session=True,
                                 cwd=str(ASR_DIR), env=py_env(py))
     independence.write_pid_record(port, proc.pid)
+    spawned_record = independence.read_pid_record(port)
+    if spawned_record is None or spawned_record["pid"] != proc.pid:
+        print("✗ 无法记录新 sidecar 的启动身份；拒绝探测就绪", file=sys.stderr)
+        return False
     deadline = time.monotonic() + start_timeout
     while time.monotonic() < deadline:
-        if health(base_url, timeout=1.0):
+        if health(base_url, timeout=1.0, expected_record=spawned_record):
             if verbose:
                 print("✓ sidecar 就绪：%s（pid %d）" % (base_url, proc.pid), file=sys.stderr)
             return True
@@ -386,19 +399,18 @@ def stop_sidecar(base_url=None, cfg=None):
     independence.validate_base_url(base_url)
     port = _port_of(base_url)
     pf = pid_file(port)
-    alive_before = health(base_url, timeout=1.0) is not None
     rec = independence.read_pid_record(port)
     if rec is None:
         if pf.exists():
             print("✗ pid 记录损坏（%s）——已清除且未发任何信号" % pf, file=sys.stderr)
             pf.unlink(missing_ok=True)
             return False
-        if alive_before:
-            print("⚠ %d 端口有服务但无本项目 pid 记录——无法归属，未发送停止信号" % port,
+        if independence.endpoint_listeners(base_url):
+            print("⚠ %d 端口有 listener 但无本项目 pid 记录——未发送 HTTP 或停止信号" % port,
                   file=sys.stderr)
-        else:
-            print("✓ sidecar 未在运行", file=sys.stderr)
-        return not alive_before
+            return False
+        print("✓ sidecar 未在运行", file=sys.stderr)
+        return True
     pid = rec["pid"]
     if not independence.pid_owns_sidecar(pid, port,
                                          start_time=rec.get("start_time")):

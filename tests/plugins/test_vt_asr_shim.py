@@ -49,11 +49,14 @@ class ShimBaseUrlSemanticsTest(unittest.TestCase):
         "http://127.0.0.1:十八",            # 端口非法
         "",
         None,
+        "http://127.0.0.1:18085/asr",       # owned channel has no URL prefix
+        "http://example.test:18085",        # remote host never owned
+        "http://user:pass@127.0.0.1:18085",
+        "http://127.0.0.1:18085/?redirect=x",
     ]
     GOOD = [
         "http://127.0.0.1:18085",
         "http://127.0.0.1:18085/",
-        "http://127.0.0.1:18085/asr",
         "http://localhost:19001",
     ]
 

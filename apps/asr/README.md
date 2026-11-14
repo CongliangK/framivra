@@ -1,7 +1,7 @@
 # asr —— Qwen3-ASR + ForcedAligner 字幕产线
 
 组件声明见 `app.json`（kind=app）；健康检查为 `asr_cli.py --help`，不加载模型。
-`asr.enabled` 在所有执行入口生效；环境、模型与输入法资产隔离。sidecar 以 cmdline、端口、启动时刻三因子核对归属，GPU/显存准入只读 `nvidia-smi` 预算，不访问 IME 端点。准入实现唯一入口为 `independence.py`；拒绝的配置与准备边界见下文。
+`asr.enabled` 在所有执行入口生效；环境、模型与输入法资产隔离。HTTP 请求前核对本机进程身份及监听 socket 归属，GPU/显存准入只读 `nvidia-smi` 预算，不访问 IME 端点。准入实现唯一入口为 `independence.py`；拒绝的配置与准备边界见下文。
 
 音频/视频 → sidecar 转写（字级时间戳）→ 文本规范化 → 锚定式断句聚合 → 帧级
 `timeline.json subtitles[]` 合并（保护其他字段、写前备份）+ 独立 SRT。模块自有轻量
@@ -15,7 +15,7 @@ sidecar（stdlib http.server，默认 **127.0.0.1:18085**；18081 为语音输�
 | 文件 | 用途 |
 |---|---|
 | `sidecar_server.py` | 转写服务：Qwen3-ASR + ForcedAligner，`/health` `/warm` `/transcribe`；words[] 加工（text↔items 对齐）；OOM 换挡 + 空闲卸载。**运行于 qwen-asr 解释器**（通常由 client 自动拉起） |
-| `client.py` | HTTP 客户端（stdlib urllib）+ 音频抽取（ffmpeg 16k mono wav）+ sidecar 进程管理（pid 三因子归属）+ config 容错读取；`ensure_sidecar/transcribe/warm` 受 enabled 门禁与拉起前显存预检约束（issue #142） |
+| `client.py` | HTTP 客户端（stdlib http.client；不走环境代理、不跟随重定向）+ 音频抽取（ffmpeg 16k mono wav）+ sidecar 进程管理（pid 三因子归属）+ config 容错读取；`ensure_sidecar/transcribe/warm` 受 enabled 门禁与拉起前显存预检约束（issue #142） |
 | `independence.py` | **独立性与安全准入单一接口（issue #141/#142）**：IME 锚定路径拒绝、遗留键迁移错误、base_url 18081 拒绝、解释器依赖来源验证、模型链接关系校验（`verify_dir_assets`）、PID 三因子归属、`asr.enabled` 严格门禁（`asr_enabled/require_enabled`）、通用 GPU/显存准入（`gpu_admission`+并发 `admission_lease`）、资产清单（版本/来源/SHA256）接口 |
 | `textnorm.py` | 文本规范化 N1-N7（内化自 ibus-voice-ime text_postprocess 确定性子集 + ctypes libopencc 繁简软依赖） |
 | `segline.py` | 字级时间戳 → 断句聚合 → 帧（锚定式；split_line/allocate 内化自 voice-ime make_subs.py，时间改字级锚定） |
@@ -49,6 +49,14 @@ Python 旧四参 `merge_subtitles` 仍可调用，但无早期参数只在 helpe
 独立 `tl_merge.py -t <项目>/timeline.json [--dry-run]` 的 stdin 是原始 UTF-8 字幕 JSON 数组；经公共 `parse_write_json` 在普通解码前拒绝重复键、非有限数和会在写回时损失十进制值的高精度 token（包括未知嵌套扩展），错误 exit1，timeline/备份/history 均不写。0.1、0.5、安全指数及大整数沿用内核写解析合同，不承诺保留数值词法。Python `merge_subtitles(new_subs=...)` 接收已有 Python 值，不能追溯调用前已发生的舍入；转录总入口与旧参数/默认替换行为不变。
 
 ## sidecar 协议（默认 127.0.0.1:18085，可配 config `asr.base_url`）
+
+客户端仅接受 `http://127.0.0.1:<port>` 或 `http://localhost:<port>`（离线归一到
+IPv4 loopback）。自有端口可配；远程主机、IPv6/其他回环别名、路径前缀、凭据、查询和
+fragment 均拒绝。每次 HTTP 前要求项目 PID/启动时刻/脚本身份及 LISTEN socket inode
+归属于同一进程；无可读 Linux `/proc` 证据时 fail closed，不先发 health 猜测归属。
+手动常驻启动须使用专属解释器 `-I`，且没有有效归属记录时客户端不会探测或复用；建议
+通过 `asr_cli sidecar start` 启动。此元数据前检不消除检查到连接之间的竞态，遵循仓库
+[不新增本地 TOCTOU 加固的边界](../../CONTRIBUTING.md#信号实验隔离)，不宣称竞态证明。
 
 | 端点 | 方法 | 请求 | 响应 |
 |---|---|---|---|
@@ -161,25 +169,57 @@ audit 同阈值）；相邻去重叠不破 `in+min_dur` 下限（极冲突保留
    缺失的独立环境/依赖仍须另行审核和准备；不得借用输入法环境、模型或共享缓存。
 2. 已独立准备资产后，`bash apps/asr/init.sh` 检查解释器 `config.asr.python` →
    `apps/asr/.venv`，模型 `config.asr.model_dir` → 专属根
-   `~/.local/share/framivra/asr/models`（Qwen3-ASR-1.7B / 0.6B /
-   **Qwen3-ForcedAligner-0.6B**），并执行本地 `--once-health` 冒烟。缺失项失败汇总，
+   `~/.local/share/framivra/asr/models`（Qwen3-ASR-1.7B / 0.6B 任一档 +
+   **Qwen3-ForcedAligner-0.6B**；显式 `asr.aligner_dir` 优先），并执行本地
+   `--once-health` 冒烟。检查统一读取 `VTX_CONFIG`，缺失或不独立的资产先拒绝，
    不自动补齐；冒烟不加载真实模型、不验证转写质量。
 3. 确认独立环境与资产就绪后，才把解释器/模型路径和显式启用项写进仓库根
-   `config.local.json`（写配置是独立操作；init 仅打印建议片段，不自动改）：
+   `config.local.json`（写配置是独立操作；init 不自动改）：
    `"asr": { "enabled": true, "python": "<apps/asr/.venv>/bin/python", "model_dir": "~/.local/share/framivra/asr/models" }`
    （`base_url` 默认 `http://127.0.0.1:18085`，无需写）。
 4. 日常使用无需手动起 sidecar：`srt`/`timeline`/`batch` 会自动拉起并等健康。
 
-空闲 5 分钟自动卸载到 CPU 释放显存；这与 CPU 实际推理验收不同。当前独立环境的
-CPU/GPU 真实转写均未验收，不据参数准入宣称硬件支持或实测显存占用。与输入法的
-GPU 竞争由 #142 通用资源准入处理，绝不停/降输入法。
+空闲 5 分钟自动卸载到 CPU 释放显存；这与 CPU 实际推理验收不同。下述独立
+CPU 冒烟不证明 GPU 支持、显存占用或输入法共驻安全；GPU 实测仍为 UNRUN。
+与输入法的 GPU 竞争由 #142 通用资源准入处理，绝不停/降输入法。
 
 ## 已验证版本
 
-- **独立安装与真实转写 UNRUN（issue #140/#141）**：专属环境 `apps/asr/.venv` 与专属模型根
-  `~/.local/share/framivra/asr/models` 的真实安装+转写正例尚未执行（旧 init 下载入口受 #18
-  许可门禁 BLOCKED；另行批准的固定快照下载也不能替代运行环境安装与实际转写验收）。以下为历史实测版本记录
-  （当时借用 IME 环境——该链路已废除，仅作 qwen-asr 库行为溯源）：
+### 2026-11-14 独立 CPU 验收（#140）
+
+从空环境独立安装：Python 3.12.13、qwen-asr 0.0.6、torch 2.10.0+cpu、
+transformers 4.57.6、accelerate 1.12.0、huggingface-hub 0.36.2；`pip check` 通过。
+环境为本工单 checkout 的 `apps/asr/.venv`；模型、HOME、缓存和状态均在本次独立目录，
+不引用输入法或共享模型缓存。95 个已安装分发包的目录均位于该 venv 内。
+
+两个资产经许可单资产接口从官方固定快照分别下载（用途按 commercial），保留上游
+README/LICENSE 和下载通知；两份模型卡证据 SHA256 均为
+`5058416891bc47a2051557765997e8c42f8eb78a0e33c3e775bd17d4b0ba4d50`。
+逐文件记录并通过 `verify_asset_entry` 复核；文件无 symlink、硬链接借用。
+
+| 资产 | 官方 revision | model.safetensors SHA256 |
+|---|---|---|
+| Qwen/Qwen3-ASR-0.6B | `5eb144179a02acc5e5ba31e748d22b0cf3e303b0` | `79d6cbd4c98c7bbffe9db2edac07f56cd6637d0d5944b27f6c2b8353840323ea` |
+| Qwen/Qwen3-ForcedAligner-0.6B | `c7cbfc2048c462b0d63a45797104fc9db3ad62b7` | `47831d0e82f96b20e9034dba01a075ee06436654719f6a68289e49f1b65ce0e7` |
+
+真实执行 `asr_cli transcribe --timestamps --json --language English` 和 `srt`，
+`device_map=cpu`、`CUDA_VISIBLE_DEVICES=''`、HF/Transformers 离线模式。
+输入是本地 eSpeak NG 合成的 3.652 秒 16kHz mono PCM（不是 mock 转写结果），SHA256
+`037dae442fe97cbcff724e3c714e1b50a6b9dd9ba0ae332414bdc4bbdee7b523`。
+输出为 “The quick brown fox jumps over the lazy dog.”，44 个字符时间窗落在音频范围内，
+起点单调、`degraded_ranges=[]`，SRT 成功生成。另一个独立合成的 7.702 秒中文输入
+SHA256 `20948a3a1a2975d22ed561dfe9ad2888737f6694d1a04968fc5f307b36235cfc`，
+正确输出“这是一个独立的语音识别测试。今天的天气很好。”，22 个字/标点时间窗通过同样检查，
+无降级区间，中文 SRT 亦生成。真实 `init.sh` 检查通过；自有服务停止后 PID/记录已消失。
+
+这是独立安装、模型加载、字级时间戳和字幕产物的短音频冒烟，不是识别质量基准。
+1.7B、长音频、GPU 推理、真实 GPU 共驻/真实 OOM 均 UNRUN；未请求、启停或读取输入法。
+资产清单由本次验收显式校验，不能据此声称每次启动会自动验证清单哈希。
+旧 `init.sh --download` 仍 BLOCKED，本次没有解除许可门禁，也不构成全部传递依赖的法律放行。
+
+### 历史版本记录
+
+以下当时借用 IME 环境的链路已废除，仅作 qwen-asr 库行为溯源：
 - qwen-asr **0.0.6**（历史实测于 Python 3.14.7）——`from_pretrained(asr,
   forced_aligner=...)` 路线实证；forced_aligner 关键字失败时自动降级显式组装（R10）。
 - Qwen3-ASR-1.7B / Qwen3-ASR-0.6B（历史实测 4.4GB / 1.8GB）；

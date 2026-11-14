@@ -10,8 +10,11 @@ import os
 import subprocess
 import sys
 import threading
+import tempfile
+from pathlib import Path
 import time
 import unittest
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -88,8 +91,22 @@ class MockSidecar:
 
 class TestClient(unittest.TestCase):
     def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="asr-client-")
+        self.addCleanup(self.temp.cleanup)
+        state = mock.patch.object(independence, "project_state_root", return_value=Path(self.temp.name))
+        state.start()
+        self.addCleanup(state.stop)
         self.mock = MockSidecar()
         self.addCleanup(self.mock.close)
+        # Transport-only tests explicitly fake endpoint proof. Real /proc and
+        # foreign-listener rejection are exercised in test_endpoint_ownership.
+        def owned_endpoint(url, expected_record=None):
+            canonical = independence.validate_base_url(url)
+            return {"base_url": canonical, "port": client._port_of(canonical),
+                    "record": {"pid": os.getpid(), "start_time": 1}}
+        self.ownership = mock.patch.object(independence, "attribute_endpoint", owned_endpoint)
+        self.ownership.start()
+        self.addCleanup(self.ownership.stop)
 
     def test_health(self):
         info = client.health(self.mock.base_url, timeout=2.0)
@@ -151,6 +168,7 @@ class TestClient(unittest.TestCase):
 
     def test_ensure_sidecar_healthy_unattributed_refused(self):
         # issue #141/#140：端口健康但无法归属本项目 → 拒绝复用（零拉起零请求复用）
+        self.ownership.stop()
         real_popen = subprocess.Popen
         def _no_popen(*a, **kw):
             raise AssertionError("无法归属时不应拉起进程：%s" % (a,))
@@ -161,6 +179,7 @@ class TestClient(unittest.TestCase):
                 base_url=self.mock.base_url, verbose=False))
         finally:
             subprocess.Popen = real_popen
+        self.assertEqual(self.mock.requests, [], "未归属服务必须零 HTTP，包括 health")
 
     def test_cfg_get(self):
         cfg = {"asr": {"base_url": "http://x:1", "python": None}}
@@ -184,8 +203,11 @@ CLI = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
 
 
 def run(args):
-    return subprocess.run([sys.executable, CLI] + args,
-                          capture_output=True, text=True, timeout=60)
+    with tempfile.TemporaryDirectory(prefix="asr-cli-position-") as home:
+        return subprocess.run([sys.executable, CLI] + args,
+                              capture_output=True, text=True, timeout=60,
+                              env={"HOME": home, "PATH": os.defpath,
+                                   "VTX_CONFIG": str(Path(home) / "missing.json")})
 
 
 class TestBaseUrlPosition(unittest.TestCase):
