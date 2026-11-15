@@ -41,6 +41,7 @@ ibus-voice-ime qwen_asr_server.py（模型管理/换挡/空闲卸载思路，解
 import argparse
 from contextlib import contextmanager
 import json
+import math
 import os
 import sys
 import threading
@@ -143,7 +144,7 @@ def _is_kept_char(ch):
 
 def _to_seconds(items):
     """时间戳单位防御：库 0.0.6 的 align() 已把 ms 转成秒（round(x/1000.0, 3)），
-    但旧数据/未来版本若回吐 ms（任一时间戳量级 > 10000；ASR 输入上限 1200s）
+    但旧数据/未来版本若回吐 ms（任一时间戳量级 > 10000；兼容旧短片数据的启发式）
     则统一除回秒。"""
     if not items:
         return items
@@ -450,6 +451,8 @@ class ModelHolder:
                 kw2 = dict(kw)
                 if self.aligner_path:
                     kw2["forced_aligner"] = self.aligner_path
+                    kw2["forced_aligner_kwargs"] = {
+                        "dtype": kw["dtype"], "device_map": self.device_map}
                 _log("加载模型：%s dtype=%s aligner=%s" % (path, self.dtype, self.aligner_path or "无"))
                 t0 = time.monotonic()
                 try:
@@ -596,6 +599,28 @@ def _probe_duration(path):
         return None
 
 
+def _validate_word_times(words, duration):
+    """Reject unusable alignment before consumers can reorder/fabricate subtitles."""
+    if not words:
+        return  # Preserve the existing full-text-mismatch fallback contract.
+    reason = None
+    if duration is None or not math.isfinite(duration) or duration < 0:
+        reason = "无法核实音频时长"
+    else:
+        previous_start = 0.0
+        for i, word in enumerate(words):
+            start, end = word["s"], word["e"]
+            if (not math.isfinite(start) or not math.isfinite(end)
+                    or not 0 <= start <= end or start < previous_start
+                    or end > duration + 0.001):  # Millisecond rounding only.
+                reason = "第 %d 个字的时间窗无效或倒退" % i
+                break
+            previous_start = start
+    if reason:
+        raise RequestError(409, "字级对齐时间戳无效（%s），拒绝生成字幕；"
+                           "未排序或夹取时间。请核对音频，或去掉 timestamps 仅转写文本。" % reason)
+
+
 def _handle_transcribe(handler):
     payload = _read_json_payload(handler)
     audio = str(payload.get("audio") or "").strip()
@@ -625,10 +650,12 @@ def _handle_transcribe(handler):
         items = [(getattr(it, "text", ""), getattr(it, "start_time", 0.0),
                   getattr(it, "end_time", 0.0)) for it in getattr(ts, "items", [])]
         words, degraded = build_words(text, items)
+        duration = _probe_duration(audio)
+        _validate_word_times(words, duration)
         _log("转写完成：chars=%d words=%d degraded=%d elapsed=%.2fs"
              % (len(text), len(words), len(degraded), elapsed))
         return {"text": text, "words": words, "degraded_ranges": degraded,
-                "duration_s": _probe_duration(audio)}
+                "duration_s": duration}
     except Exception as exc:
         if ModelHolder._is_oom(exc):
             oom_exc = exc

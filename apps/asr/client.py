@@ -45,7 +45,7 @@ ASR_DIR = Path(__file__).resolve().parent
 REPO_ROOT = ASR_DIR.parent.parent    # v2 迁移后 asr 在 apps/ 下，仓根 = 上两级
 DEFAULT_BASE_URL = "http://127.0.0.1:18085"
 SIDECAR_LOG = Path("~/.local/state/framivra/asr/sidecar.log").expanduser()
-TRANSCRIBE_TIMEOUT_DEFAULT = 1800.0     # 长音频（1200s 上限 × RTF）也要能跑完
+TRANSCRIBE_TIMEOUT_DEFAULT = 1800.0     # 整个长音频请求的默认超时；不是输入时长上限
 
 sys.path.insert(0, str(ASR_DIR))
 import independence    # noqa: E402  独立性单一接口（issue #141）
@@ -352,7 +352,8 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
         return False
     SIDECAR_LOG.parent.mkdir(parents=True, exist_ok=True)
     cmd = [py, "-I", str(ASR_DIR / "sidecar_server.py"), "--port", str(port),
-           "--model", model, "--device-map", str(device)]
+           "--model", model, "--device-map", str(device),
+           "--vram-budget", str(vram_budget_of(cfg, model))]
     if aligner:
         cmd += ["--aligner", aligner]
     else:

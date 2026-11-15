@@ -478,7 +478,7 @@ def require_enabled(cfg, action="该操作"):
 # ---------------------------------------------------------------- 通用资源准入（issue #142）
 
 #: 各档模型显存预算（MiB，保守粗粒度：权重 bf16 + 对齐器 + 激活/碎片余量）。
-#: 与输入法实现完全无关——只读 nvidia-smi 的总量/占用量，绝不探测/停止/卸载
+#: 与输入法实现完全无关——只读 nvidia-smi 的总量/占用量/空闲量，绝不探测/停止/卸载
 #: 任何外部服务（含语音输入法）来腾显存。
 VRAM_BUDGET_MIB = {"1.7b": 6144, "0.6b": 3072}
 VRAM_BUDGET_DEFAULT_MIB = 6144
@@ -494,12 +494,12 @@ def estimate_vram_mib(model_dir):
 
 
 def _run_nvidia_smi():
-    """只读 nvidia-smi 查询（每块 GPU 一行 total/used MiB）→ 行列表；不可用/
+    """只读 nvidia-smi 查询（每块 GPU 一行 total/used/free MiB）→ 行列表；不可用/
     失败/任一行畸形 → None（fail-closed，与既有畸形输出语义一致）。
     零写态、零信号、零外部服务操作。"""
     try:
         r = subprocess.run(
-            [NVIDIA_SMI, "--query-gpu=memory.total,memory.used",
+            [NVIDIA_SMI, "--query-gpu=memory.total,memory.used,memory.free",
              "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
@@ -509,16 +509,17 @@ def _run_nvidia_smi():
     rows = []
     for line in r.stdout.strip().splitlines():
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 2:
+        if len(parts) < 3:
             return None
         try:
-            total, used = int(parts[0]), int(parts[1])
+            total, used, free = int(parts[0]), int(parts[1]), int(parts[2])
         except ValueError:
             return None
-        if total <= 0 or used < 0 or used > total:
+        if total <= 0 or used < 0 or used > total or free < 0 or free > total - used:
             return None
+        # total - used includes driver-reserved memory; only reported free is available.
         rows.append({"total_mib": total, "used_mib": used,
-                     "free_mib": total - used})
+                     "free_mib": free})
     return rows or None
 
 
