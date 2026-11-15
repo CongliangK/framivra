@@ -27,9 +27,11 @@ RUN=$(python3 -c 'import pathlib,tempfile; print(pathlib.Path(tempfile.mkdtemp(p
 PROJECT="$RUN/project"
 python3 scripts/demo.py prepare --output "$PROJECT" --fetch-fonts > "$RUN/prepare.log" 2>&1
 python3 scripts/demo.py verify --project "$PROJECT" > "$RUN/input-check.log" 2>&1
-python3 -m vtx -t "$PROJECT/timeline.json" --events-jsonl "$RUN/all.events.jsonl" all > "$RUN/all.log" 2>&1
-python3 -m vtx -t "$PROJECT/timeline.json" qc --strict > "$RUN/qc-strict.log" 2>&1
+VTX_VIDEO_SEGMENTS=1 python3 -m vtx -t "$PROJECT/timeline.json" --events-jsonl "$RUN/all.events.jsonl" all > "$RUN/all.log" 2>&1
+VTX_VIDEO_SEGMENTS=1 python3 -m vtx -t "$PROJECT/timeline.json" qc --strict > "$RUN/qc-strict.log" 2>&1
 ```
+
+示例显式使用已有的正式单段配置 `VTX_VIDEO_SEGMENTS=1`，不降低分辨率、帧数、音轨或编码质量参数。默认多段拼接有[已跟踪的帧时钟漂移及修复候选 #359](https://github.com/CongliangK/framivra/pull/359)：完整解码和 strict QC 通过仍不等于逐帧 PTS 正确。保留默认配置失败记录；修复后须重新核验默认路线，不能用单段结果替代固定发布配置验收或混比性能。本版输入准备不宣称修复该内核问题。
 
 离线准备时把 `--fetch-fonts` 换为 `--fonts-dir DIR`，目录须含原文件名的四份锁定字体；两参数互斥。也可先显式运行 `python3 scripts/demo.py fonts --output "$RUN/fonts"`（联网写入新目录），再复用该目录。网络失败或包/字体 SHA 不符会明确失败，不自动采用其他版本或本机同名字体；无系统全局安装。已有完整项目携带字体，正式渲染不需要联网。
 
