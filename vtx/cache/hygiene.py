@@ -10,7 +10,7 @@
     --i-know-this-nukes-everything 显式危险旗标（见 vtx/cli/commands.py）。
   - 回收只由显式命令或预算门触发，无后台守护、无静默删除。
 """
-import fnmatch, hashlib, itertools, json, os, re, shutil, time, stat, secrets
+import fnmatch, hashlib, heapq, itertools, json, os, re, shutil, time, stat, secrets
 from pathlib import Path
 
 from ..runtime import fstxn
@@ -789,9 +789,15 @@ def df(c, quiet: bool = False):
             P(f"  {x.name:24s} {gb(s):>10s}"); tout += s
     P(f"  out 合计 {gb(tout)}")
     total = tcache + tout
+    # audit consumes only totals. Do not traverse the tree again for invisible
+    # diagnostics, or read the ledger just to discard its diagnostic text.
+    if quiet:
+        return {"cache": tcache, "out": tout, "total": total}
     P(f"总计 {gb(total)}")
-    files = sorted(c.cache.rglob("*"), key=lambda p: p.stat().st_size if p.is_file() else 0,
-                   reverse=True)[:20]
+    # Keep only the selected candidates instead of materializing/sorting every
+    # cache path. nlargest preserves sorted(..., reverse=True) tie order.
+    files = heapq.nlargest(20, c.cache.rglob("*"),
+                          key=lambda p: p.stat().st_size if p.is_file() else 0)
     P("== top-20 大文件（cache）==")
     for p in files:
         if p.is_file(): P(f"  {gb(p.stat().st_size):>10s}  {p.relative_to(c.root)}")

@@ -55,7 +55,7 @@ API（上下文管理器 + mutator 两形态）：
 重入即死锁）；对其他路径的嵌套事务须保持全仓一致的获取顺序（receipt 主件
 先于 prev 伴生件）。
 """
-import contextlib, copy, errno, json, os, secrets, stat, sys, tempfile, threading, time
+import contextlib, copy, errno, json, os, secrets, stat, sys, tempfile, threading, time, weakref
 from pathlib import Path
 
 __all__ = ["locked_write", "locked_staging", "locked_update", "atomic_write",
@@ -248,17 +248,22 @@ try:
 except ImportError:
     msvcrt = None
 
-# 进程内 per-path 锁注册表（收口后的目标路径 → Lock）。CLI 生命周期内路径数
-# 有限（每项目一份 receipt/manifest/VERSIONS），不淘汰。fstxn 是全部文件事务的
-# 唯一入口 → 同路径恒定先线程锁后 flock，跨路径顺序由调用方（见模块头尾注）。
+# Transactions include individual PNG paths, not just project ledgers. Retain
+# locks only while a caller owns a strong reference (including blocked waiters).
+# The guarded lookup/create preserves one lock domain for every live caller;
+# never evict an active lock or delete its on-disk sidecar to reclaim memory.
 _LOCKS_GUARD = threading.Lock()
-_LOCKS = {}
+_LOCKS = weakref.WeakValueDictionary()
 
 
 def _thread_lock_for(path: Path) -> threading.Lock:
     key = str(path.absolute())
     with _LOCKS_GUARD:
-        return _LOCKS.setdefault(key, threading.Lock())
+        lock = _LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _LOCKS[key] = lock
+        return lock
 
 
 def _write_error(path, reason):
