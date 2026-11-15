@@ -2,7 +2,7 @@
 
 用户快速开始已移到 [README](README.md)。本页保留开发契约和原始历史验收记录；历史记录不为新增内核管理功能背书。
 
-This optional DSH integration lives in `integrations/dsh-sidebar/`, the source home for an external-host adapter, not a native `vtx` app or hook. The Python wheel does **not** include this adapter. Timeline semantics and authoritative selection remain exclusively in the unified `vtx` read/edit kernel: this integration compiles UI actions to typed intents, not another semantic editor, query engine, renderer or history store. It is loaded by DSH, not registered in the native vtx component catalog.
+This optional DSH integration lives in `dsh-sidebar/`, the source home for an external-host adapter, not a native `vtx` app or hook. The Python wheel does **not** include this adapter. Timeline semantics and authoritative selection remain exclusively in the unified `vtx` read/edit kernel: this integration compiles UI actions to typed intents, not another semantic editor, query engine, renderer or history store. It is loaded by DSH, not registered in the native vtx component catalog.
 
 ## Implementation and evidence boundaries
 
@@ -164,7 +164,7 @@ This section and relative links to `src/`, `tests/` and `scripts/` describe the 
 
 Host/source-view tests require Node `>=24.9.0` (as declared in `engines`) and native lossless JSON; the tested `tsdown` is `0.22.2`. The client builder needs no DSH SDK package: it resolves the public `tsdown` bundler from this package's devDependencies, or — when `SIDEBAR_DSH_ROOT` points at a DSH checkout with dependencies installed — from that checkout (build-time tool path only, never a runtime dependency). Install this package's declared public-version `devDependencies` in an isolated development environment before running the complete tests; React, ReactDOM, Cordis, ui-slots and jsdom are test/platform suppliers, not plugin runtime copies.
 
-From the repository root, enter `integrations/dsh-sidebar/` (`cd integrations/dsh-sidebar`), with those build/test dependencies available:
+From the repository root, enter `dsh-sidebar/` (`cd dsh-sidebar`), with those build/test dependencies available:
 
 ```sh
 npm run build:client
@@ -192,7 +192,7 @@ The release ZIP and standard npm tarball must have `package.json`, `cordis.patch
 
 The own builder receives this package directory, `src/client/index.mjs` and an output directory; `package.json.name` is the module ID. `npm run build:client` emits `lib/client.js` and its debug map. React remains a platform-shared request and is declared as an exact `18.3.1` peer (the tested version, not a broader compatibility claim); no other external Client module is emitted unless explicitly declared in `dsh.client.external`. Local JSON presentation code is bundled. The separate packaging command builds again in a fresh staging directory, copies the Host's ESM closure with relative `.js` imports, and strips the debug-map trailer (the production ZIP omits maps/source paths). It never requires a DSH SDK package or source checkout at runtime.
 
-From `integrations/dsh-sidebar/`, install the locked build/test dependencies with `npm ci --ignore-scripts` (**writes node_modules**). Build with this package's bundler, not an ambient DSH checkout (**writes fresh artifacts**, not an install):
+From `dsh-sidebar/`, install the locked build/test dependencies with `npm ci --ignore-scripts` (**writes node_modules**). Build with this package's bundler, not an ambient DSH checkout (**writes fresh artifacts**, not an install):
 
 ```sh
 env -u SIDEBAR_DSH_ROOT NODE_ENV=production npm run package -- --out /absolute/new/framivra-dsh-sidebar-0.2.2.tgz

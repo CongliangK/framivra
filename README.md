@@ -8,6 +8,7 @@ Framivra（读 "frame-ee-vra"）是 B 站视频产线的程序仓。内核 `vtx/
 |---|---|
 | `vtx/` | 永不可关的内核：渲染、validate/QC、响度、缓存、`api.py` 与 `pluginlib/` |
 | `apps/`、`plugins/` | 独立素材/产线应用与 timeline 管线扩展；安装态、键与 hooks 见 [catalog](docs/catalog.md) |
+| [dsh-sidebar/](dsh-sidebar/README.md) | DSH 侧栏插件：时间线预览、引用与显式剪辑；独立于 Python 内核发行 |
 | `docs/skill/`、`templates/` | 工具技能与[工作流/开发范本集合](templates/README.md) |
 | `scripts/`、`vt.py` | [仓级工具](scripts/README.md)；doctor、组件/模板 list/check、version、init 与链接修复 |
 

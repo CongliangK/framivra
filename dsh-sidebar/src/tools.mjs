@@ -1,7 +1,7 @@
 /**
  * Model-facing timeline tools: read-only inspection plus a propose-only edit path.
  *
- * Contract (see integrations/dsh-sidebar/README.md):
+ * Contract (see dsh-sidebar/README.md):
  * - No commit/adopt/undo/authorize-write tool exists. A proposal is validated by
  *   the vtx zero-write plan and parked in the plugin; only the human user can
  *   confirm it in the sidebar. The UI write grant never crosses to the model.

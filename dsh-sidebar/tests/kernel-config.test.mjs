@@ -9,7 +9,7 @@ const errorAt = (result, path) => result.errors.some(item => item.path === path)
 const warningAt = (result, path) => result.warnings.some(item => item.path === path)
 
 test('template is checked without constructing defaults or loading external components', () => {
-  const text = fs.readFileSync(new URL('../../../config.example.json', import.meta.url), 'utf8')
+  const text = fs.readFileSync(new URL('../../config.example.json', import.meta.url), 'utf8')
   const result = checkKernelConfig(text)
   assert.equal(result.ok, true, JSON.stringify(result.errors))
   assert.deepEqual(result.warnings, [])
