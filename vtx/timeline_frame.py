@@ -50,25 +50,21 @@ def _png(path, width, height, limit, *, root, root_identity):
 
 
 def _environment():
-    # Reuse the existing conservative tool/font certificate collectors. No
-    # browser is started, and no second font/dependency inventory is maintained.
-    from .render import gfx_environment as env
-    from .pipeline.infra import filter_threads
+    # No browser or font-cache-building probe is started by this collector.
+    from .render.frame_environment import collect
     binary = shutil.which("ffmpeg")
     if not binary:
         raise _FrameError("environment.unavailable", "ffmpeg is unavailable")
     if any(os.environ.get(k) for k in ("LD_PRELOAD", "LD_AUDIT", "FFREPORT")):
         raise _FrameError("environment.unsupported", "loader injection/FFREPORT is unsupported")
-    return {"ffmpeg": env._file(binary), "libraries": env._libraries(binary),
-            "fonts": env._fonts(), "platform": sys.platform, "filter_threads": filter_threads(),
-            "environment": {k: os.environ.get(k) for k in env.PIXEL_ENV
-                            if k not in ("DISPLAY", "WAYLAND_DISPLAY")}}
+    return collect(binary)
+
 
 
 def _render(path, reference, frame, limit):
     from .runtime import fstxn
-    if sys.platform != "linux" or fstxn.write_capability() != "fd-anchored":
-        raise _FrameError("platform.unsupported", "render requires Linux fd-anchored writes")
+    if sys.platform not in ("linux", "darwin") or not fstxn.directory_write_capability():
+        raise _FrameError("platform.unsupported", "render requires no-follow directory-anchored writes")
     from .pluginlib.hooks import active_plugins
     stored = json.loads(reference["document"]["raw"])
     # Static manifest/config selection, BEFORE Ctx/fingerprints can import any
@@ -92,6 +88,8 @@ def _render(path, reference, frame, limit):
             detail += " (+%d more)" % (len(errors) - 16)
         raise _FrameError("render.structure",
                           "stored structure errors[%d]: %s" % (len(errors), detail))
+    # Refuse FFREPORT/loader overrides before even metadata probes can run.
+    environment = _environment()
     from .pipeline.infra import Ctx
     from .pipeline.stages import validate_core
     from .pipeline.composite import RenderPlan, _graph_code_digest
@@ -169,7 +167,6 @@ def _render(path, reference, frame, limit):
     plan = RenderPlan(c=c, draft=False, f=1.0, W=c.w, H=c.h,
                       layers=[], png_output=True)
     ass = plan.segment_ass_bytes(frame, frame + 1)
-    environment = _environment()
     # Full implementation files protect helper/ASS/profile changes too. This is
     # conservative code invalidation, not a claim of cross-host pixel equivalence.
     from .pipeline import composite

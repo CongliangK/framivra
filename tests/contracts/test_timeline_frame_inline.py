@@ -218,7 +218,8 @@ class AnchoredArtifacts(unittest.TestCase):
 
     def test_short_growing_and_mutating_reads_fail_and_descriptors_close(self):
         original = os.read
-        count_before = len(os.listdir('/proc/self/fd'))
+        fd_directory = '/dev/fd' if sys.platform == 'darwin' else '/proc/self/fd'
+        count_before = len(os.listdir(fd_directory))
         for mode in ('short', 'grow', 'mutate', 'cancel'):
             self.path.write_bytes(self.data)
             called = False
@@ -235,7 +236,7 @@ class AnchoredArtifacts(unittest.TestCase):
             with patch('vtx.render.png_artifact.os.read', side_effect=change):
                 with self.assertRaises((OSError, ValueError, KeyboardInterrupt)):
                     self.read(limit=len(self.data))
-            self.assertEqual(len(os.listdir('/proc/self/fd')), count_before)
+            self.assertEqual(len(os.listdir(fd_directory)), count_before)
 
     def test_png_exact_8mib_boundaries_no_truncation(self):
         for size in (_LIMIT-1, _LIMIT, _LIMIT+1):

@@ -13,17 +13,18 @@ const wire = value => JSON.stringify(value) + '\n'
 const readEnvelope = operation => ({
   schema: 'framivra.timeline.read/v1', operation, ok: true, content_version: version, diagnostics: [],
   document: {}, coverage: { complete: true, scope: 'unit fixture', unexpanded: [] },
+  ...(operation === 'query' ? { tracks: [], blocks: [] } : {}),
   ...(operation === 'capabilities'
     ? { content_version: null, capabilities: { operations: ['inspect', 'query', 'capabilities'], frame: { schema: 'framivra.timeline.frame/v1', explicit_render_required: true, inline_png: { flag: '--include-png', encoding: 'base64', wire_limit_bytes: 8 * 1024 * 1024 } } } }
     : {}),
 })
 const frameEnvelope = () => ({ schema: 'framivra.timeline.frame/v1', operation: 'frame', ok: true, content_version: version, diagnostics: [], image: { path: '/never/read.png' } })
-const storeEnvelope = operation => ({ schema: 'framivra.timeline.store/v1', operation: operation.split(':')[1], ok: true, ...(operation === 'store:capabilities' ? { operations: ['edit'], edit: { operations: ['edit'] }, request_transport: { stdin: { flag: '--request-stdin', max_bytes: 8388608 } } } : {}) })
+const storeEnvelope = operation => ({ schema: 'framivra.timeline.store/v1', operation: operation.split(':')[1], ok: true, ...(operation === 'store:capabilities' ? { platform_support: { darwin: true }, operations: ['edit'], edit: { operations: ['edit'] }, request_transport: { stdin: { flag: '--request-stdin', max_bytes: 8388608 } } } : {}) })
 
 /** Deferred manual child handles so tests control exit/managed-range timing exactly.
  *  waitForExit consumes one outcome per cleanup attempt (default true), modeling
  *  a provider whose managed-range confirmation can fail and later recover. */
-function makeBench() {
+function makeBench({ storeCapabilities = storeEnvelope('store:capabilities') } = {}) {
   const fs = new MemoryFs()
   const sessions = new Map([['one', { id: 'one' }], ['two', { id: 'two' }]])
   sessions.list = () => [...sessions.values()]
@@ -34,7 +35,7 @@ function makeBench() {
   function spawn(spec) {
     const argv = spec.argv.slice(1) // drop executable
     const op = argv[0] === '-t' ? (argv[2] === 'timeline' ? 'frame' : argv[2] === 'store' ? `store:${argv[3]}` : argv[2]) : 'unknown'
-    const text = wire(op === 'frame' ? frameEnvelope() : op.startsWith('store:') ? storeEnvelope(op) : readEnvelope(op))
+    const text = wire(op === 'store:capabilities' ? storeCapabilities : op === 'frame' ? frameEnvelope() : op.startsWith('store:') ? storeEnvelope(op) : readEnvelope(op))
     let doneResolve, terminated = 0
     const rangeOutcomes = []
     const done = new Promise(resolve => { doneResolve = resolve })
@@ -64,6 +65,51 @@ function makeBench() {
   }
   return { host, fs, sessions, cwds, workingDirectory, ...bench, control, frame, open }
 }
+
+test('write platform capability: Darwin requires an explicit new-core certificate; old core stays read-only', async t => {
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+  const supported = storeEnvelope('store:capabilities')
+  const oldCore = { ...supported }; delete oldCore.platform_support
+  const cases = [
+    ['darwin', 'new core', supported, true],
+    ['darwin', 'old core (no platform_support)', oldCore, false],
+    ['darwin', 'empty platform_support', { ...supported, platform_support: {} }, false],
+    ['darwin', 'explicit unsupported', { ...supported, platform_support: { darwin: false } }, false],
+    ['darwin', 'truthy string is not a certificate', { ...supported, platform_support: { darwin: 'true' } }, false],
+    ['darwin', 'new core still needs stdin transport', { ...supported, request_transport: undefined }, false],
+    ['darwin', 'new core still needs semantic edit', { ...supported, edit: { operations: [] } }, false],
+    ['linux', 'old core remains supported', oldCore, true],
+    ['linux', 'stdin refusal remains enforced', { ...oldCore, request_transport: undefined }, false],
+    ['win32', 'certificate cannot override unsupported host', supported, false],
+  ]
+  try {
+    for (const [platform, label, storeCapabilities, allowed] of cases) await t.test(`${platform}: ${label}`, async () => {
+      Object.defineProperty(process, 'platform', { ...platformDescriptor, value: platform })
+      const b = makeBench({ storeCapabilities })
+      try {
+        const grant = await b.open('one')
+        const authorized = await b.control({ op: 'authorize-write', grant })
+        const result = await authorized.json()
+        assert.equal(authorized.status, allowed ? 200 : 422, JSON.stringify(result))
+        if (allowed) {
+          assert.equal(typeof result.writeGrant, 'string')
+          assert(result.writeGrant.length > 0)
+          const status = await b.control({ op: 'status', grant, writeGrant: result.writeGrant })
+          assert.equal(status.status, 200, await status.clone().text())
+        } else {
+          assert.equal(result.error, 'WRITE_UNSUPPORTED')
+          assert.equal(result.writeGrant, undefined, 'refusal must never mint a write token')
+          const denied = await b.control({ op: 'status', grant, writeGrant: 'not-minted' })
+          assert.equal(denied.status, 403)
+          assert.equal((await denied.json()).error, 'WRITE_DENIED')
+          assert(b.spawned.filter(child => child.op.startsWith('store:')).every(child => child.op === 'store:capabilities'), 'refusal must not run store mutations')
+        }
+        assert.equal((await b.control({ op: 'inspect', grant })).status, 200, 'write support must not disable ordinary reads')
+        assert.equal((await b.control({ op: 'query', grant })).status, 200)
+      } finally { await b.host.dispose() }
+    })
+  } finally { Object.defineProperty(process, 'platform', platformDescriptor) }
+})
 
 test('F1: frame cancel must not terminate another Session\'s in-flight read', async () => {
   const b = makeBench()

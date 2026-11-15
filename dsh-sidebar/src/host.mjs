@@ -405,8 +405,9 @@ export function createPreviewHost(ctx, config = {}) {
     } finally { hold.release() }
   }
   async function writeCapabilities(grant, signal) {
-    if (process.platform !== 'linux') fail('WRITE_UNSUPPORTED', 'Semantic writes are verified only on the local Linux backend', 422)
+    if (!['linux', 'darwin'].includes(process.platform)) fail('WRITE_UNSUPPORTED', 'Semantic writes require a supported local Linux or macOS backend', 422)
     const capabilities = await reader.store(grant.executable, ctx.fs.processPath(grant.timeline), 'capabilities', undefined, signal, grant.configSnapshot, grant.id)
+    if (process.platform === 'darwin' && capabilities.platform_support?.darwin !== true) fail('WRITE_UNSUPPORTED', 'Installed vtx lacks macOS-safe timeline locking and path identity; update the core before authorizing writes.', 422)
     if (!capabilities.ok || !capabilities.operations?.includes('edit') || !capabilities.edit?.operations?.length) fail('WRITE_UNSUPPORTED', 'Installed vtx does not advertise semantic edit/plan', 422)
     const transport = capabilities.request_transport?.stdin
     if (transport?.flag !== '--request-stdin' || transport.max_bytes !== 8388608) fail('WRITE_UNSUPPORTED', 'Installed vtx lacks the official bounded --request-stdin transport; read/copy remain available. Reopening /dev/stdin is not a supported fallback.', 422)
