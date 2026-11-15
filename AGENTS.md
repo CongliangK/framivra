@@ -41,3 +41,4 @@
 - 准备/核验仅用 `scripts/demo.py prepare/verify`，用法与写态边界见[Demo](<templates/demo-timeline-svg/README.md#主性能基线>)。
 - 固定输入、同质量/环境/后端/配置分冷暖测全链；留身份、哈希与证据，未跑写 UNRUN，小探针不冒充整体提速。
 - 正式/区间视频拼接共用内核帧端点生成的 concat 时长；不得以容器推断时长或仅总帧数通过替代帧时钟正确性。
+- [PNG 批量校验](<vtx/render/gfx_cli.py>)每调用最多两线程，外层页并发另计；并行不得省略完整字节校验或沿用旧摘要。

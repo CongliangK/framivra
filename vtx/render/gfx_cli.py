@@ -35,6 +35,7 @@ import zlib
 
 from ..runtime import fstxn
 from concurrent.futures import ThreadPoolExecutor
+from itertools import islice
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -249,6 +250,35 @@ def _png_stream_invalid_reason(stream, size, *, width=None, height=None,
         return f"不可读或截断（{e}）"
 
 
+def _bounded_ordered_map(one, items):
+    """Map lazily in ordered batches, with at most two tasks/threads per call.
+
+    Empty/single-item calls and single/unknown-CPU hosts stay sequential. Each
+    invocation owns and closes its executor, including on exceptions; there is
+    no shared queue or recursive parallelism inside a task. Outer concurrent
+    page callers can each add at most two workers, never a CPU-sized pool.
+    """
+    workers = min(2, os.cpu_count() or 1)
+    if workers == 1:
+        for item in items:
+            yield one(item)
+        return
+    items = iter(items)
+    batch = list(islice(items, workers))
+    if len(batch) < 2:
+        for item in batch:
+            yield one(item)
+        return
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        while batch:
+            # Executor.map eagerly submits its iterable on Python 3.9. Explicit
+            # batches bound both submissions and generator read-ahead to two.
+            pending = [executor.submit(one, item) for item in batch]
+            for future in pending:
+                yield future.result()
+            batch = list(islice(items, workers))
+
+
 def verify_frames(outdir, frames, *, width=None, height=None):
     """批量校验目标帧 PNG → [(帧号, 原因)]（空列表 = 全部有效）。
 
@@ -256,9 +286,12 @@ def verify_frames(outdir, frames, *, width=None, height=None):
     损坏帧各报其因——三者均不得当作缓存命中或已完成帧。
     """
     outdir = Path(outdir)
+
+    def one(i):
+        return i, png_invalid_reason(outdir / f"f{i:04d}.png", width=width, height=height)
+
     bad = []
-    for i in frames:
-        reason = png_invalid_reason(outdir / f"f{i:04d}.png", width=width, height=height)
+    for i, reason in _bounded_ordered_map(one, frames):
         if reason is not None:
             bad.append((i, reason))
     return bad
@@ -297,14 +330,17 @@ def _page_metadata(n, key, width, height, backend_ns=None):
 
 
 def _page_record(outdir, n, key, width, height, backend_ns=None):
-    digests, bad = [], []
-    for i in range(n):
+    def one(i):
         got = []
         reason = png_invalid_reason(Path(outdir) / f"f{i:04d}.png",
                                     width=width, height=height, _fingerprint=got)
+        return i, reason, got[0] if got else None
+
+    digests, bad = [], []
+    for i, reason, digest in _bounded_ordered_map(one, range(n)):
         if reason:
             bad.append((i, reason))
-        digests.append(got[0] if got else None)
+        digests.append(digest)
     record = _page_metadata(n, key, width, height, backend_ns)
     record['sha256'] = digests
     return record, bad

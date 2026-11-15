@@ -113,12 +113,12 @@ env VTX_TEST_CEF_WORKER="${CEF_WORKER:?}" \
 | `VTX_CEF_PAIR_SWAP` | `1` / `0\|1`；mode n+exact 双对交替预取，`0` 回退单对逐帧导航（进缓存身份） |
 | `VTX_CEF_CAPTURE_FPS` | `120` / `1..240`；OSR 采样率请求，签名/无见证两路同值，不是 timeline FPS |
 | `VTX_CEF_PNG_ENCODER`、`VTX_CEF_PNG_LEVEL`、`VTX_CEF_PNG_FILTER` | `spng` / `spng\|fpng\|zlib`；`1` / `1..3`；`sub_up` / `none\|sub\|up\|sub_up\|all` |
-| `VTX_CEF_ENCODE_THREADS` | `2` / `1..16`；当前每 worker 仅一帧在途，增加线程不等于帧编码并行 |
+| `VTX_CEF_ENCODE_THREADS` | `2` / `1..16`；编码池线程数，受深度 2 ticket 流水与捕获速度限制，不等于线程数倍加速 |
 | `VTX_GFX_PAGES`、`VTX_GFX_SPLIT_FRAMES`、`VTX_GFX_SPLIT_MAX` | `7` / `1..32`；`450` / `0..65536`（0 关闭分片）；`3` / `1..32` |
 
 页与帧块共用**一个**全局 worker 池；不是页数乘块数的嵌套池。末块才做整页完成认证。
-每 worker 最多一个原生请求在途、两个交替输出路径；下一请求与上一帧宿主校验/提交
-重叠，仍保原子文件事务和最终全帧校验。配置、实际 worker 与 Python 适配实现均绑定
+每 worker 最多两个原生请求在途、两个交替输出路径；下一帧捕获与上一帧编码及宿主
+校验/提交重叠，回执仍按请求序且晚于自身编码，保留原子事务和最终全帧校验。配置、实际 worker 与 Python 适配实现均绑定
 CEF 缓存身份；改变配置后的第一次运行不是同身份暖态。双浏览器有额外常驻开销，峰值
 RAM 变化未实测，不能假定翻倍或本机可承受；Mac 先以 `PAGES=1` 验正确性，再单独评估
 2/3/4，不默认推满 32；默认 7 不代表经过本机资源测定，线程上限亦非容量保证。
@@ -141,12 +141,13 @@ RAM 变化未实测，不能假定翻倍或本机可承受；Mac 先以 `PAGES=1
 timeline 帧率、尺寸、codec 与像素证明不变；日志记录请求值，配置变化仍使缓存身份变化。
 无见证浏览器仅在 readiness 后收集两次真实 paint 时复制快照，闲置签名浏览器不复制；
 丢弃的回调仍递增 native paint 序号，重新启用时清旧缓冲并建立新 floor，不减少证明样本。
-原生 capture 与 encode 目前仍串行；只有实测 encode 在 gfx 临界路径占比显著时才值得
-考虑双 ticket 流水，其理想单 worker 节省上界为 `min(C,E)/(C+E)`，不是线程数倍增。
+原生 capture 与 encode 已由深度 2 ticket 流水重叠；后续优化须测量未被隐藏的关键路径，
+不能再次把已重叠的编码时间计为新增收益，也不能把编码线程数当作加速倍数。
 
 构建后在 Mac 用真实 bundle 入口设置 `CEF_WORKER`，运行上面的原生测试；
 Linux 专属测试的 SKIP 不算 Mac 通过。`v2.2.0`（`7c76ab9`）是已冻结的源码发布
-基线，不是 CEF 优化版或 Mac 性能验收。**当前真实 CEF/Mac 全链性能仍为 UNRUN。**
+基线，不是 CEF 优化版或 Mac 性能验收。[#318](<https://github.com/CongliangK/framivra/pull/318>)
+保留已执行的 Mac 冷暖配对历史；当前版本仍须独立重测，不能沿用历史耗时作为新分母。
 
 配对评估入口是 [`scripts/gfx/bench_cef.py`](../../scripts/gfx/bench_cef.py) 的
 `plan/run/report`。只复用**原来已核验的 30 秒/900 帧/1080p30 HTML 派生输入**；
