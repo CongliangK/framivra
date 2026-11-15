@@ -6,11 +6,15 @@ Framivra（读 "frame-ee-vra"）是 B 站视频产线的程序仓。内核 `vtx/
 
 | 目录 / 入口 | 职责 |
 |---|---|
-| `vtx/` | 永不可关的内核：渲染、validate/QC、响度、缓存、`api.py` 与 `pluginlib/` |
-| `apps/`、`plugins/` | 独立素材/产线应用与 timeline 管线扩展；安装态、键与 hooks 见 [catalog](docs/catalog.md) |
+| [vtx](<vtx/README.md>) | 永不可关的内核：渲染、validate/QC、响度、缓存、`api.py` 与 `pluginlib/` |
+| [apps](<apps/README.md>)、[plugins](<plugins/README.md>) | 独立素材/产线应用与 timeline 管线扩展；安装态、键与 hooks 见 [catalog](docs/catalog.md) |
 | [dsh-sidebar/](dsh-sidebar/README.md) | DSH 侧栏插件：时间线预览、引用与显式剪辑；独立于 Python 内核发行 |
-| `docs/skill/`、`templates/` | 工具技能与[工作流/开发范本集合](templates/README.md) |
-| `scripts/`、`vt.py` | [仓级工具](scripts/README.md)；doctor、组件/模板 list/check、version、init 与链接修复 |
+| [docs](<docs/README.md>) | 文档总入口；[操作技能](<docs/skill/SKILL.md>)、指南、接口与开发资料 |
+| [templates](<templates/README.md>) | 工作流、工程示例与组件开发范本 |
+| [scripts](<scripts/README.md>)、[vt.py](<vt.py>) | 仓级工具；doctor、组件/模板 list/check、version、init 与链接修复 |
+| [tests](<tests/README.md>) | 分领域回归、验收运行器与测试证据 |
+| [experiments](<experiments/README.md>) | 可选后端与有界性能实验，不是默认生产入口 |
+| [.github](<.github/README.md>) | CI、专用验收与发行证明工作流 |
 
 关停后主链产物不可信的是内核；仍能可信出片的是可卸载组件。apps/plugins 每件自包含（app.json/plugin.json + 代码 + README + tests）。**可卸载不等于无依赖**：已启用插件可以依赖相应 app，不能删除依赖后继续宣称扩展生效；[协议与边界](docs/ARCHITECTURE.md#3-应用边界apps)为准。
 
