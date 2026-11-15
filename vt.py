@@ -257,19 +257,26 @@ class _AsrIndShim:
     def validate_base_url(base_url):
         if not base_url or not isinstance(base_url, str):
             raise _AsrIndShim.AsrIndependenceError("asr.base_url 缺失或非字符串")
-        u = urlparse(base_url)
-        if u.scheme != "http" or not u.hostname:
-            raise _AsrIndShim.AsrIndependenceError(
-                "asr.base_url 必须是 http://host:port 形式：%s" % base_url)
         try:
-            port = u.port or 80
+            if any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in base_url):
+                raise ValueError("whitespace/control character")
+            u = urlparse(base_url)
+            port = u.port if u.port is not None else 80
         except ValueError:
             raise _AsrIndShim.AsrIndependenceError(
-                "asr.base_url 端口非法：%s" % base_url) from None
+                "asr.base_url 端口或格式非法：%s" % base_url) from None
         if port == _ASR_IME_PORT:
             raise _AsrIndShim.AsrIndependenceError(
                 "asr.base_url 指向端口 %d（语音输入法 sidecar 专用）——禁止复用；默认 18085"
                 % _ASR_IME_PORT)
+        if (u.scheme != "http" or u.hostname not in ("127.0.0.1", "localhost")
+                or u.username is not None or u.password is not None
+                or u.path not in ("", "/") or u.params or u.query or u.fragment
+                or "?" in base_url or "#" in base_url or "\\" in base_url
+                or not 0 < port < 65536 or u.netloc.endswith(":")):
+            raise _AsrIndShim.AsrIndependenceError(
+                "asr.base_url 必须是本地 http://127.0.0.1:port（或 localhost），禁止凭据/路径/query")
+        return "http://127.0.0.1:%d" % port
 
 
 def cmd_init(a):
@@ -383,9 +390,13 @@ def cmd_init(a):
         _asr_ind.preflight_config(lc)
         _asr_ind.validate_base_url(str(asr_base))
         if asr_on:
-            req = urllib.request.Request(str(asr_base).rstrip("/") + "/health", method="GET")
-            with urllib.request.urlopen(req, timeout=0.5) as hr:
-                h = json.loads(hr.read().decode("utf-8"))
+            if _asr_ind is _AsrIndShim:
+                raise _asr_ind.AsrIndependenceError(
+                    "缺少 ASR app，无法证明本地端点归属；未发送 HTTP")
+            import client as _asr_client
+            h = _asr_client.health(str(asr_base), timeout=0.5)
+            if not h:
+                raise RuntimeError("本项目 sidecar 未运行或端点归属不可验证")
             rec("asr_sidecar", True, f"ok model={h.get('model', '?')}")
         else:
             rec("asr_sidecar", False,

@@ -120,17 +120,15 @@ def _load_config_for_gate():
     return data if isinstance(data, dict) else {}
 
 
-def ensure_venv_site():
-    """venv 整体搬家自愈：venv 的 site-packages 不在 sys.path 时（IME venv 历史上
-    从 ~/文档/type/ibus-voice-ime 移动过，pyvenv.cfg 记录旧路径致解析失联）显式补上。
-    只依赖 stdlib；幂等（已在 path 则不重复添加）。"""
-    venv_lib = Path(sys.executable).resolve().parent.parent / "lib"
-    for sp in sorted(venv_lib.glob("python*/site-packages")):
-        if str(sp) not in sys.path and (sp / "qwen_asr").exists():
-            sys.path.insert(0, str(sp))
-            _log("⚠ venv site-packages 失联已自愈：%s" % sp)
-            return True
-    return False
+def _verify_runtime_independence():
+    """Check dependency origins before the first model import, never repair sys.path."""
+    ind = _ind()
+    if not sys.flags.isolated:
+        raise ind.AsrIndependenceError(
+            "sidecar 模型运行必须使用专属解释器的 -I 隔离模式，拒绝当前进程的 Python 路径注入")
+    py = ind.verify_interpreter(sys.executable, "sidecar 解释器")
+    for module in ("qwen_asr", "torch"):
+        ind.verify_module_from_own_env(py, module, "sidecar 解释器")
 
 
 # ================================================================ §3.4 words[] 构造（纯函数，stdlib only）
@@ -441,6 +439,7 @@ class ModelHolder:
         comp = companion_path(self.asr_path)
         tried = set()
         with self._gpu_admission_locked(self.asr_path, self.device_map):
+            _verify_runtime_independence()
             from qwen_asr import Qwen3ASRModel  # 延迟 import：准入通过后才动依赖
             kw = {"dtype": self._torch_dtype(), "device_map": self.device_map,
                   "max_inference_batch_size": 1, "max_new_tokens": self.max_new_tokens}
@@ -468,6 +467,11 @@ class ModelHolder:
                         if comp and comp not in tried:
                             # 次级保护（准入为主保护）：同根 companion 降档重试
                             _log("⚠ 显存不足（%s）→ 自动换挡 %s" % (exc, comp))
+                            # A sibling path is not ownership evidence: it may be
+                            # a symlink or contain borrowed weights independently
+                            # of the already-audited initial model.
+                            comp = _ind().verify_model_dir(
+                                comp, "OOM companion", check_weights=True)
                             attempts.append(comp)
                             continue
                     # 只回收自有资源：模型未就位不留残（模型对象交由 GC，
@@ -726,9 +730,16 @@ def main():
     ap.add_argument("--once-health", action="store_true", help="init 冒烟：起服务→自检 /health→退出")
     args = ap.parse_args()
     _ARGS = args
-    ensure_venv_site()      # venv 搬家自愈（必须在一切延迟 import qwen_asr 之前）
-
     ind = _ind()
+    cfg = _load_config_for_gate()
+    try:
+        # Direct execution must have the same boundaries as the client route,
+        # even for the zero-model health smoke. Never scan/repair external sites.
+        ind.preflight_config(cfg)
+        ind.verify_interpreter(sys.executable, "sidecar 解释器")
+    except ind.AsrIndependenceError as exc:
+        print("✗ %s" % exc, file=sys.stderr)
+        return 2
     # 端口防御（issue #141 fail-closed，先于一切资产解析）：18081 是语音输入法
     # sidecar 专用端口，绝不绑定（这是拒绝，不是探测）；其他占用照旧报错不静默换端口。
     if args.port == IME_PORT:
@@ -808,11 +819,15 @@ def main():
     # 硬边界与解析后资产审计（更 specific 的安全拒绝）先给出诊断。
     # --once-health 豁免——那是 init 准备冒烟（零模型加载零 GPU，秒起秒退），
     # 不是禁用绕过路径。
-    if not args.once_health and not ind.asr_enabled(_load_config_for_gate()):
+    if not args.once_health and not ind.asr_enabled(cfg):
         print("✗ asr.enabled 未启用——直接启动 sidecar 被拒绝（issue #142 门禁："
               "禁用态不启动/不预热/不转写/不加载模型）。--once-health 为 init "
               "准备冒烟不受限；启用：config.local.json 写 \"asr\": {\"enabled\": true}",
               file=sys.stderr)
+        return 2
+
+    if not args.once_health and not sys.flags.isolated:
+        print("✗ sidecar 模型服务须以专属解释器 -I 启动，拒绝 Python 路径注入", file=sys.stderr)
         return 2
 
     _HOLDER = ModelHolder(model_path, aligner_path=aligner_path,

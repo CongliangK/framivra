@@ -16,7 +16,9 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p "$TMP/repo/apps/asr" "$TMP/bin" "$TMP/home"
-cp "$ASR/init.sh" "$ASR/sidecar_server.py" "$TMP/repo/apps/asr/"
+cp "$ASR/init.sh" "$ASR/sidecar_server.py" "$ASR/client.py" "$ASR/independence.py" "$TMP/repo/apps/asr/"
+mkdir -p "$TMP/repo/vtx/pluginlib"
+cp "$ASR/../../vtx/pluginlib/config.py" "$TMP/repo/vtx/pluginlib/"
 export REAL_PY HOME="$TMP/home"
 export PATH="$TMP/bin:$PATH" CALL_LOG="$TMP/calls"
 export STUB_READY=0
@@ -42,11 +44,13 @@ cat > "$TMP/bin/fake-python" <<'SH'
 [[ "${1:-}" == -I ]] && shift
 case "${1:-}" in
   -c)
-    if [[ "$2" == *qwen_asr* || "$2" == *modelscope* ]]; then
+    if [[ "$2" == *qwen_asr* || "$2" == *torch* ]]; then
       [[ "$STUB_READY" == 1 ]] || exit 1
-      if [[ "$2" == *dirname* ]]; then
-        # 依赖来源探测：报告装在自身 venv 环境根内
-        echo "$(cd "$(dirname "$(dirname "$0")")" && pwd)/lib/python3.12/site-packages/qwen_asr/__init__.py"
+      if [[ "$2" == *find_spec* ]]; then
+        # 依赖来源探测：报告装在自身 venv 环境根内。
+        module=qwen_asr
+        [[ "$2" == *torch* ]] && module=torch
+        echo "$(cd "$(dirname "$(dirname "$0")")" && pwd)/lib/python3.12/site-packages/$module/__init__.py"
       else
         echo stub-version
       fi
@@ -191,7 +195,10 @@ export STUB_READY=0
 run 1
 no_calls
 contains "$TMP/output" '缺 qwen_asr 包'
-contains "$TMP/output" '缺 modelscope 包'
+# ModelScope is not a runtime dependency; its legacy downloader remains gated.
+if grep -q 'import modelscope' "$TMP/output"; then
+  echo 'FAIL: local init probed the blocked legacy downloader dependency' >&2; exit 1
+fi
 contains "$TMP/output" '旧 --download 为 BLOCKED'
 contains "$TMP/output" '固定快照模型下载不安装运行环境'
 if grep -q '自行执行：' "$TMP/output"; then
