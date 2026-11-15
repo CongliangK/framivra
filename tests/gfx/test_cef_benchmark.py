@@ -748,10 +748,10 @@ class ReportContracts(_TemporaryCase):
             else:
                 with execution.task('qc', kind='stage').scope() as qc_task:
                     if rebuild:
-                        for _ in range(repeats):
+                        for index in range(repeats):
                             with execution.task('gfx', parent=qc_task, kind='stage').scope():
                                 if commit:
-                                    produce('gfx', gfx_ok)
+                                    produce('gfx', gfx_ok[index] if isinstance(gfx_ok, tuple) else gfx_ok)
                     produce('qc')
             with mock.patch.object(stream, 'close'):
                 execution.finish(exit_code if phase == 'strict' else 0)
@@ -815,6 +815,27 @@ class ReportContracts(_TemporaryCase):
                 else:
                     ref[{'wrong-run':'run_id', 'wrong-task':'task_id', 'wrong-event':'event_id'}[fault]] = (
                         [ref['run_id'], 999999] if fault == 'wrong-event' else 'foreign')
+                self.bind_evidence(row, row['receipt_path'], json.dumps(receipts['strict']))
+                summary = self.report()
+                self.assertFalse(summary['qualified'])
+                self.assertFalse(summary['goal_met'])
+                self.assertIn('strict receipt gfx has invalid or swapped observation linkage',
+                              summary['runs'][0]['issues'])
+
+    def test_failed_strict_gfx_commit_cannot_fall_back_to_earlier_success(self):
+        for outcomes, link in (((False,), 'all'), ((True, False), 'all'),
+                               ((True, False), 'earlier-strict'), ((True, False), 'latest-failed')):
+            with self.subTest(outcomes=outcomes, link=link):
+                row, receipts, refs = self.linked_receipts(repeats=len(outcomes), gfx_ok=outcomes)
+                ref = receipts['strict']['stages']['gfx']['observed_by']
+                if link == 'all':
+                    ref.update(refs['all']['gfx'])
+                elif link == 'earlier-strict':
+                    events = [json.loads(line) for line in
+                              (self.root / row['strict_events_path']).read_text().splitlines()]
+                    first = next(e for e in events if e['event'] == 'receipt_commit' and e['stage'] == 'gfx')
+                    self.assertEqual(first['outcome'], 'succeeded')
+                    ref.update({key:first[key] for key in ('run_id','task_id','event_id')})
                 self.bind_evidence(row, row['receipt_path'], json.dumps(receipts['strict']))
                 summary = self.report()
                 self.assertFalse(summary['qualified'])

@@ -721,10 +721,11 @@ def _analyze_run(run, index, base_dir, plan):
         issues.append("all and strict QC reused the same execution ID")
     expected_all = {stage: observation.get("run_id") for stage in STAGES}
     expected_strict = dict(expected_all, qc=strict_observation.get("run_id"))
-    # Standalone strict QC can rebuild gfx. Only a validated successful commit
-    # advances that producer; stage presence or an arbitrary matching run cannot.
+    # Standalone strict QC can rebuild gfx. Any validated commit supersedes the
+    # old producer, including a failed commit (which cannot supply a valid link).
+    # Stage presence alone or an arbitrary matching run cannot advance it.
     if (strict_observation.get("status") == "complete" and strict_observation.get("exit_code") == 0
-            and any(event["stage"] == "gfx" and event["outcome"] == "succeeded"
+            and any(event["stage"] == "gfx"
                     for event in strict_observation.get("receipt_commits", []))):
         expected_strict["gfx"] = strict_observation.get("run_id")
     linkage = {"all": _receipt_links(all_receipt_raw, [observation], expected_all, issues, "all"),
