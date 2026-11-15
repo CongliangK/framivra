@@ -1,6 +1,13 @@
 # Test suites
 
-Run all unit-test discovery from the repository root:
+Kernel regressions, acceptance runners, and evidence fixtures live here; app,
+plugin, and template tests remain with their components. For the complete
+cross-directory runner and its prerequisites, use the
+[contribution guide](<../CONTRIBUTING.md#测试入口>); it includes the separate music
+pytest suite, which the command below does not run.
+
+Tests may create temporary files or launch local tools. Run this directory's
+unit-test discovery from the repository root:
 
 ```sh
 python3 -m unittest discover -s tests -t . -v

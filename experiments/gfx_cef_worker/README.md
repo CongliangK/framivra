@@ -383,7 +383,7 @@ experiments/gfx_cef_worker/build/bin/vtx_cef_worker --sanity
   读写侧；回执严格按请求序、且晚于该帧自身编码完成（宿主收到即读文件，
   原子写保证完整，alpha/png/disk 计时仍归属本帧）；编码失败/超时为保守
   失败（非 OK 回执 + 整个 serve exit 4，不静默丢帧、不留半写文件），详见
-  [协议 §3/§4](IPC_PROTOCOL.md#3-帧槽framelot--回执)。
+  [协议 §3](<IPC_PROTOCOL.md#3-消息socket-控制流>) / [§4](<IPC_PROTOCOL.md#4-请求交付时序>)。
 - **帧正确性**：OnPaint 任意行步长逐行紧凑拷入槽（杜绝跨行斜纹）+
   (0,0) 金丝雀像素核实帧号（不符即拒绝计数）+ 槽头 run_id 跨 run 残帧
   拒收；SIMD 逆预乘与 #109 标量公式 (c,a) 全组合穷举一致。
