@@ -448,7 +448,7 @@ class TestResourceAdmission(MatrixBase):
 
     def _fake_smi(self, total, used):
         script = self.bin / "nvidia-smi"
-        script.write_text("#!/bin/sh\necho '%d, %d'\n" % (total, used))
+        script.write_text("#!/bin/sh\necho '%d, %d, %d'\n" % (total, used, total - used))
         script.chmod(0o755)
         os.environ["PATH"] = "%s:%s" % (self.bin, self._path)
 
@@ -478,6 +478,33 @@ class TestResourceAdmission(MatrixBase):
         self.assertIn("显存不足", d["reason"])
         self.assertIn("绝不", d["reason"], "必须明示绝不停外部服务")
 
+    def test_driver_reserved_memory_not_available_for_admission(self):
+        """RTX4080 observation: total-used=14631 includes 351 MiB reserved."""
+        with mock.patch.object(independence.subprocess, "run", return_value=SimpleNamespace(
+                returncode=0, stdout="16376, 1745, 14280\n")) as run:
+            d = independence.gpu_admission(14500, device="cuda:0")
+        run.assert_called_once_with(
+            [independence.NVIDIA_SMI, "--query-gpu=memory.total,memory.used,memory.free",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10)
+        self.assertFalse(d["allowed"])
+        self.assertEqual(d["free_mib"], 14280)
+        self.assertEqual(d["total_mib"], 16376)
+        self.assertEqual(d["required_mib"], 14500)
+        self.assertIn("显存不足", d["reason"])
+
+    def test_invalid_reported_memory_fail_closed(self):
+        for output in ("16376, 1745", "16376, 1745, N/A", "16376, 1745, -1",
+                       "16376, 1745, 14632", "0, 0, 0", "16376, -1, 14280",
+                       "16376, 16377, 0", "16376, 1745, 14280\ninvalid"):
+            with self.subTest(output=output), mock.patch.object(
+                    independence.subprocess, "run", return_value=SimpleNamespace(
+                        returncode=0, stdout=output)):
+                d = independence.gpu_admission(14500, device="cuda:0")
+                self.assertFalse(d["allowed"])
+                self.assertIsNone(d["free_mib"])
+                self.assertIn("fail-closed", d["reason"])
+
     def test_sufficient_vram_allowed(self):
         self._fake_smi(16376, 4000)      # free=12376 ≥ 预算
         d = independence.gpu_admission(3072, device="cuda:0")
@@ -486,7 +513,7 @@ class TestResourceAdmission(MatrixBase):
     def _fake_smi_multi(self, pairs):
         """多卡假 nvidia-smi：pairs = [(total, used), ...]，每卡一行。"""
         script = self.bin / "nvidia-smi"
-        lines = "".join("echo '%d, %d'\n" % (t, u) for t, u in pairs)
+        lines = "".join("echo '%d, %d, %d'\n" % (t, u, t - u) for t, u in pairs)
         script.write_text("#!/bin/sh\n" + lines)
         script.chmod(0o755)
         os.environ["PATH"] = "%s:%s" % (self.bin, self._path)
@@ -589,7 +616,7 @@ class TestResourceAdmission(MatrixBase):
     def test_sidecar_warm_admission_denied_500_no_model(self):
         """服务内 /warm：显存不足 → 500 + 中文诊断，模型不加载（准入先于 import）。"""
         script = self.bin / "nvidia-smi"
-        script.write_text("#!/bin/sh\necho '16376, 16000'\n")
+        script.write_text("#!/bin/sh\necho '16376, 16000, 376'\n")
         script.chmod(0o755)
         port = free_port()
         base = "http://127.0.0.1:%d" % port
