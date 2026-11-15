@@ -546,7 +546,9 @@ def _equal(digests):
 
 def _receipt_links(receipt, observations, expected, issues, label):
     """Legacy missing links stay unknown; contradictory present links reject."""
-    commits = [row for observation in observations for row in observation.get("receipt_commits", [])]
+    commits = [row for observation in observations
+               if observation.get("status") == "complete" and observation.get("exit_code") == 0
+               for row in observation.get("receipt_commits", [])]
     linked, absent = 0, 0
     for stage in STAGES:
         row = _dict(_dict(_dict(receipt).get("stages")).get(stage))
@@ -554,11 +556,12 @@ def _receipt_links(receipt, observations, expected, issues, label):
         if ref is None:
             absent += 1
             continue
-        matches = [event for event in commits if event["stage"] == stage
-                   and event["run_id"] == expected.get(stage)
-                   and event["outcome"] == "succeeded"
-                   and ref == {key: event[key] for key in ("run_id", "task_id", "event_id")}]
-        if len(matches) == 1:
+        producers = [event for event in commits if event["stage"] == stage
+                     and event["run_id"] == expected.get(stage)]
+        # A repeated stage supersedes its earlier receipt, not merely its run ID.
+        latest = producers[-1] if producers else {}
+        if (latest.get("outcome") == "succeeded"
+                and ref == {key: latest[key] for key in ("run_id", "task_id", "event_id")}):
             linked += 1
         else:
             issues.append(label + " receipt " + stage + " has invalid or swapped observation linkage")
@@ -717,9 +720,16 @@ def _analyze_run(run, index, base_dir, plan):
     if observation.get("run_id") and observation.get("run_id") == strict_observation.get("run_id"):
         issues.append("all and strict QC reused the same execution ID")
     expected_all = {stage: observation.get("run_id") for stage in STAGES}
+    expected_strict = dict(expected_all, qc=strict_observation.get("run_id"))
+    # Standalone strict QC can rebuild gfx. Only a validated successful commit
+    # advances that producer; stage presence or an arbitrary matching run cannot.
+    if (strict_observation.get("status") == "complete" and strict_observation.get("exit_code") == 0
+            and any(event["stage"] == "gfx" and event["outcome"] == "succeeded"
+                    for event in strict_observation.get("receipt_commits", []))):
+        expected_strict["gfx"] = strict_observation.get("run_id")
     linkage = {"all": _receipt_links(all_receipt_raw, [observation], expected_all, issues, "all"),
                "strict": _receipt_links(receipt_raw, [observation, strict_observation],
-                                        dict(expected_all, qc=strict_observation.get("run_id")), issues, "strict")}
+                                        expected_strict, issues, "strict")}
     native = _native(evidence, run.get("native_paths"), observation.get("run_id"))
     native["inherited_files"] = len(run.get("native_inherited_paths", [])) if isinstance(run.get("native_inherited_paths", []), list) else None
     elapsed = _dict(run.get("command")).get("elapsed_seconds")
