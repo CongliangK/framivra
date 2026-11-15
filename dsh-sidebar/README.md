@@ -10,4 +10,4 @@
 
 扫描不执行程序；安装与保存需明确确认。生成预览会写缓存，剪辑另行授权，加入草稿不会自动发送消息。
 
-适配 **DSH 0.2.2-rc.1 / Node ≥24.9.0**。[开发与验证记录](https://github.com/CongliangK/framivra/blob/main/integrations/dsh-sidebar/DEVELOPMENT.md) · [反馈问题](https://github.com/CongliangK/framivra/issues)
+适配 **DSH 0.2.2-rc.1 / Node ≥24.9.0**。[开发与验证记录](https://github.com/CongliangK/framivra/blob/main/dsh-sidebar/DEVELOPMENT.md) · [反馈问题](https://github.com/CongliangK/framivra/issues)

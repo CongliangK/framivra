@@ -1,6 +1,6 @@
 # Framivra DSH 侧栏 · 工作台视觉设计约定（DESIGN.md）
 
-范围：仅 `integrations/dsh-sidebar`（宿主内嵌 React 客户端）。目标气质：剪辑工具（CapCut/Premiere 式）——低持久文字、画面优先、密度紧凑、深色单色调。本文只记录已定决策，供后续修改对照。
+范围：仅 `dsh-sidebar`（宿主内嵌 React 客户端）。目标气质：剪辑工具（CapCut/Premiere 式）——低持久文字、画面优先、密度紧凑、深色单色调。本文只记录已定决策，供后续修改对照。
 
 ## 意图
 
