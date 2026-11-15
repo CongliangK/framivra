@@ -13,6 +13,12 @@ def spans(rows):
             'union_s': union([(r['start_s'], r['end_s']) for r in rows])}
 
 
+def qualified_median(rows, state):
+    values = [r['external_wall_s'] for r in rows
+              if r['name'].endswith('-' + state) and r['qualified_pair']]
+    return statistics.median(values) if values else None
+
+
 def summarize(root):
     identity = json.loads((root / 'identity.json').read_text())
     result = {'root': str(root), 'tabs': identity['environment']['VTX_GFX_TABS'], 'runs': [],
@@ -40,10 +46,22 @@ def summarize(root):
         reuse = root / name / 'cache-reuse.json'
         if reuse.exists():
             record['reuse'] = json.loads(reuse.read_text())
+        qualification = root / name / 'cdp-qualification.json'
+        record['cdp_qualification'] = json.loads(qualification.read_text()) if qualification.exists() else None
+        record['measurement_qualified'] = bool(resources['exit_code'] == 0
+            and observation['exit_code'] == 0 and events['evidence_complete'] and events['exit_code'] == 0
+            and record['cdp_qualification'] and record['cdp_qualification']['valid']
+            and (name.endswith('cold') or record.get('reuse', {}).get('all_existing_unchanged') is True))
         result['runs'].append(record)
+    for row in result['runs']:
+        pair = row['name'].rsplit('-', 1)[0]
+        members = [r for r in result['runs'] if r['name'].rsplit('-', 1)[0] == pair]
+        row['qualified_pair'] = (len(members) == 2 and
+            {r['name'].rsplit('-', 1)[1] for r in members} == {'cold', 'warm'} and
+            all(r['measurement_qualified'] for r in members))
     for state in ('cold', 'warm'):
-        values = [r['external_wall_s'] for r in result['runs'] if r['name'].endswith(state)]
-        result[state + '_median_s'] = statistics.median(values) if values else None
+        result[state + '_median_s'] = qualified_median(result['runs'], state)
+    result['aggregation_boundary'] = 'Only complete measured cold/warm pairs qualify; failed/incomplete/unqualified attempts remain listed. This does not grant independent quality or performance acceptance.'
     return result
 
 

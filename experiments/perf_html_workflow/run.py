@@ -86,7 +86,7 @@ def command(argv, directory, env):
               'sampled_cpu_s': sum(x['cpu_s'] for x in maxima.values()),
               'sampled_read_bytes': sum(x['read_bytes'] for x in maxima.values()),
               'sampled_write_bytes': sum(x['write_bytes'] for x in maxima.values()),
-              'resource_boundary': '100ms process-tree samples; lower bounds, short-lived children may be missed; RSS sums include shared pages',
+              'resource_boundary': '100ms samples: CPU and summed-RSS peak lower bounds; short-lived children may be missed; RSS includes shared pages; Linux tree IO sums may double-count waited-for children and are not physical IO or lower bounds',
               'loadavg_before_after_end_only': list(os.getloadavg())}
     save(directory / 'resources.json', {'samples': samples, 'process_last_observations': maxima})
     save(directory / 'result.json', result)
@@ -128,9 +128,11 @@ def main():
         parser.error('tabs and pairs must be positive')
     root = args.output.resolve()
     root.mkdir(parents=True, exist_ok=False)
+    config = root / 'study-config.json'
+    save(config, {})  # Pin default core policy; never inherit a checkout's local config.
     ffmpeg, chrome = args.ffmpeg.resolve(), args.chrome.resolve()
     env = {k: v for k, v in os.environ.items() if not k.startswith('VTX_')}
-    env.update(FIXED_ENV, VTX_GFX_TABS=str(args.tabs), VTX_CHROME=str(chrome),
+    env.update(FIXED_ENV, VTX_CONFIG=str(config), VTX_GFX_TABS=str(args.tabs), VTX_CHROME=str(chrome),
                PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1', TMPDIR=str(args.tmpdir.resolve(strict=True)),
                PATH=str(ffmpeg.parent) + os.pathsep + os.environ['PATH'])
     project_input = root / 'input'
@@ -151,7 +153,8 @@ def main():
                 'inputs': inputs, 'page_source': PAGE, 'environment': {k: v for k, v in env.items() if k.startswith('VTX_')},
                 'source_sha256': {str(p.relative_to(REPO)): sha(p) for base in ('vtx', 'experiments/perf_html_workflow')
                                   for p in sorted((REPO / base).rglob('*.py'))},
-                'tmpdir': env['TMPDIR'],
+                'tmpdir': env['TMPDIR'], 'config': {'path': str(config), 'sha256': sha(config), 'content': {}},
+                'cache_policy': 'core (default from fixed empty config)',
                 'cache_definition': 'cold=new project cache/out; warm=same project immediately rerun; OS page cache not cleared',
                 'unobserved': {k: {'value': None, 'reason': reason} for k, reason in {
                     'browser_png_encoder_s': 'CDP capture includes raster, encode, transport and JSON; no browser-internal timer',

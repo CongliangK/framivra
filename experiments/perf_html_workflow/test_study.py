@@ -10,11 +10,19 @@ from unittest import mock
 from experiments.perf_html_workflow import observe
 from experiments.perf_html_workflow.quality import audio_timeline, png_inventory
 from vtx.cache import session as cache_session
-from experiments.perf_html_workflow.summarize import spans
+from experiments.perf_html_workflow.summarize import spans, qualified_median
 from vtx.render import gfx_render
 
 
 class SpanTests(unittest.TestCase):
+    def test_median_excludes_unqualified_pairs_but_retains_observations(self):
+        rows = [{'name': '1-cold', 'external_wall_s': 1, 'qualified_pair': False},
+                {'name': '2-cold', 'external_wall_s': 10, 'qualified_pair': True},
+                {'name': '3-cold', 'external_wall_s': 12, 'qualified_pair': True}]
+        self.assertEqual(qualified_median(rows, 'cold'), 11)
+        self.assertIsNone(qualified_median(rows, 'warm'))
+        self.assertEqual(len(rows), 3)
+
     def test_overlapping_work_is_not_wall_union_and_failures_remain(self):
         result = spans([{'start_s': 0, 'end_s': 3, 'status': 'ok'},
                         {'start_s': 1, 'end_s': 4, 'status': 'failed'},

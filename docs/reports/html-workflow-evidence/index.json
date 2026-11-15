@@ -1,0 +1,1073 @@
+{
+  "schema": "html-workflow-study-evidence/1",
+  "issue": "https://github.com/CongliangK/framivra/issues/346",
+  "measured_source_head": "67cf6d57a33726c73e2580b8ffc1b45ecf7bd620",
+  "runtime_base_commit": "d5d57c16b2e4b9a1bf439c22ecf4b5cc1d4648c9",
+  "measurement_window": "2026-11-14 Asia/Shanghai; UTC timestamps per command records",
+  "workload": "Unchanged public chart_curve.html,600f/20s/1920x1080/30fps,deterministic220Hz tone; actual all chain, not a complete narrated episode or mainSVG900f benchmark",
+  "inputs_sha256": {
+    "gfx/chart_curve.html": "a4963d195649d7e3351854b35c707ad669262a86ea06a4bb73d8ccf3aca5da9b",
+    "timeline.json": "a4295321ad34120672ac12ecddce17b89e1cedf2b522a8cfa313d754634c2c63",
+    "tone.wav": "000509e01b8f4dcb09a53a8b197758ecd4e384bbc67f72f85256385b8a66efa0"
+  },
+  "host": {
+    "cpu": "AMD Ryzen9 7950X 16-core/32-thread",
+    "memory_bytes": 66379497472,
+    "platform": "Linux-7.2.15-200.fc44.x86_64-x86_64-with-glibc2.43"
+  },
+  "tool_versions": {
+    "python": "Python 3.12.13",
+    "chrome": "Google Chrome 157.0.8103.38 ",
+    "ffmpeg": "ffmpeg version n8.1.3-35-gf1acb0a266-20261114 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe": "ffprobe version n8.1.3-35-gf1acb0a266-20261114 Copyright (c) 2007-2026 the FFmpeg developers"
+  },
+  "configuration": {
+    "VTX_GFX": "cdp",
+    "VTX_GFX_PAGES": "7",
+    "VTX_GFX_SPLIT_FRAMES": "450",
+    "VTX_GFX_SPLIT_MAX": "3",
+    "VTX_GFX_NAVFREE": "0",
+    "VTX_GFX_STATIC": "1",
+    "VTX_VIDEO_SEGMENTS": "1",
+    "VTX_IO_WORKERS": "2",
+    "VTX_PIPELINE": "1",
+    "VTX_NO_NVENC": "1",
+    "VTX_SEG_NVENC": "0",
+    "VTX_FILTER_THREADS": "1",
+    "VTX_GFX_TABS": "4",
+    "VTX_CHROME": "/opt/google/chrome/google-chrome"
+  },
+  "quality_comparison": {
+    "schema": "html-study-comparison/1",
+    "all_equal": {
+      "png_bytes": true,
+      "png_rgba": true,
+      "video": true,
+      "audio": true,
+      "audio_timing": true
+    },
+    "quality": [
+      {
+        "arm": "A1",
+        "state": "cold",
+        "status": "passed",
+        "png_bytes": "2f2e17c2d6d8f48afddd4ceded37d84f546c2f2a4ffc30fd3f25a87f5cbed81b",
+        "png_rgba": "3af82b07bea42abceedbf7f7a827d7ca1565f827b2aea444972446ce652c8660",
+        "video": "ef76bfaddb85b69384b02ef6787330ff4208c6b2dbe84f4e5c99930c1ede1187",
+        "audio": "2b5e8652d0d33a40a93929e29ebd6749986672acd0a77a1282230e8f969407c6",
+        "audio_timing": "03cbc6e54ffdb748bf72b509565782c7eecfb16a8c7301c115b8bf83f276f6dd",
+        "no_black": true
+      },
+      {
+        "arm": "A1",
+        "state": "warm",
+        "status": "passed",
+        "png_bytes": "2f2e17c2d6d8f48afddd4ceded37d84f546c2f2a4ffc30fd3f25a87f5cbed81b",
+        "png_rgba": "3af82b07bea42abceedbf7f7a827d7ca1565f827b2aea444972446ce652c8660",
+        "video": "ef76bfaddb85b69384b02ef6787330ff4208c6b2dbe84f4e5c99930c1ede1187",
+        "audio": "2b5e8652d0d33a40a93929e29ebd6749986672acd0a77a1282230e8f969407c6",
+        "audio_timing": "03cbc6e54ffdb748bf72b509565782c7eecfb16a8c7301c115b8bf83f276f6dd",
+        "no_black": true
+      },
+      {
+        "arm": "B1",
+        "state": "cold",
+        "status": "passed",
+        "png_bytes": "2f2e17c2d6d8f48afddd4ceded37d84f546c2f2a4ffc30fd3f25a87f5cbed81b",
+        "png_rgba": "3af82b07bea42abceedbf7f7a827d7ca1565f827b2aea444972446ce652c8660",
+        "video": "ef76bfaddb85b69384b02ef6787330ff4208c6b2dbe84f4e5c99930c1ede1187",
+        "audio": "2b5e8652d0d33a40a93929e29ebd6749986672acd0a77a1282230e8f969407c6",
+        "audio_timing": "03cbc6e54ffdb748bf72b509565782c7eecfb16a8c7301c115b8bf83f276f6dd",
+        "no_black": true
+      },
+      {
+        "arm": "B1",
+        "state": "warm",
+        "status": "passed",
+        "png_bytes": "2f2e17c2d6d8f48afddd4ceded37d84f546c2f2a4ffc30fd3f25a87f5cbed81b",
+        "png_rgba": "3af82b07bea42abceedbf7f7a827d7ca1565f827b2aea444972446ce652c8660",
+        "video": "ef76bfaddb85b69384b02ef6787330ff4208c6b2dbe84f4e5c99930c1ede1187",
+        "audio": "2b5e8652d0d33a40a93929e29ebd6749986672acd0a77a1282230e8f969407c6",
+        "audio_timing": "03cbc6e54ffdb748bf72b509565782c7eecfb16a8c7301c115b8bf83f276f6dd",
+        "no_black": true
+      },
+      {
+        "arm": "B2",
+        "state": "cold",
+        "status": "passed",
+        "png_bytes": "2f2e17c2d6d8f48afddd4ceded37d84f546c2f2a4ffc30fd3f25a87f5cbed81b",
+        "png_rgba": "3af82b07bea42abceedbf7f7a827d7ca1565f827b2aea444972446ce652c8660",
+        "video": "ef76bfaddb85b69384b02ef6787330ff4208c6b2dbe84f4e5c99930c1ede1187",
+        "audio": "2b5e8652d0d33a40a93929e29ebd6749986672acd0a77a1282230e8f969407c6",
+        "audio_timing": "03cbc6e54ffdb748bf72b509565782c7eecfb16a8c7301c115b8bf83f276f6dd",
+        "no_black": true
+      },
+      {
+        "arm": "B2",
+        "state": "warm",
+        "status": "passed",
+        "png_bytes": "2f2e17c2d6d8f48afddd4ceded37d84f546c2f2a4ffc30fd3f25a87f5cbed81b",
+        "png_rgba": "3af82b07bea42abceedbf7f7a827d7ca1565f827b2aea444972446ce652c8660",
+        "video": "ef76bfaddb85b69384b02ef6787330ff4208c6b2dbe84f4e5c99930c1ede1187",
+        "audio": "2b5e8652d0d33a40a93929e29ebd6749986672acd0a77a1282230e8f969407c6",
+        "audio_timing": "03cbc6e54ffdb748bf72b509565782c7eecfb16a8c7301c115b8bf83f276f6dd",
+        "no_black": true
+      },
+      {
+        "arm": "A2",
+        "state": "cold",
+        "status": "passed",
+        "png_bytes": "2f2e17c2d6d8f48afddd4ceded37d84f546c2f2a4ffc30fd3f25a87f5cbed81b",
+        "png_rgba": "3af82b07bea42abceedbf7f7a827d7ca1565f827b2aea444972446ce652c8660",
+        "video": "ef76bfaddb85b69384b02ef6787330ff4208c6b2dbe84f4e5c99930c1ede1187",
+        "audio": "2b5e8652d0d33a40a93929e29ebd6749986672acd0a77a1282230e8f969407c6",
+        "audio_timing": "03cbc6e54ffdb748bf72b509565782c7eecfb16a8c7301c115b8bf83f276f6dd",
+        "no_black": true
+      },
+      {
+        "arm": "A2",
+        "state": "warm",
+        "status": "passed",
+        "png_bytes": "2f2e17c2d6d8f48afddd4ceded37d84f546c2f2a4ffc30fd3f25a87f5cbed81b",
+        "png_rgba": "3af82b07bea42abceedbf7f7a827d7ca1565f827b2aea444972446ce652c8660",
+        "video": "ef76bfaddb85b69384b02ef6787330ff4208c6b2dbe84f4e5c99930c1ede1187",
+        "audio": "2b5e8652d0d33a40a93929e29ebd6749986672acd0a77a1282230e8f969407c6",
+        "audio_timing": "03cbc6e54ffdb748bf72b509565782c7eecfb16a8c7301c115b8bf83f276f6dd",
+        "no_black": true
+      },
+      {
+        "arm": "A3",
+        "state": "cold",
+        "status": "passed",
+        "png_bytes": "2f2e17c2d6d8f48afddd4ceded37d84f546c2f2a4ffc30fd3f25a87f5cbed81b",
+        "png_rgba": "3af82b07bea42abceedbf7f7a827d7ca1565f827b2aea444972446ce652c8660",
+        "video": "ef76bfaddb85b69384b02ef6787330ff4208c6b2dbe84f4e5c99930c1ede1187",
+        "audio": "2b5e8652d0d33a40a93929e29ebd6749986672acd0a77a1282230e8f969407c6",
+        "audio_timing": "03cbc6e54ffdb748bf72b509565782c7eecfb16a8c7301c115b8bf83f276f6dd",
+        "no_black": true
+      },
+      {
+        "arm": "A3",
+        "state": "warm",
+        "status": "passed",
+        "png_bytes": "2f2e17c2d6d8f48afddd4ceded37d84f546c2f2a4ffc30fd3f25a87f5cbed81b",
+        "png_rgba": "3af82b07bea42abceedbf7f7a827d7ca1565f827b2aea444972446ce652c8660",
+        "video": "ef76bfaddb85b69384b02ef6787330ff4208c6b2dbe84f4e5c99930c1ede1187",
+        "audio": "2b5e8652d0d33a40a93929e29ebd6749986672acd0a77a1282230e8f969407c6",
+        "audio_timing": "03cbc6e54ffdb748bf72b509565782c7eecfb16a8c7301c115b8bf83f276f6dd",
+        "no_black": true
+      },
+      {
+        "arm": "B3",
+        "state": "cold",
+        "status": "passed",
+        "png_bytes": "2f2e17c2d6d8f48afddd4ceded37d84f546c2f2a4ffc30fd3f25a87f5cbed81b",
+        "png_rgba": "3af82b07bea42abceedbf7f7a827d7ca1565f827b2aea444972446ce652c8660",
+        "video": "ef76bfaddb85b69384b02ef6787330ff4208c6b2dbe84f4e5c99930c1ede1187",
+        "audio": "2b5e8652d0d33a40a93929e29ebd6749986672acd0a77a1282230e8f969407c6",
+        "audio_timing": "03cbc6e54ffdb748bf72b509565782c7eecfb16a8c7301c115b8bf83f276f6dd",
+        "no_black": true
+      },
+      {
+        "arm": "B3",
+        "state": "warm",
+        "status": "passed",
+        "png_bytes": "2f2e17c2d6d8f48afddd4ceded37d84f546c2f2a4ffc30fd3f25a87f5cbed81b",
+        "png_rgba": "3af82b07bea42abceedbf7f7a827d7ca1565f827b2aea444972446ce652c8660",
+        "video": "ef76bfaddb85b69384b02ef6787330ff4208c6b2dbe84f4e5c99930c1ede1187",
+        "audio": "2b5e8652d0d33a40a93929e29ebd6749986672acd0a77a1282230e8f969407c6",
+        "audio_timing": "03cbc6e54ffdb748bf72b509565782c7eecfb16a8c7301c115b8bf83f276f6dd",
+        "no_black": true
+      }
+    ],
+    "B_over_A_paired_ratios": {
+      "cold": [
+        1.0583063002231894,
+        1.0845361784522978,
+        1.063028502488311
+      ],
+      "warm": [
+        0.9999912269145693,
+        1.002390412417707,
+        1.0006462779406289
+      ]
+    },
+    "median_paired_ratios": {
+      "cold": 1.063028502488311,
+      "warm": 1.0006462779406289
+    },
+    "cold_sampled_summed_rss_GiB": {
+      "A": [
+        5.683605194091797,
+        5.510959625244141,
+        5.741905212402344
+      ],
+      "B": [
+        4.346588134765625,
+        4.564029693603516,
+        4.372356414794922
+      ]
+    },
+    "rss_paired_ratios": [
+      0.7647589841891158,
+      0.8281733135363561,
+      0.7614818171067614
+    ],
+    "decision": "Do not change default tabs for speed: tabs2 slower cold in all pairs, warm unchanged; lower sampled summed RSS is a tradeoff, not a speed win."
+  },
+  "runs": [
+    {
+      "arm": "A1",
+      "tabs": "4",
+      "states": [
+        {
+          "name": "1-cold",
+          "qualified_pair": true,
+          "wall_s": 79.28359243000159,
+          "operations": {
+            "browser_start": {
+              "calls": 2,
+              "failed_calls": 0,
+              "work_s": 0.5889979359999415,
+              "union_s": 0.3008048029987549
+            },
+            "navigate_including_ready": {
+              "calls": 606,
+              "failed_calls": 0,
+              "work_s": 29.25188344200069,
+              "union_s": 8.195152715001313
+            },
+            "capture_png_transport_json": {
+              "calls": 608,
+              "failed_calls": 0,
+              "work_s": 52.17938071205208,
+              "union_s": 10.56209783000304
+            },
+            "atomic_png_write": {
+              "calls": 600,
+              "failed_calls": 0,
+              "work_s": 0.3256048039038433,
+              "union_s": 0.2992675289060571
+            },
+            "render_page": {
+              "calls": 2,
+              "failed_calls": 0,
+              "work_s": 27.79221833000338,
+              "union_s": 14.239735079001548
+            },
+            "hydrate_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 1.3815268729995296,
+              "union_s": 1.3815268729995296
+            },
+            "compact_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 17.484597054000915,
+              "union_s": 17.484597054000915
+            }
+          },
+          "stages": {
+            "validate": 1.356504422998114,
+            "audit": 1.2035113510028168,
+            "prepare": 3.0921241720025137,
+            "audio": 4.452725148999889,
+            "gfx": 23.96379159099888,
+            "video": 23.102536086000327,
+            "mux": 4.012261672000022,
+            "qc": 1.3932137029987643,
+            "finish": 0.04437457799940603
+          },
+          "sampled_peak_summed_rss_bytes": 6102724608,
+          "sampled_cpu_s": 136.8,
+          "reuse": null
+        },
+        {
+          "name": "1-warm",
+          "qualified_pair": true,
+          "wall_s": 68.02840418800042,
+          "operations": {
+            "browser_start": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "navigate_including_ready": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "capture_png_transport_json": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "atomic_png_write": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "render_page": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "hydrate_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 12.118797753002582,
+              "union_s": 12.118797753002582
+            },
+            "compact_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 11.184490366998944,
+              "union_s": 11.184490366998944
+            }
+          },
+          "stages": {
+            "validate": 1.356002553999133,
+            "audit": 1.2134410149992618,
+            "prepare": 3.080960881001374,
+            "audio": 4.220697384000232,
+            "gfx": 19.088185356002214,
+            "video": 23.059876694002014,
+            "mux": 3.9851863559997582,
+            "qc": 1.3892640899975959,
+            "finish": 0.043502339998667594
+          },
+          "sampled_peak_summed_rss_bytes": 1672286208,
+          "sampled_cpu_s": 94.87,
+          "reuse": {
+            "files_before": 1,
+            "all_existing_unchanged": true
+          }
+        }
+      ]
+    },
+    {
+      "arm": "B1",
+      "tabs": "2",
+      "states": [
+        {
+          "name": "1-cold",
+          "qualified_pair": true,
+          "wall_s": 83.90632537299825,
+          "operations": {
+            "browser_start": {
+              "calls": 2,
+              "failed_calls": 0,
+              "work_s": 0.5210410769977898,
+              "union_s": 0.2617884259998391
+            },
+            "navigate_including_ready": {
+              "calls": 606,
+              "failed_calls": 0,
+              "work_s": 14.30183012301859,
+              "union_s": 9.463157416015747
+            },
+            "capture_png_transport_json": {
+              "calls": 608,
+              "failed_calls": 0,
+              "work_s": 42.616655170964805,
+              "union_s": 15.307739658990613
+            },
+            "atomic_png_write": {
+              "calls": 600,
+              "failed_calls": 0,
+              "work_s": 0.294370348987286,
+              "union_s": 0.2895557779884257
+            },
+            "render_page": {
+              "calls": 2,
+              "failed_calls": 0,
+              "work_s": 37.174335716001224,
+              "union_s": 18.72711994099882
+            },
+            "hydrate_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 1.3488755149992357,
+              "union_s": 1.3488755149992357
+            },
+            "compact_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 17.523324661000515,
+              "union_s": 17.523324661000515
+            }
+          },
+          "stages": {
+            "validate": 1.3611189559997001,
+            "audit": 1.2104855299985502,
+            "prepare": 3.078433023998514,
+            "audio": 4.421445928997855,
+            "gfx": 28.479623767001613,
+            "video": 23.19477810600074,
+            "mux": 3.9795536150013504,
+            "qc": 1.3987199449984473,
+            "finish": 0.04419702800078085
+          },
+          "sampled_peak_summed_rss_bytes": 4667113472,
+          "sampled_cpu_s": 140.11,
+          "reuse": null
+        },
+        {
+          "name": "1-warm",
+          "qualified_pair": true,
+          "wall_s": 68.02780736899877,
+          "operations": {
+            "browser_start": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "navigate_including_ready": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "capture_png_transport_json": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "atomic_png_write": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "render_page": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "hydrate_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 12.14745757700075,
+              "union_s": 12.14745757700075
+            },
+            "compact_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 11.127283378998982,
+              "union_s": 11.127283378998982
+            }
+          },
+          "stages": {
+            "validate": 1.353879718000826,
+            "audit": 1.191852050000307,
+            "prepare": 3.0732944929986843,
+            "audio": 4.261716728000465,
+            "gfx": 19.06448280499899,
+            "video": 23.188979246002418,
+            "mux": 3.997801224999421,
+            "qc": 1.396809038000356,
+            "finish": 0.04399184900103137
+          },
+          "sampled_peak_summed_rss_bytes": 1652150272,
+          "sampled_cpu_s": 95.13000000000001,
+          "reuse": {
+            "files_before": 1,
+            "all_existing_unchanged": true
+          }
+        }
+      ]
+    },
+    {
+      "arm": "B2",
+      "tabs": "2",
+      "states": [
+        {
+          "name": "1-cold",
+          "qualified_pair": true,
+          "wall_s": 85.79160568000225,
+          "operations": {
+            "browser_start": {
+              "calls": 2,
+              "failed_calls": 0,
+              "work_s": 0.5255132800011779,
+              "union_s": 0.2639259730021877
+            },
+            "navigate_including_ready": {
+              "calls": 606,
+              "failed_calls": 0,
+              "work_s": 14.392350306039589,
+              "union_s": 9.678926117012452
+            },
+            "capture_png_transport_json": {
+              "calls": 608,
+              "failed_calls": 0,
+              "work_s": 45.35325257795557,
+              "union_s": 17.505096772001707
+            },
+            "atomic_png_write": {
+              "calls": 600,
+              "failed_calls": 0,
+              "work_s": 0.29224426302607753,
+              "union_s": 0.2897537370263308
+            },
+            "render_page": {
+              "calls": 2,
+              "failed_calls": 0,
+              "work_s": 39.251205900996865,
+              "union_s": 20.785196286997234
+            },
+            "hydrate_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 1.3595404189982219,
+              "union_s": 1.3595404189982219
+            },
+            "compact_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 17.49226905099931,
+              "union_s": 17.49226905099931
+            }
+          },
+          "stages": {
+            "validate": 1.33965595099653,
+            "audit": 1.1927504480008793,
+            "prepare": 3.084212794998166,
+            "audio": 4.384364629000629,
+            "gfx": 30.477234991998557,
+            "video": 23.09272774099736,
+            "mux": 4.050610299997061,
+            "qc": 1.391455657001643,
+            "finish": 0.044340317999740364
+          },
+          "sampled_peak_summed_rss_bytes": 4900589568,
+          "sampled_cpu_s": 137.62,
+          "reuse": null
+        },
+        {
+          "name": "1-warm",
+          "qualified_pair": true,
+          "wall_s": 68.10830358800013,
+          "operations": {
+            "browser_start": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "navigate_including_ready": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "capture_png_transport_json": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "atomic_png_write": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "render_page": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "hydrate_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 12.147181878000993,
+              "union_s": 12.147181878000993
+            },
+            "compact_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 11.182345999997779,
+              "union_s": 11.182345999997779
+            }
+          },
+          "stages": {
+            "validate": 1.3485106459993403,
+            "audit": 1.1996671669985517,
+            "prepare": 3.0558469610004977,
+            "audio": 4.291096141001617,
+            "gfx": 19.057258586999524,
+            "video": 23.17230062299859,
+            "mux": 4.057691178000823,
+            "qc": 1.3956412900006399,
+            "finish": 0.0440388079987315
+          },
+          "sampled_peak_summed_rss_bytes": 1651867648,
+          "sampled_cpu_s": 93.96,
+          "reuse": {
+            "files_before": 1,
+            "all_existing_unchanged": true
+          }
+        }
+      ]
+    },
+    {
+      "arm": "A2",
+      "tabs": "4",
+      "states": [
+        {
+          "name": "1-cold",
+          "qualified_pair": true,
+          "wall_s": 79.10442029000114,
+          "operations": {
+            "browser_start": {
+              "calls": 2,
+              "failed_calls": 0,
+              "work_s": 0.5647637650035904,
+              "union_s": 0.2887672120014031
+            },
+            "navigate_including_ready": {
+              "calls": 606,
+              "failed_calls": 0,
+              "work_s": 30.58930055395831,
+              "union_s": 8.845595235987275
+            },
+            "capture_png_transport_json": {
+              "calls": 608,
+              "failed_calls": 0,
+              "work_s": 50.578372525953455,
+              "union_s": 10.735013512003206
+            },
+            "atomic_png_write": {
+              "calls": 600,
+              "failed_calls": 0,
+              "work_s": 0.31487099698279053,
+              "union_s": 0.30728663897752995
+            },
+            "render_page": {
+              "calls": 2,
+              "failed_calls": 0,
+              "work_s": 27.56197088299814,
+              "union_s": 14.194231511999533
+            },
+            "hydrate_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 1.3436973840034625,
+              "union_s": 1.3436973840034625
+            },
+            "compact_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 17.523095282002032,
+              "union_s": 17.523095282002032
+            }
+          },
+          "stages": {
+            "validate": 1.3518316299996513,
+            "audit": 1.1985480190014641,
+            "prepare": 3.0643318370021007,
+            "audio": 4.369085414000438,
+            "gfx": 23.82673915200212,
+            "video": 23.122664581998833,
+            "mux": 3.9577377010027703,
+            "qc": 1.3923764850005682,
+            "finish": 0.044603506998100784
+          },
+          "sampled_peak_summed_rss_bytes": 5917347840,
+          "sampled_cpu_s": 136.83,
+          "reuse": null
+        },
+        {
+          "name": "1-warm",
+          "qualified_pair": true,
+          "wall_s": 67.94588490100068,
+          "operations": {
+            "browser_start": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "navigate_including_ready": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "capture_png_transport_json": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "atomic_png_write": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "render_page": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "hydrate_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 12.116359518000536,
+              "union_s": 12.116359518000536
+            },
+            "compact_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 11.150269682002545,
+              "union_s": 11.150269682002545
+            }
+          },
+          "stages": {
+            "validate": 1.355466515000444,
+            "audit": 1.2014952540012018,
+            "prepare": 3.0789161840002635,
+            "audio": 4.207615884999541,
+            "gfx": 19.012561668998387,
+            "video": 23.117370410996955,
+            "mux": 3.995978079001361,
+            "qc": 1.389067250998778,
+            "finish": 0.04423858800146263
+          },
+          "sampled_peak_summed_rss_bytes": 1711452160,
+          "sampled_cpu_s": 94.24,
+          "reuse": {
+            "files_before": 1,
+            "all_existing_unchanged": true
+          }
+        }
+      ]
+    },
+    {
+      "arm": "A3",
+      "tabs": "4",
+      "states": [
+        {
+          "name": "1-cold",
+          "qualified_pair": true,
+          "wall_s": 78.85193562900167,
+          "operations": {
+            "browser_start": {
+              "calls": 2,
+              "failed_calls": 0,
+              "work_s": 0.5607156719997874,
+              "union_s": 0.2841870200027188
+            },
+            "navigate_including_ready": {
+              "calls": 606,
+              "failed_calls": 0,
+              "work_s": 30.109865457983688,
+              "union_s": 8.834417256999586
+            },
+            "capture_png_transport_json": {
+              "calls": 608,
+              "failed_calls": 0,
+              "work_s": 50.497153850006725,
+              "union_s": 10.500261481996858
+            },
+            "atomic_png_write": {
+              "calls": 600,
+              "failed_calls": 0,
+              "work_s": 0.31651360105752246,
+              "union_s": 0.30389699306397233
+            },
+            "render_page": {
+              "calls": 2,
+              "failed_calls": 0,
+              "work_s": 27.378789689995756,
+              "union_s": 13.961958967996907
+            },
+            "hydrate_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 1.3511874220021127,
+              "union_s": 1.3511874220021127
+            },
+            "compact_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 17.495164536998345,
+              "union_s": 17.495164536998345
+            }
+          },
+          "stages": {
+            "validate": 1.3443704419987625,
+            "audit": 1.195964433001791,
+            "prepare": 3.059577005002211,
+            "audio": 4.428827828000067,
+            "gfx": 23.66151610000088,
+            "video": 23.050346369996987,
+            "mux": 3.9762987610010896,
+            "qc": 1.4052879740011122,
+            "finish": 0.044442558002629085
+          },
+          "sampled_peak_summed_rss_bytes": 6165323776,
+          "sampled_cpu_s": 137.1,
+          "reuse": null
+        },
+        {
+          "name": "1-warm",
+          "qualified_pair": true,
+          "wall_s": 67.82202554200194,
+          "operations": {
+            "browser_start": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "navigate_including_ready": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "capture_png_transport_json": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "atomic_png_write": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "render_page": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "hydrate_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 12.094901322001533,
+              "union_s": 12.094901322001533
+            },
+            "compact_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 11.154487554998923,
+              "union_s": 11.154487554998923
+            }
+          },
+          "stages": {
+            "validate": 1.3497432340009254,
+            "audit": 1.1978021999966586,
+            "prepare": 3.0623946609994164,
+            "audio": 4.214720735002629,
+            "gfx": 18.987577709001926,
+            "video": 23.06653512399862,
+            "mux": 3.9563763920014026,
+            "qc": 1.3950059109993163,
+            "finish": 0.0438849290003418
+          },
+          "sampled_peak_summed_rss_bytes": 1645772800,
+          "sampled_cpu_s": 94.04,
+          "reuse": {
+            "files_before": 1,
+            "all_existing_unchanged": true
+          }
+        }
+      ]
+    },
+    {
+      "arm": "B3",
+      "tabs": "2",
+      "states": [
+        {
+          "name": "1-cold",
+          "qualified_pair": true,
+          "wall_s": 83.82185505000234,
+          "operations": {
+            "browser_start": {
+              "calls": 2,
+              "failed_calls": 0,
+              "work_s": 0.5336375250008132,
+              "union_s": 0.2747071550002147
+            },
+            "navigate_including_ready": {
+              "calls": 606,
+              "failed_calls": 0,
+              "work_s": 13.974217937935464,
+              "union_s": 9.34943752898107
+            },
+            "capture_png_transport_json": {
+              "calls": 608,
+              "failed_calls": 0,
+              "work_s": 43.31620771997041,
+              "union_s": 15.258559347013943
+            },
+            "atomic_png_write": {
+              "calls": 600,
+              "failed_calls": 0,
+              "work_s": 0.29450781897685374,
+              "union_s": 0.2916063829761697
+            },
+            "render_page": {
+              "calls": 2,
+              "failed_calls": 0,
+              "work_s": 37.06860271700498,
+              "union_s": 18.723555317003047
+            },
+            "hydrate_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 1.391473206000228,
+              "union_s": 1.391473206000228
+            },
+            "compact_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 17.426322657996934,
+              "union_s": 17.426322657996934
+            }
+          },
+          "stages": {
+            "validate": 1.355401195000013,
+            "audit": 1.2082294930005446,
+            "prepare": 3.066955013000552,
+            "audio": 4.393646554999577,
+            "gfx": 28.454768548002903,
+            "video": 23.279024250001385,
+            "mux": 3.975164831997972,
+            "qc": 1.3921469849992718,
+            "finish": 0.04381140899931779
+          },
+          "sampled_peak_summed_rss_bytes": 4694781952,
+          "sampled_cpu_s": 139.35999999999999,
+          "reuse": null
+        },
+        {
+          "name": "1-warm",
+          "qualified_pair": true,
+          "wall_s": 67.86585742099851,
+          "operations": {
+            "browser_start": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "navigate_including_ready": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "capture_png_transport_json": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "atomic_png_write": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "render_page": {
+              "calls": 0,
+              "failed_calls": 0,
+              "work_s": 0,
+              "union_s": 0
+            },
+            "hydrate_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 12.067335096999159,
+              "union_s": 12.067335096999159
+            },
+            "compact_graphics": {
+              "calls": 1,
+              "failed_calls": 0,
+              "work_s": 11.190734135998355,
+              "union_s": 11.190734135998355
+            }
+          },
+          "stages": {
+            "validate": 1.3532996579997416,
+            "audit": 1.2013330339977983,
+            "prepare": 3.07954139299909,
+            "audio": 4.176462276001985,
+            "gfx": 18.92780441600189,
+            "video": 23.094427219002682,
+            "mux": 3.972832114999619,
+            "qc": 1.3838031199993566,
+            "finish": 0.04416655900058686
+          },
+          "sampled_peak_summed_rss_bytes": 1723568128,
+          "sampled_cpu_s": 94.02,
+          "reuse": {
+            "files_before": 1,
+            "all_existing_unchanged": true
+          }
+        }
+      ]
+    }
+  ],
+  "raw_archive": {
+    "path": "records.tar.xz",
+    "bytes": 2347168,
+    "sha256": "011ea790e411f22ac2264e6c1ed405cbf61d2168617a96c4e7e30310a86a8610",
+    "members": 543,
+    "manifest": "archive-manifest.json",
+    "includes": "All setup/failed/diagnostic/A-B command records, logs, observations, events, resources, input HTML/timeline/tone, identities, complete packed certificates, full per-frame pixel hashes, full video/audio frame timing hashes, decoded PCM, strictQC and source snapshots for corrected failed/diagnostic tools",
+    "excludes": "Large .vtxp packs and final movies remain at original local study root; archive has their SHA256 inventories and all-frame independent decoded evidence. Original tool binaries excluded; exact hashes/versions and verified release asset retained.",
+    "transport": "XZ with duplicate payloads stored as tar hardlinks; every logical member remains byte-identical and independently listed in archive-manifest.json"
+  },
+  "retained_local_root": "/home/liangruochong/.local/tmp/dsh/study-html-performance-9ea6ec97c7c4",
+  "sample_frames": [
+    {
+      "path": "frame-0060.png",
+      "sha256": "b86915c2593866cc9a5506b5cd430184e72e9f80c7eefff41fdac9d286050c50"
+    },
+    {
+      "path": "frame-0300.png",
+      "sha256": "f30977464f448bc46ce95d13c5e4944857f1409fdb08d5920eb3e6e545c39b10"
+    },
+    {
+      "path": "frame-0540.png",
+      "sha256": "ebfdb40168a1e1c1406bd99a2a08a65f215a533dad5e80ceaa6b4cca1a7cdf7f"
+    }
+  ],
+  "corrections": [
+    "Original process resource_boundary calls all metrics lower bounds. This is wrong for Linux per-process IO sums: waited-for child IO may be duplicated. IO is sampled aggregate, not physical/device IO or guaranteed lower bound; CPU and summed-RSS caveats stay separate. Raw records are not rewritten.",
+    "Actual runs had no config.local.json and no inherited VTX_CONFIG; default core policy confirmed in every stdout. Independently reviewed absence, not recorded contemporaneously by original runner. Current runner pins empty task-local config for reproducibility; this did not change measured runs.",
+    "Exploratory baseline-valid inventory omitted .vtxp and is not cache acceptance. Retained as diagnostics. Final A/B uses corrected full pack inventory; all six cold/warm pack identities unchanged.",
+    "Current summary excludes failed/incomplete/unqualified pairs from medians, but preserves every attempt. Original artifacts are immutable."
+  ],
+  "checks": {
+    "all": "12/12 exit0 complete events, cold600 CDP frames,warm0,no fallback",
+    "cache": "6/6 cold-warm packed cache SHA256+mtime unchanged",
+    "strict_qc": "6/6 exit0",
+    "independent_decode": "12/12 passed; all600 PNG and video frames with timestamps, audio samples/PTS; all cross-run identities equal",
+    "blackdetect": "12/12 no black frames",
+    "visual": "f60/300/540 inspected for fonts/layout; not artistic or user acceptance",
+    "unit": "90 tests passed (study12 + existingcost78); exact count in unit-tests.log",
+    "svg_main": "UNRUN",
+    "full_repository_suite": "UNRUN"
+  },
+  "decision": "Do not change tabs default for speed; candidate cold median paired ratio1.0630285,warm1.0006463; lower sampled summed RSS is a tradeoff. No production/default/CI changes."
+}
