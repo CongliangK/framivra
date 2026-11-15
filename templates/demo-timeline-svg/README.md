@@ -2,84 +2,79 @@
 
 这是一支 30 秒中文概念动效：JSON 编排画面、文字和同一个短声，再修改落点，承接到成片与品牌。`timeline.json` 是正式 v2 工程；`motion-plan.json` 是离线创作计划，不能交给 vtx 执行。产品以 `clip.format = svg-sequence` 读取静态 SVG，不执行生成器 JavaScript。
 
-## 可移植基线规范（迁移目标，尚未实现）
-
-本节落实[字体与音频可移植性要求](https://github.com/CongliangK/framivra/issues/345#issuecomment-6895329396)的设计约束，**不是已可运行的新基线**。下方仍是现行准备与验收契约；私下移交 WAV、固定生成环境与缺少公开字体获取流程是待消除的限制，不是推荐的新工程做法。默认入口、冻结输入及旧成绩在迁移完成前不变。
-
-- **字体选用与获取**：优先通用系统字体或业内标准公开字体，避免冷门、需特殊授权安装的字体。现有 Noto CJK / DejaVu 已是公开许可的标准字体，优先补齐获取流程而非无故换字形；不能把“系统同名”当作相同输入。新版须提供经实际下载核验的官方公开来源、固定发行文件与 SHA256，记录 family、字重、face index 和许可全文；缺字节时给出明确获取步骤，不要求私人移交。字体准备进入项目，渲染只读本地声明文件，不依赖用户全局安装、联网下载或静默 fallback。
-- **音频生成与设计**：新版以 Python 标准库的确定性 PCM 合成为最小路径，不要求 NumPy、外部音乐工程、模型、音色库或私人 WAV。明确整数运算、字节序、量化及 WAV 布局，不能以浮点数学函数跨平台逐字节相同为前提。保留非静音音乐 bed 与独立可复用短声、原时间线落点及两份 48kHz 双声道 PCM24 输入规格；不以静音、删音轨或把短声烘焙进 bed 降低混音覆盖。标准库仅替代输入制作，正式混音、封装和 QC 仍走产品完整链。
-- **版本与证据**：字体、音频或生成源码等输入变化必须建立明确的新基线身份；旧源码、字体/音频锁、许可和成绩保持原身份，可从固定版本恢复。新版需独立复核生成与输入锁、完整 900 帧及音频、全链 QC 和实际视听；新旧负载不混算性能，不回写旧 hash 冒充一致。默认 `prepare/verify`、旧准备回执及发布验收的迁移须经维护方评审；涉及 CI / 门禁的任何改动均须按[写态红线](../../AGENTS.md#写态红线)另获明确批准，保留完整性与篡改拒绝检查。
-- **开箱可用的边界**：目标是在已安装受支持视频工具链的设备上自行准备并渲染，无额外私人环境；不等于免除渲染后端和媒体工具。当前 SVG 后端的系统范围及 Inkscape / Fontconfig 等要求仍见下方[实际依赖与字体](#实际依赖与字体)，Windows SVG 尚未支持，不能由这次输入规范调整宣称支持。跨设备可运行与跨设备像素完全一致是不同的验证结论。
-
 ## 主性能基线
 
-[baseline.json](benchmark/baseline.json) 锁定唯一30秒基线的22叶运行源码、依赖、字体锁、许可与自测。`scripts/demo.py` 逐件核对完整字节后仅复制白名单；README、benchmark元数据和已有生成物不进入RUN，verify拒绝额外README或源码。commit/tree仅记创作出处，不是运行读取地址或被测engine身份；来源与依赖仍见 `SOURCES.json`、`fonts.lock.json` 和 `vendor/scoreweft/SOURCES.json`。源码匹配不代表性能、原生全链或人工视听通过。
+唯一活动输入为 **portable-v2：30 秒 / 900 帧 / 1920×1080 / 30fps SVG**。[源锁](benchmark/portable-v2.json) 固定 22 叶源码、字体锁、许可与自测；[输入锁](benchmark/portable-v2-input-lock.json) 固定两份完整 WAV 的编码字节、PCM、采样规格及整数生成算法身份。`scripts/demo.py` 逐件校验后只复制白名单，900 个 SVG 从可信源码逐帧重算，字体逐字节校验。README、benchmark 元数据及已有生成物不进入项目，verify 拒绝额外 README/源码。缺锁、缺输入或内容不符即失败，不从待验产物回写 expected。
 
-`benchmark/input-lock.json` 只锁独立复核的两个完整 WAV 编码/PCM/采样规格及生成出处；900 个 SVG 由固定可信源码逐帧重算，字体按原锁核实际字节。缺锁、内容不符或白名单源文件缺失即停止，不从待验目录回写 expected，不联网获取或接受任意 HEAD 字节。HTML/CDP/CEF、字幕、普通媒体及恢复能力由独立机制测试覆盖，不能由 SVG 主片代替。
+本版消除私人字体/WAV 移交和特定 NumPy/FFmpeg 音频生成环境：公开固定字体可显式获取，音频本地由 Python 标准库生成。音色已改变，**不是旧基线的等价重编码**，旧成绩不能与本版混比；图形源码、构图、实际字体字节、时长和 cue 落点未改变。新版身份不代表性能提升或所有平台已验收。
 
 ### 准备与正式运行
 
-从可信源码根目录执行；完整克隆、`--depth 1` 浅克隆和包含 scripts/vtx/templates 的源码归档均可，不依赖历史 Git 对象。Git 只用于可选 engine 出处：无 Git、无 `.git` 或只能找到父仓时明确记录 unknown/null 与原因，不借父仓身份。普通 Demo 可以继续准备；正式性能比较必须先有独立可审计的精确 engine 身份，不能拿创作源 commit 代替。唯一准备/输入核验入口是 `scripts/demo.py`；它复用模板原 `build_demo.js`，不包含另一套媒体配方。先检查已有固定字体，不下载安装或以同名字体替代。preflight 是只读诊断：退出 0 只代表报告完整，须另看 `prepare_ready`，不表示准备或渲染成功。
+使用包含 scripts/vtx/templates 的源码发行（完整克隆、浅克隆或源码归档），不是仅安装内核 wheel。工具前提见[实际依赖与字体](#实际依赖与字体)。默认不联网、不安装系统字体；以下为只读诊断：
 
 ```bash
-FONT_DIR="/path/to/existing-font-files"
-python3 scripts/demo.py preflight --fonts-dir "$FONT_DIR"
+python3 scripts/demo.py fonts
+python3 scripts/demo.py preflight --fonts-dir "/path/to/existing-font-files"
 ```
 
-以下为**写操作**，必须在同一 Bash 会话中使用全新 RUN；不能复用用户工程、cache/out 或已有证据目录。用物理路径避免临时目录的系统 symlink 别名；prepare 拒绝已有输出、symlink 组件、缺父目录及仓/HOME/cache 内输出，失败保留原始日志并停止后续阶段。
+`fonts` 列出固定公开来源与包/字体 SHA256，未提供已有目录时报告 MISSING、退出 1；`fonts --fonts-dir DIR` 校验已有字体。preflight 退出 0 只代表报告完整，另看 `prepare_ready`；缺字体时为 false，不表示已试过下载或渲染。
+
+以下为**显式联网与写操作**：从 Debian 官方公开包下载并校验字体，不执行包安装器；生成音频、帧、缓存及成片。必须在同一 Bash 会话中使用全新物理 RUN，不能复用用户工程或证据目录。prepare 拒绝已有输出、symlink 组件、缺父目录及仓/HOME/cache 内输出；失败保留日志且停止后续步骤。
 
 ```bash
 set -euo pipefail
 RUN=$(python3 -c 'import pathlib,tempfile; print(pathlib.Path(tempfile.mkdtemp(prefix="framivra-promo-")).resolve())')
 PROJECT="$RUN/project"
-python3 scripts/demo.py prepare --output "$PROJECT" --fonts-dir "$FONT_DIR" > "$RUN/prepare.log" 2>&1
+python3 scripts/demo.py prepare --output "$PROJECT" --fetch-fonts > "$RUN/prepare.log" 2>&1
 python3 scripts/demo.py verify --project "$PROJECT" > "$RUN/input-check.log" 2>&1
 python3 -m vtx -t "$PROJECT/timeline.json" --events-jsonl "$RUN/all.events.jsonl" all > "$RUN/all.log" 2>&1
 python3 -m vtx -t "$PROJECT/timeline.json" qc --strict > "$RUN/qc-strict.log" 2>&1
 ```
 
-prepare 默认真实生成全 900 SVG、manifest、字体副本、母带前音乐与短声，必须命中唯一 canonical 输入锁；保完整源/输入核验、真实 schema 和产品 validate 的日志。生成工具版本与二进制 SHA 只是出处，不是消费端平台白名单。
+离线准备时把 `--fetch-fonts` 换为 `--fonts-dir DIR`，目录须含原文件名的四份锁定字体；两参数互斥。也可先显式运行 `python3 scripts/demo.py fonts --output "$RUN/fonts"`（联网写入新目录），再复用该目录。网络失败或包/字体 SHA 不符会明确失败，不自动采用其他版本或本机同名字体；无系统全局安装。已有完整项目携带字体，正式渲染不需要联网。
 
-当前 canonical 生成方是本仓冻结的 macOS arm64 工具链（Python 3.14.3、NumPy 2.4.2、FFmpeg-full 9.0.2、Node 24.14.1，均为本机 Homebrew arm64 二进制），2026-10-23 由两次独立真实生成（结构规格、源码、字体完全相同，两个 WAV 全字段逐字节相等）后重新冻结 `benchmark/input-lock.json`。其他机器（如 Linux x86_64）不重生成音频：把同一两个 canonical WAV 私有移交到仅含 `bed-premaster.wav` / `content-cue.wav` 的物理目录，并给 preflight 与 prepare 显式增加 `--audio-inputs DIR`。入口先核编码字节、全部 PCM 与规格，再用原生成器备齐图形、复制音频并按同一完整标准复核；不要求未用的 NumPy，不下载、不自动 fallback、不接纳新 hash 或新增平台锁。缺移交文件或字节不同即失败；GitHub 不上传音频二进制。该路线记为 `canonical-transfer`，不冒充本机音频生成。2026-10-23 前的旧 Linux x86_64 锁（Python 3.12.14、NumPy 2.3.5、FFmpeg 7.1.5）整件原字节见[父提交固定版本](https://github.com/CongliangK/framivra/blob/f71e09d56b21346834b8a6853798d4568cc90bbb/templates/demo-timeline-svg/benchmark/input-lock.json)与仓外迁移记录，历史不删不改，另立平行活动锁不允许。
+prepare 真实生成全 900 SVG、manifest、字体副本和两份新音频，再执行完整输入核验、真实 schema 自测与产品 validate。`--audio-inputs DIR` 仅是可选复用：目录只能含已核验的 portable-v2 `bed-premaster.wav` / `content-cue.wav`；旧 WAV 必须拒绝。回执记为 `canonical-transfer`，不冒充生成，正常跨设备准备不需要该参数。
 
-准备成功不等于原生渲染或视听通过。`all` 复用正式视频、音频、封装与普通 QC；strict QC 是单独一次调用。不要用裸 `--graphics-only` 的不完整输入绕过完整验证。
+唯一准备/输入核验入口仍是 `scripts/demo.py prepare/verify`，内部使用模板 `build_demo.js`。不要用裸 `--graphics-only` 绕过完整验证。准备成功不等于全链成功：正式 `all` 包含混音、封装和普通 QC，strict QC 单独执行。Git 只提供可选被测 engine 出处；无 Git/无自身 `.git` 时明确 unknown/null，不借父仓身份，仍可准备普通 Demo；性能比较必须另有可审计的精确 engine 身份。
 
 ### 实际运行证据
 
-源规格不存性能成绩。每次 run 分开保存实际 engine commit/tree/dirty、完整 argv、相关且已脱敏环境与配置、工具/运行库和字体身份、退出码与完整事件；dirty engine 还需精确改动及未跟踪依赖身份。保存准备回执、源与生成输入哈希，实际核全片 900 帧/PTS/音频样本与内容；目标值不是测量值，未执行项写 UNRUN/null，人工视听单独记录。
+源规格不存性能成绩。分别保留 engine commit/tree/dirty、argv、脱敏环境/配置、工具/运行库/字体身份、退出码、完整事件、准备回执与输入哈希；dirty engine 还需精确改动和未跟踪依赖身份。实际核全片 900 帧/PTS/音频样本与内容；目标值不是测量值，未执行项写 UNRUN/null，人工视听单列。
 
-制作端到端（prepare + all）、已备输入 all、strict QC 分开计时；包含 schema/自测等步骤的窗口必须明列，并行阶段不能相加冒充墙钟。冷项目只指全新 cache/out，不声称 OS 页缓存冷；暖态须按回执和缓存字节核真实复用。同输入、工具/环境、配置与质量口径下才能比较 engine，机制探针或历史成绩不能重标为本次结果。新的实验新建 RUN，不覆盖已有证据。
+制作端到端（prepare + all）、已备输入 all、strict QC 分开计时；首轮字体下载另列，不与离线准备混比。冷项目仅指新 cache/out，不声称 OS 页缓存冷；暖态按回执/缓存字节核复用，并行阶段不能相加冒充墙钟。同输入、工具/环境、配置和质量口径才比较 engine；新实验新建 RUN，不覆盖旧证据。HTML/CDP/CEF、字幕、普通媒体与恢复能力仍由独立机制测试覆盖。
 
 ## 实际依赖与字体
 
-- 图形生成：Node.js 标准库，无 npm 依赖。当前实现按 Node 18+ API 编写。
-- 完整结构自测（prepare 内部调用）：`test_schema.py` 使用已有 `jsonschema` 校验仓库真实 `vtx/timeline.schema.json`，这是仅用于测试的依赖。缺少时明确返回 BLOCKED，不安装、不降级成部分验证、不报告通过。复制到仓外的模板，两项自测均可用 `--schema` 指定对应产品 schema。
-- 程序配乐：Python 3.9+、NumPy、FFmpeg。顺序合成，生成器子进程超时受限，不包含外部采样、音色库、模型或下载器。当前 canonical 冻结环境为 macOS arm64（Apple M4，Darwin）：Python 3.14.3、NumPy 2.4.2、FFmpeg-full 9.0.2（2026-10-23 重冻结）；首审环境为 Linux x86_64 的 Python 3.12.14、NumPy 2.3.5、FFmpeg 7.1.5（旧锁见上文父提交固定链接）；不承诺不同运行时跨版本位级相同。
-- SVG 实际依赖：prepare 内的产品 validate 也会调用 SVG 引擎与字体身份探针；`prepare_ready` 仅表示已列预检项通过，不代表这些探针或完整原生能力已通过。SVG 运行时身份实现支持 Linux ELF 与 macOS arm64，Windows 不支持。必须已有 Framivra、Inkscape、Fontconfig 的 `fc-scan`、FFmpeg/FFprobe；Linux 另需 system `ldd`。macOS 要求自包含 Inkscape.app 的真实 arm64 Mach-O 可执行文件及可解析依赖，不接受启动脚本。按 `VTX_INKSCAPE`、PATH 顺序定位；macOS 未找到时再查系统或用户 Applications 中的 Inkscape.app。后端版本、二进制及运行库身份和声明字体文件的 face 枚举清单由产品回执记录；须核对锁内期望 face，枚举不证明逐字形实际选面；私有配置隔离用户环境，仅使用声明字体。实现边界见 [SVG 后端](../../vtx/render/gfx_svg.py)，代码支持不等于对应平台或作品已通过真实渲染、音频终链与人工视听验收；resvg 不是此模板的生产依赖。
-- 真实文本字体：Noto Sans CJK SC Regular/Bold 与 DejaVu Sans Book/Bold。确切文件、字重、TTC face index、版本和 SHA256 的唯一清单是 `fonts.lock.json`。不接受静默 fallback；准备时必须匹配固定字节。
+- 图形生成用 Node.js 18+ 标准库，无 npm 依赖；音频生成用 Python 3.9+ 标准库，无 NumPy、音乐插件、外部采样、音色库、模型、FFmpeg 编码或私有工程依赖。
+- prepare 保留真实 schema 检查：`test_schema.py` 需要 `jsonschema`，缺少即 BLOCKED，不安装、不降级为部分验证。复制到仓外的两项自测可用 `--schema` 指定产品 schema。
+- 产品链仍需 Framivra、FFmpeg/ffprobe、Inkscape 和 Fontconfig `fc-scan`。SVG 运行身份支持 Linux ELF 与 macOS arm64，**Windows SVG 不支持**；Linux 另需 system `ldd`。macOS 要求自包含 Inkscape.app 的真实 arm64 Mach-O 程序及可解析依赖，不接受启动脚本。按 `VTX_INKSCAPE`、PATH 顺序定位，macOS 再查系统/用户 Applications。prepare 的产品 validate 也会探测这些身份；preflight 的 `prepare_ready` 不代表实际探针/原生能力已通过。[SVG 后端](../../vtx/render/gfx_svg.py)用私有配置隔离用户环境；face 枚举不等于逐字形选面或跨平台像素等价。
 
-生成器会先检查项目内已准备的字体，再检查锁文件内的 Linux 系统路径提示。该提示不是 Mac 路径，也不保证其他电脑已装字体。已有相同字体文件时，把上面的 `FONT_DIR` 设为包含清单所列原文件名的目录。
+**字体规范**：优先系统通用或业内标准公开字体，避免冷门、需特殊授权安装的字体。本片沿用 Noto Sans CJK SC Regular/Bold 与 DejaVu Sans Book/Bold；family、字重、TTC face index、版本和字体 SHA256 的权威为 [fonts.lock.json](fonts.lock.json)。不能把“系统同名”当成同一依赖，也不能静默 fallback。
 
-字体不会提交到本模板仓库；准备阶段复制到 `assets/fonts/`，manifest 显式引用这些项目根相对路径，产品使用隔离字体配置读取。更换字体或字形需要重新审核字体锁和视觉，不以同名 family 冒充同一依赖。许可全文见 `licenses/`。
+公开来源固定为 Debian 官方 [Noto CJK 20220127+repack1-1](https://deb.debian.org/debian/pool/main/f/fonts-noto-cjk/fonts-noto-cjk_20220127+repack1-1_all.deb) 和 [DejaVu 2.37-8](https://deb.debian.org/debian/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb)；完整包 SHA、成员路径及下载大小由 [获取模块](../../scripts/demo_fonts.py)维护。标准库仅解出四份字体，先核包再核字体；不需要 Debian 系统、包管理器或原生成机器。其他发行包即使也叫 2.37，字节可能不同，不能替换。字体复制到项目 `assets/fonts/`，manifest 声明相对路径；更换字体须更新独立基线身份并复核视觉，不是修改锁来掩盖差异。
+
+**音频规范**：[生成器](audio/build.py)固定波形/频率表、整数相位、包络、声像、量化与小端 PCM24 布局，不依赖跨平台 libm 浮点结果。保留原音符编排、非静音 bed 和独立可复用短声；新合成音色不声称与原 Scoreweft nylon/FM 相同。输出均为 48kHz 双声道 PCM24，bed 1440000 采样、cue 54400 采样，保留零尾与幅度检查；不预先替代产品响度/限幅终链，不用静音或烘焙 cue 降低混音覆盖。字节确定性不等于听感质量批准。
 
 ## 编排和缓存边界
 
-时间以正式 `timeline.json` 与 `motion-plan.json` 为准：第一次共同出现为 7.6 秒；13.7 秒经过旧落点时不触发内容；第二次为 15.4 秒；17 秒承接已经发生的结果，没有第三次 cue。
+以 `timeline.json` 与 `motion-plan.json` 为准：第一次共同出现为 7.6 秒；13.7 秒经过旧落点不触发内容；第二次为 15.4 秒；17 秒承接结果，没有第三次 cue。两事件都从同一个短声源的第 0 帧播放各 34 帧，不能换成从 0 秒播放的烘焙音轨。源内含设计增益/声像，正式音轨单位增益；终链重新测量并听审。
 
-`gfx/demo.frames.json` 按 clip 局部帧索引逐帧对应；所有清单路径相对工程根目录。SVG 只使用受控图形、真实文本和本地 clipPath 引用。源 `renderer.js` 保留原运动实现；其 SVG 描述中的 “no audio” 指图形文件本身，正式工程音频来自独立音轨。
+`gfx/demo.frames.json` 按 clip 局部帧索引，路径相对工程根；SVG 只用受控图形、真实文字和本地 clipPath。`renderer.js` 的 “no audio” 描述只指图形文件。片内中文由 SVG 绘制，正式工程保留必填 `subtitles: []`。
 
-`sources` 分别指向母带前 bed 与同一份短声 WAV；两个音频事件都从这个短声源的第 0 帧播放。完整 cue 试听轨和试听母带不进入正式工程，不能替换成一个从 0 秒起播放的烘焙事件。源内已有设计增益/声像，正式音轨使用单位增益；产品音频终链须重新测量并听审，不能套用试听母带结论。
+生成源码、字体与历史 vendor 来源闭包仍登记为 `cache_dependencies`，并由源锁校验；保留 vendor 是既有归属/发布许可兼容，不执行其引擎。产品还读取 manifest、每帧 SVG 和字体字节。自建作品改源须重生成重验；缓存失效不会执行 JavaScript。`.generated/preparation.json` 不是产品成功回执。
 
-片内中文已由 SVG 文字绘制，因此正式工程显式保留 `subtitles: []`。它是产品 schema 的必填根字段，空字幕列表也不能省略。
+## 版本迁移与历史恢复
 
-生成器、运动计划、渲染源码、音频源码、最小 synth 依赖与实际字体均登记在 clip 的 `cache_dependencies`；产品还读取 manifest、每帧 SVG 与字体字节。自建作品改源码后须自行重生成、重新验证；缓存失效不会执行 JavaScript。本固定 30 秒 benchmark 不接受改源或回写锁绕过 prepare/verify。`.generated/preparation.json` 只记录输入/帧哈希，不是原生成功回执。
+这是[维护者批准](https://github.com/CongliangK/framivra/issues/345#issuecomment-6896296666)的输入版本迁移，不是旧 JSON 回执的无缝兼容：`baseline_id` 增加 `portable-v2`；准备/核验 JSON `schema_version` 为 2；source 从旧 commit/tree 改为 revision/运行叶摘要，音频来源从 NumPy 工具链改为固定整数算法。准备回执还绑定入口与字体获取模块 SHA；脚本变动须重新准备，不能给旧回执补签。
+
+[旧源锁](benchmark/baseline.json)和[旧音频锁](benchmark/input-lock.json)保留原字节，仅供历史审计，不是第二活动基线。旧源码、许可证、原准备/核验流程完整保存在[固定提交 5852490](https://github.com/CongliangK/framivra/tree/5852490c28089a41ea4d9a54e45fe45eeb97b1a8)；它保留旧 macOS canonical/私下 WAV 移交约定，但该约定不再是新项目路径。更早 Linux 锁仍可从[原固定版本](https://github.com/CongliangK/framivra/blob/f71e09d56b21346834b8a6853798d4568cc90bbb/templates/demo-timeline-svg/benchmark/input-lock.json)恢复。
+
+核验旧项目须在上述固定提交的独立检出中运行原 `scripts/demo.py verify --project <旧项目>`，不要把旧锁复制给新脚本；恢复检出属于写操作，不覆盖现有工程或日常 checkout。新 verify 对旧 baseline_id 明确拒绝并给恢复版本。旧证据、旧成绩不改身份，输入变化另立新版、独立核验并重测；CI/门禁变更继续遵守[写态红线](../../AGENTS.md#写态红线)。
 
 ## 来源与许可
 
-原创视觉沿用已审的 JSON 时间线构图和 `timeline-motion-r1` 运动源码，没有复用旧复杂版本；来源字节锚见 `SOURCES.json`。原配乐的音符、短声、增益、声像和母带前导出保持一致，适配仅改为项目相对的固定依赖，去掉独立试听母带处理。
+原创视觉沿用 `timeline-motion-r1`，来源字节锚在 `SOURCES.json`。Scoreweft 原 MIT synth 子集、固定提交与逐文件哈希保留在 `vendor/scoreweft/`，未改其源件；新音频不导入它。新源码遵守仓库 MIT 许可，完整上游许可仍随项目保留。
 
-Scoreweft 的 MIT 程序合成最小依赖随包提供，固定提交、逐文件 SHA256、上游链接见 `vendor/scoreweft/SOURCES.json`，完整许可见 `vendor/scoreweft/LICENSE`。该子集仅含 synth 路线必需源码，未修改 vendored 文件；不包括上游其他音色、采样、谱、预览或模型。新项目源码遵守仓库根 MIT 许可，依赖许可各自保留。
+Noto CJK 适用 SIL OFL 1.1；DejaVu 使用 Bitstream Vera 许可，DejaVu 修改为公有领域；全文见 `licenses/`。字体、大 WAV、生成帧、缓存和成片不提交模板仓库。下载字体不分发或安装媒体工具二进制。
 
-Noto CJK 适用 SIL OFL 1.1；DejaVu 使用 Bitstream Vera 许可，DejaVu 修改为公有领域。NumPy、FFmpeg、Inkscape 仅使用用户已有安装，不随模板分发工具二进制。生成帧、字体副本、大 WAV、缓存和成片均在本模板 `.gitignore` 中。
-
-`test_demo.js` 保源文件/字体身份、静态生成确定性、普通时间点状态、音轨绑定和真实 schema 根必填字段；`test_schema.py` 另对完整工程做真实产品 schema 结构校验。它们不保运行时语义/媒体检查、真实产品渲染、实际字体选中、音画同步、响度或艺术质量。后者必须由真实运行和独立复审给出。
+`test_demo.js` 与 `test_schema.py` 保留源/字体身份、全帧静态重算、语义时间点、音轨绑定和真实 schema 检查；独立标准库测试另外验证公开字体获取失败、完整音频固定哈希/PCM/非静音/尾零及新旧身份拒混。实际字体选中、音画同步、响度、原生渲染和艺术质量仍须真实运行与复审，不由单元测试替代。

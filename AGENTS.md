@@ -38,5 +38,5 @@
 ## 基线与性能
 
 - 唯一主基线为 30秒/900帧/1080p30 SVG；禁用退役12秒基线，机制探针不能代替主片。
-- 准备/核验仅用 `scripts/demo.py prepare/verify`，用法与写态边界见[Demo](<templates/demo-timeline-svg/README.md#主性能基线>)。
+- 准备/核验仅用 `scripts/demo.py prepare/verify`；portable-v2 用公开锁定字体和标准库音频，旧输入不混用，获取与恢复见[Demo](<templates/demo-timeline-svg/README.md#主性能基线>)。
 - 固定输入、同质量/环境/后端/配置分冷暖测全链；留身份、哈希与证据，未跑写 UNRUN，小探针不冒充整体提速。

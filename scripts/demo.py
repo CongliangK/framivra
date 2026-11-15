@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Prepare and verify the single canonical 30-second Demo; never render or re-freeze.
 
-The original template owns generation. This entry owns trusted source selection,
-new-directory boundaries, raw diagnostics and complete input verification. An
-explicit canonical audio transfer is not a new profile or a generation result.
+The template owns portable integer-PCM generation. This entry owns trusted source
+selection, explicit public font acquisition, new-directory boundaries and complete
+input verification. Legacy inputs require their original, fixed checkout.
 """
 import argparse
 import hashlib
@@ -21,9 +21,10 @@ import wave
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = ROOT / 'templates/demo-timeline-svg'
-BASELINE = PACKAGE / 'benchmark/baseline.json'
-INPUT_LOCK = PACKAGE / 'benchmark/input-lock.json'
-BENCHMARK_ID = 'framivra-promo-timeline-svg-30s'
+BASELINE = PACKAGE / 'benchmark/portable-v2.json'
+INPUT_LOCK = PACKAGE / 'benchmark/portable-v2-input-lock.json'
+BENCHMARK_ID = 'framivra-promo-timeline-svg-30s-portable-v2'
+LEGACY_CHECKOUT = '5852490c28089a41ea4d9a54e45fe45eeb97b1a8'
 SOURCE_EXCLUSIONS = ('README.md',)
 UNRUN_FIELDS = ('render', 'preview', 'qc', 'cef', 'visual')
 AUDIO_SAMPLES = {'assets/audio/bed-premaster.wav': 1440000,
@@ -74,12 +75,14 @@ def valid_hash(value, length=64):
 
 def validate_manifest(data):
     """The repository source selector is trusted; an instance cannot replace it."""
-    if not isinstance(data, dict) or data.get('format') != 'framivra-source-baseline/v1' or data.get('baseline_id') != BENCHMARK_ID:
+    if not isinstance(data, dict) or data.get('format') != 'framivra-source-baseline/v2' or data.get('baseline_id') != BENCHMARK_ID:
         raise DemoError('unknown source baseline identity')
     source = data.get('source', {})
-    if (not isinstance(source, dict) or not valid_hash(source.get('commit'), 40) or not valid_hash(source.get('git_tree'), 40)
-            or source.get('path') != 'templates/demo-timeline-svg'):
-        raise DemoError('invalid source commit/tree/path')
+    if (not isinstance(source, dict) or source.get('revision') != 'portable-v2'
+            or not valid_hash(source.get('runtime_sha256'))
+            or source.get('path') != 'templates/demo-timeline-svg'
+            or source.get('legacy_checkout') != LEGACY_CHECKOUT):
+        raise DemoError('invalid source revision/digest/path')
     workload = data.get('workload', {})
     if not isinstance(workload, dict):
         raise DemoError('invalid source workload')
@@ -97,7 +100,13 @@ def validate_manifest(data):
                 or Path(name).as_posix() != name or not valid_hash(digest)):
             raise DemoError('invalid runtime source identity: ' + str(name))
         safe_relpath(PACKAGE, name)
+    if source['runtime_sha256'] != runtime_digest(hashes):
+        raise DemoError('source revision digest differs from runtime file identities')
     return data
+
+
+def runtime_digest(hashes):
+    return hashlib.sha256(json.dumps(hashes, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
 
 
 def load_baseline():
@@ -105,22 +114,17 @@ def load_baseline():
 
 
 def validate_input_lock(data, baseline):
-    fields = {'format', 'baseline_id', 'source_git_tree', 'provenance', 'audio'}
+    fields = {'format', 'baseline_id', 'source_runtime_sha256', 'provenance', 'audio'}
     if (not isinstance(data, dict) or set(data) != fields
-            or data['format'] != 'framivra-generated-input-lock/v1'
+            or data['format'] != 'framivra-generated-input-lock/v2'
             or data['baseline_id'] != BENCHMARK_ID
-            or data['source_git_tree'] != baseline['source']['git_tree']):
+            or data['source_runtime_sha256'] != baseline['source']['runtime_sha256']):
         raise DemoError('invalid canonical input lock identity')
     origin = data['provenance']
-    if not isinstance(origin, dict) or set(origin) != {'tools', 'numpy_version'} or not isinstance(origin['numpy_version'], str) or not origin['numpy_version']:
-        raise DemoError('missing canonical generation provenance')
-    if not isinstance(origin['tools'], dict) or set(origin['tools']) != {'python', 'node', 'ffmpeg', 'ffprobe'}:
-        raise DemoError('incomplete canonical tool provenance')
-    for name, tool in origin['tools'].items():
-        if (not isinstance(tool, dict) or set(tool) != {'version_line', 'binary_sha256'}
-                or not isinstance(tool['version_line'], str) or not tool['version_line']
-                or not valid_hash(tool['binary_sha256'])):
-            raise DemoError('invalid tool provenance: ' + name)
+    if (not isinstance(origin, dict) or set(origin) != {'algorithm', 'generator_sha256'}
+            or origin['algorithm'] != 'integer-pcm24/v1'
+            or origin['generator_sha256'] != baseline['runtime_files_sha256']['audio/build.py']):
+        raise DemoError('invalid portable generation provenance')
     if not isinstance(data['audio'], dict) or set(data['audio']) != set(AUDIO_SAMPLES):
         raise DemoError('canonical lock must contain exactly the two authored WAVs')
     for name, samples in AUDIO_SAMPLES.items():
@@ -187,7 +191,7 @@ def source_files(baseline):
         data = regular(safe_relpath(PACKAGE, name)).read_bytes()
         if hashlib.sha256(data).hexdigest() != expected:
             raise DemoError('fixed runtime source bytes differ: ' + name)
-        # All 22 original runtime blobs were independently verified as 100644.
+        # Portable source files retain regular non-executable copy modes.
         result[name] = (data, 0o644)
     return result
 
@@ -235,11 +239,41 @@ def package_version(name):
 
 
 def dependency_identity(transfer):
+    # Transfer is optional reuse, not a prerequisite on another OS. Both routes
+    # retain the real schema/product validator; neither imports NumPy or music.
     tools = {name: tool_identity(name) for name in ('python', 'node', 'ffmpeg', 'ffprobe')}
-    numpy = package_version('numpy')
-    if any(tool is None for tool in tools.values()) or not package_version('jsonschema') or (not transfer and not numpy):
-        raise DemoError('BLOCKED: required existing tools/jsonschema' + ('/NumPy' if not transfer else '') + ' unavailable')
-    return {'tools': tools, 'numpy_version': numpy}
+    if any(tool is None for tool in tools.values()) or not package_version('jsonschema'):
+        raise DemoError('BLOCKED: required existing tools/jsonschema unavailable')
+    return {'tools': tools, 'audio_generator': 'integer-pcm24/v1'}
+
+
+def font_tools():
+    # Read-only diagnosis must not leave a local __pycache__ as an import side effect.
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        if __package__:
+            from . import demo_fonts
+        else:
+            import demo_fonts
+        return demo_fonts
+    finally:
+        sys.dont_write_bytecode = previous
+
+
+def generator_identity():
+    return {'sha256': sha256_file(Path(__file__)),
+            'fonts_sha256': sha256_file(Path(__file__).with_name('demo_fonts.py'))}
+
+
+def cmd_fonts(args):
+    tools = font_tools()
+    try:
+        report = tools.fetch_fonts(check_output_path(args.output)) if args.output else tools.diagnose_fonts(args.fonts_dir)
+    except (tools.FontError, OSError, ValueError) as error:
+        raise DemoError(str(error)) from error
+    print(json.dumps(report, indent=2))
+    return 0 if report['status'] == 'PASS' else 1
 
 
 def check_fonts(files, fonts_dir):
@@ -247,7 +281,8 @@ def check_fonts(files, fonts_dir):
     for font in fonts:
         source = Path(fonts_dir) / Path(font['path']).name if fonts_dir else Path(font['system_path_hint'])
         if not source.is_file() or sha256_file(source) != font['sha256']:
-            raise DemoError('BLOCKED: missing pinned font ' + Path(font['path']).name)
+            raise DemoError('BLOCKED: missing pinned font ' + Path(font['path']).name +
+                            '; inspect public sources with scripts/demo.py fonts, then prepare --fetch-fonts or supply --fonts-dir DIR')
     return fonts
 
 
@@ -348,7 +383,7 @@ def cmd_preflight(args):
         checks['fonts'] = {'ok': False, 'error': 'fixed source unavailable'}
     if args.audio_inputs:
         check('audio_inputs', lambda: check_audio(Path(os.path.abspath(args.audio_inputs)), lock, True)) if lock else checks.update(audio_inputs={'ok': False, 'error': 'canonical input lock unavailable'})
-    print(json.dumps({'schema_version': 1, 'baseline_id': BENCHMARK_ID, 'command': 'preflight',
+    print(json.dumps({'schema_version': 2, 'baseline_id': BENCHMARK_ID, 'command': 'preflight',
         'read_only': True, 'checks': checks, 'engine': engine_identity(), 'prepare_supported': True,
         'prepare_ready': all(row['ok'] for row in checks.values()),
         'render': {'ready': False, 'reason': 'Native rendering has not run', 'cef': None,
@@ -364,16 +399,17 @@ def cmd_prepare(args):
     files = source_files(baseline)
     identity = dependency_identity(bool(args.audio_inputs))
     fonts_dir = str(Path(args.fonts_dir).expanduser().resolve()) if args.fonts_dir else None
-    check_fonts(files, fonts_dir)
+    if not args.fetch_fonts:
+        check_fonts(files, fonts_dir)
     transfer = Path(os.path.abspath(args.audio_inputs)) if args.audio_inputs else None
     if transfer:
         check_audio(transfer, lock, True)
     logs = project / 'logs'
-    record = {'schema_version': 1, 'baseline_id': BENCHMARK_ID,
+    record = {'schema_version': 2, 'baseline_id': BENCHMARK_ID,
               'source': baseline['source'], 'baseline_sha256': sha256_file(BASELINE),
               'excluded_paths': list(SOURCE_EXCLUSIONS), 'runtime_source_count': len(files),
               'canonical_input_lock_sha256': sha256_file(INPUT_LOCK),
-              'generator': {'sha256': sha256_file(Path(__file__))},
+              'generator': generator_identity(),
               'audio_mode': 'canonical-transfer' if transfer else 'generated',
               **identity, 'engine': engine_identity(),
               'stages': [], 'results': {name: 'UNRUN' for name in UNRUN_FIELDS}, 'complete': False}
@@ -382,6 +418,16 @@ def cmd_prepare(args):
     project.mkdir()
     try:
         logs.mkdir(); save()
+        if args.fetch_fonts:
+            tools = font_tools()
+            fonts_dir = str(project / 'assets/fonts')
+            (project / 'assets').mkdir()
+            try:
+                record['font_acquisition'] = tools.fetch_fonts(fonts_dir)
+            except (tools.FontError, OSError, ValueError) as error:
+                raise DemoError('public font acquisition failed: ' + str(error)) from error
+            check_fonts(files, fonts_dir)
+            save()
         for name, (data, mode) in files.items():
             path = safe_relpath(project, name); path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data); path.chmod(mode)
@@ -413,7 +459,7 @@ def cmd_prepare(args):
     except (DemoError, OSError, ValueError, wave.Error, subprocess.SubprocessError) as error:
         record['error'] = str(error)
     save()
-    print(json.dumps({'schema_version': 1, 'project': str(project), 'ok': record['complete'],
+    print(json.dumps({'schema_version': 2, 'project': str(project), 'ok': record['complete'],
                       'audio_mode': record['audio_mode'], 'stages': record['stages'], 'unrun': list(UNRUN_FIELDS)}, indent=2))
     return 0 if record['complete'] else 1
 
@@ -426,18 +472,20 @@ def cmd_verify(args):
     if (not isinstance(record, dict) or not isinstance(record.get('stages'), list)
             or any(not isinstance(row, dict) for row in record['stages'])):
         raise DemoError('invalid preparation record/stage structure')
-    if (record.get('schema_version') != 1 or record.get('baseline_id') != BENCHMARK_ID
+    if record.get('baseline_id') != BENCHMARK_ID:
+        raise DemoError('legacy/unknown baseline; verify legacy inputs from fixed checkout ' + LEGACY_CHECKOUT + ', never relabel them as portable-v2')
+    if (record.get('schema_version') != 2 or record.get('baseline_id') != BENCHMARK_ID
             or record.get('source') != baseline['source'] or record.get('baseline_sha256') != sha256_file(BASELINE)
             or record.get('excluded_paths') != list(SOURCE_EXCLUSIONS) or record.get('runtime_source_count') != len(files)
             or record.get('canonical_input_lock_sha256') != sha256_file(INPUT_LOCK)
-            or record.get('generator') != {'sha256': sha256_file(Path(__file__))}
+            or record.get('generator') != generator_identity()
             or record.get('audio_mode') not in ('generated', 'canonical-transfer')
             or record.get('complete') is not True
             or [row.get('stage') for row in record.get('stages', [])] != list(STAGES)
             or any(row.get('exit_code') != 0 for row in record.get('stages', []))):
         raise DemoError('invalid preparation identity or incomplete stages')
     decoded = check_inputs(project, files, lock)
-    print(json.dumps({'schema_version': 1, 'command': 'verify', 'baseline_id': BENCHMARK_ID,
+    print(json.dumps({'schema_version': 2, 'command': 'verify', 'baseline_id': BENCHMARK_ID,
                       'source_checks': 'fixed runtime subset matches', 'decoded_checks': decoded,
                       'engine': record.get('engine'),
                       'failures': [], 'ok': True, 'unrun': list(UNRUN_FIELDS)}, indent=2))
@@ -447,21 +495,28 @@ def cmd_verify(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
+    fonts = sub.add_parser('fonts', help='read-only font diagnosis; --output explicitly downloads pinned public files')
+    choice = fonts.add_mutually_exclusive_group()
+    choice.add_argument('--fonts-dir', help='existing font directory to diagnose without writing')
+    choice.add_argument('--output', help='NEW directory for explicit public download; writes no system fonts')
+    fonts.set_defaults(func=cmd_fonts)
     for name, handler in [('preflight', cmd_preflight), ('prepare', cmd_prepare), ('verify', cmd_verify)]:
         node = sub.add_parser(name)
         if name == 'verify':
             node.add_argument('--project', required=True)
         else:
-            node.add_argument('--fonts-dir')
-            node.add_argument('--audio-inputs', help='explicit directory containing the two canonical WAVs; never automatic fallback')
+            fonts = node.add_mutually_exclusive_group()
+            fonts.add_argument('--fonts-dir')
+            node.add_argument('--audio-inputs', help='optional exact portable-v2 WAV reuse; old baseline WAVs are rejected')
             if name == 'prepare':
+                fonts.add_argument('--fetch-fonts', action='store_true', help='explicitly download pinned public fonts into the new project')
                 node.add_argument('--output', required=True)
         node.set_defaults(func=handler)
     args = parser.parse_args(argv)
     try:
         return args.func(args)
     except (DemoError, OSError, ValueError, wave.Error, subprocess.SubprocessError) as error:
-        print(json.dumps({'schema_version': 1, 'command': args.command, 'ok': False, 'error': str(error)}), file=sys.stderr)
+        print(json.dumps({'schema_version': 2, 'command': args.command, 'ok': False, 'error': str(error)}), file=sys.stderr)
         return 3
 
 

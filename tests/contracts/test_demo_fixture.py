@@ -38,7 +38,9 @@ class ContractTests(unittest.TestCase):
     def test_frozen_manifest_valid(self):
         baseline = demo.load_baseline()
         self.assertEqual(baseline['baseline_id'], demo.BENCHMARK_ID)
-        self.assertEqual(baseline['source']['git_tree'], 'd5c869e3b998bbf61f7a1969293546066275ed17')
+        self.assertEqual(baseline['source']['revision'], 'portable-v2')
+        self.assertEqual(baseline['source']['legacy_checkout'], demo.LEGACY_CHECKOUT)
+        self.assertEqual(baseline['source']['runtime_sha256'], demo.runtime_digest(baseline['runtime_files_sha256']))
         self.assertEqual(baseline['workload']['duration_frames'], 900)
         demo.validate_manifest(baseline)
         with patch.object(demo.subprocess, 'run', side_effect=AssertionError('source must not require Git')):
@@ -76,7 +78,7 @@ class ContractTests(unittest.TestCase):
         with self.assertRaises(demo.DemoError):
             demo.validate_manifest({'baseline_id': 'other', 'format': 'framivra-source-baseline/v1'})
         baseline = demo.load_baseline()
-        for field, value in [('commit', 'zz'), ('git_tree', '0' * 39), ('path', '../escape')]:
+        for field, value in [('revision', 'legacy'), ('runtime_sha256', '0' * 63), ('legacy_checkout', '0' * 40), ('path', '../escape')]:
             broken = json.loads(json.dumps(baseline))
             broken['source'][field] = value
             with self.assertRaises(demo.DemoError, msg=field):
@@ -125,7 +127,7 @@ class ContractTests(unittest.TestCase):
         result = cli('preflight')
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
-        self.assertEqual(report['schema_version'], 1)
+        self.assertEqual(report['schema_version'], 2)
         self.assertTrue(report['read_only'])
         self.assertTrue(report['prepare_supported'])
         self.assertTrue(report['checks']['source']['ok'])
@@ -140,9 +142,8 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(before, after)
         # Transfer consumes no synth runtime, but does not waive actual validator tools.
         with patch.object(demo, 'tool_identity', return_value={'version_line': 'test-only', 'binary_sha256': '0' * 64}), patch.object(demo, 'package_version', side_effect=lambda name: None if name == 'numpy' else 'test-only'):
-            self.assertIsNone(demo.dependency_identity(True)['numpy_version'])
-            with self.assertRaises(demo.DemoError):
-                demo.dependency_identity(False)
+            self.assertEqual(demo.dependency_identity(True)['audio_generator'], 'integer-pcm24/v1')
+            self.assertEqual(demo.dependency_identity(False)['audio_generator'], 'integer-pcm24/v1')
         for response in (FileNotFoundError(), subprocess.CompletedProcess([], 128, b'', b'not a repository'),
                          subprocess.CompletedProcess([], 0, str(REPO.parent).encode() + b'\n', b'')):
             with patch.object(demo.subprocess, 'run', **({'side_effect': response} if isinstance(response, Exception) else {'return_value': response})):
@@ -213,7 +214,7 @@ class RealGenerationTests(unittest.TestCase):
     def test_f2_same_toolchain_outputs_hash_equal(self):
         first, second = self.projects
         identities = [demo.load_json_file_strict(path / 'realization.json') for path in self.projects]
-        for field in ('tools', 'numpy_version'):
+        for field in ('tools', 'audio_generator'):
             self.assertEqual(identities[0][field], identities[1][field])
         for name, expected in self.lock['audio'].items():
             digest = demo.sha256_file(first / name)
@@ -268,7 +269,7 @@ class RealGenerationTests(unittest.TestCase):
             shallow = base / 'shallow'
             git('clone', '--quiet', '--depth', '1', upstream.as_uri(), shallow)
             self.assertEqual(git('rev-parse', '--is-shallow-repository', cwd=shallow).stdout.strip(), b'true')
-            self.assertNotEqual(subprocess.run(['git', 'cat-file', '-e', demo.load_baseline()['source']['commit'] + '^{commit}'],
+            self.assertNotEqual(subprocess.run(['git', 'cat-file', '-e', demo.LEGACY_CHECKOUT + '^{commit}'],
                                               cwd=shallow, capture_output=True).returncode, 0)
             archive = archive.rename(upstream / 'archive')
             self.assertFalse((archive / '.git').exists())
