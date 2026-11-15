@@ -21,6 +21,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from fractions import Fraction
 from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
@@ -42,6 +43,47 @@ TL = {
             {"src": "gfx/page.html", "dst_in": 30, "dur": 60}]},
     ],
 }
+
+
+class TestConcatManifest(unittest.TestCase):
+    def manifest(self, edges):
+        from vtx.pipeline.composite import _concat_manifest
+        return _concat_manifest(((Path(f"segment{n}.mp4"), a, b)
+                                 for n, (a, b) in enumerate(zip(edges, edges[1:]))), FPS)
+
+    def durations(self, manifest):
+        return [Fraction(line.split()[1]) for line in manifest.splitlines()[1::2]]
+
+    def test_canonical_irregular_cuts_have_frame_derived_durations(self):
+        edges = [0, 112, 225, 338, 450, 562, 675, 788, 900]
+        durations = self.durations(self.manifest(edges))
+        self.assertEqual(durations, [Fraction(n, 1_000_000) for n in
+            (3733333, 3766667, 3766667, 3733333, 3733333, 3766667, 3766667, 3733333)])
+        self.assertEqual(sum(durations), 30)
+        elapsed = Fraction(0)
+        for a, duration in zip(edges, durations):
+            self.assertEqual(round(elapsed * 15360), a * 512)
+            elapsed += duration
+
+    def test_many_cuts_do_not_accumulate_rounding_and_range_origin_is_local(self):
+        edges = list(range(10001))
+        durations = self.durations(self.manifest(edges))
+        elapsed = Fraction(0)
+        for a, duration in zip(edges, durations):
+            self.assertLessEqual(abs(elapsed - Fraction(a, FPS)), Fraction(1, 2_000_000))
+            self.assertEqual(round(elapsed * 15360), a * 512)
+            elapsed += duration
+        self.assertEqual(self.manifest(edges), self.manifest([n + 10**12 for n in edges]))
+        self.assertEqual(self.durations(self.manifest([110, 112, 225, 230])),
+                         [Fraction(n, 1_000_000) for n in (66667, 3766666, 166667)])
+
+    def test_paths_keep_absolute_posix_quote_and_unicode_escaping(self):
+        from vtx.pipeline.composite import _concat_manifest
+        path = Path("剪辑 # /take's.mp4")
+        manifest = _concat_manifest([(path, 0, 1)], FPS)
+        escaped = path.resolve().as_posix().replace("'", "'\\''")
+        self.assertEqual(manifest, f"file '{escaped}'\nduration 0.033333\n")
+        self.assertEqual(_concat_manifest([], FPS), '')
 
 
 class TestParseTimespec(unittest.TestCase):
@@ -265,6 +307,35 @@ class TestRangeCachePolicy(unittest.TestCase):
             subprocess_run.assert_not_called()
         self.assertFalse(self.c.cache.exists(), 'mock producers must not create media/cache files')
 
+    def test_range_concat_uses_clipped_frame_spans_without_formal_writes(self):
+        from vtx.pipeline import range as ranges
+        plan = mock.Mock(nseg=3)
+        plan._seg_content_key.return_value = 'fixture-key'
+        with mock.patch.object(ranges, 'RenderPlan', return_value=plan), \
+                mock.patch.object(ranges, 'choose_cutpoints', return_value=[112, 225]), \
+                mock.patch.object(ranges, 'prepare_layers', return_value=[]), \
+                mock.patch.object(ranges, 'media_cache_valid', return_value=False), \
+                mock.patch.object(ranges, 'pick_vcodec', return_value=([], 'fixture')), \
+                mock.patch.object(ranges, 'mix_audio_wav'), \
+                mock.patch.object(ranges.fstxn, 'mkdir'), \
+                mock.patch.object(ranges.fstxn, 'atomic_write') as write, \
+                mock.patch.object(ranges.subprocess, 'run') as probe, \
+                contextlib.redirect_stdout(io.StringIO()):
+            ranges.run_range(self.c, 110, 230)
+        write.assert_called_once()
+        path, manifest = write.call_args.args
+        self.assertEqual(path.parent, self.c.cache / 'preview')
+        self.assertEqual(manifest.splitlines()[1::2],
+                         ['duration 0.066667', 'duration 3.766666', 'duration 0.166667'])
+        self.assertEqual([(call.kwargs['a'], call.kwargs['b'])
+                          for call in plan.composite.call_args_list],
+                         [(110, 112), (112, 225), (225, 230)])
+        concat = self.c.run.call_args_list[0].args[0]
+        self.assertEqual(concat[-3:-1], ['-c', 'copy'])
+        probe.assert_not_called()
+        self.assertFalse(self.c.cache.exists())
+        self.assertFalse(self.c.out.exists())
+
     def test_off_gfx_rejected_before_preencoding_with_actionable_guidance(self):
         from vtx.cache.policy import CachePolicy
         from vtx.pipeline import range as ranges
@@ -303,6 +374,39 @@ class TestRangeIntegration(unittest.TestCase):
         settings = patch.dict(os.environ, {'VTX_CONFIG': str(config)})
         settings.start()
         self.addCleanup(settings.stop)
+
+    def test_irregular_medium_b_frame_concat_keeps_exact_pts(self):
+        """Small clock probe; canonical 1080p acceptance remains separate."""
+        from vtx.pipeline.composite import _concat_manifest
+        with tempfile.TemporaryDirectory(prefix="vtx-concat-clock-") as directory:
+            root = Path(directory)
+            edges = [0, 112, 225, 338, 450, 562, 675, 788, 900]
+            segments = []
+            for n, (a, b) in enumerate(zip(edges, edges[1:])):
+                path = root / f"segment{n}.mp4"
+                subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                    'color=black:s=160x90:r=30', '-frames:v', str(b - a),
+                    '-c:v', 'libx264', '-preset', 'medium', '-threads', '1',
+                    '-pix_fmt', 'yuv420p', str(path)], check=True, capture_output=True, timeout=60)
+                segments.append((path, a, b))
+            manifest = root / 'list.txt'
+            manifest.write_text(_concat_manifest(segments, FPS), encoding='utf-8')
+            movie = root / 'concat.mp4'
+            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'concat', '-safe', '0',
+                '-i', str(manifest), '-c', 'copy', str(movie)],
+                check=True, capture_output=True, timeout=60)
+            probe = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                '-show_streams', '-show_frames', '-of', 'json', str(movie)],
+                check=True, capture_output=True, timeout=60)
+            metadata = json.loads(probe.stdout)
+            stream = metadata['streams'][0]
+            time_base = Fraction(stream['time_base'])
+            self.assertGreater(stream['has_b_frames'], 0)
+            self.assertEqual(int(stream['nb_frames']), 900)
+            self.assertEqual(Fraction(stream['avg_frame_rate']), FPS)
+            self.assertEqual(int(stream['duration_ts']) * time_base, 30)
+            self.assertEqual([int(frame['pts']) * time_base for frame in metadata['frames']],
+                             [Fraction(n, FPS) for n in range(900)])
 
     def test_silent_gap_window_renders_exact_audio_without_formal_writes(self):
         import math

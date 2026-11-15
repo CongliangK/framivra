@@ -14,7 +14,7 @@ cache 正式键产物、不写 out/、不更新 receipt/manifest/VERSIONS——�
 import json, os, re, subprocess, sys, time
 from pathlib import Path
 
-from .composite import RenderPlan, choose_cutpoints, prepare_layers
+from .composite import RenderPlan, choose_cutpoints, prepare_layers, _concat_manifest
 from ..media.encoders import pick_vcodec
 from ..cache.recovery import media_cache_valid
 from .stages import mix_audio_wav
@@ -215,9 +215,9 @@ def run_range(c, fa: int, fb: int):
     # 画面拼接（-c copy，各子段同编码参数）→ 临时视频；随后与窗口音频 mux
     tmpv = vdir / f"range_{la}_{lb}.video.mp4"
     lst = vdir / f"range_{la}_{lb}.list.txt"
-    # 与 composite.render_segmented 同一转义法：绝对 POSIX 路径 + 引号转义（-safe 0 已带）
-    fstxn.atomic_write(lst, "".join(
-        "file '" + s.resolve().as_posix().replace("'", "'\\''") + "'\n" for s in segs), root=c.root)
+    # Share both path escaping and frame-derived timing with formal rendering.
+    fstxn.atomic_write(lst, _concat_manifest(
+        ((path, a, b) for path, (a, b) in zip(segs, parts)), c.fps), root=c.root)
     t = time.monotonic()
     c.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
            "-c", "copy", str(tmpv)])

@@ -23,6 +23,29 @@ SEG_CUT_RADIUS = 150    # 切点搜索半径：找不到静默帧则放弃该切
 DEFAULT_SEGMENTS = 8    # VTX_VIDEO_SEGMENTS 默认段数
 
 
+def _concat_manifest(segments, fps):
+    """Place (path, start_frame, end_frame) segments on the frame clock.
+
+    Concat otherwise infers offsets from container durations, which may round
+    differently from the video clock. Its duration directives use microseconds;
+    round cumulative boundaries relative to the first frame, not each segment
+    independently, so rounding error cannot accumulate across cuts. At 30 fps
+    these boundaries rescale back to the exact MP4 video ticks.
+    """
+    lines = []
+    origin = None
+    for path, a, b in segments:
+        if origin is None:
+            origin = a
+        start = ((a - origin) * 1_000_000 + fps // 2) // fps
+        end = ((b - origin) * 1_000_000 + fps // 2) // fps
+        duration = end - start
+        # Absolute POSIX paths preserve Windows paths containing '#' as well.
+        name = path.resolve().as_posix().replace("'", "'\\''")
+        lines.append(f"file '{name}'\nduration {duration // 1_000_000}.{duration % 1_000_000:06d}\n")
+    return "".join(lines)
+
+
 # ---------------------------------------------------------------- 合成代码摘要（段缓存防洗白）
 _SYNTH_FUNCS = ("composite", "_composite_graph", "_composite_passes",
                 "_layer_chain", "_layer_input_args")
@@ -792,10 +815,9 @@ class RenderPlan:
         lst = vdir / "list.txt"
         # PR#1（Windows 实测）：相对路径 concat 项在含 '#' 等特殊字符的目录下会被
         # 按清单目录做 URL 基准解析出错；绝对 POSIX 路径 + 引号转义规避（-safe 0 已带）。
-        def concat_entry(path):
-            name = path.resolve().as_posix().replace("'", "'\\''")
-            return f"file '{name}'\n"
-        fstxn.atomic_write(lst, "".join(concat_entry(s) for s in segs), root=self.c.root)
+        fstxn.atomic_write(lst, _concat_manifest(
+            ((path, a, b) for path, a, b in zip(segs, edges, edges[1:])), c.fps),
+            root=self.c.root)
         # 记录本代段缓存对应的合成代码摘要（R7）：vtx diff 据此在 timeline 侧 0 失效
         # 时仍能提示「代码摘要已漂移 → 磁盘段缓存全冷重建」，避免影响面误报温态。
         if not c.dry:
