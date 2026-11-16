@@ -277,7 +277,40 @@ class Ps1CollisionPathTransport(unittest.TestCase):
         result = subprocess.run([shutil.which("powershell") or shutil.which("pwsh"), "-NoProfile",
                                  "-File", str(script), str(self.repo), tree, sys.executable],
                                 capture_output=True, timeout=20)
-        self.assertEqual(result.returncode, 73, result.stderr)
+        diagnostic = b""
+        if result.returncode != 73:
+            # Failure-only private probe: retain the original result as the gate.
+            # Change only stderr suppression in an extracted function copy, so
+            # Python/Git startup errors are visible without changing production.
+            probe_stderr = self.root / "probe.stderr"
+            probe = self.root / "collision-probe.ps1"
+            invocation = "$pathJson = & $py[0] $collisionArgs -c $collisionCode $Dir $TargetRef 2>$null"
+            if self.function.count(invocation) == 1:
+                probe_function = self.function.replace(
+                    invocation, invocation.replace("2>$null", "2>$ProbeStderr"), 1)
+                probe.write_text(
+                    "param($Dir, $TargetRef, $Python, $ProbeStderr)\n"
+                    "$ErrorActionPreference = 'Stop'\n$py = @($Python)\n"
+                    "Write-Output ('PROBE_ARGUMENT_MODE=' + $PSNativeCommandArgumentPassing)\n"
+                    "Write-Output ('PROBE_PYTHON_PREFIX_COUNT=' + ($py.Length - 1))\n"
+                    + probe_function + "\nAssert-NoIgnoredCollision $TargetRef\n",
+                    encoding="utf-8-sig")
+                try:
+                    observed = subprocess.run(
+                        [shutil.which("powershell") or shutil.which("pwsh"), "-NoProfile",
+                         "-File", str(probe), str(self.repo), tree, sys.executable, str(probe_stderr)],
+                        capture_output=True, timeout=20)
+                    diagnostic = (b"\nFAILURE_ONLY_PROBE exit=" + str(observed.returncode).encode("ascii")
+                                  + b"\nstdout=" + observed.stdout[-8192:]
+                                  + b"\nstderr=" + observed.stderr[-8192:])
+                    if probe_stderr.is_file():
+                        with probe_stderr.open("rb") as captured:
+                            diagnostic += b"\nnative_stderr=" + captured.read(8192)
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    diagnostic = b"\nFAILURE_ONLY_PROBE unavailable: " + type(error).__name__.encode("ascii")
+            else:
+                diagnostic = b"\nFAILURE_ONLY_PROBE unavailable: invocation source changed"
+        self.assertEqual(result.returncode, 73, result.stderr + diagnostic)
         self.assertIn(b"IGNORED_COLLISION_REJECTED", result.stdout)
         self.assertEqual((self.repo / ignored).read_bytes(), b"owned sentinel")
 
