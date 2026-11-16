@@ -43,3 +43,4 @@
 - 准备/核验仅用 `scripts/demo.py prepare/verify`；portable-v2 用公开锁定字体和标准库音频，旧输入不混用，获取与恢复见[Demo](<templates/demo-timeline-svg/README.md#主性能基线>)。
 - 固定输入、同质量/环境/后端/配置分冷暖测全链；留身份、哈希与证据，未跑写 UNRUN，局部提速不冒充完整 all 收益；SVG 有界调度与串行回退见[缓存语义](<docs/cache-provenance.md#产物身份>)。
 - 正式/区间视频拼接共用内核帧端点生成的 concat 时长；不得以容器推断时长或仅总帧数通过替代帧时钟正确性。
+- [执行事件](<docs/reference/execution-events.md>)中跨阶段重建的回执须绑定实际阶段的嵌套任务；并行/嵌套区间不相加冒充墙钟。

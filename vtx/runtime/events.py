@@ -488,6 +488,12 @@ class ExecutionContext:
         current = _ACTIVE.get()
         if not self.enabled or current is None or current.execution is not self:
             return write(None)
+        if stage in STAGES and current.stage != stage:
+            # A standalone qc may rebuild gfx. Attribute that transaction to a
+            # nested gfx task rather than emitting an invalid qc/gfx receipt.
+            # The parser and receipt trust checks remain unchanged.
+            with self.task(stage, kind='stage').scope():
+                return self.receipt(stage, ok, write)
         with self.lock:
             ref = {'run_id': self.run_id, 'task_id': current.task_id,
                    'event_id': [self.run_id, self.seq + 1]}
