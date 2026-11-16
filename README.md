@@ -18,6 +18,12 @@ Framivra（读 "frame-ee-vra"）是 B 站视频产线的程序仓。内核 `vtx/
 
 关停后主链产物不可信的是内核；仍能可信出片的是可卸载组件。apps/plugins 每件自包含（app.json/plugin.json + 代码 + README + tests）。**可卸载不等于无依赖**：已启用插件可以依赖相应 app，不能删除依赖后继续宣称扩展生效；[协议与边界](docs/ARCHITECTURE.md#3-应用边界apps)为准。
 
+## DSH 插件（npm 安装）
+
+**推荐使用可视化界面：** 在 DSH 的 **插件 → 添加插件** 中输入 npm 包名 `framivra-dsh-sidebar`，点击 **安装**（**下载插件并写入当前 profile**）。无需克隆本仓或手动解压；镜像未同步时切换到 npm 官方源。
+
+兼容版本、安装源与首次配置见[插件安装说明](<dsh-sidebar/README.md#可视化安装推荐>)；供智能体使用的 npm/DSH 命令见[命令行安装](<dsh-sidebar/README.md#命令行安装可选>)。npm 包仅提供 DSH 侧栏，不包含 Python 内核或媒体工具；命令行渲染从下方快速开始进入。
+
 ## 快速开始（clone 即用，零安装步骤）
 
 公开主 Demo 与主性能输入从 [30 秒 JSON 时间线作品](templates/demo-timeline-svg/README.md#主性能基线) 起步；浏览器、字幕和普通媒体能力由独立机制测试覆盖。自建项目先满足[依赖矩阵](#依赖矩阵)；「零安装」仅指不必 pip 安装本仓，不包含外部工具或媒体。以下克隆、初始化、脚手架与渲染均为**写操作**；`PROJECT` 必须是全新项目的绝对路径，避免覆盖已有 timeline。
