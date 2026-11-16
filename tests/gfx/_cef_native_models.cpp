@@ -2,7 +2,6 @@
 // Each model executes production code, with only the browser/event transport
 // substituted. No native Chromium rasterization or performance result is implied.
 #include "pair_swap_planner.hpp"
-#include "invalidation_policy.hpp"
 #if defined(VTX_MODEL_ORCHESTRATION)
 // === Paired browser orchestration: actual serve/parser/OnPaint + fake CEF. ===
 #include "frame_sync_machine.hpp"

@@ -158,11 +158,13 @@ VTX_GFX_SPLIT_MAX=3` 后，冷态 `all` 中位 91.749→86.244s，配对减时�
 timeline 帧率、尺寸、codec 与像素证明不变；日志记录请求值，配置变化仍使缓存身份变化。
 无见证浏览器仅在 readiness 后收集两次真实 paint 时复制快照，闲置签名浏览器不复制；
 丢弃的回调仍递增 native paint 序号，重新启用时清旧缓冲并建立新 floor，不减少证明样本。
-活动 producer 对同一需求的强制 `Invalidate` 最多合并到 `min(8ms, 请求采样周期)`，
-新请求、readiness、见证搬移及下一独立样本立即触发；stale 回调不消费需求，仍有界重试。
-每个原有 `SendExternalBeginFrame`、就绪前双 rAF、绘制后围栏、两次 unsigned 样本及超时
-均保留，不是替代 BeginFrame 架构或闲置预热。当前两后端各一组筛选配对与外部GUI请求重叠，
-[时戳与污染标记](<../../docs/reports/browser-cold-chain-screens.json>)原样保留；须补测后才作取舍，不能沿用上表收益。
+强制重绘合并与CDP快速PNG原型已撤回：[受扰样本](<../../docs/reports/browser-cold-chain-screens.json>)
+保留，补测后CEF完整cold为96.611→96.815s、CDP为135.481→133.755s，后者PNG体积增加67.1%。
+单组补测不足以估计稳定增益/回归，未提供值得保留原型的收益；[补测证据](<../../docs/reports/browser-cold-chain-repeats.json>)
+逐项保留质量、时戳与资源代价。绘制后围栏、独立样本、非推进拒收修复及全部就绪/超时边界不变。
+当前Mac A0试验仅对自有renderer关闭后台CPU降优先级（`disable-renderer-backgrounding`）；
+不改变页面可见性、timer策略、浏览器数量或证明门，Linux/A1不变。策略绑定新worker二进制身份，
+须用重编产物单独验证完整冷暖链与资源代价，尚无30%结论。
 原生 capture 与 encode 已由深度 2 ticket 流水重叠；后续优化须测量未被隐藏的关键路径，
 不能再次把已重叠的编码时间计为新增收益，也不能把编码线程数当作加速倍数。
 

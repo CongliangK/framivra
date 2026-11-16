@@ -31,9 +31,8 @@ __vtx_render 加速特性（方案 v2 阶段 2，详见「渲染主体」前注�
 import base64
 from ..runtime import fstxn, file_clone
 from itertools import groupby
+from collections import deque
 import hashlib
-import http.client
-import io
 from pathlib import Path
 import json
 import os
@@ -318,8 +317,7 @@ class WSConn:
 class Tab:
     """一个 page target 的 CDP 会话（线程独占）。"""
 
-    def __init__(self, port, ws_path, width=1920, height=1080, *, optimize_for_speed=False):
-        self.optimize_for_speed = optimize_for_speed
+    def __init__(self, port, ws_path, width=1920, height=1080):
         self.ws = WSConn(port, ws_path)
         try:
             self._mid = 0
@@ -427,155 +425,8 @@ class Tab:
         return r.get("result", {}).get("value")
 
     def shot(self) -> bytes:
-        params = {"format": "png"}
-        if getattr(self, "optimize_for_speed", False):
-            params["optimizeForSpeed"] = True
-        r = self.call("Page.captureScreenshot", timeout=30, **params)
+        r = self.call("Page.captureScreenshot", format="png", timeout=30)
         return base64.b64decode(r["data"])
-
-
-def _screenshot_speed_schema(protocol):
-    """Only a well-formed optional boolean declaration enables the PNG hint."""
-    if not isinstance(protocol, dict) or not isinstance(protocol.get('domains'), list):
-        return 'unknown-schema'
-    if any(not isinstance(d, dict) or not isinstance(d.get('domain'), str)
-           for d in protocol['domains']):
-        return 'unknown-schema'
-    pages = [d for d in protocol['domains'] if d['domain'] == 'Page']
-    if len(pages) != 1 or not isinstance(pages[0].get('commands'), list):
-        return 'unknown-schema'
-    if any(not isinstance(c, dict) or not isinstance(c.get('name'), str)
-           for c in pages[0]['commands']):
-        return 'unknown-schema'
-    commands = [c for c in pages[0]['commands'] if c['name'] == 'captureScreenshot']
-    if len(commands) != 1 or not isinstance(commands[0].get('parameters'), list):
-        return 'unknown-schema'
-    parameters = commands[0]['parameters']
-    names = set()
-    for parameter in parameters:
-        if (not isinstance(parameter, dict) or not isinstance(parameter.get('name'), str)
-                or not parameter['name'] or parameter['name'] in names
-                or (('type' in parameter) == ('$ref' in parameter))
-                or ('type' in parameter and parameter['type'] not in
-                    ('boolean', 'integer', 'number', 'string', 'object', 'array', 'any', 'binary'))
-                or ('$ref' in parameter and (not isinstance(parameter['$ref'], str)
-                                            or not parameter['$ref']))
-                or ('optional' in parameter and type(parameter['optional']) is not bool)):
-            return 'unknown-schema'
-        names.add(parameter['name'])
-    matches = [p for p in parameters if p['name'] == 'optimizeForSpeed']
-    if not matches:
-        return 'unsupported'
-    parameter = matches[0]
-    if parameter.get('type') == 'boolean' and parameter.get('optional') is True:
-        return 'enabled'
-    return 'unknown-schema'
-
-
-class _ProtocolProbeTooLarge(ValueError):
-    pass
-
-
-class _ProtocolProbeReader(io.RawIOBase):
-    """Bound every raw receive, including HTTP headers, to one owned budget."""
-    def __init__(self, sock, deadline):
-        self.sock, self.deadline = sock, deadline
-        # Retain the socket's file reference: HTTPConnection may close its own
-        # reference immediately after headers when the server says close.
-        self.stream = None
-        self.stream = sock.makefile('rb', buffering=0)
-        self.remaining_bytes = 4 * 1024 * 1024 + 65536
-
-    def readable(self):
-        return True
-
-    def readinto(self, buffer):
-        remaining = self.deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError('protocol probe deadline')
-        if self.remaining_bytes <= 0:
-            raise _ProtocolProbeTooLarge()
-        self.sock.settimeout(remaining)
-        n = self.stream.readinto(memoryview(buffer)[:self.remaining_bytes])
-        self.remaining_bytes -= n
-        return n
-
-    def close(self):
-        try:
-            if self.stream is not None:
-                self.stream.close()
-        finally:
-            super().close()
-
-
-class _ProtocolProbeSocket:
-    def __init__(self, sock, deadline):
-        self.sock, self.deadline = sock, deadline
-
-    def __getattr__(self, name):
-        return getattr(self.sock, name)
-
-    def makefile(self, *args, **kwargs):
-        return io.BufferedReader(_ProtocolProbeReader(self.sock, self.deadline))
-
-    def sendall(self, data):
-        remaining = self.deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError('protocol probe deadline')
-        self.sock.settimeout(remaining)
-        self.sock.sendall(data)
-
-
-class _ProtocolProbeConnection(http.client.HTTPConnection):
-    def __init__(self, port, deadline, timeout):
-        super().__init__('127.0.0.1', port, timeout=timeout)
-        self.deadline = deadline
-
-    def connect(self):
-        super().connect()
-        self.sock = _ProtocolProbeSocket(self.sock, self.deadline)
-
-
-def _probe_screenshot_speed(port, timeout=1.0):
-    """Optional local DevTools probe with total deadline and bounded wire/body.
-
-    Unknown schema/I/O/timeout keeps legacy screenshots. This does not handle
-    errors from actual screenshots, JS evaluation or strict request enforcement.
-    """
-    if timeout <= 0:
-        return 'unknown-timeout'
-    deadline = time.monotonic() + timeout
-    limit = 4 * 1024 * 1024
-    connection = _ProtocolProbeConnection(port, deadline, timeout)
-    try:
-        connection.request('GET', '/json/protocol', headers={'Connection': 'close'})
-        with connection.getresponse() as response:
-            if response.status != 200:
-                return 'unknown-io'
-            chunks, size = [], 0
-            while True:
-                if time.monotonic() >= deadline:
-                    return 'unknown-timeout'
-                chunk = response.read1(min(65536, limit + 1 - size))
-                if time.monotonic() >= deadline:
-                    return 'unknown-timeout'
-                size += len(chunk)
-                if size > limit:
-                    return 'unknown-size'
-                if not chunk:
-                    break
-                chunks.append(chunk)
-        return _screenshot_speed_schema(json.loads(b''.join(chunks)))
-    except (TimeoutError, socket.timeout):
-        return 'unknown-timeout'
-    except _ProtocolProbeTooLarge:
-        return 'unknown-size'
-    except (OSError, http.client.HTTPException):
-        return 'unknown-io'
-    except (ValueError, UnicodeError, RecursionError):
-        return 'unknown-schema'
-    finally:
-        connection.close()
 
 
 _SUPERVISION_WARNED = False
@@ -620,7 +471,6 @@ class Browser:
         self.tab_ws_urls = []
         self.lock = threading.Lock()
         self.generation = 0
-        self.screenshot_speed_capability = 'unknown-unprobed'
 
     def _find_chrome(self):
         if self.chrome:
@@ -630,7 +480,6 @@ class Browser:
             raise RuntimeError("no chrome found")
 
     def start(self):
-        self.screenshot_speed_capability = 'unknown-unprobed'
         self._find_chrome()
         from .gfx_environment import CHROME_VISUAL_FLAGS
         s = socket.socket()
@@ -687,11 +536,6 @@ class Browser:
                 time.sleep(0.2)
         else:
             raise RuntimeError("chrome devtools not ready in 15s")
-        probe_budget = min(1.0, max(0.0, deadline - time.monotonic()))
-        self.screenshot_speed_capability = (
-            _probe_screenshot_speed(self.port, probe_budget) if probe_budget > 0
-            else 'unknown-timeout')
-        print(f"  CDP screenshot optimizeForSpeed: {self.screenshot_speed_capability}")
         req = urllib.request.Request(
             f"http://127.0.0.1:{self.port}/json/new?about:blank", method="PUT")
         self.tab_ws_urls = []
@@ -706,8 +550,7 @@ class Browser:
         tabs = []
         try:
             for u in self.tab_ws_urls:
-                tabs.append(Tab(self.port, u, self.width, self.height,
-                                optimize_for_speed=self.screenshot_speed_capability == 'enabled'))
+                tabs.append(Tab(self.port, u, self.width, self.height))
         except BaseException:
             for t in tabs:
                 t.close()
@@ -1031,6 +874,17 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     static_spans_n = 0          # 特性 2：生效跨度数（stats 打 span×K）
     static_copied_n = 0         # 特性 2：字节复制成员帧数（write 成功才计数，B5 口径）
     deferred_spans = []         # [(head, [members])]：头帧本次渲染落盘后复制
+    claim_lock = threading.Lock()
+    stopped = threading.Event()
+    fatal = []                  # first escaping exception and its original traceback
+    worker_done = [threading.Event() for _ in range(tabs_n)]
+    threads = []
+
+    def stop_claims(error=None):
+        with claim_lock:
+            if error is not None and not fatal:
+                fatal.append((error, error.__traceback__))
+            stopped.set()
 
     def note(msg):
         """加速特性告警：progress 缺席（vtx 现行接法）也必须可见——落 stderr。"""
@@ -1115,7 +969,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         except Exception:
             return False
 
-    def worker(idx):
+    def render_worker(idx):
         nonlocal pool, use_override
         # 观测累积全部线程本地（每 worker 独立 dict/list，收尾写 per_tab 自己的槽位，
         # 运行期无共享写免锁），join 后 render_page 单线程合并。
@@ -1130,6 +984,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             try:
                 new_pool = None
                 with browser.lock:
+                    if stopped.is_set():
+                        return
                     if browser.generation == gen[0]:
                         browser.hard_restart()
                         new_pool = browser.open_tabs()
@@ -1142,7 +998,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                     pool = new_pool
                     gen[0] = browser.generation
             except Exception:
-                time.sleep(0.5)
+                if not stopped.is_set():
+                    time.sleep(0.5)
 
         def shot_with_heal(i, navfree=False):
             """渲一帧并落盘（含自愈重试 ≤2）。B5 语义：路径计数移到 write 成功
@@ -1151,6 +1008,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             nf = navfree
             retries = 0
             while True:
+                if stopped.is_set():
+                    return False
                 try:
                     if idx >= len(pool):
                         raise ConnectionError("tab lost after browser restart")
@@ -1166,6 +1025,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                     gen[0] = browser.generation
                     return True
                 except Exception:
+                    if stopped.is_set():
+                        return False
                     if nf:
                         # navfree 失败 → 本帧转导航路径；绝不静默（页级告警一次）
                         nf = False
@@ -1182,21 +1043,35 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                         return False
                     heal()
 
+        # Claim only after the previous frame (including retries/write) finishes.
+        # Each tab remains sequential; idle tabs can consume another frame rather
+        # than stop at a fixed stride while other tabs still have queued work.
+        i = claim_frame()
         # —— navfree 每 tab 一次性导航（特性 1）：之后帧态全由页内 __vtx_render 置位 ——
         nf_tab = navfree_on
-        if nf_tab and queues[idx]:
+        if nf_tab and i is not None:
             try:
                 if idx >= len(pool):
                     raise ConnectionError("tab lost after browser restart")
                 t0 = time.monotonic()
-                pool[idx].navigate(f"{base_uri}?f={queues[idx][0]}")
+                pool[idx].navigate(f"{base_uri}?f={i}")
                 my_times["nav"].append(time.monotonic() - t0)
             except Exception:
                 nf_tab = False    # 首导航失败 → 本 tab 逐帧导航（各帧自会重试/自愈）
-        for i in queues[idx]:
+        while i is not None:
             shot_with_heal(i, navfree=nf_tab)
+            i = claim_frame()
         # 收尾：写本 worker 的观测槽位（每槽只被所属线程写一次，无竞争）
         per_tab[idx] = (my_paths, my_times)
+
+    def worker(idx):
+        try:
+            if not stopped.is_set():
+                render_worker(idx)
+        except BaseException as error:
+            stop_claims(error)
+        finally:
+            worker_done[idx].set()
 
     try:
         pool = browser.open_tabs()
@@ -1243,7 +1118,13 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 note(f"跨度头帧 {head_path} 不可读（{e}），改渲染成员帧")
                 work.extend(members)
         work.sort()
-        queues = [work[k::tabs_n] for k in range(tabs_n)]
+        # Build claims only after static pruning/copy-failure reinsertion.
+        # The lock protects ownership, never navigation, retries or disk I/O.
+        pending = deque(work)
+
+        def claim_frame():
+            with claim_lock:
+                return pending.popleft() if pending and not stopped.is_set() else None
         # —— 特性 1 nav-free 资格判定：VTX_GFX_NAVFREE=1 且页面有 __vtx_render。
         # 默认 0：env 关闭时零额外 eval，页面行为与旧路径逐字节一致。——
         if os.environ.get("VTX_GFX_NAVFREE", "0") == "1":
@@ -1287,13 +1168,44 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             # 缩减后 work 可能清空（缺失帧全是已缓存头帧的跨度成员）→ 零线程收尾
             threads = [threading.Thread(target=worker, args=(k,)) for k in range(tabs_n)]
             for t in threads:
+                if stopped.is_set():
+                    break
                 t.start()
-            for t in threads:
-                t.join()
+            for idx, t in enumerate(threads):
+                if t.ident is not None:
+                    worker_done[idx].wait()
+    except BaseException as error:
+        stop_claims(error)
     finally:
+        stop_claims()
+        # Target-owned events, not Thread.is_alive alone: an interrupted join
+        # can mark a still-running thread stopped on supported CPython versions.
+        # Never close the browser while an admitted worker can still heal it.
+        for idx, t in enumerate(threads):
+            if t.ident is None:
+                continue
+            while not worker_done[idx].is_set():
+                try:
+                    worker_done[idx].wait()
+                except BaseException as error:
+                    stop_claims(error)
+            while t.is_alive():
+                try:
+                    t.join()
+                except BaseException as error:
+                    stop_claims(error)
         for t in pool:
-            t.close()   # 显式释放 tab CDP fd(对端将随 stop() 退出,无害)
-        browser.stop()
+            try:
+                t.close()
+            except BaseException as error:
+                stop_claims(error)
+        try:
+            browser.stop()
+        except BaseException as error:
+            stop_claims(error)
+    if fatal:
+        error, traceback = fatal[0]
+        raise error.with_traceback(traceback)
     dt = (time.monotonic() - t0) * 1000
     # —— 特性 2 延后复制：头帧已由本次渲染落盘，缺失成员字节复制头帧文件 ——
     for head, members in deferred_spans:

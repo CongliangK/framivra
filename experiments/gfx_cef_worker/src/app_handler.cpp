@@ -64,6 +64,14 @@ void WorkerApp::OnBeforeCommandLineProcessing(
   if (options_ == nullptr || !process_type.empty()) {
     return;
   }
+#if defined(__APPLE__)
+  if (options_->mode == "a0") {
+    // Owned software-rendering workers should not lose renderer CPU priority
+    // merely because OSR has no foreground window. This does not change page
+    // visibility, timer policy, frame gates or the bounded browser count.
+    command_line->AppendSwitch("disable-renderer-backgrounding");
+  }
+#endif
   if (options_->serve_mode) {
     // serve 模式：DoD③ abort() 演练需原生 SIGABRT 语义（无崩溃副本/无
     // 崩溃处理器拦截），一次性渲染路径不注入。
