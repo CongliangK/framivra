@@ -1254,7 +1254,54 @@ int test() {
     ck(x.close_calls == 1 && x.shutdowns == 1,
        "observed browser takes precedence over creation return code");
   }
+  // Ring scheduling may be permanently disabled while C's asynchronous
+  // creation is still owned. Exercise the actual close helper for all slots;
+  // this models lifetime only, not a browser proof or performance result.
+  {
+    Fixture pairs[3];
+    pairs[0].create();
+    pairs[1].create();
+    pairs[2].pump.tasks.push_back([&] { pairs[2].create(true, false); });
+    pairswap::Planner planner{true, 3};
+    planner.RecordSignedPrefetch(2, 452, "file:///page?f=452", 7);
+    planner.Disable();
+    bool closed = true;
+    for (auto& pair : pairs) closed = pair.finish(true) && closed;
+    ck(closed && planner.effective_depth() == 1,
+       "fallback retains and closes every ring slot including pending C");
+    for (auto& pair : pairs)
+      ck(pair.close_calls == 1 && pair.shutdowns == 1,
+         "fallback closes each created pair once, before releasing owners");
+    ck(pairs[2].pump.waits == 2, "late C creation adopted then closed after fallback");
+  }
+  {
+    Fixture pairs[3];
+    pairs[0].create();
+    pairs[1].create();
+    pairs[2].create();
+    pairs[2].state.closed = true;
+    pairs[2].state.browser = nullptr;  // C died independently before cleanup.
+    bool closed = true;
+    for (auto& pair : pairs) closed = pair.finish(true) && closed;
+    ck(closed && pairs[2].close_calls == 0,
+       "dead C is released without any illegal browser method");
+    ck(pairs[0].close_calls == 1 && pairs[1].close_calls == 1,
+       "dead C never bypasses A/B close");
+  }
+  {
+    Fixture pairs[3];
+    pairs[0].create();
+    pairs[1].create();
+    // C's successful creation request never calls OnAfterCreated.
+    bool closed = true;
+    for (auto& pair : pairs) closed = pair.finish(true) && closed;
+    ck(!closed && pairs[2].shutdowns == 0 && pairs[2].pump.ticks == 5000,
+       "unresolved pending C forbids clean ring shutdown after A/B close");
+    ck(pairs[0].close_calls == 1 && pairs[1].close_calls == 1,
+       "unresolved C does not skip independent A/B cleanup");
+  }
   std::printf("EXTRACTED_LIFECYCLE_PASS checks=%d scenarios=8 (fake CEF callbacks, actual close helper)\n", checks);
+  std::printf("THREE_PAIR_LIFECYCLE_PASS scenarios=3 pending-C-after-fallback preclosed-C unresolved-C\n");
   return 0;
 }
 }
@@ -1393,6 +1440,10 @@ template<class T> struct CefRefPtr : std::shared_ptr<T> {
   CefRefPtr() = default;
   CefRefPtr(T* pointer) : std::shared_ptr<T>(pointer) {}
   CefRefPtr& operator=(T* pointer) { this->reset(pointer); return *this; }
+  // Match CEF's pointer/null comparisons; std::shared_ptr free operators do
+  // not deduce the base type from this derived fake wrapper on every compiler.
+  bool operator==(std::nullptr_t) const { return this->get() == nullptr; }
+  bool operator!=(std::nullptr_t) const { return this->get() != nullptr; }
 };
 struct CefString {
   std::string value;
@@ -1597,8 +1648,10 @@ struct ServeOptions {
   int encode_threads = 2, fault_abort_after_frames = -1;
   PngEncodeOptions png;
   bool sync = false;
-  // The transport fault model is explicitly single-pair, not the PairSwap suite.
+  // The transport fault model defaults to one pair; the production ring's
+  // requested-depth API is retained even when scheduling is disengaged.
   bool pair_swap = false;
+  int pair_depth = 2;
   std::string sync_mode = "n", sync_log, sync_canary = "exact", reference_context = "shared";
 };
 // 仅 SERVE_FAILURES 拼接体（serve.cpp 环形槽路径）使用；ONESHOT 变体下
@@ -1644,10 +1697,18 @@ std::string ExpandUrlTemplate(const std::string& tpl, int32_t frame) {
 struct ExactBaselineCapture {
   // serve.cpp:758 同名成员（PairSwap 预取导航簿记）；故障模型
   // pair_swap=false，仅满足拼接体编译，运行期不可达。
-  bool Prefetch(int32_t, const std::string&) { return true; }
+  pairswap::PairBookkeeping prefetch;
+  bool prefetch_disabled = false;
+  void InvalidatePrefetch() { prefetch.Consume(); }
+  void DisablePrefetch() { InvalidatePrefetch(); prefetch_disabled = true; }
+  bool Prefetch(int32_t frame, const std::string& url) {
+    if (prefetch_disabled) return false;
+    prefetch.Record(frame, url, 0);
+    return true;
+  }
   bool Close(PumpDriver& pump) {
     ++baseline_closes;
-    if (scenario == "baseline_closes_signed") {
+    if (scenario == "baseline_closes_signed" && !pump.state->closed.load()) {
       tasks.emplace_back(tick, [state = pump.state] { NaturalClose(state); });
       pump.Once();
     }

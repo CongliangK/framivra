@@ -58,11 +58,12 @@ struct ServeOptions {
                                      // early_burst（对抗注入面）
   int sync_pump_timeout_ms = 5000;   // S4 泵送硬超时（工单冻结 5000ms）
   int sync_ready_timeout_ms = 20000; // S1→S3 就绪信号等待上限
-  // PairSwap 双对交替预取（仅 mode n + exact 生效）：绑定帧 N 时立即对
-  // 空闲对 LoadURL 帧 N+1，把每帧双导航成本藏进上一帧周期。env
-  // VTX_CEF_PAIR_SWAP=0 回退单对 navigate-now 现路径（决策逻辑见
-  // pair_swap_planner.hpp）。
-  bool pair_swap = true;             // --pair-swap=0|1（默认 1 开启）
+  // Only sync mode n + exact engages the navigation ring. At BIND N,
+  // an already-created retired pair navigates to N+depth-1 (no bridge/paint).
+  // Depth 3 is opt-in for deterministic frame-pure pages; swap=0 forces one
+  // pair regardless of requested depth. Host tickets/encoding remain depth 2.
+  bool pair_swap = true;             // --pair-swap=0|1 (default 1)
+  int pair_depth = 2;                // --pair-depth=2|3 (default 2)
 };
 
 // Shared checked closure for serve and one-shot owners. False means CEF still

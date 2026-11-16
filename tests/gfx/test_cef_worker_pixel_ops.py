@@ -559,6 +559,7 @@ struct ServeOptions {
   std::string sync_canary = "exact";
   std::string url_template = "file://page.html?f={f}";
   int png = 0;
+  int pair_depth = 2;
 };
 struct FrameRequest {
   uint32_t request_id = 1;
@@ -613,6 +614,8 @@ struct FakeMachine {
                               const std::string& fields) {
     assert(fields.find("\"request_wall_to_reply_us\"") != std::string::npos);
     assert(fields.find("\"pair_index\":") != std::string::npos);
+    assert(fields.find("\"pair_depth_requested\":2") != std::string::npos);
+    assert(fields.find("\"pair_depth_effective\":2") != std::string::npos);
     assert(fields.find("\"signed_prefetch\":\"") != std::string::npos);
     assert(fields.find("\"unsigned_prefetch\":\"") != std::string::npos);
     ++timing_rows;
@@ -686,12 +689,18 @@ int main(int argc, char** argv) {
   ServeOptions opt;
   struct { int width = 1, height = 1; unsigned capture_fps = 120; } cef_opt;
   FakeMachine sync_machine;
-  ExactBaselineCapture exact_baseline, exact_baseline_b;
+  ExactBaselineCapture exact_baseline, auxiliary_baselines[2];
   vtx_cef::pairswap::Planner planner{true};
   vtx_cef::pairswap::Binding binding;  // pair 0：本拼接固定走 A 对
-  RunState state, state_b;
+  RunState state, auxiliary_states[2];
   RunState& active_state = state;
-  CefRefPtr<CefBrowser> browser, browser_b;
+  CefRefPtr<CefBrowser> browser, auxiliary_browsers[2];
+  const auto pair_browser = [&](int index) -> CefRefPtr<CefBrowser> {
+    return index == 0 ? browser : auxiliary_browsers[index - 1];
+  };
+  const auto pair_capture = [&](int index) -> ExactBaselineCapture& {
+    return index == 0 ? exact_baseline : auxiliary_baselines[index - 1];
+  };
   PngEncodeWorkspace encode_workspace;
   MiniPool pool(2); FakePump pump;
   uint32_t document_gen = 0;

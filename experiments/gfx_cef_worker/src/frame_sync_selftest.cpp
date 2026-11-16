@@ -1408,7 +1408,7 @@ void TestPairSwapPlannerAlternatingPrefetch() {
   Check(b0.pair == 0 && b0.signed_nav == pairswap::SignedNav::kNavigateNow &&
             b0.signed_prefetch == pairswap::Outcome::kMiss,
         "pairswap: frame 0 is a miss (nothing prefetched yet)");
-  Check(p.PrefetchTargetAfterAccept(0) == 1,
+  Check(p.PrefetchTargetAtBind(0) == 1,
         "pairswap: accept(0) targets standby pair B");
   // B 对浏览器尚未创建 → serve.cpp 不登记（不为预取凭空建窗）。
   p.NotifyRequestFinished(true);
@@ -1420,7 +1420,7 @@ void TestPairSwapPlannerAlternatingPrefetch() {
   Check(b1.pair == 1 && b1.signed_prefetch == pairswap::Outcome::kMiss &&
             b1.signed_nav == pairswap::SignedNav::kNavigateNow,
         "pairswap: frame 1 on pair B is a miss (creation carries navigation)");
-  Check(p.PrefetchTargetAfterAccept(1) == 0,
+  Check(p.PrefetchTargetAtBind(1) == 0,
         "pairswap: accept(1) targets pair A");
   p.RecordSignedPrefetch(0, 2, url(2), 200);
   p.NotifyRequestFinished(true);
@@ -1433,8 +1433,8 @@ void TestPairSwapPlannerAlternatingPrefetch() {
         "pairswap: frame 2 adopts the prefetched navigation with its floor");
   // serve.cpp 次序：accept 瞬间先问预取目标（此时活跃对仍是本帧的对），
   // 请求收尾才交替 —— 备用对 = 本帧对 ^ 1。
-  Check(p.PrefetchTargetAfterAccept(2) == 1 &&
-            pairswap::Planner::PrefetchFrame(2) == 3,
+  Check(p.PrefetchTargetAtBind(2) == 1 &&
+            p.PrefetchFrame(2) == 3,
         "pairswap: accept(2) prefetches strictly N+1 on pair B");
   p.NotifyRequestFinished(true);
   p.RecordSignedPrefetch(1, 3, url(3), 300);
@@ -1471,8 +1471,8 @@ void TestPairSwapPlannerOutOfOrderFallback() {
             wrong_url.signed_nav == pairswap::SignedNav::kNavigateNow,
         "pairswap: URL mismatch rejects adoption");
   // 帧号回绕/非法值守门：不产生预取目标。
-  Check(p.PrefetchTargetAfterAccept(std::numeric_limits<int32_t>::max()) == -1 &&
-            p.PrefetchTargetAfterAccept(-1) == -1,
+  Check(p.PrefetchTargetAtBind(std::numeric_limits<int32_t>::max()) == -1 &&
+            p.PrefetchTargetAtBind(-1) == -1,
         "pairswap: frame wrap/degenerate values never prefetch");
   // 失败请求不交替活跃对（宿主必然中止会话）。
   pairswap::Planner q{true};
@@ -1492,7 +1492,7 @@ void TestPairSwapPlannerDisabledFallback() {
     Check(b.pair == 0 && b.signed_nav == pairswap::SignedNav::kNavigateNow &&
               b.signed_prefetch == pairswap::Outcome::kOff,
           "pairswap: disabled planner keeps every request on pair A (off)");
-    Check(p.PrefetchTargetAfterAccept(f) == -1,
+    Check(p.PrefetchTargetAtBind(f) == -1,
           "pairswap: disabled planner never prefetches");
     p.NotifyRequestFinished(true);
   }
@@ -1502,6 +1502,66 @@ void TestPairSwapPlannerDisabledFallback() {
   Check(b.signed_prefetch == pairswap::Outcome::kOff &&
             b.signed_nav == pairswap::SignedNav::kNavigateNow,
         "pairswap: disabled planner ignores stray prefetch records");
+}
+
+void TestPairSwapDepthThree() {
+  const auto url = [](int32_t f) { return "file:///demo.html?f=" + std::to_string(f); };
+  for (int start : {0, 450, 451}) {
+    pairswap::Planner p{true, 3};
+    bool created[3] = {true, false, false};
+    for (int ordinal = 0; ordinal < 9; ++ordinal) {
+      const int32_t frame = start + ordinal;
+      auto b = p.BindNextRequest(frame, url(frame));
+      Check(b.pair == ordinal % 3, "depth3: accepted ordinal routes A/B/C independent of frame");
+      Check(b.signed_prefetch == (ordinal < 3 ? pairswap::Outcome::kMiss : pairswap::Outcome::kHit),
+            "depth3: first three miss then sequential hits");
+      if (ordinal >= 3)
+        Check(b.signed_load_floor == static_cast<uint64_t>(frame - 2),
+              "depth3: adoption preserves navigation load floor");
+      created[b.pair] = true;  // actual bind, not speculative creation
+      const int target = p.PrefetchTargetAtBind(frame);
+      Check(target == (b.pair + 2) % 3 && p.PrefetchFrame(frame) == frame + 2,
+            "depth3: retire previous accepted pair toward N+2, preserve N+1");
+      if (created[target]) p.RecordSignedPrefetch(target, frame + 2, url(frame + 2), frame);
+      p.NotifyRequestFinished(true);
+    }
+  }
+  pairswap::Planner p{true, 3};
+  p.BindNextRequest(450, url(450));
+  p.RecordSignedPrefetch(1, 451, url(451), 1);
+  p.RecordSignedPrefetch(2, 452, url(452), 2);
+  p.NotifyRequestFinished(true);
+  Check(p.BindNextRequest(460, url(460)).signed_prefetch == pairswap::Outcome::kMiss,
+        "depth3: skip invalidates selected token");
+  p.NotifyRequestFinished(true);
+  Check(p.BindNextRequest(452, url(452)).signed_prefetch == pairswap::Outcome::kMiss,
+        "depth3: backtrack cannot revive other horizon token");
+  p.RecordSignedPrefetch(2, 453, url(453), 7);
+  Check(p.BindNextRequest(453, "file:///other.html?f=453").signed_prefetch == pairswap::Outcome::kMiss,
+        "depth3: exact URL mismatch misses");
+  p.RecordSignedPrefetch(2, 454, url(454), 8);
+  Check(p.BindNextRequest(454, url(454)).signed_prefetch == pairswap::Outcome::kHit,
+        "depth3: exact frame and URL adopt");
+  Check(p.BindNextRequest(454, url(454)).signed_prefetch == pairswap::Outcome::kMiss,
+        "depth3: replay consumes token once only");
+  const int previous = p.active_pair();
+  p.NotifyRequestFinished(false);
+  Check(p.active_pair() == previous, "depth3: failure never rotates active pair");
+  const auto max = std::numeric_limits<int32_t>::max();
+  Check(p.PrefetchTargetAtBind(max - 2) >= 0 && p.PrefetchFrame(max - 2) == max &&
+            p.PrefetchTargetAtBind(max - 1) == -1 && p.PrefetchFrame(max - 1) == -1 &&
+            p.PrefetchTargetAtBind(max) == -1 && p.PrefetchFrame(max) == -1,
+        "depth3: N+2 INT32 boundary checked without overflow");
+  pairswap::Planner depth2{true};
+  Check(depth2.PrefetchFrame(max - 1) == max && depth2.PrefetchFrame(max) == -1,
+        "depth2: N+1 INT32 boundary unchanged");
+  pairswap::Planner off{false, 3};
+  Check(off.effective_depth() == 1 && off.PrefetchTargetAtBind(450) == -1 &&
+            off.BindNextRequest(450, url(450)).pair == 0,
+        "depth3: disabled never requests auxiliary pairs");
+  p.Disable();
+  Check(p.effective_depth() == 1 && p.BindNextRequest(455, url(455)).signed_prefetch == pairswap::Outcome::kOff,
+        "depth3: permanent fallback invalidates speculation and routes A off");
 }
 
 }  // namespace
@@ -1563,6 +1623,7 @@ int main(int argc, char* argv[]) {
   TestPairSwapPlannerAlternatingPrefetch();
   TestPairSwapPlannerOutOfOrderFallback();
   TestPairSwapPlannerDisabledFallback();
+  TestPairSwapDepthThree();
 
   // --jsonl-out：跑一段混合场景把 JSONL 落盘，供 Python 跨语言全量校验。
   if (!jsonl_out.empty()) {

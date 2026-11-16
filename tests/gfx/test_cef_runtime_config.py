@@ -22,7 +22,7 @@ class CefRuntimeConfiguration(unittest.TestCase):
     def test_defaults_and_native_argv_have_one_normalized_source(self):
         options = backend.cef_runtime_options()
         self.assertEqual(options.to_dict(), dict(sync_mode='n', reference_context='shared', png_encoder='spng',
-            png_level=1, png_filter='sub_up', encode_threads=2, capture_fps=120, pair_swap='1'))
+            png_level=1, png_filter='sub_up', encode_threads=2, capture_fps=120, pair_swap='1', pair_depth=2))
         self.assertEqual(options.argv(), ['--sync-mode=n', '--reference-context=shared', '--png-encoder=spng',
             '--png-level=1', '--png-filter=sub_up', '--encode-threads=2', '--capture-fps=120',
             '--pair-swap=1'])
@@ -40,7 +40,7 @@ class CefRuntimeConfiguration(unittest.TestCase):
         options = backend.CefRuntimeOptions("p", "fpng", 3, "none", 4)
         self.assertEqual(options.to_dict(), dict(sync_mode="p", png_encoder="fpng",
             png_level=3, png_filter="none", encode_threads=4, reference_context="shared",
-            capture_fps=120, pair_swap='1'))
+            capture_fps=120, pair_swap='1', pair_depth=2))
 
     def test_pair_swap_is_an_explicit_choice_defaulting_on(self):
         self.assertEqual(backend.cef_runtime_options().pair_swap, '1')
@@ -53,6 +53,23 @@ class CefRuntimeConfiguration(unittest.TestCase):
             with self.subTest(value=value), patch.dict(os.environ, VTX_CEF_PAIR_SWAP=value):
                 with self.assertRaisesRegex(ValueError, 'VTX_CEF_PAIR_SWAP'):
                     backend.cef_runtime_options()
+
+    def test_pair_depth_is_explicit_bounded_and_default_argv_compatible(self):
+        self.assertEqual(backend.cef_runtime_options().pair_depth, 2)
+        self.assertFalse(any(v.startswith('--pair-depth=')
+                             for v in backend.cef_runtime_options().argv()))
+        with patch.dict(os.environ, VTX_CEF_PAIR_DEPTH='03'):
+            options = backend.cef_runtime_options()
+            self.assertEqual(options.pair_depth, 3)
+            self.assertIn('--pair-depth=3', options.argv())
+            self.assertIn('pair-depth=3', backend.cef_launch_flags('a0'))
+            with patch.dict(os.environ, VTX_CEF_PAIR_SWAP='0'):
+                # Requested configuration stays identified even when native
+                # pair-swap=0 explicitly disengages auxiliary browsers.
+                disabled = backend.cef_runtime_options()
+                self.assertEqual(disabled.pair_depth, 3)
+                self.assertIn('--pair-swap=0', disabled.argv())
+                self.assertIn('--pair-depth=3', disabled.argv())
 
     def test_capture_rate_is_an_explicit_native_request(self):
         for value in (1, 30, 60, 120, 240):
@@ -80,7 +97,7 @@ class CefRuntimeConfiguration(unittest.TestCase):
     def test_numeric_controls_reject_silent_coercion_and_unbounded_pools(self):
         for name, low, high in (
             ('VTX_CEF_PNG_LEVEL', 1, 3), ('VTX_CEF_ENCODE_THREADS', 1, 16),
-            ('VTX_CEF_CAPTURE_FPS', 1, 240),
+            ('VTX_CEF_CAPTURE_FPS', 1, 240), ('VTX_CEF_PAIR_DEPTH', 2, 3),
             ('VTX_GFX_PAGES', 1, 32), ('VTX_GFX_SPLIT_FRAMES', 0, 65536),
             ('VTX_GFX_SPLIT_MAX', 1, 32)):
             for value in (str(low), str(high), str(high).zfill(6)):
@@ -109,14 +126,14 @@ class CefConfigurationIdentity(unittest.TestCase):
         before = backend.identity()
         self.assertTrue(before.startswith('cef-alpha-exact-v2|'))
         for name, value in dict(VTX_CEF_MODE='a1', VTX_CEF_SYNC_MODE='p',
-                VTX_CEF_REFERENCE_CONTEXT='isolated', VTX_CEF_CAPTURE_FPS='60',
+                VTX_CEF_REFERENCE_CONTEXT='isolated', VTX_CEF_CAPTURE_FPS='60', VTX_CEF_PAIR_DEPTH='3',
                 VTX_CEF_PNG_ENCODER='fpng', VTX_CEF_PNG_LEVEL='3',
                 VTX_CEF_PNG_FILTER='none', VTX_CEF_ENCODE_THREADS='1',
                 VTX_GFX_PAGES='2', VTX_GFX_SPLIT_FRAMES='0', VTX_GFX_SPLIT_MAX='4').items():
             with self.subTest(name=name), patch.dict(os.environ, {name: value}):
                 self.assertNotEqual(before, backend.identity())
         with patch.dict(os.environ, VTX_CEF_ENCODE_THREADS='02', VTX_GFX_PAGES='07',
-                        VTX_CEF_CAPTURE_FPS='00120'):
+                        VTX_CEF_CAPTURE_FPS='00120', VTX_CEF_PAIR_DEPTH='002'):
             self.assertEqual(before, backend.identity())
         self.worker.write_bytes(b'fixture native executable B')
         self.assertNotEqual(before, backend.identity())
@@ -153,7 +170,7 @@ class CefConfigurationIdentity(unittest.TestCase):
             return dict(schema=environment.SCHEMA, status='input-bound', backend='cef',
                         cef_configuration=backend.cef_configuration())
         for name, value in dict(VTX_CEF_SYNC_MODE='p', VTX_CEF_REFERENCE_CONTEXT='isolated', VTX_CEF_CAPTURE_FPS='60',
-                               VTX_CEF_PNG_FILTER='none',
+                               VTX_CEF_PNG_FILTER='none', VTX_CEF_PAIR_DEPTH='3',
                                VTX_GFX_PAGES='1', VTX_GFX_SPLIT_FRAMES='0').items():
             with self.subTest(name=name), patch.object(environment, 'collect', side_effect=collect):
                 context = SimpleNamespace()
@@ -193,6 +210,23 @@ class NativeCefConfiguration(unittest.TestCase):
             with self.subTest(value=value):
                 result = self.run_worker("--capture-fps=" + value)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_pair_depth_range_and_numeric_syntax_are_checked_before_rendering(self):
+        for value in ('0', '1', '4', '-3', '+3', '3.0', ' 3', '3 ', 'auto'):
+            with self.subTest(value=value):
+                result = self.run_worker('--pair-depth=' + value)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('--pair-depth', result.stderr)
+        for value in ('2', '3', '003'):
+            with self.subTest(value=value):
+                result = self.run_worker('--pair-depth=' + value)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_nondefault_pair_depth_is_not_silently_ignored_by_one_shot(self):
+        result = subprocess.run([WORKER, '--mode=a0', '--pair-depth=3', '--url=about:blank'],
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('--pair-depth requires --serve', result.stderr)
 
     def test_encoder_thread_boundary_is_checked_before_rendering(self):
         for value in ('0', '17', '1000000000'):

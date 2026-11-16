@@ -1837,6 +1837,137 @@ document.querySelector('div').style.left=(20+f*3)+'px';</script>''')
                 shutil.copytree(root, target, dirs_exist_ok=True)
                 (target / 'test.stdout.log').write_text(result.stdout + '\n' + repair.stdout)
 
+    def _assert_three_pair_frames(self, frames, *, enabled=True):
+        with tempfile.TemporaryDirectory(prefix='cef_three_pairs_') as td:
+            root = Path(td).resolve()
+            p = project(root, n=max(frames) + 1)
+            env = dict(os.environ, VTX_GFX='cef', VTX_CEF_WORKER=WORKER,
+                       VTX_CEF_MODE='a0', VTX_CEF_SYNC_MODE='n', VTX_GFX_CACHE_NS='',
+                       VTX_CEF_PAIR_DEPTH='3', VTX_CEF_PAIR_SWAP='1' if enabled else '0')
+            with mock.patch.dict(os.environ, env):
+                c = Ctx(p)
+                out = hygiene.gfx_dir(c, c.tl['video_tracks'][0]['clips'][0])
+                out.mkdir(parents=True)
+                gfx_cef.render_page(root/'page.html', out, max(frames) + 1,
+                                    ctx=c, width=64, height=48, frames=frames)
+                for f in frames:
+                    w, h, rgba = decode_png_rgba(out/f'f{f:04d}.png')
+                    expected = bytearray()
+                    for y in range(h):
+                        for x in range(w):
+                            expected.extend(((x + f) % 256, y + 9, x ^ y, 255)
+                                if x <= 9 or x >= 54 or y <= 9 or y >= 38
+                                else ((17, 33, 65, 255) if f % 2 else (0, 0, 0, 0)))
+                    self.assertEqual((w, h), (64, 48))
+                    self.assertEqual(rgba, bytes(expected), f)
+                events = [json.loads(line) for path in (c.cache/'reports/cef').glob('*.sync.jsonl')
+                          for line in path.read_text().splitlines()]
+                stats = [e for e in events if e['event'] == 'adapter_timing']
+                self.assertEqual([e['target_frame_index'] for e in stats], frames)
+                self.assertEqual([e['pair_index'] for e in stats],
+                                 [i % 3 if enabled else 0 for i in range(len(frames))])
+                for e in stats:
+                    self.assertEqual(e['pair_depth_requested'], 3)
+                    self.assertEqual(e['pair_depth_effective'], 3 if enabled else 1)
+                    # Load + readiness + two accepted phases + final are the
+                    # minimum. Rejected positive paint candidates also fence.
+                    self.assertGreaterEqual(e['signed_fence_count'], 5)
+                    # Early blank/rasterization batches may require fresh
+                    # pairs and another final fence; they cannot reduce proof.
+                    self.assertGreaterEqual(e['unsigned_fence_count'], 2)
+                    self.assertGreaterEqual(e['unsigned_samples_captured'], 2)
+                    self.assertEqual(e['delivery_status'], 0)
+                accepted = [e for e in events if e.get('to') == 'S5_ONPAINT_VERIFIED']
+                self.assertEqual([e['target_frame_index'] for e in accepted], frames)
+                for verified in accepted:
+                    request = [e for e in events if e['request_id'] == verified['request_id']]
+                    equal = [e for e in request if e['event'] == 'exact_baseline_equal']
+                    veto = [e for e in request if e['event'] == 'exact_baseline_veto_armed']
+                    self.assertEqual(len(equal), 1)
+                    self.assertEqual(len(veto), 1)
+                    self.assertIs(veto[0]['restoration_source'], False)
+                    self.assertEqual(equal[0]['compared_bytes'], 64 * 48 * 4)
+                    self.assertEqual(equal[0]['via'], 'byte_exact')
+                    self.assertEqual(equal[0]['consecutive_equal_paints'], 2)
+                    self.assertLess(equal[0]['seq'], verified['seq'])
+                    self.assertEqual(verified['restore_source'], 'native_cross_capture')
+                self.assertFalse(any((c.cache/'tmp').iterdir()), 'supervised worker leaked')
+                return [(e['signed_prefetch'], e['unsigned_prefetch']) for e in stats]
+
+    def test_real_three_pairs_preserve_pixels_and_two_frame_lookahead(self):
+        expected = [('miss', 'miss')] * 3 + [('hit', 'hit')] * 3
+        self.assertEqual(self._assert_three_pair_frames(list(range(6))), expected)
+        # Non-zero, non-multiple-of-three start must still begin on pair A.
+        self.assertEqual(self._assert_three_pair_frames(list(range(451, 457))), expected)
+
+    def test_real_three_pairs_short_session_and_skipped_frames(self):
+        self.assertEqual(self._assert_three_pair_frames([0, 1]), [('miss', 'miss')] * 2)
+        self.assertEqual(self._assert_three_pair_frames([0, 1, 4, 5, 6, 7, 8]),
+                         [('miss', 'miss')] * 4 + [('hit', 'hit')] * 3)
+
+    def test_real_three_pairs_disabled_remains_single_pair(self):
+        self.assertEqual(self._assert_three_pair_frames(list(range(4)), enabled=False),
+                         [('off', 'off')] * 4)
+
+    def test_real_three_pair_option_is_disengaged_for_mode_p(self):
+        with tempfile.TemporaryDirectory(prefix='cef_pair_depth_mode_p_') as td:
+            root = Path(td).resolve()
+            p = project(root)
+            (root/'page.html').write_text('''<!doctype html><style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden}</style><script>
+window.__vtx_render = function(f) {
+  document.documentElement.style.background = `rgb(${f+17},33,65)`;
+  return Promise.resolve();
+};</script>''')
+            env = dict(os.environ, VTX_GFX='cef', VTX_CEF_WORKER=WORKER,
+                       VTX_CEF_MODE='a0', VTX_CEF_SYNC_MODE='p', VTX_GFX_CACHE_NS='',
+                       VTX_CEF_PAIR_DEPTH='3', VTX_CEF_PAIR_SWAP='1')
+            with mock.patch.dict(os.environ, env):
+                c = Ctx(p)
+                out = hygiene.gfx_dir(c, c.tl['video_tracks'][0]['clips'][0])
+                out.mkdir(parents=True)
+                gfx_cef.render_page(root/'page.html', out, 3, ctx=c, width=64, height=48)
+                for f in range(3):
+                    self.assertEqual(decode_png_rgba(out/f'f{f:04d}.png'),
+                                     (64, 48, bytes((17 + f, 33, 65, 255)) * (64 * 48)))
+                stats = [e for path in (c.cache/'reports/cef').glob('*.sync.jsonl')
+                         for line in path.read_text().splitlines()
+                         if (e := json.loads(line))['event'] == 'adapter_timing']
+                self.assertEqual(len(stats), 3)
+                for e in stats:
+                    self.assertEqual(e['pair_index'], 0)
+                    self.assertEqual(e['pair_depth_requested'], 3)
+                    self.assertEqual(e['pair_depth_effective'], 1)
+                    self.assertEqual(e['signed_prefetch'], 'off')
+                    self.assertEqual(e['unsigned_prefetch'], 'off')
+                self.assertFalse(any((c.cache/'tmp').iterdir()), 'supervised worker leaked')
+
+    def test_real_third_pair_js_failure_never_degrades_into_success(self):
+        from vtx.render.cef_client import CefWorkerError
+        for bad_frame in (2, 5):  # Initial creation and later adopted prefetch on C.
+            with self.subTest(frame=bad_frame), tempfile.TemporaryDirectory(prefix='cef_pair_c_error_') as td:
+                root = Path(td).resolve()
+                p = project(root, n=bad_frame + 1)
+                page = root/'page.html'
+                page.write_text(PAGE.replace('if(f%2)',
+                    f"if(f==={bad_frame})throw Error('PAIR_C_FAILURE');\nif(f%2)"))
+                env = dict(os.environ, VTX_GFX='cef', VTX_CEF_WORKER=WORKER,
+                           VTX_CEF_MODE='a0', VTX_CEF_SYNC_MODE='n', VTX_GFX_CACHE_NS='',
+                           VTX_CEF_PAIR_DEPTH='3', VTX_CEF_PAIR_SWAP='1')
+                with mock.patch.dict(os.environ, env):
+                    c = Ctx(p)
+                    out = hygiene.gfx_dir(c, c.tl['video_tracks'][0]['clips'][0])
+                    out.mkdir(parents=True)
+                    with self.assertRaisesRegex(CefWorkerError, 'JS_ERR'):
+                        gfx_cef.render_page(page, out, bad_frame + 1, ctx=c, width=64, height=48)
+                    self.assertFalse((out/f'f{bad_frame:04d}.png').exists())
+                    events = [json.loads(line) for path in (c.cache/'reports/cef').glob('*.sync.jsonl')
+                              for line in path.read_text().splitlines()]
+                    accepted = [e['target_frame_index'] for e in events
+                                if e.get('to') == 'S5_ONPAINT_VERIFIED']
+                    self.assertEqual(accepted, list(range(bad_frame)))
+                    self.assertFalse(any((c.cache/'tmp').iterdir()), 'failed worker leaked')
+
     def test_real_mode_n_pair_swap_disabled_falls_back_to_single_pair(self):
         with tempfile.TemporaryDirectory(prefix='cef_production_') as td:
             root = Path(td).resolve()
