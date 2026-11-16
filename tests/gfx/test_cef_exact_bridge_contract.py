@@ -346,6 +346,14 @@ class NativeOrchestrationModel(unittest.TestCase):
                        "  if (state_->capture_armed)")
         fallback = region(app, "  // One-shot capture still snapshots every paint.",
                           "}\n\nbool WorkerClient::OnConsoleMessage")
+        # Deterministically change the observation only AFTER the production
+        # prefilter chose rejection; the actual callback must remain unable to
+        # advance proof even if its subsequent accounting read becomes valid.
+        negative_branch = 'if (!state_->sync_machine->PaintMayAdvance(src, stride, w, h)) {'
+        self.assertEqual(paint.count(negative_branch), 1)
+        paint = paint.replace(negative_branch, negative_branch +
+                              '\n      if (negative_classification_hook) '
+                              'negative_classification_hook(state_, src);')
         paint = ("void SimPaint(RunState* state_, const std::vector<uint8_t>& bytes) {"
                  "const auto* src = bytes.data(); int width = 32, height = 24;\n"
                  + paint + fallback + "}\n")
@@ -356,6 +364,7 @@ class NativeOrchestrationModel(unittest.TestCase):
         output = self.compile_run("paired", source)
         self.assertIn("EXTRACTED_NATIVE_MODEL_PASS", output)
         self.assertIn("scenarios=49", output)
+        self.assertIn("NONADVANCING_CALLBACK_MUTATION_PASS phases=2", output)
 
     def test_every_veto_and_probe_byte_with_owned_capture_storage(self):
         source = (FIXTURES / "_cef_native_models.cpp").read_text(encoding="utf-8")

@@ -531,9 +531,14 @@ bool FrameSyncStateMachine::PaintMayAdvance(const uint8_t* src, size_t stride,
 
 // ---------------------------------------------------------------- OnPaint 闸门
 
+PaintVerdict FrameSyncStateMachine::FeedNonAdvancingPaint(const uint8_t* src,
+    size_t stride, uint32_t width, uint32_t height, uint64_t now_us) {
+  return FeedPaintImpl(src, stride, width, height, nullptr, now_us, nullptr, false);
+}
+
 PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
     uint32_t width, uint32_t height, uint8_t* dst, uint64_t now_us) {
-  return FeedPaintImpl(src, stride, width, height, dst, now_us, nullptr);
+  return FeedPaintImpl(src, stride, width, height, dst, now_us, nullptr, true);
 }
 
 PaintVerdict FrameSyncStateMachine::FeedOwnedPaint(std::vector<uint8_t>& src,
@@ -543,12 +548,12 @@ PaintVerdict FrameSyncStateMachine::FeedOwnedPaint(std::vector<uint8_t>& src,
       src.size() == static_cast<size_t>(width) * height * 4u;
   return FeedPaintImpl(compact ? src.data() : nullptr,
       compact ? static_cast<size_t>(width) * 4u : 0, width, height, dst, now_us,
-      compact ? &src : nullptr);
+      compact ? &src : nullptr, true);
 }
 
 PaintVerdict FrameSyncStateMachine::FeedPaintImpl(const uint8_t* src, size_t stride,
     uint32_t width, uint32_t height, uint8_t* dst, uint64_t now_us,
-    std::vector<uint8_t>* owned) {
+    std::vector<uint8_t>* owned, bool allow_advance) {
   PaintVerdict v;
   ++req_paints_;
   if (state_ > State::S0_IDLE && state_ < State::S4_COMPOSITOR_PUMPING) {
@@ -674,6 +679,20 @@ PaintVerdict FrameSyncStateMachine::FeedPaintImpl(const uint8_t* src, size_t str
     }
     v.disposition = PaintDisposition::kAccepted;
     v.decoded_frame = inter[0];  // receipt canary 来源：真实解码结果
+  }
+
+  // A false prefilter result is not permission to advance on a second read of
+  // the borrowed callback buffer. Keep this capability guard before ANY signed
+  // phase mutation, candidate storage, acceptance or output, for every mode.
+  if (!allow_advance) {
+    ++counters_.rejected_stale_paint;
+    ++req_rejected_;
+    v.disposition = PaintDisposition::kRejectedStale;
+    Emit("paint", now_us, nullptr, nullptr,
+         "\"disposition\":\"rejected_stale_paint\","
+         "\"reason\":\"nonadvancing_path_positive_candidate\","
+         "\"rejected_stale_paint_count\":" + std::to_string(req_rejected_));
+    return v;
   }
 
   if (desc_.canary == CanaryMode::kExact) {

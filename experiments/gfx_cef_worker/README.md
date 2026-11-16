@@ -77,6 +77,12 @@ jitter_max_channel_delta、jitter_signature_streak）；超预算或探针角差
 可信错误观察器，并在接受捕获像素前核对 renderer fence：未捕获异常、语法错误、
 未处理 Promise 拒绝及已覆盖的错误事件抑制反例以 `JS_ERR/3` 拒绝；协议、
 文档绑定或 deadline 失败以 `TIMEOUT/1` 拒绝。已处理异常与普通 console 不作错误帧。
+OnPaint 借用缓冲的快速筛选**不授予证明权限**：未围栏的拒收分支只能做非推进计账，
+即使再次读取变成有效签名，也不能推进第一/第二 signed 阶段、S5 或写输出。
+正向候选必须走 owned 快照 → 绘制后 JS fence → 状态机消费；等待下一次可信候选，
+不为负帧复制整张图。并发实测已发现旧拒收分支重解码后越过该边界；累计 fence 数够大
+不能单独证明每个 signed 阶段都经过围栏，重采样会掩盖缺失。修复与双阶段变更回归见
+[实现](src/frame_sync_machine.cpp)和[原生自测](src/frame_sync_selftest.cpp)。
 这些有限反例不构成任意网页正确性或不可信输入安全保证；短片 fixture 也不代替完整项目验收。
 
 缓存身份与路由权威见 [cache-provenance](../../docs/cache-provenance.md)。

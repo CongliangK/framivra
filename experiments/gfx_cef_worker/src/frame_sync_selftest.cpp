@@ -1304,6 +1304,110 @@ void TestPrefilterAndProbeCorruption() {
   }
 }
 
+void TestNonAdvancingPaintMutation() {
+  // Model the observed local failure without claiming why CEF observations
+  // changed: classification sees stale bytes, the accounting reread sees valid
+  // bytes. Neither exact phase may acquire proof authority on that path.
+  Harness t;
+  RequestDesc d;
+  d.document_gen = 1; d.request_id = 0xFEDCBA98u; d.target_frame_index = 462;
+  d.expected_w = 32; d.expected_h = 24; d.canary = CanaryMode::kExact;
+  FrameBuf original(32, 24), first = original, second = original;
+  first.DrawExact(d.target_frame_index, d.request_id, false);
+  second.DrawExact(d.target_frame_index, d.request_id, true);
+  const std::vector<uint8_t> sentinel(original.px.size(), 0xAA);
+  auto dst = sentinel;
+  Check(t.AdvanceToS3(d, nullptr, 0) && t.m.EnterPumping(400),
+        "nonadvancing: exact request ready and pumping");
+  auto borrowed = original.px;
+  Check(!t.m.PaintMayAdvance(borrowed.data(), 32 * 4, 32, 24),
+        "nonadvancing: first classifier observes stale bytes");
+  borrowed = first.px;
+  const auto before = t.m.request_stats();
+  const auto first_denied = t.m.FeedNonAdvancingPaint(borrowed.data(), 32 * 4, 32, 24, 500);
+  Check(first_denied.disposition == PaintDisposition::kRejectedStale &&
+        !t.m.needs_relocation() && !t.m.needs_baseline_veto() && !t.m.accepted() && dst == sentinel,
+        "nonadvancing: stale-to-valid reread cannot verify first phase or output");
+  Check(t.m.request_stats().paints_fed == before.paints_fed + 1 &&
+        t.m.request_stats().rejected_stale_paint == before.rejected_stale_paint + 1 &&
+        t.lines.back().find("nonadvancing_path_positive_candidate") != std::string::npos,
+        "nonadvancing: changed positive reread is counted and explicitly rejected");
+  auto owned_first = first.px;
+  Check(t.m.FeedOwnedPaint(owned_first, 32, 24, dst.data(), 600).disposition != PaintDisposition::kAccepted &&
+        t.m.needs_relocation() && !t.m.needs_baseline_veto() && dst == sentinel,
+        "nonadvancing: fresh owned first phase still recovers normally");
+  borrowed = first.px;  // Old location/token is stale after first verification.
+  Check(!t.m.PaintMayAdvance(borrowed.data(), 32 * 4, 32, 24),
+        "nonadvancing: second classifier observes stale first-phase bytes");
+  borrowed = second.px;
+  Check(t.m.FeedNonAdvancingPaint(borrowed.data(), 32 * 4, 32, 24, 700).disposition ==
+            PaintDisposition::kRejectedStale && t.m.needs_relocation() &&
+        !t.m.needs_baseline_veto() && !t.m.accepted() && dst == sentinel,
+        "nonadvancing: stale-to-valid second reread cannot freeze candidate or output");
+  PageEvent id;
+  id.document_gen = d.document_gen; id.request_id = d.request_id;
+  id.target_frame_index = d.target_frame_index;
+  Check(t.m.ArmExactBaseline(id, 10, 701), "nonadvancing: unsigned native ready floor");
+  t.m.FeedExactBaselinePaint(id, original.px.data(), 32 * 4, 32, 24, dst.data(), 702, 11);
+  t.m.FeedExactBaselinePaint(id, original.px.data(), 32 * 4, 32, 24, dst.data(), 703, 12);
+  Check(!t.m.accepted() && dst == sentinel,
+        "nonadvancing: unsigned equality cannot replace blocked second signed phase");
+  auto owned_second = second.px;
+  Check(t.m.FeedOwnedPaint(owned_second, 32, 24, dst.data(), 800).disposition != PaintDisposition::kAccepted &&
+        t.m.needs_baseline_veto() && dst == sentinel,
+        "nonadvancing: fresh owned second phase still freezes signed bytes");
+  t.m.FeedExactBaselinePaint(id, original.px.data(), 32 * 4, 32, 24, dst.data(), 900, 13);
+  Check(!t.m.accepted() && dst == sentinel,
+        "nonadvancing: recovered proof still needs two fresh unsigned samples");
+  Check(t.m.FeedExactBaselinePaint(id, original.px.data(), 32 * 4, 32, 24,
+        dst.data(), 1000, 14).disposition == PaintDisposition::kAccepted && dst == original.px,
+        "nonadvancing: full normal owned proof recovers byte-exact output");
+
+  for (const auto mode : {CanaryMode::kClean, CanaryMode::kDiagnostic}) {
+    Harness legacy;
+    auto request = d; request.canary = mode;
+    FrameBuf good(32, 24), stale(32, 24);
+    if (mode == CanaryMode::kClean) good.DrawCanaryClean(d.target_frame_index);
+    else good.DrawCanaryDiag(d.target_frame_index);
+    auto legacy_dst = sentinel;
+    Check(legacy.AdvanceToS3(request, nullptr, 0) && legacy.m.EnterPumping(400),
+          "nonadvancing: legacy mode ready");
+    Check(!legacy.m.PaintMayAdvance(stale.px.data(), 32 * 4, 32, 24),
+          "nonadvancing: legacy stale classifier");
+    stale.px = good.px;
+    Check(legacy.m.FeedNonAdvancingPaint(stale.px.data(), 32 * 4, 32, 24, 500).disposition ==
+              PaintDisposition::kRejectedStale && !legacy.m.accepted() && legacy_dst == sentinel,
+          "nonadvancing: legacy positive reread cannot accept or write");
+    auto owned = good.px;
+    Check(legacy.m.FeedOwnedPaint(owned, 32, 24, legacy_dst.data(), 600).disposition ==
+              PaintDisposition::kAccepted && legacy.m.accepted(),
+          "nonadvancing: legacy fresh owned candidate recovers");
+  }
+}
+
+void TestNonAdvancingRejectionAttribution() {
+  for (const auto mode : {CanaryMode::kClean, CanaryMode::kDiagnostic, CanaryMode::kExact}) {
+    Harness original, nonadvancing;
+    RequestDesc d;
+    d.document_gen = 1; d.request_id = 42; d.target_frame_index = 7;
+    d.expected_w = 32; d.expected_h = 24; d.canary = mode;
+    FrameBuf stale(32, 24);
+    Check(original.AdvanceToS3(d, nullptr, 0) && nonadvancing.AdvanceToS3(d, nullptr, 0) &&
+          original.m.EnterPumping(400) && nonadvancing.m.EnterPumping(400),
+          "nonadvancing: rejection attribution setup");
+    const auto compare = [&](const uint8_t* pixels, size_t stride, uint32_t w, uint32_t h) {
+      const auto old = original.m.FeedPaint(pixels, stride, w, h, nullptr, 500);
+      const auto safe = nonadvancing.m.FeedNonAdvancingPaint(pixels, stride, w, h, 500);
+      return old.disposition == safe.disposition && original.lines.back() == nonadvancing.lines.back() &&
+          original.m.request_stats().paints_fed == nonadvancing.m.request_stats().paints_fed &&
+          original.m.request_stats().rejected_stale_paint == nonadvancing.m.request_stats().rejected_stale_paint;
+    };
+    Check(compare(nullptr, 32 * 4, 32, 24) && compare(stale.px.data(), 7, 32, 24) &&
+          compare(stale.px.data(), 32 * 4, 31, 24) && compare(stale.px.data(), 32 * 4, 32, 24),
+          "nonadvancing: invalid buffer, stride, size and stale attribution unchanged");
+  }
+}
+
 void TestOwnedExactPaint() {
   Harness t;
   RequestDesc d;
@@ -1542,6 +1646,8 @@ int main(int argc, char* argv[]) {
 
   TestRequestBoundExact();
   TestPrefilterAndProbeCorruption();
+  TestNonAdvancingPaintMutation();
+  TestNonAdvancingRejectionAttribution();
   TestExternalPumpSchedule();
   TestOwnedExactPaint();
   TestNativeExact();
