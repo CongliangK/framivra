@@ -1,6 +1,40 @@
-# 克隆安装与安全更新
+# 安装与安全更新
 
-从 [README 快速开始](../../README.md#快速开始clone-即用零安装步骤) 手动克隆，或使用下列平台引导器；均运行仓内幂等 `vt.py init`，不要求 gh CLI。引导器会写克隆目录与配置，并可能更新源码；不是零写态检查。
+## 受管非 AI 制作环境
+
+推荐[README 的三平台一键命令](<../../README.md#一键安装完整非-ai-环境>)：`bootstrap.sh` / `bootstrap.ps1` 获取 Python 后运行 `scripts/install_source.py`，从任意工作目录部署。**联网写操作**：下载源码、PyPI 包、缺失的系统包和公开锁定字体；需要系统权限时明确请求，不由 DSH 提权。不覆盖系统 Python，不改已有项目、开发克隆或旧 wheel 安装。
+
+### 默认套件与范围
+
+实际依赖的唯一列表见[README 矩阵](<../../README.md#依赖矩阵>)。默认含完整 apps/plugins/templates 源码、独立 editable venv、FFmpeg/ffprobe、原生浏览器、SoX、实际音频同步/图像/合成依赖，以及 Noto/DejaVu/Inter/JetBrains Mono 字体与许可。CDP 是默认后端；CPU x264 和原生 AAC 可用，不为 libfdk_aac 自动获取未经审查的 nonfree 构建，不强装 GPU 驱动。
+
+标准制作范围是 HTML/CDP 动效、普通媒体、字幕、音频同步、synth/sample 基础音乐与音效、FFmpeg 混音/响度/导出。完整工具源码不代表所有可选路线就绪：Blender 分轨审计、SVG/Inkscape、CEF/Electron、SF2/FluidSynth、SFZ/sfizz、参考母带匹配 matchering 及第三方采样/音源仍按组件另装；后者不是 AI，也不冒称默认已验收。第三方素材的存在/名称不证明授权。AI 权重、Torch、ComfyUI、ASR/TTS/生图服务与密钥均不安装；已有用户配置不被重置，enabled 字段也不是所有插件的统一执行禁用门。
+
+### 统一位置与登记
+
+| 系统 | 默认用户根 | 本轮资格 |
+|---|---|---|
+| Linux | `~/.local/share/framivra` | 支持 apt-get/dnf/pacman 引导；真实隔离安装被主干既有 [#381](https://github.com/CongliangK/framivra/issues/381) 的 QC 问题阻止 ready，未宣称完整通过。精简容器、缺软件源/图形库时可能失败，不静默降级 |
+| macOS | `~/.local/share/framivra` | 仅 Apple Silicon、原生 Google Chrome.app；本轮 Linux 上实现，macOS 实机 UNRUN，Intel 不在当前 CDP 身份支持内 |
+| Windows | `%LOCALAPPDATA%\framivra`（缺失时用户 AppData/Local） | 原生 x64 PowerShell/winget/Chrome 或 Edge；本轮未实机验收，后续由 Windows 用户验证；不声明 SVG 主 Demo 支持 |
+
+根内固定 `source/`、`venv/`、`config.json`、`fonts/`、`verification/`、`installation.json`，POSIX 入口为 `bin/vtx`，Windows 为 `venv/Scripts/vtx.exe`。配置、字体、测试产物在源码外。Linux 字体只使用根内 fontconfig；macOS/Windows 还安装用户字体（已有不同字节同名文件拒绝覆盖）。缺包由平台包管理器获取，包源是否提供完整 FFmpeg/原生浏览器仍须实际测试；Fedora 可能需预先配置媒体源。原生工具已齐时不调用系统包管理器。
+
+登记 schema 是 `framivra.installation/v1`，包含固定绝对 source/python/vtx/config 路径、完整 commit、版本、profile=`non-ai`、renderer=`cdp`、工具路径、字体环境和验收输出。仅实际 import、协议探测、音乐合成/QC、HTML/字幕/音视频冷暖全链、严格 QC 与解码通过后发布 `status=ready`；失败是 preparing/非零退出，不能当作就绪。安装探针使用独立 capability scope，不替代 900 帧 SVG 主片、正式发行冻结或跨平台验收。
+
+DSH 先只读验证默认登记，再扫描旧位置；候选不自动执行或切换，必须选择、保存并检查真实 read/store 协议。Windows 命令仅在子进程设置 ExecutionPolicy Bypass，不修改持久执行策略，也不能绕过企业组策略。原生 Windows 使用绝对 exe，不把 Windows 分号 PATH 填入 POSIX 受信 PATH。工具环境由绑定该源码的受管 CLI 载入，不能只写没有消费者的工具路径；显式 `VTX_CONFIG` 仍优先。
+
+### 计划、重跑与更新
+
+引导器的 `--plan` 仍需通过 HTTPS 获取 Python 计划程序，之后不下载或安装依赖、不建安装目录、不执行候选；完全离线计划须先审读下载好的 `install_source.py`，再执行 `python3 install_source.py --plan`。没有 Python 时计划明确失败，不偷偷安装。`--yes` 允许已说明的下载/写入，不绕过系统管理员授权。`--no-system` 仅复用已安装原生工具，缺项失败。自定义 `--root` 适合隔离测试，DSH 只自动发现默认根，非默认路径需手动选取。
+
+重跑复用已固定源码并重新验证；升级须显式 `--update`。source 的 origin、登记所有权、HEAD 与干净状态须一致；拒绝本地提交、未跟踪改动及 ignored→tracked 碰撞，不 reset/clean，不收养用户克隆。下载中断的唯一暂存目录保留供检查；重跑不覆盖它或用户数据。异常中断可能留下 `.install.lock`，先确认对应进程已停止再人工移除该锁；不自动删除未知锁或失败目录。
+
+新通道默认明确 `main`，解析、抓取并登记实际完整提交，不把插件 release/latest 当作内核稳定版；也不在稳定失败后回落 main。可显式 `--ref` 选择完整 SHA 或版本 tag，但必须通过当前协议/制作测试。信任是官方 Git/HTTPS 与平台包源/PyPI，不宣称独立签名或 keyless provenance；原严格发行资产安装器不因此放宽。
+
+## 手动克隆与旧式引导器
+
+从 [README 开发者快速开始](../../README.md#快速开始clone-即用零安装步骤) 手动克隆，或使用以下旧式源码引导器；它们只运行幂等 `vt.py init`，**不是上方完整制作套件**，不登记新的受管安装。无需 gh CLI，写克隆目录与配置并可能更新源码。
 
 ## 安装选择与信任
 

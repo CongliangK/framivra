@@ -24,6 +24,34 @@ Framivra（读 "frame-ee-vra"）是 B 站视频产线的程序仓。内核 `vtx/
 
 兼容版本、安装源与首次配置见[插件安装说明](<dsh-sidebar/README.md#可视化安装推荐>)；供智能体使用的 npm/DSH 命令见[命令行安装](<dsh-sidebar/README.md#命令行安装可选>)。npm 包仅提供 DSH 侧栏，不包含 Python 内核或媒体工具；命令行渲染从下方快速开始进入。
 
+## 一键安装完整非 AI 环境
+
+先安装上方 npm 侧栏，再在任意工作目录执行对应命令。**这是联网写操作**：准备完整源码、独立 Python 环境、FFmpeg/ffprobe、SoX、原生浏览器及中英文字体；默认 CDP，不下载 AI 模型、不启动 AI 服务。缺少系统依赖时可能要求管理员授权；执行前可下载审读脚本。
+
+**Linux：**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/CongliangK/framivra/main/scripts/bootstrap.sh | bash
+```
+
+**macOS（Apple Silicon）：**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/CongliangK/framivra/main/scripts/bootstrap.sh | bash
+```
+
+**Windows x64（原生 PowerShell）：**
+
+```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $p = Join-Path $env:TEMP ('framivra-' + [guid]::NewGuid().ToString('N') + '.ps1'); Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/CongliangK/framivra/main/scripts/bootstrap.ps1 -OutFile $p; powershell -NoProfile -ExecutionPolicy Bypass -File $p
+```
+
+完成后在 DSH **插件 → Framivra → 内核**中点击**扫描已有安装**，选择已登记的非 AI/CDP 环境，**保存配置 → 检查连接**。扫描不执行候选、不自动切换连接；旧内核不搬迁、不覆盖。
+
+当前主干存在[色域/QC 既有问题 #381](https://github.com/CongliangK/framivra/issues/381)，已在 Linux 安装验收中复现；受影响时安装器保持 preparing、非零退出，不发布 ready。安装器不会绕过该制作验收。
+
+统一布局、标准制作套件与选装边界、更新/重试、信任与三平台实测状态见[安装指南](<docs/guides/installation.md#受管非-ai-制作环境>)。这里的“完整”指 HTML/CDP 动效、字幕、普通媒体、音频同步、基础配乐合成及混音导出链，不意味着所有可选引擎、商业素材或实验后端均已安装。源码通道默认显式 `main`，登记实际提交；不是已冻结稳定发行或签名供应链声明。
+
 ## 快速开始（clone 即用，零安装步骤）
 
 公开主 Demo 与主性能输入从 [30 秒 JSON 时间线作品](templates/demo-timeline-svg/README.md#主性能基线) 起步；浏览器、字幕和普通媒体能力由独立机制测试覆盖。自建项目先满足[依赖矩阵](#依赖矩阵)；「零安装」仅指不必 pip 安装本仓，不包含外部工具或媒体。以下克隆、初始化、脚手架与渲染均为**写操作**；`PROJECT` 必须是全新项目的绝对路径，避免覆盖已有 timeline。
@@ -63,9 +91,11 @@ python3 vtx/vtx.py -t "$PROJECT/timeline.json" all
 | 使用范围 | 依赖与边界 |
 |---|---|
 | 基础渲染 | Python ≥3.9、FFmpeg/ffprobe、Chrome/Chromium/Edge；`vt.py init` 自检 |
-| 默认 CDP gfx | NumPy；显式 `VTX_GFX=cli` 不要求 NumPy，但有独立[环境身份与支持边界](docs/cache-provenance.md#gfx-environment) |
+| 默认 CDP gfx / 图像制作 | NumPy、Pillow；显式 `VTX_GFX=cli` 不要求 NumPy，但有独立[环境身份与支持边界](docs/cache-provenance.md#gfx-environment) |
+| 音频同步 | NumPy、SciPy、SoundFile、soxr、FFmpeg；一键安装器准备这些实际依赖 |
+| 制作字体 | Noto Sans CJK SC、Inter、JetBrains Mono、DejaVu Sans；安装器固定公开字节并保留许可，公开 SVG Demo 仍须使用其输入锁 |
 | 正式 AAC 封装 | 强烈建议 libfdk_aac；缺失回落并告警，交付仍须复测编码后解码真峰 |
-| 可选媒体工具 | Blender、SoX；`video --gpu` 可用 NVIDIA NVENC，探测失败回落 x264 |
+| 额外媒体路线 | Blender、Inkscape/SVG 按各组件安装；SoX 非内核硬依赖但包含在一键套件。`video --gpu` 可用 NVIDIA NVENC，探测失败回落 x264 |
 | 可选音乐生成 | [bgm](apps/bgm/README.md)：NumPy + FFmpeg；运行环境外置，音源/模型自行安装，不捆绑、不自动下载；普通视频不要求音乐环境 |
 | 默认关闭的模型/服务 | [ASR](apps/asr/README.md)、[TTS](apps/tts/README.md)、[生图 API](apps/imgen/README.md)、[抠像/ComfyUI](apps/matting/README.md)、[降噪](plugins/denoise/README.md)：各 owner 维护解释器、服务、权重、配置与启用要求 |
 
