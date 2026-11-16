@@ -1130,6 +1130,28 @@
       },
       "notes": "Real isolated official DSH baseline screenshot, not an After or full-composite acceptance. Project capture contribution and inspected host MIT declaration only; no transitive font/icon/software rights clearance, private media, credentials or runtime redistribution."
     },
+    "macos-plugin-screenshot-evidence": {
+      "kind": "data",
+      "source": "docs/reports/assets/macos-plugin/",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT",
+      "default_payload": true,
+      "distribution": [
+        "git-source"
+      ],
+      "evidence": "macos-plugin-capture-provenance",
+      "additional_evidence": [
+        "framivra",
+        "macos-plugin-canonical-capture-provenance"
+      ],
+      "files_sha256": {
+        "docs/reports/assets/macos-plugin/before.png": "6253bf7ba56d2f25936fa6699f0ae614751a76cf6002d860f664c5938ad7ee66",
+        "docs/reports/assets/macos-plugin/after.png": "5ec1649154e4bdd69e5faf4b994e4ef5dc88d8c01574ecbb8652f9028b72b697",
+        "docs/reports/assets/macos-plugin/canonical-before.png": "6b527fbd23a4b60c4873ce928aa56f310b730deb701baa6603a48ea3995dace1",
+        "docs/reports/assets/macos-plugin/canonical-after.png": "08c5937a6fc2f8e7be1263f8c0e5d3f475517f11ec7acbb60aaef380234ce34e"
+      },
+      "notes": "Real official DSH 0.2.2-rc.1 UI captures: before.png/after.png show the earlier public synthetic 90-frame mechanism fixture; canonical-before.png/canonical-after.png show frame 228 of the actual portable-v2 900-SVG-frame 1920x1080 30fps project in matched 1280x720 dark views. Separate provenance records preserve both identities. MIT records project-authored capture/fixture contributions and the inspected host package declaration only; external fonts, icons, dependencies and runtime rights are not relicensed or independently cleared. No private assets, chat content, font files or runtime binaries are distributed by this entry. This is provenance/integrity evidence, not legal certification, endorsement or whole-film QC/performance clearance."
+    },
     "gfx-environment-evidence": {
       "kind": "data",
       "source": "tests/runners/run_gfx_environment_acceptance.py",
@@ -1411,6 +1433,20 @@
       "sha256": "c04d7afb662f0f79721593ee8dcca61530f2ade577d1ee89b058eb4e640eeb79",
       "local_path": "experiments/gfx_electron_worker/SOURCE-LICENSE-NOTICE.txt",
       "scope": "Maintainer authorization for project-authored source only; no third-party license grant"
+    },
+    "macos-plugin-capture-provenance": {
+      "revision": "e784a5accb6f8425973c0fb74ca6b7186591c539",
+      "url": "https://github.com/CongliangK/framivra/tree/e784a5accb6f8425973c0fb74ca6b7186591c539/docs/reports/assets/macos-plugin",
+      "text": "Project-captured macOS Framivra sidebar evidence committed at e784a5accb6f8425973c0fb74ca6b7186591c539. before.png and after.png are real 1280x720 captures of official DSH 0.2.2-rc.1 with the project sidebar and a public synthetic 90-frame test fixture; the after image shows generated color bars and the label Public test fixture. They contain no private media or embedded font/runtime binaries. Project-authored fixture/capture contributions follow the root MIT declaration. The inspected official @deepseek-ai/dsh 0.2.2-rc.1 package declares MIT; its shipped LICENSE is Copyright (c) 2026 DeepSeek, SHA256 ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be (package.json SHA256 3e14837ceb3bbc0ba419ed08e9b5ba164338369b1268b93c3c25d89f7b1c9953). This records capture provenance and the host package declaration only, not a transitive dependency/font audit, independent legal clearance, endorsement, or a grant of third-party rights. No model output or private asset rights are claimed.\n",
+      "sha256": "f55654b38f9c4edbfed0438123f359a0909a1dd2618a5bafe4cd657c8f764229",
+      "scope": "These two project-captured screenshots only; no independent clearance of external UI, font, icon or runtime rights"
+    },
+    "macos-plugin-canonical-capture-provenance": {
+      "revision": "d786d5e5d586a4242939b9182d78549a66053e8e",
+      "url": "https://github.com/CongliangK/framivra/pull/367",
+      "text": "Project-captured canonical macOS Framivra sidebar evidence for PR #367. canonical-before.png and canonical-after.png show matched 1280x720 dark official DSH 0.2.2-rc.1 views at frame 228 of the public portable-v2 canonical 30-second / 900-SVG-frame / 1920x1080 / 30fps project, not the earlier 90-frame mechanism fixture. Baseline core source: e784a5accb6f8425973c0fb74ca6b7186591c539; candidate core source: d786d5e5d586a4242939b9182d78549a66053e8e. Both used the unchanged freshly built sidebar tgz SHA256 14eeecfe5165a1def010170d72ee67dca662a31b09c0e9d5843346677ed4738c and timeline.json SHA256 a7008c2e5b2833da13021c3a1ccb46a09068ca1775b6724328563d2d37f7d105. The capture run recorded one explicit first-frame request per side: before HTTP 499 after 30037 ms; after HTTP 200 in 22351 ms under the unchanged 30-second request budget. Candidate producer identity changes required genuine regeneration of all 900 gfx cache frames using the exact installed candidate core; old producer caches were not relabeled or forged. Only prepared canonical inputs were reused; this is not a claim of an empty-cache render or whole-film performance/QC acceptance. The images contain no chat content or private assets. Project-authored capture/fixture contributions follow the root MIT declaration; the separately recorded official host MIT declaration does not clear transitive UI/icon/font/runtime rights. No font files or runtime binaries are distributed by these screenshot entries. The revision below identifies candidate code, not a claim that these later captures already existed in that commit.\n",
+      "sha256": "2f528a3b340d308f47026f239c2adb0fa4f6617f01ac2c0185860b837bfb8da7",
+      "scope": "Canonical frame-228 screenshot provenance; revision identifies tested code, not screenshot publication or independent legal clearance"
     },
     "gfx-environment-generation": {
       "revision": "d7ed2cc90ab19d1bd7208cdfb0af54deb42440c9",

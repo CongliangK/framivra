@@ -42,7 +42,7 @@ async function bench(options = {}) {
       const operation = store ? (spec.argv[4] === 'plan' ? 'plan' : spec.argv[4]) : spec.argv[3] === 'timeline' ? spec.argv[4] : spec.argv[3]
       const value = store
         ? operation === 'capabilities'
-          ? { schema: 'framivra.timeline.store/v1', operation, ok: true, diagnostics: [], operations: ['edit', 'commit', 'status', 'recover'], edit: { operations: ['project.resize'] }, request_transport: { stdin: { flag: '--request-stdin', max_bytes: 8388608 } } }
+          ? { schema: 'framivra.timeline.store/v1', operation, ok: true, diagnostics: [], platform_support: { darwin: true }, operations: ['edit', 'commit', 'status', 'recover'], edit: { operations: ['project.resize'] }, request_transport: { stdin: { flag: '--request-stdin', max_bytes: 8388608 } } }
           : { schema: 'framivra.timeline.store/v1', operation, ok: true, diagnostics: [], op_id: randomUUID() }
         : operation === 'frame'
           ? { schema: 'framivra.timeline.frame/v1', operation, ok: true, diagnostics: [], content_version: version, image: { path: '/never/read.png' } }

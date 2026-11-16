@@ -143,9 +143,13 @@ vtx -t /path/to/timeline.json timeline frame --frame 30 --render --include-png
 
 返回独立 `framivra.timeline.frame/v1` envelope：content_version、reference、image、diagnostics。reference 原样保留同版本完整原文/暂态地址/选择；图像不是解析数据投影。成功 image 的 kind 为 `current-composite`、approximate=false，含 PNG 相对工程路径、SHA256/实际字节数、画布宽高、整数 frame、fps={num,den}、content_version、input_fingerprint、render_key 与 cache_hit。图像来自共享 RenderPlan 在 `[frame,frame+1)` 的有序图层/黑画布/ASS 合成，直接 RGB PNG；不是 final/qc_clean 提帧、黑场兜底、丢层近似或已编码成片的像素等价保证。空画布的真实黑场可以成功。
 
-首切片授权渲染**仅 Linux fd-anchored 写平台、纯内核工程和已完成当前 warm seg/gfx**；安装但本工程未激活的有键插件不阻挡，任何生效插件在 Ctx/潜在 import 前静态拒绝 `plugins.unsupported`。复用真实纯内核 validate 规则及素材探测，不执行插件钩子、不准备虚拟源；更宽插件/跨平台/冷态准备支持仍未完成。默认不渲染路径跨平台仍可用。schema 结构失败、素材/缓存缺失、版本不符、运行失败/取消均不返回成功图像；无 prepare/gfx/all/final/qc_clean fallback。不得把 frame 成功视作正式交付/QC 通过。
+授权渲染支持 **Linux 与原生 arm64 macOS 的 no-follow 目录 fd 写平台、纯内核工程**；仍按当前缓存政策核对上游准备资格。macOS 要求原生 Mach-O FFmpeg 与唯一 CoreText libass 字体后端，绑定外部 dylib 闭包、系统 dyld cache、字体及偏好；Intel/Rosetta、app 包装的 FFmpeg、其他字体后端和无法解析的加载环境明确拒绝，不降级证书。安装但本工程未激活的有键插件不阻挡，任何生效插件在 Ctx/潜在 import 前静态拒绝 `plugins.unsupported`。复用真实纯内核 validate 规则及素材探测，不执行插件钩子、不准备虚拟源；更宽插件及未知工具链支持仍未完成。默认不渲染路径跨平台仍可用。schema 结构失败、素材/缓存缺失、版本不符、运行失败/取消均不返回成功图像；无 prepare/gfx/all/final/qc_clean fallback。不得把 frame 成功视作正式交付/QC 通过。
+
+`FFREPORT` 与不受支持的 loader 环境在构造 Ctx、素材 probe 之前拒绝，避免诊断文件越出预览写域。目录锚定字节写/锁/staging 与可重开 proc-fd Path 是独立能力；macOS 的 `locked_write/locked_update` 仍为既有 legacy Path 级别，不把 `/dev/fd` 冒充 Linux `/proc`。gfx pack 使用直接 pinned 二进制流，发布恢复用原生 no-replace rename。
 
 写域仅 `cache/preview/frame_<render_key>/`（PNG、完成标记、ASS、随机 FFV1 暂存及锁），不改 timeline、store、普通 cache/seg/gfx、out、receipt 或 delivery 状态。相同 key 锁串行；完整 PNG 和同 SHA 完成标记均通过才可命中。发布前后复核原文完整 SHA/输入身份/有序上游字节/环境；中断和部分写不生成完成标记。遗留失败暂存可存在，不是成功缓存。媒体子进程不脱离调用者 process-group；取消时 kill 并 communicate/wait 回收。CLI 主线程临时处理 SIGINT/SIGTERM 并恢复 handler；Python API 不安装 signal handler。SIGKILL 或库调用者未处理的 SIGTERM 属硬退出边界，不承诺 finally。沿用 fstxn 合作进程/非对抗性边界，不承诺物理断电或非合作输入 ABA 攻击防御。
+
+SVG 单帧消费使用既有显式 `consumer_scope`，只在同一次操作内复用已认证的 bare PNG 来源；不是跨请求身份缓存。初次与每个发布检查点均在消费前后重新核对完整输入指纹，包括不可见 SVG、声明依赖、字体及运行库。中间仍复查完成标记身份、请求 SVG 字节、完整 PNG 与证书摘要；退出/取消即失效，escaped 来源恢复完整核验。规范 pack 路径在读取前后都须不存在才走 bare 快路；出现 pack（包括损坏或链接）仍走原完整 reader/拒绝路径，不静默回落。不缩减锁等待、合成、发布、清理及返回的检查点，也不改变宿主截止时间、重试或授权语义。
 
 键包括原文版本、Fast 媒体 stat 输入指纹、整数帧/fps/画布、ASS 精确字节、有序层/上游内容键和当前上游字节 SHA、实际 ffmpeg/动态依赖/字体环境、graph/PNG profile/实现源码身份；环境采集复用既有 gfx 证书工具。**Fast 不等于全媒体内容哈希**，跨机器逐像素等价未证。输入/完整 ASCII JSON wire 各 8MiB；输出超限拒绝而不截断引用。PNG 实读上限 max_png_bytes 为 1..8MiB（`--max-png-bytes`），超限不发布完成结果；编码器瞬态文件可大于该交付上限。CLI 成功0、业务拒绝1、错误旗标组合2，仅 stdout 完整 JSON，不另落报告。
 
@@ -279,6 +283,8 @@ fade 默认 `preserve-content`：保留外侧 fade，内部接缝设 0。切点�
 ### 发布与恢复协议
 
 同目录允许多个工程：按实际文件系统顺序解析父路径（包括 symlink 后的 `..`），再加最终文件名确定 canonical 目标与独立 `.vtx-store-<文件名SHA256>/`，新 manifest 绑定该文件名及 canonical 完整位置（已发布的旧版 filename-only manifest 仍可读、不自动改写）；项目叶 symlink/多硬链与非普通文件拒绝。历史不在 cache/out，renderer 只读当前工程，日志不提供另一份 HEAD；不要移动/删改历史、锁文件或只复制工程后期待 undo。status 可创建锁与 manifest，但不恢复/修改工程；inspect/query 始终零写态。
+
+macOS 在解析父路径后按实际目录项拼写拒绝大小写/Unicode 别名（`path.alias`），不改写旧 history/hash/manifest。状态、恢复与提交在既有目标锁之前取得同父目录 `.vtx-store-parent.lock`，并持有至操作结束，防止两个尚不存在的别名分别创建历史；该名字保留，不能用作工程文件。此锁不存 HEAD、不删除，零写计划不创建它。同父目录不同工程写入因而串行。`store capabilities` 可选 `platform_support.darwin:true` 仅在当前 macOS 具备目录锚定锁且实现这些规则时返回；侧栏在 macOS 必须检查该标记，旧内核保持只读，Linux 原能力握手不变。
 
 初始化先取同目标稳定的外置 `.bootstrap.lock`（仅同步发布，不存工程身份/HEAD，永不删除），在随机 sibling `.initializing-*` 私有目录内 write/flush/fsync manifest → rename manifest → fsync 私有目录 → rename 整个完整目录到 canonical history → fsync 工程父目录，然后才可执行事务。首次 mkdir、半写/fsync、两个 rename 与目录同步任一点进程崩溃，canonical 要么尚未发布，要么已有完整 manifest；下次 status/recover/事务在同一 bootstrap 锁内重试父目录同步。未发布私有目录不可能含运行过的事务，重试另建目录，不扫描选取、不采用也不删除其残件；其存在不阻止安全重新初始化。旧实现或外来 canonical 目录缺 manifest（即使空、仅 lock、完整单个 `.publish-*`、多个或损坏临时）一律 recovery_required 并提示人工检查，绝不猜身份/清证据。已发布新 manifest 的位置不符也拒绝，不能凭同 SHA 接管 decoy。旧版已发布 manifest 不具完整位置绑定，不宣称可鉴别其跨目录复制。初始化失败不返回成功、不改工程，发布后父 fsync 失败下次重试也不会永卡；这不是物理断电保证。
 

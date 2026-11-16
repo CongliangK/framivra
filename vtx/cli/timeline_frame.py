@@ -1,8 +1,9 @@
 """JSON-only adapter for explicitly authorized timeline frame rendering."""
 import json
 import signal
+import sys
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 
 
 @contextmanager
@@ -49,7 +50,9 @@ def run_frame_command(args, parser):
         if args.max_png_bytes is not None:
             kwargs["max_png_bytes"] = _integer(args.max_png_bytes)
         try:
-            with _cancel_on_sigterm():
+            # Core diagnostics (for example unsupported NVENC on macOS) must
+            # remain visible without corrupting the single JSON stdout envelope.
+            with _cancel_on_sigterm(), redirect_stdout(sys.stderr):
                 result = frame_timeline(args.timeline, **kwargs)
         except KeyboardInterrupt:
             result = {"schema": _SCHEMA, "operation": "frame", "ok": True,

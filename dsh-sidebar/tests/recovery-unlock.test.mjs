@@ -25,7 +25,7 @@ async function bench(options = {}) {
       if (store && operation === 'status') {
         value = statusResults.shift() ?? storeStatus({ pending: false })
       } else if (store && operation === 'capabilities') {
-        value = { schema: 'framivra.timeline.store/v1', operation, ok: true, diagnostics: [], operations: ['edit', 'commit', 'status', 'recover'], edit: { operations: ['project.resize'] }, request_transport: { stdin: { flag: '--request-stdin', max_bytes: 8388608 } } }
+        value = { schema: 'framivra.timeline.store/v1', operation, ok: true, diagnostics: [], platform_support: { darwin: true }, operations: ['edit', 'commit', 'status', 'recover'], edit: { operations: ['project.resize'] }, request_transport: { stdin: { flag: '--request-stdin', max_bytes: 8388608 } } }
       } else if (store) {
         // plan/commit: killed child when crashing, UUID receipt otherwise.
         if (options.crashCommit && operation !== 'plan') {

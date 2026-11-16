@@ -50,19 +50,15 @@ def _png(path, width, height, limit, *, root, root_identity):
 
 
 def _environment():
-    # Reuse the existing conservative tool/font certificate collectors. No
-    # browser is started, and no second font/dependency inventory is maintained.
-    from .render import gfx_environment as env
-    from .pipeline.infra import filter_threads
+    # No browser or font-cache-building probe is started by this collector.
+    from .render.frame_environment import collect
     binary = shutil.which("ffmpeg")
     if not binary:
         raise _FrameError("environment.unavailable", "ffmpeg is unavailable")
     if any(os.environ.get(k) for k in ("LD_PRELOAD", "LD_AUDIT", "FFREPORT")):
         raise _FrameError("environment.unsupported", "loader injection/FFREPORT is unsupported")
-    return {"ffmpeg": env._file(binary), "libraries": env._libraries(binary),
-            "fonts": env._fonts(), "platform": sys.platform, "filter_threads": filter_threads(),
-            "environment": {k: os.environ.get(k) for k in env.PIXEL_ENV
-                            if k not in ("DISPLAY", "WAYLAND_DISPLAY")}}
+    return collect(binary)
+
 
 
 def _render(path, reference, frame, limit, *, prepare_gfx=False, trust_html=False):
@@ -81,8 +77,8 @@ def _render(path, reference, frame, limit, *, prepare_gfx=False, trust_html=Fals
 
 def _render_inner(path, reference, frame, limit, *, prepare_gfx, trust_html, request):
     from .runtime import fstxn
-    if sys.platform != "linux" or fstxn.write_capability() != "fd-anchored":
-        raise _FrameError("platform.unsupported", "render requires Linux fd-anchored writes")
+    if sys.platform not in ("linux", "darwin") or not fstxn.directory_write_capability():
+        raise _FrameError("platform.unsupported", "render requires no-follow directory-anchored writes")
     from .pluginlib.hooks import active_plugins
     stored = json.loads(reference["document"]["raw"])
     # Static manifest/config selection, BEFORE Ctx/fingerprints can import any
@@ -112,6 +108,8 @@ def _render_inner(path, reference, frame, limit, *, prepare_gfx, trust_html, req
             detail += " (+%d more)" % (len(errors) - 16)
         raise _FrameError("render.structure",
                           "stored structure errors[%d]: %s" % (len(errors), detail))
+    # Refuse FFREPORT/loader overrides before even metadata probes can run.
+    environment = _environment()
     from .pipeline.infra import Ctx
     from .pipeline.stages import validate_core
     from .pipeline.composite import RenderPlan, _graph_code_digest
@@ -180,135 +178,142 @@ def _render_inner(path, reference, frame, limit, *, prepare_gfx, trust_html, req
     if errors:
         raise _FrameError("render.validation", "; ".join(errors[:16]))
     policy = policy_for(c)
-    try:
-        sources = PreviewInputs(c, frame, prepare_gfx=True) if prepare_gfx else PreviewInputs(c, frame)
-        identities = sources.identity()
-    except (OSError, ValueError) as error:
-        raise _FrameError("inputs.not_ready", str(error)) from error
-    c.pass_cache = policy.pass_retention
-    plan = RenderPlan(c=c, draft=False, f=1.0, W=c.w, H=c.h,
-                      layers=[], png_output=True)
-    ass = plan.segment_ass_bytes(frame, frame + 1)
-    environment = _environment()
-    # Full implementation files protect helper/ASS/profile changes too. This is
-    # conservative code invalidation, not a claim of cross-host pixel equivalence.
-    from .pipeline import composite
-    from .render import preview_inputs
-    from .render.gfx_cli import _png_stream_invalid_reason
-    code_files = [__file__, inspect.getfile(composite), inspect.getfile(Ctx),
-                  inspect.getfile(preview_inputs), inspect.getfile(read_artifact),
-                  inspect.getfile(_png_stream_invalid_reason)]
-    if prepare_gfx:
-        from .render import preview_gfx
-        code_files.append(inspect.getfile(preview_gfx))
-    code = _files(code_files)
-    inputs = {"schema": _SCHEMA, "content_version": version,
-              "input_fingerprint": c.input_fingerprint, "frame": frame, "fps": c.fps,
-              "width": c.w, "height": c.h, "layers": identities,
-              "ass_sha256": _hash(ass), "graph": _graph_code_digest(),
-              "profile": "kernel-composite/png-rgb24/ffv1/v1", "code": code,
-              "environment": environment, "cache_mode": policy.mode}
-    import secrets
-    request_root = None
-    if prepare_gfx:
-        # Descriptors and all environment/input checks above are write-free.
-        verify_input_identity(c)
-        document_current()
-        from .render.preview_gfx import recover_requests, REQUEST_SCHEMA
-        recover_requests(c)
-        request_root = c.cache / 'preview' / ('request_' + secrets.token_hex(16))
-        fstxn.mkdir(request_root, root=c.root)
-        request.append((request_root, fstxn.cleanup_identity(request_root)))
-        fstxn.atomic_write(request_root / 'request.json',
-                           json.dumps({'schema': REQUEST_SCHEMA, 'project': str(c.root)}), root=c.root)
-        sources.produce(request_root / 'producers')
-        identities = sources.identity()
-        inputs['layers'] = identities
-        inputs['prepare_gfx'] = True
-    key = _digest(inputs)
-    # core/off images are explicit requested deliveries, never reusable entries.
-    suffix = "" if policy.reuse_media else "_" + secrets.token_hex(8)
-    directory = (request_root / ('frame_' + key) if prepare_gfx else
-                 c.cache / "preview" / ("frame_" + key + suffix))
-    image = directory / "image.png"
-    marker = directory / "complete.json"
-
-    def current():
-        if project_identity(c.root) != root_identity:
-            raise _FrameError("snapshot.changed", "project root identity changed")
-        verify_input_identity(c)
-        document_current()
-        if active_plugins(SimpleNamespace(tl=stored)):
-            raise _FrameError("plugins.changed", "active plugin selection changed")
+    from .render import gfx_svg
+    with gfx_svg.consumer_scope(c):
         try:
-            same_inputs = sources.identity() == identities
+            sources = PreviewInputs(c, frame, prepare_gfx=True) if prepare_gfx else PreviewInputs(c, frame)
+            verify_input_identity(c)
+            identities = sources.identity()
+            verify_input_identity(c)
         except (OSError, ValueError) as error:
-            raise _FrameError("inputs.changed", str(error)) from error
-        if not same_inputs or _environment() != environment:
-            raise _FrameError("inputs.changed", "render inputs/environment changed")
-        if _files(code_files) != code:
-            raise _FrameError("implementation.changed", "compositor implementation changed")
+            raise _FrameError("inputs.not_ready", str(error)) from error
+        c.pass_cache = policy.pass_retention
+        plan = RenderPlan(c=c, draft=False, f=1.0, W=c.w, H=c.h,
+                          layers=[], png_output=True)
+        ass = plan.segment_ass_bytes(frame, frame + 1)
+        # Full implementation files protect helper/ASS/profile changes too. This is
+        # conservative code invalidation, not a claim of cross-host pixel equivalence.
+        from .pipeline import composite
+        from .render import preview_inputs
+        from .render.gfx_cli import _png_stream_invalid_reason
+        code_files = [__file__, inspect.getfile(composite), inspect.getfile(Ctx),
+                      inspect.getfile(preview_inputs), inspect.getfile(read_artifact),
+                      inspect.getfile(_png_stream_invalid_reason)]
+        if prepare_gfx:
+            from .render import preview_gfx
+            code_files.append(inspect.getfile(preview_gfx))
+        code = _files(code_files)
+        inputs = {"schema": _SCHEMA, "content_version": version,
+                  "input_fingerprint": c.input_fingerprint, "frame": frame, "fps": c.fps,
+                  "width": c.w, "height": c.h, "layers": identities,
+                  "ass_sha256": _hash(ass), "graph": _graph_code_digest(),
+                  "profile": "kernel-composite/png-rgb24/ffv1/v1", "code": code,
+                  "environment": environment, "cache_mode": policy.mode}
+        import secrets
+        request_root = None
+        if prepare_gfx:
+            # Descriptors are write-free. Pin the full document around production,
+            # including invisible graphics and native inputs in this scope.
+            verify_input_identity(c)
+            document_current()
+            from .render.preview_gfx import recover_requests, REQUEST_SCHEMA
+            recover_requests(c)
+            request_root = c.cache / 'preview' / ('request_' + secrets.token_hex(16))
+            fstxn.mkdir(request_root, root=c.root)
+            request.append((request_root, fstxn.cleanup_identity(request_root)))
+            fstxn.atomic_write(request_root / 'request.json',
+                               json.dumps({'schema': REQUEST_SCHEMA, 'project': str(c.root)}), root=c.root)
+            sources.produce(request_root / 'producers')
+            verify_input_identity(c)
+            identities = sources.identity()
+            verify_input_identity(c)
+            inputs['layers'] = identities
+            inputs['prepare_gfx'] = True
+        key = _digest(inputs)
+        # core/off images are explicit requested deliveries, never reusable entries.
+        suffix = "" if policy.reuse_media else "_" + secrets.token_hex(8)
+        directory = (request_root / ('frame_' + key) if prepare_gfx else
+                     c.cache / "preview" / ("frame_" + key + suffix))
+        image = directory / "image.png"
+        marker = directory / "complete.json"
 
-    # Preflight checks have not written anything. Only the explicit authorization
-    # path reaches this point; same-key producers serialize before reading cache.
-    current()
-    fstxn.mkdir(directory, root=c.root)
-    with fstxn.file_lock(directory / "frame.lock", root=c.root):
+        def current():
+            if project_identity(c.root) != root_identity:
+                raise _FrameError("snapshot.changed", "project root identity changed")
+            verify_input_identity(c)
+            document_current()
+            if active_plugins(SimpleNamespace(tl=stored)):
+                raise _FrameError("plugins.changed", "active plugin selection changed")
+            try:
+                same_inputs = sources.identity() == identities
+                verify_input_identity(c)
+            except (OSError, ValueError) as error:
+                raise _FrameError("inputs.changed", str(error)) from error
+            if not same_inputs or _environment() != environment:
+                raise _FrameError("inputs.changed", "render inputs/environment changed")
+            if _files(code_files) != code:
+                raise _FrameError("implementation.changed", "compositor implementation changed")
+
+        # Preflight checks have not written anything. Only the explicit authorization
+        # path reaches this point; same-key producers serialize before reading cache.
         current()
-        hit = False
-        if policy.reuse_media and not prepare_gfx:
-            try:
-                record = json.loads(read_artifact(marker, root=c.root, limit=4096, root_identity=root_identity))
-                facts, data = _png(image, c.w, c.h, limit, root=c.root, root_identity=root_identity)
-                hit = record == {"schema": _SCHEMA, "render_key": key, **facts}
-            except (OSError, ValueError):
-                pass
-        if not hit:
-            c.write_root = directory
-            scratch = directory / ("inputs_" + secrets.token_hex(8))
-            fstxn.mkdir(scratch, root=c.root)
-            scratch_identity = fstxn.cleanup_identity(scratch)
-            try:
-                layers = sources.materialize(scratch)
-                plan.layers = layers
-                plan.scratch_dir = scratch / "passes"
-                ass_path = scratch / "subtitles.ass"
-                fstxn.atomic_write(ass_path, ass, root=c.root)
-                with fstxn.locked_staging(image, root=c.root) as staging:
-                    plan.composite(layers, staging, with_subs=True, a=frame, b=frame + 1,
-                                   sub_file=ass_path)
-                    facts, data = _png(staging, c.w, c.h, limit, root=c.root, root_identity=root_identity)
+        fstxn.mkdir(directory, root=c.root)
+        with fstxn.file_lock(directory / "frame.lock", root=c.root):
+            current()
+            hit = False
+            if policy.reuse_media and not prepare_gfx:
+                try:
+                    record = json.loads(read_artifact(marker, root=c.root, limit=4096, root_identity=root_identity))
+                    facts, data = _png(image, c.w, c.h, limit, root=c.root, root_identity=root_identity)
+                    hit = record == {"schema": _SCHEMA, "render_key": key, **facts}
+                except (OSError, ValueError):
+                    pass
+            if not hit:
+                c.write_root = directory
+                scratch = directory / ("inputs_" + secrets.token_hex(8))
+                fstxn.mkdir(scratch, root=c.root)
+                scratch_identity = fstxn.cleanup_identity(scratch)
+                try:
+                    layers = sources.materialize(scratch)
+                    plan.layers = layers
+                    plan.scratch_dir = scratch / "passes"
+                    ass_path = scratch / "subtitles.ass"
+                    fstxn.atomic_write(ass_path, ass, root=c.root)
+                    with fstxn.locked_staging(image, root=c.root) as staging:
+                        plan.composite(layers, staging, with_subs=True, a=frame, b=frame + 1,
+                                       sub_file=ass_path)
+                        facts, data = _png(staging, c.w, c.h, limit, root=c.root, root_identity=root_identity)
+                        current()
                     current()
+                finally:
+                    fstxn.remove_pinned(scratch, scratch_identity, preserve=lambda _path: False)
+                    sources.materialized = []
                 current()
-            finally:
-                fstxn.remove_pinned(scratch, scratch_identity, preserve=lambda _path: False)
-                sources.materialized = []
-            current()
-            # Cleanup must also succeed before a delivery receives its success
-            # authority; temporary seg/PNG/pass/ASS files are not retained.
-            fstxn.atomic_write(marker, json.dumps({"schema": _SCHEMA, "render_key": key, **facts}), root=c.root)
-            try:
+                # Cleanup must also succeed before a delivery receives its success
+                # authority; temporary seg/PNG/pass/ASS files are not retained.
+                fstxn.atomic_write(marker, json.dumps({"schema": _SCHEMA, "render_key": key, **facts}), root=c.root)
+                try:
+                    current()
+                except BaseException:
+                    fstxn.unlink(marker, root=c.root)
+                    raise
+            else:
                 current()
-            except BaseException:
-                fstxn.unlink(marker, root=c.root)
-                raise
-        else:
+            # Reopen only through the anchored helper after publication. Neither a
+            # staging certificate nor an old marker may bless replacement bytes.
+            final_facts, data = _png(image, c.w, c.h, limit, root=c.root, root_identity=root_identity)
+            if final_facts != facts:
+                raise _FrameError("image.invalid", "published PNG differs from completion certificate")
             current()
-        # Reopen only through the anchored helper after publication. Neither a
-        # staging certificate nor an old marker may bless replacement bytes.
-        final_facts, data = _png(image, c.w, c.h, limit, root=c.root, root_identity=root_identity)
-        if final_facts != facts:
-            raise _FrameError("image.invalid", "published PNG differs from completion certificate")
-        current()
-    return ({"state": "generated", "kind": "current-composite", "approximate": False,
-            "path": None if prepare_gfx else str(image.relative_to(c.root)),
-            **({'delivery': 'inline-only'} if prepare_gfx else {}), "mime_type": "image/png",
-            "width": c.w, "height": c.h, "frame": frame, "fps": {"num": int(c.fps), "den": 1},
-            "content_version": version, "input_fingerprint": c.input_fingerprint,
-            "identity_semantics": ('Fast media stat identity; native producer input/environment certificates; '
-                                   'legacy HTML dynamic closure unproven; trusted HTML is not sandboxed'
-                                   if prepare_gfx else 'Fast media stat identity; non-adversarial inputs'),
-            "render_key": key, "cache_hit": hit, **facts}, data)
+        return ({"state": "generated", "kind": "current-composite", "approximate": False,
+                "path": None if prepare_gfx else str(image.relative_to(c.root)),
+                **({'delivery': 'inline-only'} if prepare_gfx else {}), "mime_type": "image/png",
+                "width": c.w, "height": c.h, "frame": frame, "fps": {"num": int(c.fps), "den": 1},
+                "content_version": version, "input_fingerprint": c.input_fingerprint,
+                "identity_semantics": ('Fast media stat identity; native producer input/environment certificates; '
+                                       'legacy HTML dynamic closure unproven; trusted HTML is not sandboxed'
+                                       if prepare_gfx else 'Fast media stat identity; non-adversarial inputs'),
+                "render_key": key, "cache_hit": hit, **facts}, data)
 
 
 def frame_timeline(path, *, frame, expected_content_version=None, render=False,
@@ -323,7 +328,8 @@ def frame_timeline(path, *, frame, expected_content_version=None, render=False,
     The remaining notes describe the unchanged default warm-input path.
 
     Defaults do not construct Ctx, probe assets, lock or create directories.
-    Authorized rendering requires Linux fd-anchored writes and core-only projects.
+    Authorized rendering requires Linux/macOS directory-anchored writes and
+    core-only projects; native toolchain/platform restrictions still apply.
     Visible native clips may be encoded temporarily inside cache/preview; graphics
     require existing authenticated inputs (disabled in off mode). It never runs a
     graphics producer/plugin, modifies timeline/store/delivery state, or uses
