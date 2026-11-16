@@ -161,7 +161,8 @@ timeline 帧率、尺寸、codec 与像素证明不变；日志记录请求值�
 活动 producer 对同一需求的强制 `Invalidate` 最多合并到 `min(8ms, 请求采样周期)`，
 新请求、readiness、见证搬移及下一独立样本立即触发；stale 回调不消费需求，仍有界重试。
 每个原有 `SendExternalBeginFrame`、就绪前双 rAF、绘制后围栏、两次 unsigned 样本及超时
-均保留，不是替代 BeginFrame 架构或闲置预热；当前原型的完整性能尚待复验，不能沿用上表收益。
+均保留，不是替代 BeginFrame 架构或闲置预热。当前两后端各一组筛选配对与外部GUI请求重叠，
+[时戳与污染标记](<../../docs/reports/browser-cold-chain-screens.json>)原样保留；须补测后才作取舍，不能沿用上表收益。
 原生 capture 与 encode 已由深度 2 ticket 流水重叠；后续优化须测量未被隐藏的关键路径，
 不能再次把已重叠的编码时间计为新增收益，也不能把编码线程数当作加速倍数。
 
