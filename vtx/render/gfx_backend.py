@@ -14,7 +14,7 @@ OUTPUT = "electron_native_topng"
 CEF_CONFIGURATION_ENV = (
     "VTX_CEF_SYNC_MODE", "VTX_CEF_REFERENCE_CONTEXT", "VTX_CEF_CAPTURE_FPS",
     "VTX_CEF_PNG_ENCODER", "VTX_CEF_PNG_LEVEL",
-    "VTX_CEF_PNG_FILTER", "VTX_CEF_ENCODE_THREADS", "VTX_CEF_PAIR_SWAP", "VTX_CEF_PAIR_DEPTH",
+    "VTX_CEF_PNG_FILTER", "VTX_CEF_ENCODE_THREADS", "VTX_CEF_PAIR_SWAP",
     "VTX_GFX_PAGES", "VTX_GFX_SPLIT_FRAMES", "VTX_GFX_SPLIT_MAX",
 )
 
@@ -53,24 +53,16 @@ class CefRuntimeOptions:
     # 与其他 runtime 面一致：改变 worker 编排但不改变输出字节，仍绑定
     # identity（与 encode_threads/capture_fps 同风格）。
     pair_swap: str = "1"
-    # Opt-in navigation lookahead for deterministic, frame-pure local pages.
-    # This is browser-pair count, not the depth-2 screenshot ticket queue.
-    pair_depth: int = 2
 
     def to_dict(self):
         return asdict(self)
 
     def argv(self):
-        flags = [f"--sync-mode={self.sync_mode}",
-                 f"--reference-context={self.reference_context}", f"--png-encoder={self.png_encoder}",
-                 f"--png-level={self.png_level}", f"--png-filter={self.png_filter}",
-                 f"--encode-threads={self.encode_threads}", f"--capture-fps={self.capture_fps}",
-                 f"--pair-swap={self.pair_swap}"]
-        # Existing workers remain usable with the unchanged default. Explicit
-        # depth 3 must be understood by the worker, never silently ignored.
-        if self.pair_depth != 2:
-            flags.append(f"--pair-depth={self.pair_depth}")
-        return flags
+        return [f"--sync-mode={self.sync_mode}",
+                f"--reference-context={self.reference_context}", f"--png-encoder={self.png_encoder}",
+                f"--png-level={self.png_level}", f"--png-filter={self.png_filter}",
+                f"--encode-threads={self.encode_threads}", f"--capture-fps={self.capture_fps}",
+                f"--pair-swap={self.pair_swap}"]
 
 
 def cef_runtime_options():
@@ -87,8 +79,7 @@ def cef_runtime_options():
         png_filter=_cef_choice("VTX_CEF_PNG_FILTER", "sub_up", ("none", "sub", "up", "sub_up", "all")),
         encode_threads=_cef_integer("VTX_CEF_ENCODE_THREADS", 2, 1, 16),
         capture_fps=_cef_integer("VTX_CEF_CAPTURE_FPS", 120, 1, 240),
-        pair_swap=_cef_choice("VTX_CEF_PAIR_SWAP", "1", ("0", "1")),
-        pair_depth=_cef_integer("VTX_CEF_PAIR_DEPTH", 2, 2, 3))
+        pair_swap=_cef_choice("VTX_CEF_PAIR_SWAP", "1", ("0", "1")))
 
 
 def cef_scheduling_options():

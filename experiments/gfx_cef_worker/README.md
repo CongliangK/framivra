@@ -110,8 +110,7 @@ env VTX_TEST_CEF_WORKER="${CEF_WORKER:?}" \
 | --- | --- |
 | `VTX_CEF_SYNC_MODE` | `n` / `n\|p`；生产 exact P 等待 Promise 钩子 |
 | `VTX_CEF_REFERENCE_CONTEXT` | `shared` / `shared\|isolated`；只改变无见证浏览器的 request context |
-| `VTX_CEF_PAIR_SWAP` | `1` / `0\|1`；mode n+exact 浏览器对轮换预取，`0` 回退单对逐帧导航（进缓存身份） |
-| `VTX_CEF_PAIR_DEPTH` | `2` / `2\|3`；显式选择浏览器对数量，`3` 仅供无跨文档可变副作用的确定性本地帧纯页面；不扩大截图票据队列 |
+| `VTX_CEF_PAIR_SWAP` | `1` / `0\|1`；mode n+exact 双对交替预取，`0` 回退单对逐帧导航（进缓存身份） |
 | `VTX_CEF_CAPTURE_FPS` | `120` / `1..240`；OSR 采样率请求，签名/无见证两路同值，不是 timeline FPS |
 | `VTX_CEF_PNG_ENCODER`、`VTX_CEF_PNG_LEVEL`、`VTX_CEF_PNG_FILTER` | `spng` / `spng\|fpng\|zlib`；`1` / `1..3`；`sub_up` / `none\|sub\|up\|sub_up\|all` |
 | `VTX_CEF_ENCODE_THREADS` | `2` / `1..16`；编码池线程数，受深度 2 ticket 流水与捕获速度限制，不等于线程数倍加速 |
@@ -134,18 +133,6 @@ RAM 变化未实测，不能假定翻倍或本机可承受；Mac 先以 `PAGES=1
 内存实测（30 帧冷态小样本、1080p、本机单次）：开启峰值 RSS 2375.5MB vs 关闭
 1717.8MB（+657.7MB，新增一对渲染器），未观测到 staging 双份导致的显性翻倍；该数字
 是单机单次样本，不构成容量承诺。
-
-**三对预取（显式 `VTX_CEF_PAIR_DEPTH=3` / `--pair-depth=3`）**：按成功请求顺序轮换
-A/B/C，绑定帧 N 时让已退休的一对仅导航 N+2，保留另一对的 N+1 预取；前三次实际绑定
-才逐个建窗，短会话不凭空创建 C。乱序/跳帧仍须精确匹配帧号、URL、新文档及 load floor，
-未命中回退新导航；桥和快照采集仍只在实际请求绑定后进行。`PAIR_SWAP=0`、非 mode n+exact
-时不启用多对；默认深度2不向旧 worker 添加新参数，显式3遇到不支持的 worker 应失败而非忽略。
-诊断分别记录 `pair_depth_requested` / `pair_depth_effective`。一对验证、最多两对未来导航，
-每 worker 最多6个浏览器；**仍只有两个截图 ticket 和两份 staging**，逐帧证明/错误围栏不减少。
-更早执行未来文档可能改变共享 localStorage/cookie/IndexedDB 或请求副作用，故不适用于此类页面，
-不能仅凭双路像素一致就宣称任意页面等价。它是 opt-in 研究能力，不默认替代双对，也不保证提速；
-更深预取与多个 worker 的内存、字体解析、IO竞争必须一并验证，未测场景仍为 UNRUN。
-
 `--capture-fps` 只改变内部采样请求；锁定 CEF 154 的
 [ClampFrameRate](https://raw.githubusercontent.com/chromiumembedded/cef/14c5a08/libcef/browser/osr/osr_util.cc)
 保留正值，传至 [SetMinCapturePeriod](https://raw.githubusercontent.com/chromiumembedded/cef/14c5a08/libcef/browser/osr/video_consumer_osr.cc)。

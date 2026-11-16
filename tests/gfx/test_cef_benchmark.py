@@ -589,22 +589,6 @@ class CliContracts(_TemporaryCase):
         self.assertEqual(plan['candidate_env'], {'VTX_CEF_PNG_LEVEL':'2'})
         self.assertEqual(fixture.rows(), [])
 
-    def test_pair_depth_requires_a_bounded_declared_ablation(self):
-        fixture = self.fixture()
-        for value in ('1', '4', '+3', '3.0'):
-            with self.subTest(value=value):
-                result = fixture.cli('plan', '--candidate-set', 'VTX_CEF_PAIR_DEPTH=' + value,
-                                     '--ablation', 'pair-lookahead')
-                self.assertNotEqual(result.returncode, 0)
-        self.assertNotEqual(fixture.cli('plan', '--candidate-set',
-                                       'VTX_CEF_PAIR_DEPTH=3').returncode, 0)
-        result = fixture.cli('plan', '--candidate-set', 'VTX_CEF_PAIR_DEPTH=3',
-                             '--ablation', 'pair-lookahead')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)['plan']['candidate_env'],
-                         {'VTX_CEF_PAIR_DEPTH': '3'})
-        self.assertEqual(fixture.rows(), [])
-
 
 def _overlapping_events():
     """Canonical events with overlapping independent waves and stage intervals."""
