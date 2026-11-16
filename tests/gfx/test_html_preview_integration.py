@@ -23,8 +23,10 @@ class HtmlPreviewIntegration(unittest.TestCase):
         self.page = self.root / '图层 # demo.html'
         self.timeline = self.root / 'timeline.json'
         process = subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
-            'color=c=blue:s=1920x1080:r=30', '-frames:v', '16', '-c:v', 'ffv1',
-            '-threads', '1', str(self.root / 'source.mkv')], capture_output=True, text=True)
+            'color=c=blue:s=1920x1080:r=30:d=0.5333333333333333', '-f', 'lavfi', '-i',
+            'sine=frequency=440:sample_rate=48000:duration=0.5333333333333333',
+            '-frames:v', '16', '-shortest', '-c:v', 'ffv1', '-c:a', 'pcm_s16le',
+            '-ar', '48000', '-ac', '2', '-threads', '1', str(self.root / 'source.mkv')], capture_output=True, text=True)
         self.assertEqual(process.returncode, 0, process.stderr)
         self.doc = {'version': 2,
             'project': {'fps': 30, 'width': 1920, 'height': 1080, 'duration_frames': 16},
@@ -34,7 +36,8 @@ class HtmlPreviewIntegration(unittest.TestCase):
                                             'dst_in': 0, 'dur': 16}]},
                 {'name': 'page', 'kind': 'gfx', 'clips': [{'src': self.page.name, 'dst_in': 2, 'dur': 12,
                                           'x': 100, 'y': 80, 'opacity': 0.5}]}],
-            'audio_tracks': [], 'subtitles': [{'in': 7, 'out': 8, 'text': 'COMPLETE COMPOSITE'}]}
+            'audio_tracks': [{'name': 'tone', 'events': [{'src': 'base', 'in': 0, 'out': 16, 'volume': 0.3}]}],
+            'subtitles': [{'in': 7, 'out': 8, 'text': 'COMPLETE COMPOSITE'}]}
         self.timeline.write_text(json.dumps(self.doc), encoding='utf-8')
         self.write_page()
 
@@ -57,8 +60,8 @@ window.__vtx_export_png=()=>EXPORT;
             cwd=str(Path(__file__).resolve().parents[2]), capture_output=True, text=True,
             timeout=90, env={**os.environ, 'VTX_CHROME': os.environ['VTX_TEST_CHROME'],
                              'VTX_NO_NVENC': '1', 'VTX_SEG_NVENC': '0', 'VTX_FILTER_THREADS': '1'})
-        self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout[:2000])
         result = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, {'diagnostics': result.get('diagnostics'), 'stderr': proc.stderr[-2000:]})
         self.assertTrue(result['ok'], result['diagnostics'])
         image = result['image']
         self.assertEqual(image['kind'], 'current-composite')
@@ -102,6 +105,50 @@ window.__vtx_export_png=()=>EXPORT;
         _, png = self.render(8)
         self.assertGreater(png.getpixel((20, 20))[2], 240)
         self.assertLess(png.getpixel((250, 230))[2], 245)
+
+    def test_same_input_formal_all_audio_qc_and_selected_frame(self):
+        # This is a separate explicitly written formal copy, not a warm-cache
+        # replacement for the initial empty-cache preview operation.
+        original = self.timeline.read_bytes()
+        _, preview = self.render(7)
+        self.assertEqual(self.timeline.read_bytes(), original)
+        formal = self.root / 'formal'
+        formal.mkdir()
+        for source in (self.timeline, self.page, self.root / 'source.mkv'):
+            shutil.copy2(source, formal / source.name)
+        env = {**os.environ, 'VTX_CHROME': os.environ['VTX_TEST_CHROME'], 'VTX_GFX': 'cdp',
+               'VTX_NO_NVENC': '1', 'VTX_SEG_NVENC': '0', 'VTX_FILTER_THREADS': '1'}
+        for operation in (['all'], ['qc', '--strict']):
+            proc = subprocess.run([sys.executable, '-m', 'vtx', '-t', str(formal / 'timeline.json'), *operation],
+                cwd=str(Path(__file__).resolve().parents[2]), capture_output=True, text=True,
+                timeout=180, env=env)
+            self.assertEqual(proc.returncode, 0, proc.stdout[-5000:] + proc.stderr[-3000:])
+        # Core policy intentionally retires the intermediate audio.wav after a
+        # successful all. Verify the actual delivered audio, not an obsolete
+        # assumption that temporary stage handoffs survive that operation.
+        self.assertTrue((formal / 'out' / 'final.mp4').is_file())
+        audio = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(formal / 'out' / 'final.mp4'),
+            '-map', '0:a:0', '-ar', '48000', '-ac', '2', '-f', 's16le', '-'],
+            capture_output=True, timeout=30)
+        self.assertEqual(audio.returncode, 0, audio.stderr)
+        self.assertLessEqual(abs(len(audio.stdout) // 4 - 16 * 1600), 1024)
+        self.assertTrue(any(audio.stdout), 'delivered audio must contain the synthesized tone')
+        self.assertEqual((formal / 'timeline.json').read_bytes(), original)
+        decoded = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(formal / 'out' / 'final.mp4'),
+            '-vf', 'select=eq(n\\,7)', '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24',
+            '-threads', '1', '-'], capture_output=True, timeout=30)
+        self.assertEqual(decoded.returncode, 0, decoded.stderr)
+        self.assertEqual(len(decoded.stdout), 1920 * 1080 * 3)
+        encoded = self.Image.frombytes('RGB', (1920, 1080), decoded.stdout)
+        from PIL import ImageChops
+        # Existing full-resolution mean-absolute threshold from verify_e2e.py;
+        # additionally check graphic and ASS regions so a large flat background
+        # cannot conceal a missing/wrong layer. Encoded bytes need not be equal.
+        for box in (None, (200, 180, 500, 480), (0, 800, 1920, 1080)):
+            a = preview if box is None else preview.crop(box)
+            b = encoded if box is None else encoded.crop(box)
+            values = ImageChops.difference(a, b).tobytes()
+            self.assertLess(sum(values) / len(values), 2, box)
 
 
 if __name__ == '__main__':

@@ -119,6 +119,7 @@ def _render_inner(path, reference, frame, limit, *, prepare_gfx, trust_html, req
     from .render.gfx_environment import _files
 
     class PreviewCtx(Ctx):
+        _core_only_preview = True
         write_root = None
 
         def receipt(self, *args, **kwargs):
@@ -240,10 +241,10 @@ def _render_inner(path, reference, frame, limit, *, prepare_gfx, trust_html, req
         def current():
             if project_identity(c.root) != root_identity:
                 raise _FrameError("snapshot.changed", "project root identity changed")
-            verify_input_identity(c)
-            document_current()
             if active_plugins(SimpleNamespace(tl=stored)):
                 raise _FrameError("plugins.changed", "active plugin selection changed")
+            verify_input_identity(c)
+            document_current()
             try:
                 same_inputs = sources.identity() == identities
                 verify_input_identity(c)
@@ -390,5 +391,6 @@ def frame_timeline(path, *, frame, expected_content_version=None, render=False,
     except (OSError, ValueError, RuntimeError, KeyError, TypeError, SystemExit) as error:
         result["image"] = None
         from .render.png_artifact import ArtifactError
-        _error(result, error.code if isinstance(error, (_FrameError, ArtifactError)) else "render.failed", "", str(error)[:2000])
+        from .pluginlib.hooks import _CoreOnlyPreviewError
+        _error(result, error.code if isinstance(error, (_FrameError, ArtifactError, _CoreOnlyPreviewError)) else "render.failed", "", str(error)[:2000])
     return _finish(result)
