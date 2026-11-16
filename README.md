@@ -14,7 +14,7 @@ Framivra（读 "frame-ee-vra"）是 B 站视频产线的程序仓。内核 `vtx/
 | [scripts](<scripts/README.md>)、[vt.py](<vt.py>) | 仓级工具；doctor、组件/模板 list/check、version、init 与链接修复 |
 | [tests](<tests/README.md>) | 分领域回归、验收运行器与测试证据 |
 | [experiments](<experiments/README.md>) | 可选后端与有界性能实验，不是默认生产入口 |
-| [.github](<.github/README.md>) | CI、专用验收与发行证明工作流 |
+| [.github](<.github/GUIDE.md>) | CI、专用验收与发行证明工作流 |
 
 关停后主链产物不可信的是内核；仍能可信出片的是可卸载组件。apps/plugins 每件自包含（app.json/plugin.json + 代码 + README + tests）。**可卸载不等于无依赖**：已启用插件可以依赖相应 app，不能删除依赖后继续宣称扩展生效；[协议与边界](docs/ARCHITECTURE.md#3-应用边界apps)为准。
 
