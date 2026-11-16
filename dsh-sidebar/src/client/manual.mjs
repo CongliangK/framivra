@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { parseJSON, stringifyJSON } from '../json.mjs'
 import { AgentProposals } from './proposals.mjs'
+import { TimelineSettings } from './timeline-settings.mjs'
 const h = React.createElement
 const id = () => crypto.randomUUID()
 export const EDIT_OPERATIONS = ['source.add','source.remove','source.update','track.add','track.remove','track.copy','track.reorder','track.rename','track.references','block.insert','block.remove','block.copy','block.move','block.relink','block.trim','block.split','parameters.update','parameters.unset','project.resize','range.ripple']
@@ -62,6 +63,7 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
   const [op, setOp] = useState('block.move')
   const [v, setV] = useState({ family: 'video', kind: 'aroll', source_field: 'path', property: 'opacity', property_target: 'block', reference_field: 'duck_by', fade_policy: 'preserve-content', text_policy: 'duplicate-text', mode: 'shift', crossing: 'reject', scope: [], split_ids: [], order: [], start: '0', end: '10', duration: '10', src_in: '0', src_out: '10', volume: '1', at: '0', delta: '1', index: '0', value: '1' })
   const [queue, setQueue] = useState([]), [plan, setPlan] = useState(), [status, setStatus] = useState(), [busy, setBusy] = useState(false), [message, setMessage] = useState('')
+  const [settingsEpoch, setSettingsEpoch] = useState(0)
   const request = useRef(), generation = useRef(0), live = useRef(true), invalidations = useRef(Promise.resolve())
   const frameSafety = useRef({ dirty: false, busy: false, unknown: false })
   const proposalSafety = useRef({ dirty: false, busy: false, unknown: false })
@@ -128,6 +130,17 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
     onQuickReady?.(available ? quick : undefined)
     return () => { if (quickOwner.current === token) quickOwner.current = undefined; onQuickReady?.(undefined) }
   }, [write, managed, busy, base, selected, selection, frame, proposalBlocked, staleLock, v])
+  const settingsDisabled = !write || !managed || busy || proposalBlocked || staleLock || frameSafety.current.unknown
+  const settingsChanged = () => {
+    if (settingsDisabled || tabSignal.aborted || !live.current) return false
+    draftDirty.current = true; safety({ dirty: true }); invalidate()
+    return true
+  }
+  const settingsQueued = operations => {
+    if (!settingsChanged()) return
+    setQueue(previous => previous.concat(operations))
+    setMessage('配置已加入未保存批次；仍需内核预检与冻结确认，没有写入或渲染。')
+  }
   const set = (key, value) => { draftDirty.current = true; safety({ dirty: true }); invalidate(); setV(previous => ({ ...previous, [key]: value })) }
   async function run(action, extra = {}) {
     safety({ busy: true })
@@ -218,8 +231,9 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
     h('p',null,`写授权：${write?'已明确授予（非 read grant）':'未授予，保留 read / copy / noDraft 降级'}；选择 ${blocks.length} 个块 / ${track?.data?.id ?? '无真实轨'}`),
     staleLock ? h('p',{role:'alert'},'权威视图刷新失败：此旧视图已锁定，禁止再写、快捷编辑、拖动与导帧。请刷新或关闭后重开预览；不会自动重试；结果判定以内核回执为准。') : null,
     !managed ? h('div',null,h('p',null,'Legacy：只读。显式接管会分配稳定 ID 并创建持久历史；现有未知 ID/不兼容素材 ID 将被内核拒绝，绝不自动改名或迁移。'), h('button',{type:'button',disabled:!write||busy||staleLock,onClick:()=>void run('adopt',{base_revision:base,confirmation:'stable-ids-and-history'})},'确认稳定 ID / 历史影响并接管 legacy')) : null,
+    h(TimelineSettings, { key: `${opened.grant}:${base}:${settingsEpoch}`, document: opened.snapshot.document, tracks: result.tracks, disabled: settingsDisabled, onChange: settingsChanged, onQueue: settingsQueued }),
     h('fieldset',{disabled:!write||!managed||busy||staleLock,style:{minWidth:0}},h('legend',null,'专用操作表单（不是整段 JSON 请求）'),selectOperation(),...form,
-      h('button',{type:'button',disabled:busy||staleLock,onClick:add},'加入未保存批次'), h('button',{type:'button',disabled:busy||staleLock,onClick:()=>{invalidate();setQueue([]);if(!staleOwnedDirty.current){draftDirty.current=false;safety({dirty:false})}}},'清空未保存批次')),
+      h('button',{type:'button',disabled:busy||staleLock,onClick:add},'加入未保存批次'), h('button',{type:'button',disabled:busy||staleLock,onClick:()=>{invalidate();setQueue([]);setSettingsEpoch(previous=>previous+1);if(!staleOwnedDirty.current){draftDirty.current=false;safety({dirty:false})}}},'清空未保存批次')),
     h('pre',{'aria-label':'未保存 typed intents',style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(queue,2)),
     h('button',{type:'button',disabled:!write||busy||proposalBlocked||staleLock||!queue.length,onClick:()=>void run('plan',{base_revision:base,operations:queue})},'内核预检计划（零写）'),
     plan ? h('div',null,h('strong',null,`未保存计划 · op_id ${plan.submitted_request.op_id}`),h('pre',{style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(plan,2)),h('button',{type:'button',disabled:busy||staleLock,onClick:()=>void run('commit',{planToken:plan.planToken})},'确认提交此冻结计划（一次 revision）')) : null,
