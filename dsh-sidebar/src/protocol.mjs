@@ -28,6 +28,7 @@ export const HOST_PROTOCOL_OPS = [
   'plan', 'commit', 'status', 'recover', 'adopt', 'undo',
   'proposal-list', 'proposal-reject', 'proposal-confirm',
   'inspect', 'query', 'reference',
+  'storage-inspect', 'storage-plan', 'storage-clean', 'storage-cancel',
 ]
 export const HOST_IDENTITY = { plugin: '0.2.2', protocol: 1, ops: HOST_PROTOCOL_OPS }
 
@@ -50,7 +51,7 @@ export const HOST_LIB_MODULES = ['configuration', 'kernel-config', 'kernel-manag
 export const CLIENT_MODULES = [
   'icons', 'icon-controls', 'editor-controls', 'viewport', 'timeline', 'manual',
   'selection', 'reference', 'frame', 'settings', 'kernel-settings', 'draft-services', 'proposals',
-  'grant-lifecycle', 'official-draft', 'workbench', 'index',
+  'grant-lifecycle', 'official-draft', 'workbench', 'storage', 'index',
 ]
 /** Stamp recipe: prefix + first 16 hex of sha256 over the per-file sha256
  *  digests of the modules above (joined with '\n'), in the listed order.
@@ -165,7 +166,7 @@ export class TimelineReader {
       this.config = { vtxExecutable: snapshot.vtxExecutable, trustedPath: snapshot.trustedPath }
     } else this.config = undefined
     this.active = new Map() // Ownership survives direct-command settlement and failed cleanup.
-    this.spawnKinds = new WeakMap() // Spawned child -> admission class ('read' | 'store-capabilities' | 'store' | 'frame').
+    this.spawnKinds = new WeakMap() // Child -> admission class (read, store-capabilities, store, frame, storage-read, storage-clean).
     this.spawnOwners = new WeakMap() // Spawned child -> owner token (grant/session) so cancel reaping stays scoped.
     this.cleanupFailed = new WeakSet() // Children whose managed range was not confirmed reaped; retained until a retry succeeds.
     this.lifecycle = new AbortController()
@@ -183,7 +184,7 @@ export class TimelineReader {
   }
   /**
    * True while semantic admission must wait: an actual store transaction or a
-   * frame child is in flight, or any child — including an ordinary read — has a
+   * frame/storage-clean child is in flight, or any child — including a read — has a
    * failed, unreaped cleanup. Ordinary reads and the pure-static store
    * capabilities probe never block semantic operations on their own.
    * @returns {boolean}
@@ -192,7 +193,7 @@ export class TimelineReader {
     for (const handle of this.active.keys()) {
       if (this.cleanupFailed.has(handle)) return true
       const kind = this.spawnKinds.get(handle)
-      if (kind === 'store' || kind === 'frame') return true
+      if (kind === 'store' || kind === 'frame' || kind === 'storage-clean') return true
     }
     return false
   }
@@ -251,6 +252,21 @@ export class TimelineReader {
       if (kind === undefined || this.spawnKinds.get(handle) === kind) return true
     }
     return false
+  }
+  async storage(executable, timeline, operation, request, signal, snapshot, owner) {
+    if (!['inspect', 'plan', 'clean'].includes(operation)) fail('BAD_OPERATION', 'Unknown storage command')
+    const input = request === undefined ? undefined : stringifyJSON(request)
+    if (input !== undefined && Buffer.byteLength(input, 'utf8') > 4096) fail('REQUEST_TOO_LARGE', 'Storage request exceeds 4 KiB', 413)
+    return this.command(executable, timeline, ['storage', operation, ...(input === undefined ? [] : ['--request-stdin'])], signal, text => {
+      const value = parseJSON(text)
+      const mismatch = () => fail('PROTOCOL_MISMATCH', 'Official storage/v1 JSON envelope required', 502)
+      if (!object(value) || value.schema !== 'framivra.storage/v1' || value.operation !== operation || typeof value.ok !== 'boolean' ||
+          !(/^sha256:[a-f0-9]{64}$/.test(value.content_version) || (value.ok === false && value.content_version === null)) || !Array.isArray(value.diagnostics)) mismatch()
+      if (value.ok && operation === 'inspect' && (!object(value.usage) || !['project_bytes', 'cache_bytes', 'out_bytes', 'other_bytes', 'file_count', 'symlinks_skipped'].every(key => integer(value.usage[key])) || !['off', 'core', 'aggressive'].includes(value.cache_mode))) mismatch()
+      if (value.ok && operation === 'plan' && (!object(value.plan) || !/^sha256:[a-f0-9]{64}$/.test(value.plan.id) || !integer(value.plan.bytes) || !integer(value.plan.count) || !Array.isArray(value.plan.entries) || value.plan.count !== value.plan.entries.length || value.plan.entries.some(entry => !object(entry) || typeof entry.path !== 'string' || !integer(entry.bytes) || typeof entry.category !== 'string' || typeof entry.reason !== 'string'))) mismatch()
+      if (operation === 'clean' && value.ok && (!object(value.removed) || !object(value.remaining) || !['bytes', 'count'].every(key => integer(value.removed[key]) && integer(value.remaining[key])))) mismatch()
+      return value
+    }, input, true, false, snapshot, owner)
   }
   async store(executable, timeline, operation, request, signal, snapshot, owner) {
     if (!['capabilities', 'plan', 'commit', 'status', 'recover'].includes(operation)) fail('BAD_OPERATION', 'Unknown store command')
@@ -375,6 +391,7 @@ export class TimelineReader {
  * pure static probe; every other store command is a transaction that may touch
  * the lock/manifest, and frame children own render state. */
 function spawnKind(args) {
+  if (args[0] === 'storage') return args[1] === 'clean' ? 'storage-clean' : 'storage-read'
   if (args[0] === 'store') return args[1] === 'capabilities' ? 'store-capabilities' : 'store'
   if (args[0] === 'timeline' && args[1] === 'frame') return 'frame'
   return 'read'

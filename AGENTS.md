@@ -4,7 +4,7 @@
 
 - B 站视频制作工具箱：素材与 timeline.json → 帧精确视频、混音、QC 与缓存；[内核](<vtx/>)永不可关。
 - [apps](<apps/>)产出素材或辅助结果；[plugins](<plugins/>)扩展时间线管线；启用后不得忽略依赖或失败。
-- [DSH 侧栏](<dsh-sidebar/README.md>)独立发行；[资源审查](<docs/reports/development-history.md>)局部证据不代表全链验收。
+- [DSH 侧栏](<dsh-sidebar/README.md>)独立发行；空间统计与确认清理见[接口](<docs/reference/storage-api.md>)，删除归内核。
 - 制作从[技能](<docs/skill/SKILL.md>)进入；科技口播与开发范本见[工作流](<templates/README.md>)；组件查[catalog](<docs/catalog.md>)。
 - 开发先读[架构契约](<docs/ARCHITECTURE.md>)与[DEV](<docs/DEV.md>)；时间线 API/写事务见[接口边界](<docs/reference/timeline-api.md>)。
 - 环境按[README](<README.md#依赖矩阵>)准备：Python ≥3.9，媒体工具按路径配置；模型默认关闭，依赖声明为空不等于仅需标准库。

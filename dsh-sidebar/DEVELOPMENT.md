@@ -12,6 +12,12 @@ The conversation-draft bridge uses official `InputActions` plus public `Conversa
 
 Evidence remains supplier- and artifact-specific. Acceptance sections dated before this upgrade are preserved historical evidence for their original DSH and ZIP, **not certificates for the current release**. Agent-loop fixtures use a clearly labelled deterministic scripted model, not an external AI service or billing account.
 
+### Project storage controls (#362)
+
+The additive `storage/v1` protocol and stopped-writer/delete authority live in the [kernel storage contract](<../docs/reference/storage-api.md>). The owner-only control endpoint consumes an immutable one-use preview token; it never accepts deletion paths or exposes storage operations to model tools. Existing three-way cache settings remain the only tier control. The visible inspector samples bounded logical project space; it is not a process-memory monitor. Cancellation does not undo deletions, and unknown cleanup outcomes remain visible across later reads.
+
+New kernel, host-boundary and React lifecycle checks cover the contract; they are not native browser acceptance. Real Before/After application captures and authenticated owner workflow acceptance remain **UNRUN** for this revision. Historical screenshots and acceptance below do not certify the new panel. Whole-chain cold/warm performance and sustained leak claims likewise remain unverified; see the [resource investigation](<../docs/reports/development-history.md#资源生命周期排查362>).
+
 ### npm 0.2.2-rc.1 migration verification (2026-11-13, Linux x64)
 
 An independent DSH home/profile on loopback port 3180 exercised official local-directory installation, localized plugin details, saved configuration and actual read/store capability checks, folder/file opening, the five-track view, text references and a verified 1920×1080 current-composite PNG added to the real conversation draft. Original draft text and its earlier reference were preserved; no prompt or upload request was issued. Anonymous control access returned 401. Missing warm inputs were explicitly refused before preparation was performed outside the UI. This three-second fixture is a **mechanism smoke test, not a performance baseline or final-video QC**. Exact final archive digest, executed regression counts, restart checks and remaining UNRUN scope are recorded with the upgrade PR; the old evidence below remains unchanged. Production port 3080 is not the test instance and is not deployed by this change.

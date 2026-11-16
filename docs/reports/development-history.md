@@ -61,13 +61,15 @@ A臂冷态中位：启动覆盖0.289s；608次截图（600目标帧+8探针）�
 | gfx | PNG、压缩包与生产证据可占主要空间，但本轮没有项目占比数据。[文件事务](../../vtx/runtime/fstxn.py)原强引用锁表为每个唯一加锁路径保留 Python 锁，[CLI 截图](../../vtx/render/gfx_cli.py)的逐帧 `locked_staging` 等调用会持续增加条目（CDP 的无锁 `atomic_write` 本身不经过该表）；改为弱引用注册表，所有持有者/等待者仍强引用同一锁。不删除磁盘锁文件、不改变跨进程锁协议。 |
 | video / mux / qc | seg、逐层无损 pass、交接音视频与最终成片性质不同；不能按扩展名统一删除。`core/off` 用后回收媒体，`aggressive` 的保留属于策略而非泄漏；失败/截断链保留必要交接件。峰值编码内存和并发浏览器成本待实测。 |
 | audit / df | [体积检查](../../vtx/cache/hygiene.py)的 quiet 路径原先仍全量排序 cache 路径、扫描孤儿并读取账本，仅丢弃打印。本轮跳过这些展示专用步骤，verbose top-20 改为有界候选选择，保留排序/同尺寸顺序及返回值。逻辑字节统计仍需遍历，不能当物理独占空间或原子快照。 |
-| 缓存回收 / DSH | 历史键、预览、报告、实验缓存与事务锁各有不同保留边界；[清理约束](../cache-provenance.md#容量与保留)要求停写，不证明与在途渲染互斥。现有 `df` 只返回 cache/out 总量，不含项目素材；`gc` 文本预演与执行重新计算，不能直接冒充绑定用户确认的 GUI 删除计划。 |
+| 缓存回收 / DSH | 历史键、预览、报告、实验缓存与事务锁各有不同保留边界；[清理约束](../cache-provenance.md#容量与保留)要求停写。本次新增[空间接口](<../reference/storage-api.md>)与侧栏采样、冻结预演及独立确认，复用原 GC 与参与者策略锁；不把文本 `gc` 输出冒充绑定确认，也不承诺排斥任意外部写入者。 |
 
 另有未修复的静态风险：[CDP 接收器](../../vtx/render/gfx_render.py)逐 WebSocket 帧限长，但分片消息累计未限长，握手头也无总字节上限；小上限内存探针可由两个合法分片组成超限消息，不等于已观测真实浏览器内存泄漏。[媒体执行](../../vtx/pipeline/infra.py)的 `capture_output` 保留完整子进程日志，普通 FFmpeg 不具备浏览器同等的进程树监管；正常退出会回收直接子进程，不能据此断言正常路径有僵尸泄漏。分片上限应验证合法截图尺寸，媒体取消须明确等待/收尾与跨平台语义，均未在本轮改写。
 
 [回归](../../tests/cache/test_storage_diagnostics.py)检查 quiet 不做展示遍历/账本读取、verbose top-20 与稳定全排序一致和缺失布局零写态；[锁生命周期回归](../../tests/safety/test_fstxn_lock_lifetime.py)检查闲置路径回收、活动持有者/等待者共享锁。这些是机制证明，不是 RSS 上限或整片提速证明。
 
-DSH 已有全局缓存三档保存，不能把它解释为 CPU/RAM/并发任务档位。[资源预算](../reference/resource-budget.md)仍是未接入渲染 CLI 的 Linux 协作记账原语，不是 OS 限制。若新增运行档位，需要先确定调度语义与消费者，不能只增表单而没有生效链。GUI 空间监控/确认清理尚未实现；本轮不改清理范围、渲染排他协议、运行参数或质量门，也不将 UI 需求核销。
+用户已明确本次档位仅指既有 `off/core/aggressive`。DSH 复用原全局三档确认/CAS 保存，不新增 CPU/RAM/并发档位；[资源预算](../reference/resource-budget.md)仍是未接入渲染 CLI 的 Linux 协作记账原语，不是 OS 限制。空间管理实现与有界响应、过期/替换/失败等机制回归见[接口](<../reference/storage-api.md>)、[内核测试](<../../tests/cache/test_storage_api.py>)和[侧栏记录](<../../dsh-sidebar/DEVELOPMENT.md#project-storage-controls-362>)。真实 UI 前后对比与 owner 交互尚未验收，不将代码/构建通过冒充 UI 完成交付。
+
+本机只读主片 preflight 返回完整诊断，但 `prepare_ready=false`：缺已有固定字体与合规 Inkscape；Python 3.14 的依赖检查通过，默认 Python 3.9 另缺 jsonschema。未下载替代字节、改锁或用小片替代主基线，未执行 prepare/verify/all/strict QC。另以 Python 3.14 跑通既有[缓存档位机制集成](<../../tests/cache/test_cache_modes_integration.py>)三项：小型 CPU fixture 的三档解码等价、阶段交接及私有工作集回收；其测试耗时不是主片阶段性能，不能证明长期无泄漏。
 
 ## 已收敛的设计选择
 
