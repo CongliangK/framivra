@@ -32,6 +32,7 @@ class PreviewInputs:
         self.policy = policy_for(c)
         self.entries = []
         self.materialized = []
+        self._svg_scope = getattr(c, '_svg_consumer_sources', None)
         tracks = []
         for ti, track in enumerate(c.tl['video_tracks']):
             native = []
@@ -45,6 +46,16 @@ class PreviewInputs:
                 if gfx:
                     from .gfx_packed_reader import read_frame
                     entry['png'] = read_frame(c, clip, frame - clip['dst_in'])
+                    from . import gfx_svg
+                    if self._svg_scope is not None and gfx_svg.is_svg(clip):
+                        from ..cache.session import pack_path
+                        # The initial read retains the standalone reader's full
+                        # gates. Retain only its exact scoped source and canonical
+                        # archive path, never authority across operations.
+                        source = self._svg_scope.get(gfx_svg.canonical(clip))
+                        archive = pack_path(c, clip)
+                        if source is not None and fstxn.cleanup_identity(archive) is None:
+                            entry['bare_svg'] = source, archive
                 else:
                     native.append(clip)
                 self.entries.append(entry)
@@ -69,14 +80,29 @@ class PreviewInputs:
                 self.warm = warm
 
     def identity(self):
-        """Reauthenticate visible gfx/current media before and after consumption."""
+        """Reauthenticate visible gfx/current media before and after consumption.
+
+        Explicit SVG scopes require the caller's full-document input checks on
+        BOTH sides of this call, including invisible pages and runtime inputs.
+        """
         warm = {(layer['ti'], id(layer['cl'])): layer for layer in self.warm or []}
         identities = []
         for entry in self.entries:
             clip = entry['cl']
             if entry['gfx']:
-                from .gfx_packed_reader import read_frame
-                data = read_frame(self.c, clip, self.frame - clip['dst_in'])
+                from .gfx_packed_reader import read_frame, _bare_bytes
+                index = self.frame - clip['dst_in']
+                bare = entry.get('bare_svg')
+                if (bare is not None and self._svg_scope is not None
+                        and getattr(self.c, '_svg_consumer_sources', None) is self._svg_scope
+                        and fstxn.cleanup_identity(bare[1]) is None):
+                    data = _bare_bytes(self.c, bare[0], index)
+                    # A newly published archive, even corrupt or a symlink,
+                    # must take the full reader/refusal path, never bare fallback.
+                    if fstxn.cleanup_identity(bare[1]) is not None:
+                        data = read_frame(self.c, clip, index)
+                else:
+                    data = read_frame(self.c, clip, index)
                 asset = {'png_sha256': hashlib.sha256(data).hexdigest()}
                 if data != entry['png']:
                     raise ValueError('authenticated graphics frame changed during preview')

@@ -149,6 +149,8 @@ vtx -t /path/to/timeline.json timeline frame --frame 30 --render --include-png
 
 写域仅 `cache/preview/frame_<render_key>/`（PNG、完成标记、ASS、随机 FFV1 暂存及锁），不改 timeline、store、普通 cache/seg/gfx、out、receipt 或 delivery 状态。相同 key 锁串行；完整 PNG 和同 SHA 完成标记均通过才可命中。发布前后复核原文完整 SHA/输入身份/有序上游字节/环境；中断和部分写不生成完成标记。遗留失败暂存可存在，不是成功缓存。媒体子进程不脱离调用者 process-group；取消时 kill 并 communicate/wait 回收。CLI 主线程临时处理 SIGINT/SIGTERM 并恢复 handler；Python API 不安装 signal handler。SIGKILL 或库调用者未处理的 SIGTERM 属硬退出边界，不承诺 finally。沿用 fstxn 合作进程/非对抗性边界，不承诺物理断电或非合作输入 ABA 攻击防御。
 
+SVG 单帧消费使用既有显式 `consumer_scope`，只在同一次操作内复用已认证的 bare PNG 来源；不是跨请求身份缓存。初次与每个发布检查点均在消费前后重新核对完整输入指纹，包括不可见 SVG、声明依赖、字体及运行库。中间仍复查完成标记身份、请求 SVG 字节、完整 PNG 与证书摘要；退出/取消即失效，escaped 来源恢复完整核验。规范 pack 路径在读取前后都须不存在才走 bare 快路；出现 pack（包括损坏或链接）仍走原完整 reader/拒绝路径，不静默回落。不缩减锁等待、合成、发布、清理及返回的检查点，也不改变宿主截止时间、重试或授权语义。
+
 键包括原文版本、Fast 媒体 stat 输入指纹、整数帧/fps/画布、ASS 精确字节、有序层/上游内容键和当前上游字节 SHA、实际 ffmpeg/动态依赖/字体环境、graph/PNG profile/实现源码身份；环境采集复用既有 gfx 证书工具。**Fast 不等于全媒体内容哈希**，跨机器逐像素等价未证。输入/完整 ASCII JSON wire 各 8MiB；输出超限拒绝而不截断引用。PNG 实读上限 max_png_bytes 为 1..8MiB（`--max-png-bytes`），超限不发布完成结果；编码器瞬态文件可大于该交付上限。CLI 成功0、业务拒绝1、错误旗标组合2，仅 stdout 完整 JSON，不另落报告。
 
 `include_png` 严格为 bool，默认 False 的 metadata-only shape 不变；True 仅在成功 image 增加 `inline:{encoding:"base64",data:"<canonical base64>"}`，无 data URL，消费者无需重开 path。它不授予渲染权：Python 未 render 仍 `render.not_authorized`；CLI `--include-png` 缺 `--render` 为 `cli.arguments`/exit2，其他命令拒绝该旗标。支持探测只看 capabilities 的可选 `frame:{schema:"framivra.timeline.frame/v1",explicit_render_required:true,inline_png:{flag:"--include-png",encoding:"base64",wire_limit_bytes:8388608}}`，不猜版本、不扩大只读 operations，不改变 store 能力；缺广告须拒绝 inline，不回退私读路径。
