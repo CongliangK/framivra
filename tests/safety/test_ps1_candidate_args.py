@@ -268,9 +268,15 @@ class Ps1CollisionPathTransport(unittest.TestCase):
                          "native PowerShell unavailable; transport tests are not native validation")
     def test_native_powershell_rejects_unicode_prefix_collision(self):
         tree, _, ignored = self.tree_with_ignored_collision()
+        for prefix in (False, True):
+            with self.subTest(python_prefix="-B" if prefix else "none"):
+                self._assert_native_collision(tree, ignored, prefix)
+
+    def _assert_native_collision(self, tree, ignored, prefix):
+        setup = "$py = @($Python)\n" + ("$py += '-B'\n" if prefix else "")
         script = self.root / "collision.ps1"
         script.write_text("param($Dir, $TargetRef, $Python)\n$ErrorActionPreference = 'Stop'\n"
-                          "$py = @($Python)\n" + self.function +
+                          + setup + self.function +
                           "\ntry { Assert-NoIgnoredCollision $TargetRef } catch {\n"
                           "  if ($_.Exception.Message.Contains('本地被忽略的文件')) {\n"
                           "    Write-Output 'IGNORED_COLLISION_REJECTED'; exit 73\n"
@@ -292,7 +298,7 @@ class Ps1CollisionPathTransport(unittest.TestCase):
                     invocation, invocation.replace("2>$null", "2>$ProbeStderr"), 1)
                 probe.write_text(
                     "param($Dir, $TargetRef, $Python, $ProbeStderr)\n"
-                    "$ErrorActionPreference = 'Stop'\n$py = @($Python)\n"
+                    "$ErrorActionPreference = 'Stop'\n" + setup +
                     "Write-Output ('PROBE_ARGUMENT_MODE=' + $PSNativeCommandArgumentPassing)\n"
                     "Write-Output ('PROBE_PYTHON_PREFIX_COUNT=' + ($py.Length - 1))\n"
                     + probe_function + "\nAssert-NoIgnoredCollision $TargetRef\n",

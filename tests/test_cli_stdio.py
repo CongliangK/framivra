@@ -194,11 +194,15 @@ sys.stdout.flush()
                     os.write(write_fd, b"p" * 65536)
                 except BlockingIOError:
                     break
+            # This negative control specifically exercises buffered-write errors;
+            # unbuffered FileIO can silently discard an EAGAIN write instead.
+            child_env = dict(os.environ)
+            child_env.pop("PYTHONUNBUFFERED", None)
             # Keep read_fd open but deliberately undrained until the child exits.
             try:
                 result = subprocess.run(
                     [sys.executable, "-c", script],
-                    stdout=write_fd, stderr=subprocess.PIPE,
+                    stdout=write_fd, stderr=subprocess.PIPE, env=child_env,
                     preexec_fn=nonblocking, timeout=5, check=False,
                 )
                 self.assertNotEqual(result.returncode, 0)
