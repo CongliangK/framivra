@@ -93,7 +93,9 @@ def main():
     import sys
 
     from .runtime.stdio import ensure_blocking_stdio
+    from .runtime.managed import configure_environment
     ensure_blocking_stdio()
+    configure_environment()
 
     from .cli.commands import _main
     from .runtime import events

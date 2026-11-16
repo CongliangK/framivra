@@ -8,6 +8,7 @@
 - 制作从[技能](<docs/skill/SKILL.md>)进入；科技口播与开发范本见[工作流](<templates/README.md>)；组件查[catalog](<docs/catalog.md>)。
 - 开发先读[架构契约](<docs/ARCHITECTURE.md>)与[DEV](<docs/DEV.md>)；时间线 API/写事务见[接口边界](<docs/reference/timeline-api.md>)。
 - 环境按[README](<README.md#依赖矩阵>)准备：Python ≥3.9，媒体工具按路径配置；模型默认关闭，依赖声明为空不等于仅需标准库。
+- [受管源码安装](<docs/guides/installation.md#受管非-ai-制作环境>)使用统一用户根、独立 editable venv 与制作测试后的 ready 登记；DSH 仅扫描/验证/显式连接，不把登记、mock 或机制探针当作跨平台正式发行验收。
 
 ## 常用命令
 
