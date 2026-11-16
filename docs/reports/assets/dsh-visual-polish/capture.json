@@ -39,6 +39,29 @@
     "live_theme_switch": "After light-to-dark through host Settings retained the identical workbench and frame-input DOM nodes and unsent typed value42. No query/render request was made for that text change.",
     "independent_visual_review": "Approved actual expanded/narrow/scrolled captures; no actionable visual regression. Unmatched inline-wide captures were excluded from this comparison. Maintainer subjective visual satisfaction remains unconfirmed."
   },
+  "dependency_combination": {
+    "not_main_or_a_matching_before_after": true,
+    "source_tree": "84ba8a28c88095a63e70384a2085347a5214ccfe",
+    "composition": "UI production tree of 1754a2a plus unmerged macOS platform PR #367 fd09a6a; generated build-only merge, only AGENTS documentation selected from UI branch",
+    "plugin_tgz_sha256": "4111f579aa15da8e841d38f1c33af69dbf82ccbc726201cf67fe1f0f800ce2ae",
+    "plugin_build": "pkg:a32f22aca04889dd",
+    "core_wheel_sha256": "23405369a85c8ddbf4f2754fd3e8bd39644b6d6dcf9dce8b5acad49931b6f99b",
+    "fixture": "Separately validated 180-frame 1080p30 AV pattern, transparent PiP, two tone audio rows and inline ASS subtitles; ordinary source video has audio. Not a main performance baseline.",
+    "source_av_sha256": "858b34ca70440d1a56ea328964f9b9f7d813ba67f105cec94ac1a557a64ab23f",
+    "source_tone_sha256": "439962aeb472606236e58ccb2824d393c8367b2320e277749e4020b6e8aa8b2b",
+    "checks": [
+      "Official validate passed: two sources, two video tracks/three clips, two audio events and two subtitles. project.name remains a visible unknown-key advisory.",
+      "Actual official-host frame75 returned and fully decoded verified1920x1080 current-composite PNG, containing base video, transparent PiP and ASS. Two corrected-fixture requests total.",
+      "Explicit write authorization and official legacy adopt succeeded, invalidating the old image; regenerated frame75 succeeded.",
+      "Entering duration181 immediately removed the verified image and disabled generation while dirty. Generic unknown-extension, source-bounds-unprobed, assets/plugins-unchecked and render-required plan warnings remained visible.",
+      "Fresh zero-write plan submitted only project.resize181 at base a1406040a44772b2be234338a08568c9345d33a2c611e7fae14f65cc079d4b9b; one explicit confirmation returned edit.ok=true. Disk independently read back duration181/fps30/1920x1080/head0a8990d7-f7fe-4066-b27e-031213ddf885 and SHAaa34358abb18482cb3650a2f9bae830d0468f92106a6c136b3d2ff50b23a31cf. Saved UI showed181 and no image.",
+      "Browser reset between dirty-image test and final save; save-time absence is observed, not an independent same-in-memory-image invalidation proof. No post-save frame request or chat send."
+    ],
+    "supplementary_captures": ["combo-frame75.png", "combo-config-dirty.png", "combo-saved.png"],
+    "failed_attempts_retained": "The first layout-fixture frame request correctly refused three empty rows. First repaired fixture validation then correctly refused an audio-less source. Only synthetic inputs were repaired; no protection, deadline or pass criterion changed.",
+    "resource_boundary": "Synthetic media creation, validate and frame requests all held the shared native-media serial lock; lock released before configuration-only checks. Other workers' heavy workloads were not started or killed."
+  },
+  "browser_zoom_probe": "At1280x720, two real ControlOrMeta+Equal accelerator attempts left DPR1/innerWidth1280/innerHeight720/visualViewport.scale1 unchanged. True125% browser zoom therefore UNRUN; no CSS zoom/pinchscale substitute or fake capture used.",
   "limitations": [
     "The main-line core/plugin still refuse macOS frame rendering/semantic writes; this presentation-only change does not bypass those guards.",
     "Dependency-combination verification against unmerged #367 is supplementary, not proof of merged-main support; its final merged combination requires revalidation.",

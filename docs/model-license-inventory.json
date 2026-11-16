@@ -1175,7 +1175,10 @@
         "docs/reports/assets/dsh-visual-polish/before-light-narrow-349-properties.png": "7f144e4e9b6dd98ec5703cc3b0cd1ae0b5bf08d987e0d6fc4986065de3eab3fd",
         "docs/reports/assets/dsh-visual-polish/after-light-narrow-349-properties.png": "f198638595b350b40eeacf24306e8fdde61b5b07fb6714dbaec17ffd736e0dcc",
         "docs/reports/assets/dsh-visual-polish/before-dark-narrow-349-properties.png": "c8a98d681722f0c54c0679a87c77f8a1c163fe0a63b3fa4fb2dffce7e9998722",
-        "docs/reports/assets/dsh-visual-polish/after-dark-narrow-349-properties.png": "81f75995db71d7487fa7639436f5b34c564de53158779e25c8ff325835e6b6ed"
+        "docs/reports/assets/dsh-visual-polish/after-dark-narrow-349-properties.png": "81f75995db71d7487fa7639436f5b34c564de53158779e25c8ff325835e6b6ed",
+        "docs/reports/assets/dsh-visual-polish/combo-frame75.png": "3b29f204bc1216f124810303200601bd1b5d900de85796f48a68261793d63f43",
+        "docs/reports/assets/dsh-visual-polish/combo-config-dirty.png": "5b9b467c224469bb77938baeb69ed0dfa3d5af4810944c7386b876e10a6d6b60",
+        "docs/reports/assets/dsh-visual-polish/combo-saved.png": "2b37521547f5744d6a32995718387d3379276e7da375a40584a207a58d9eee11"
       },
       "notes": "Actual official npm DSH 0.2.2-rc.1 application captures with synthetic project data only; not a mock UI. No credentials, private material, media/font files, browser or runtime binaries are included. Framivra authorship and pinned DSH source MIT notice do not constitute legal clearance of trademarks or arbitrary external assets. Layout fixture reads (including intentionally empty tracks) are separate from validated AV functional checks; capture.json states the tested scope. Existing offline audit and unknown-asset rejection remain unchanged."
     },
