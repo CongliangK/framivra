@@ -37,8 +37,8 @@ stdout 是单个 JSON；诊断日志走 stderr。所有响应包含：
 
 [侧栏说明](<../../dsh-sidebar/README.md>)与[开发边界](<../../dsh-sidebar/DEVELOPMENT.md>)描述安装与宿主 API。工作台属性侧栏的“空间与缓存”在面板/文档可见时每 10 秒采样，不重叠扫描；预演期间停止自动采样，并显示完整候选清单。每次清理须勾选独立的停止写入与删除确认；语义编辑授权不能替代它。
 
-宿主复用 owner-only `/api/framivra/control`：`storage-inspect`、`storage-plan`、`storage-clean`、`storage-cancel`。所有请求沿用 Session/grant；只有 `clean` 另收 `planToken` 与固定 `confirm`。宿主冻结内核计划，仅返回有效期 60 秒的一次性 opaque token，绑定项目、Session、配置、可执行文件与时间线版本。浏览器不提交文件路径或内核计划。模型工具不暴露这些操作；取消也不授予编辑/删除权限。
+宿主复用 owner-only `/api/framivra/control`：`storage-inspect`、`storage-plan`、`storage-clean`、`storage-cancel`。所有请求沿用 Session/grant；只有 `clean` 另收 `planToken` 与固定 `confirm`。宿主冻结内核计划，仅返回有效期 60 秒的一次性 opaque token，绑定项目、Session、宿主配置选择、可执行文件与时间线版本。浏览器不提交文件路径或内核计划。模型工具不暴露这些操作；取消也不授予编辑/删除权限。
 
-宿主沿用有界 JSON 与托管子进程回收；本地 frame/语义事务/提案与空间操作互斥，取消和失败后的清理不能提前释放仍活跃的进程所有权。配置、项目或保存版本变化会使预演失效；清理未知结果不会自动重试。统计采样不是文件系统原子快照，也不是模型/浏览器内存监控。
+宿主沿用有界 JSON 与托管子进程回收；本地 frame/语义事务/提案与空间操作互斥，取消和失败后的清理不能提前释放仍活跃的进程所有权。宿主配置选择、项目或保存版本变化会使预演失效；清理未知结果不会自动重试。统计采样不是文件系统原子快照，也不是模型/浏览器内存监控。
 
 档位切换复用现有“插件 → Framivra → 配置文件 → 缓存档位”表单：审核并确认 CAS 保存全局 `cache.mode`，下次操作生效，不中断运行任务，也不立即删除历史缓存。本次不增加 CPU、内存、并发或编码质量档位。
