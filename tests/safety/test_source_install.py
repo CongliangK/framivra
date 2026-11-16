@@ -160,6 +160,15 @@ class SourceInstall(unittest.TestCase):
         self.assertNotIn('torch', ' '.join(install.PYTHON_PACKAGES).lower())
         self.assertIn('scipy', ' '.join(install.PYTHON_PACKAGES))
 
+    def test_linux_fontconfig_and_ensurepip_are_planned_without_replacing_browser(self):
+        found = {name: '/tools/' + name for name in (*install.TOOL_NAMES, 'chrome')}
+        self.assertEqual(install.platform_packages(found, 'linux', 'apt-get'),
+                         [['apt-get', 'install', '-y', 'fontconfig']])
+        found.update({'fc-cache': '/tools/fc-cache', 'fc-list': '/tools/fc-list'})
+        self.assertEqual(install.platform_packages(found, 'linux', 'apt-get', needs_venv=True),
+                         [['apt-get', 'install', '-y', 'python3-venv']])
+        self.assertEqual(install.platform_packages(found, 'linux', 'apt-get'), [])
+
     def test_existing_user_configuration_is_preserved(self):
         target = self.root / 'config.json'
         original = '{"asr":{"enabled":true},"private":"preserve"}\n'

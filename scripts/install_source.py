@@ -9,6 +9,7 @@ import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
+import importlib.util
 import os
 from pathlib import Path
 import platform
@@ -130,8 +131,12 @@ def native_browser():
     return None
 
 
+def native_names(system=None):
+    return (*TOOL_NAMES, 'fc-cache', 'fc-list') if (system or sys.platform) == 'linux' else TOOL_NAMES
+
+
 def tools():
-    result = {name: str(Path(value).resolve()) for name in TOOL_NAMES
+    result = {name: str(Path(value).resolve()) for name in native_names()
               if (value := shutil.which(name))}
     browser = native_browser()
     if browser:
@@ -139,11 +144,11 @@ def tools():
     return result
 
 
-def platform_packages(found, system=None, manager=None):
+def platform_packages(found, system=None, manager=None, needs_venv=False):
     """Pure plan: native packages only; no models or optional experimental backends."""
     system = system or sys.platform
-    missing = set((*TOOL_NAMES, 'chrome')) - set(found)
-    if not missing:
+    missing = set((*native_names(system), 'chrome')) - set(found)
+    if not missing and not needs_venv:
         return []
     if system == 'win32':
         ids = {'git': 'Git.Git', 'ffmpeg': 'Gyan.FFmpeg', 'ffprobe': 'Gyan.FFmpeg',
@@ -158,14 +163,21 @@ def platform_packages(found, system=None, manager=None):
             result.append(['brew', 'install', '--cask', 'google-chrome'])
         return result
     mapping = {
-        'apt-get': ('apt-get', 'install', '-y', 'git', 'ffmpeg', 'sox', 'chromium', 'python3-venv', 'libegl1', 'libgbm1', 'fontconfig'),
-        'dnf': ('dnf', 'install', '-y', 'git', 'ffmpeg', 'sox', 'chromium', 'python3-pip', 'fontconfig'),
-        'pacman': ('pacman', '-S', '--needed', '--noconfirm', 'git', 'ffmpeg', 'sox', 'chromium', 'python-pip', 'fontconfig'),
+        'apt-get': ('apt-get', 'install', '-y'),
+        'dnf': ('dnf', 'install', '-y'),
+        'pacman': ('pacman', '-S', '--needed', '--noconfirm'),
     }
     manager = manager or next((p for p in mapping if shutil.which(p)), None)
     if manager not in mapping:
         raise InstallError('Supported Linux package managers: apt-get, dnf, pacman; install Git, Python venv, FFmpeg, SoX and native Chromium first.')
-    return [list(mapping[manager])]
+    packages = {'git': 'git', 'ffmpeg': 'ffmpeg', 'ffprobe': 'ffmpeg', 'sox': 'sox',
+                'chrome': 'chromium', 'fc-cache': 'fontconfig', 'fc-list': 'fontconfig'}
+    selected = list(dict.fromkeys(packages[key] for key in sorted(missing)))
+    if needs_venv:
+        selected.append({'apt-get': 'python3-venv', 'dnf': 'python3-pip', 'pacman': 'python-pip'}[manager])
+    if manager == 'apt-get' and 'chrome' in missing:
+        selected += ['libegl1', 'libgbm1']
+    return [[*mapping[manager], *selected]]
 
 
 def refresh_windows_path():
@@ -175,16 +187,20 @@ def refresh_windows_path():
     values = []
     for hive, key in ((winreg.HKEY_LOCAL_MACHINE, r'SYSTEM\CurrentControlSet\Control\Session Manager\Environment'),
                       (winreg.HKEY_CURRENT_USER, r'Environment')):
-        with winreg.OpenKey(hive, key) as handle:
-            values.append(os.path.expandvars(winreg.QueryValueEx(handle, 'Path')[0]))
+        try:
+            with winreg.OpenKey(hive, key) as handle:
+                values.append(os.path.expandvars(winreg.QueryValueEx(handle, 'Path')[0]))
+        except FileNotFoundError:
+            continue
     os.environ['PATH'] = os.pathsep.join(values + [os.environ.get('PATH', '')])
 
 
 def prepare_tools(no_system):
     found = tools()
-    plans = platform_packages(found)
+    needs_venv = sys.platform == 'linux' and importlib.util.find_spec('ensurepip') is None
+    plans = platform_packages(found, needs_venv=needs_venv)
     if plans and no_system:
-        raise InstallError('Missing native tools (--no-system): ' + ', '.join(sorted(set((*TOOL_NAMES, 'chrome')) - set(found))))
+        raise InstallError('Missing native tools (--no-system): ' + ', '.join(sorted(set((*native_names(), 'chrome')) - set(found))))
     for plan in plans:
         if not shutil.which(plan[0]):
             raise InstallError('Required package manager not found: ' + plan[0])
@@ -193,7 +209,7 @@ def prepare_tools(no_system):
         command(plan)
     refresh_windows_path()
     found = tools()
-    missing = set((*TOOL_NAMES, 'chrome')) - set(found)
+    missing = set((*native_names(), 'chrome')) - set(found)
     if missing:
         raise InstallError('Packages did not provide working tools: ' + ', '.join(sorted(missing)) + '. Check package availability, repositories and PATH; rerun to resume.')
     return found
@@ -405,7 +421,7 @@ def install(args):
           'No AI models/services. System package installation may request administrator approval.' % (root, args.ref), flush=True)
     if args.plan:
         print(json.dumps({'root': str(root), 'profile': 'non-ai', 'renderer': 'cdp',
-                          'pythonPackages': PYTHON_PACKAGES, 'nativeCommands': platform_packages(tools())}, indent=2))
+                          'pythonPackages': PYTHON_PACKAGES, 'nativeCommands': platform_packages(tools(), needs_venv=sys.platform == 'linux' and importlib.util.find_spec('ensurepip') is None)}, indent=2))
         return 0
     if not args.yes:
         if not sys.stdin.isatty():

@@ -14,7 +14,7 @@
 
 | 系统 | 默认用户根 | 本轮资格 |
 |---|---|---|
-| Linux | `~/.local/share/framivra` | 支持 apt-get/dnf/pacman 引导；真实安装记录见 PR。精简容器、缺软件源/图形库时可能失败，不静默降级 |
+| Linux | `~/.local/share/framivra` | 支持 apt-get/dnf/pacman 引导；真实隔离安装被主干既有 [#381](https://github.com/CongliangK/framivra/issues/381) 的 QC 问题阻止 ready，未宣称完整通过。精简容器、缺软件源/图形库时可能失败，不静默降级 |
 | macOS | `~/.local/share/framivra` | 仅 Apple Silicon、原生 Google Chrome.app；本轮 Linux 上实现，macOS 实机 UNRUN，Intel 不在当前 CDP 身份支持内 |
 | Windows | `%LOCALAPPDATA%\framivra`（缺失时用户 AppData/Local） | 原生 x64 PowerShell/winget/Chrome 或 Edge；本轮未实机验收，后续由 Windows 用户验证；不声明 SVG 主 Demo 支持 |
 

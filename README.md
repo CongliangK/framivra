@@ -48,6 +48,8 @@ curl -fsSL https://raw.githubusercontent.com/CongliangK/framivra/main/scripts/bo
 
 完成后在 DSH **插件 → Framivra → 内核**中点击**扫描已有安装**，选择已登记的非 AI/CDP 环境，**保存配置 → 检查连接**。扫描不执行候选、不自动切换连接；旧内核不搬迁、不覆盖。
 
+当前主干存在[色域/QC 既有问题 #381](https://github.com/CongliangK/framivra/issues/381)，已在 Linux 安装验收中复现；受影响时安装器保持 preparing、非零退出，不发布 ready。安装器不会绕过该制作验收。
+
 统一布局、标准制作套件与选装边界、更新/重试、信任与三平台实测状态见[安装指南](<docs/guides/installation.md#受管非-ai-制作环境>)。这里的“完整”指 HTML/CDP 动效、字幕、普通媒体、音频同步、基础配乐合成及混音导出链，不意味着所有可选引擎、商业素材或实验后端均已安装。源码通道默认显式 `main`，登记实际提交；不是已冻结稳定发行或签名供应链声明。
 
 ## 快速开始（clone 即用，零安装步骤）
