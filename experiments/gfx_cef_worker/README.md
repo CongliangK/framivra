@@ -128,6 +128,17 @@ env VTX_TEST_CEF_WORKER="${CEF_WORKER:?}" \
 CEF 缓存身份；改变配置后的第一次运行不是同身份暖态。双浏览器有额外常驻开销，峰值
 RAM 变化未实测，不能假定翻倍或本机可承受；Mac 先以 `PAGES=1` 验正确性，再单独评估
 2/3/4，不默认推满 32；默认 7 不代表经过本机资源测定，线程上限亦非容量保证。
+对单个 900 帧页面，应用默认 `7/450/3` 实际只有 **2 个帧块 worker**，不是 7 个。
+修复拒收路径后，本机完整三对试验中，显式设 `VTX_GFX_PAGES=3 VTX_GFX_SPLIT_FRAMES=300
+VTX_GFX_SPLIT_MAX=3` 后，冷态 `all` 中位 91.749→86.244s，配对减时中位 **6.0%**；
+暖态配对中位反而慢0.6%，无实用收益。冷态采样 summed-RSS 中位约 6.83→8.26GiB，
+这是**更多内存换小幅速度的既有配置调优**，不是新算法、不改默认，相对应用默认未达30%/50%。
+相对此前 `1/0/1` 单worker**基准档**另做3对，冷态128.817→85.885s、配对减时33.1%，
+但RSS约4.46→8.48GiB且暖态无稳定收益；不能把该档的33%冒充默认应用的提升。
+仅覆盖该 10逻辑CPU/16GiB Mac 的锁定旧版 HTML 派生工程，不外推 portable-v2 SVG 或其它项目；
+参数变更使缓存身份失效，首次必须按冷态计。完整逐对数据、负结果与恢复默认方法见
+[调优结论](../../docs/reports/development-history.md#cef-并发调优与被否决的深预取368)及
+[脱敏证据](../../docs/reports/cef-concurrency-evidence.json)。
 
 **PairSwap 双对交替预取（mode n + exact，默认开启，`VTX_CEF_PAIR_SWAP=0` 关闭）**：
 每 worker 额外持有 B 对浏览器（signed+unsigned × A/B 共 4 个 OSR 渲染器，B 对惰性
@@ -191,9 +202,24 @@ BENCH_OUTPUT="${BENCH_PARENT:?}/cef-bench-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 "$PYTHON" -B "$BENCH" report "$BENCH_OUTPUT" --json
 ```
 
-默认固定 Mode N/shared、单 worker、关闭分片；先验证该档，再分别评估并发/配置。
+**基准工具**默认固定 Mode N/shared、单 worker、关闭分片，不是上表的应用默认调度；
+先验证该档，再分别评估并发/配置。
 上表配置可用 `--common-set KEY=VALUE` 同改两端；候选单独变更
 须同时声明 `--candidate-set KEY=VALUE --ablation <说明>`，不得当作纯代码提速。
+复验上述两块/三块对照时，两仓须为同一修复版本的独立干净检出；将 `TUNING_WORKER`
+设为**同一份新构建 worker**的绝对路径，覆盖 `ARGS` 内两端 worker。沿用其余 `ARGS`
+（含3轮），**另建输出并实际写入**：
+
+```bash
+"$PYTHON" -B "$BENCH" run "${ARGS[@]}" \
+  --baseline-worker "${TUNING_WORKER:?}" --candidate-worker "$TUNING_WORKER" \
+  --common-set VTX_GFX_PAGES=7 --common-set VTX_GFX_SPLIT_FRAMES=450 \
+  --common-set VTX_GFX_SPLIT_MAX=3 --candidate-set VTX_GFX_PAGES=3 \
+  --candidate-set VTX_GFX_SPLIT_FRAMES=300 \
+  --ablation fixed-rejection-path-bounded-three-block-tuning \
+  --output "${BENCH_PARENT:?}/cef-three-block-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+```
+
 完整 `all` 的外层墙钟是主计时；之后另跑 `qc --strict` 和媒体核验，复制、strict QC、
 媒体哈希计算均不计入该墙钟。保存 `run.json`、`summary.json`、`report.md`，并保留
 逐轮 events、日志、回执、native/pipeline 证据。报告分别展示 strict QC、900 帧/PTS/音频
