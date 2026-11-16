@@ -147,7 +147,15 @@ def load_input_lock(baseline):
 
 
 def symlink_components(path):
-    return [p for p in (path, *path.parents) if p.is_symlink()]
+    """Reject links and Windows reparse points, including directory junctions."""
+    def linked(part):
+        try:
+            info = part.lstat()
+        except FileNotFoundError:
+            return False
+        return stat.S_ISLNK(info.st_mode) or bool(
+            getattr(info, 'st_file_attributes', 0) & 0x400)
+    return [p for p in (path, *path.parents) if linked(p)]
 
 
 def check_output_path(raw):
@@ -156,7 +164,7 @@ def check_output_path(raw):
         raise DemoError('empty --output')
     candidate = Path(os.path.abspath(os.path.expanduser(str(raw))))
     if candidate.exists() or symlink_components(candidate):
-        raise DemoError('output exists or contains a symlink: ' + str(candidate))
+        raise DemoError('output exists or contains a symlink/reparse point: ' + str(candidate))
     if not candidate.parent.is_dir():
         raise DemoError('output parent directory does not exist')
     home = Path.home().resolve()
@@ -221,14 +229,35 @@ def engine_identity():
 
 def tool_identity(name):
     executable = sys.executable if name == 'python' else shutil.which(name)
+    if name == 'inkscape':
+        executable = os.environ.get('VTX_INKSCAPE') or executable
+        if not executable and sys.platform == 'darwin':
+            executable = next((str(path) for path in (
+                Path('/Applications/Inkscape.app/Contents/MacOS/inkscape'),
+                Path.home() / 'Applications/Inkscape.app/Contents/MacOS/inkscape')
+                if path.is_file()), None)
     if not executable:
         return None
+    if name == 'inkscape':
+        # Discovery only: even --version can initialize a user Inkscape profile.
+        # The real SVG resolver checks native executable/libraries/fonts later.
+        try:
+            path = regular(Path(executable).expanduser().resolve(strict=True))
+        except RuntimeError as error:
+            raise DemoError('Inkscape path resolution failed: ' + str(error)) from error
+        return {'executable': str(path), 'binary_sha256': sha256_file(path),
+                'runtime_probe': 'UNRUN'}
     flag = '-version' if name in ('ffmpeg', 'ffprobe') else '--version'
     result = subprocess.run([executable, flag], capture_output=True, timeout=30)
-    lines = (result.stdout or result.stderr).decode('utf-8', 'replace').splitlines()
+    lines = (result.stdout or result.stderr).decode('utf-8', 'strict').splitlines()
     if result.returncode or not lines:
         raise DemoError('tool version probe failed: ' + name)
-    return {'version_line': lines[0], 'binary_sha256': sha256_file(Path(executable).resolve())}
+    if name == 'node':
+        version = re.fullmatch(r'v(\d+)\.\d+\.\d+', lines[0])
+        if version is None or int(version.group(1)) < 18:
+            raise DemoError('Node.js 18+ required; observed ' + lines[0])
+    return {'executable': str(Path(executable).resolve()), 'version_line': lines[0],
+            'binary_sha256': sha256_file(Path(executable).resolve())}
 
 
 def package_version(name):
@@ -241,9 +270,19 @@ def package_version(name):
 def dependency_identity(transfer):
     # Transfer is optional reuse, not a prerequisite on another OS. Both routes
     # retain the real schema/product validator; neither imports NumPy or music.
-    tools = {name: tool_identity(name) for name in ('python', 'node', 'ffmpeg', 'ffprobe')}
-    if any(tool is None for tool in tools.values()) or not package_version('jsonschema'):
-        raise DemoError('BLOCKED: required existing tools/jsonschema unavailable')
+    tools, errors = {}, []
+    for name in ('python', 'node', 'ffmpeg', 'ffprobe', 'inkscape', 'fc-scan'):
+        try:
+            tools[name] = tool_identity(name)
+            if tools[name] is None:
+                errors.append(name + ': not found' +
+                              (' (PATH or VTX_INKSCAPE)' if name == 'inkscape' else ''))
+        except (DemoError, OSError, ValueError, subprocess.SubprocessError) as error:
+            errors.append(name + ': ' + str(error))
+    if not package_version('jsonschema'):
+        errors.append('jsonschema: Python package not installed in ' + sys.executable)
+    if errors:
+        raise DemoError('BLOCKED: ' + '; '.join(errors))
     return {'tools': tools, 'audio_generator': 'integer-pcm24/v1'}
 
 

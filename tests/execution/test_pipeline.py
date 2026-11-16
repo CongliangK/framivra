@@ -171,13 +171,17 @@ class TestPipelineIntegration(unittest.TestCase):
              "clips": [{"src": "gfx/page.html", "dst_in": 30, "dur": 30}]})
         cls.tl = cls.proj / "timeline.json"
         cls.tl.write_text(json.dumps(tl), encoding="utf-8")
+        # Warm seg reuse is an aggressive-policy contract; default core mode
+        # deliberately retires/rebuilds media intermediates after handoff.
+        cls.config = root / "cache-config.json"
+        cls.config.write_text(json.dumps({"cache": {"mode": "aggressive"}}), encoding="utf-8")
 
     @classmethod
     def tearDownClass(cls):
         cls._tmp.cleanup()
 
     def _all(self, extra_env=None):
-        env = {"VTX_VIDEO_SEGMENTS": "2"}
+        env = {"VTX_VIDEO_SEGMENTS": "2", "VTX_CONFIG": str(self.config)}
         env.update(extra_env or {})
         return _run_vtx(self.tl, "all", extra_env=env)
 

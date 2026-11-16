@@ -51,7 +51,9 @@ class SamplingCacheContract(unittest.TestCase):
                         (2, 'other-filter'), (2, qc._QC_GRAY_FILTER),
                         (3, None), (3, 'other-filter'), (3, qc._QC_GRAY_FILTER),
                         (4, None), (4, 'other-filter'), (4, qc._QC_GRAY_FILTER),
-                        (5, None), (5, 'other-filter'), (6, qc._QC_GRAY_FILTER)):
+                        (5, None), (5, 'other-filter'),
+                        (5, 'format=yuv420p,' + qc._QC_GRAY_FILTER),
+                        (6, qc._QC_GRAY_FILTER)):
                     old = dict(current, version=version)
                     if value is None:
                         old.pop('probe_filter')
@@ -144,11 +146,39 @@ class SamplingMediaContract(unittest.TestCase):
                             f'crop={w}:{h},scale=1920:1080:flags=lanczos,crop=960:540:240:120'),
                             bytes(48 * 27))
 
+        # A leading format=yuv420p silently inserts auto_scale for yuvj420p.
+        # FFmpeg 6.1.1 compresses pc luma to tv there, losing Y=4 before the
+        # explicit range expansion. Disable implicit conversion to catch that
+        # graph regression even on newer FFmpeg, which preserves pc metadata.
+        for range_, y, expected in (('pc', 4, 4), ('tv', 20, 5)):
+            with self.subTest(native_input=range_, automatic_conversion=False):
+                video = self.encoded_plane(320, 180, range_, y)
+                def no_automatic_conversion(args, **kwargs):
+                    return self.command([args[0], '-noauto_conversion_filters',
+                                         *args[1:]], **kwargs)
+                self.c.run = no_automatic_conversion
+                try:
+                    sample = _sample(self.c, video)
+                    self.assertEqual(set(sample), {expected})
+                    self.assertEqual(len(sample), 48 * 27)
+                finally:
+                    self.c.run = self.command
+
+        # Removing the input format constraint must not require YUV sources.
+        # Equal RGB channels define full-range luma independently of a matrix.
+        with self.subTest(native_input='rgb24'):
+            source = self.root / 'rgb.png'
+            self.command(['ffmpeg', '-v', 'error', '-f', 'rawvideo',
+                          '-pixel_format', 'rgb24', '-video_size', '320x180',
+                          '-i', '-', '-frames:v', '1', source],
+                         input=bytes([4]) * (320 * 180 * 3))
+            self.assertEqual(set(_sample(self.c, source)), {4})
+
     def test_mixed_pattern_truth_and_untagged_range_defaults_to_limited(self):
         # Non-constant truth: left 3/4 limited black, right 1/4 limited white.
         # Interior probes must land exactly on 0/255 and the transition must
-        # stay at the geometric boundary — no sub-pixel drift from the
-        # format=yuv420p front (chroma site / matrix cannot move luma edges).
+        # stay at the geometric boundary — negotiating the scale output's
+        # chroma site / matrix cannot move luma edges.
         w, h = 1920, 1080
         self.serial += 1
         split = w * 3 // 4

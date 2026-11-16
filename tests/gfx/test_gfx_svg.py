@@ -7,7 +7,7 @@ import stat
 import json
 import subprocess
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from unittest import mock
 
@@ -87,6 +87,26 @@ class SvgContract(unittest.TestCase):
         c = self.ctx(); old = gfx_key(c, self.clip)
         self.manifest['_meta'] = 'changed'; self.save()
         self.assertNotEqual(old, gfx_key(c, self.clip))
+
+        # The shared declaration adapter returns native absolute paths for clip
+        # dependencies. Simulate its Windows separator boundary, not a renderer.
+        nested = self.root / '资源 #'
+        nested.mkdir()
+        (nested / 'dependency.txt').write_text('bound Windows dependency')
+        sentinel = r'C:\project\资源 #\dependency.txt'
+        class WindowsDependency:
+            def is_absolute(inner): return True
+            def relative_to(inner, root):
+                self.assertEqual(root, self.root.resolve())
+                return PureWindowsPath('资源 #/dependency.txt')
+        native_path = gfx_svg.Path
+        def path(value):
+            return WindowsDependency() if value == sentinel else native_path(value)
+        with mock.patch('vtx.cache.cache_state.declared_dependencies', return_value=[sentinel]), \
+                mock.patch.object(gfx_svg, 'Path', side_effect=path):
+            record = gfx_svg.resolve(c, self.clip)
+        self.assertIn('资源 #/dependency.txt', record['files'])
+        self.assertNotIn(r'资源 #\dependency.txt', record['files'])
 
     def test_font_bytes_and_actual_engine_version_invalidate(self):
         self.manifest['fonts'] = ['font.ttf']

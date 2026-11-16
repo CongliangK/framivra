@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import os
+from fractions import Fraction
 from pathlib import Path
 import re
 import shutil
@@ -70,7 +71,9 @@ class EmptyTrackImpactIntegration(unittest.TestCase):
 
     def selected_segments(self):
         entries = []
-        for line in (self.root / "cache/vseg/list.txt").read_text().splitlines():
+        lines = (self.root / "cache/vseg/list.txt").read_text().splitlines()
+        self.assertEqual(len(lines) % 2, 0, lines)
+        for line, duration_line in zip(lines[::2], lines[1::2]):
             match = re.fullmatch(r"file '(.+)'", line)
             self.assertIsNotNone(match, line)
             path = Path(match[1])
@@ -79,6 +82,11 @@ class EmptyTrackImpactIntegration(unittest.TestCase):
             entries.append({"index": int(name[1]), "start": int(name[2]), "name": path.name,
                             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                             "mtime_ns": path.stat().st_mtime_ns, "frames": self.decoded_frames(path)})
+            duration = re.fullmatch(r"duration (\d+\.\d{6})", duration_line)
+            self.assertIsNotNone(duration, duration_line)
+            # These fixtures cut on whole seconds: require the explicit concat
+            # clock to match decoded segment frames, not container duration.
+            self.assertEqual(Fraction(duration[1]), Fraction(entries[-1]["frames"], 30))
         return entries
 
     def test_formal_cold_warm_endpoint_edit_matches_actual_four_segments(self):

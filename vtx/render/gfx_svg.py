@@ -583,7 +583,7 @@ def resolve(c, clip):
     for name in declared_dependencies(c, clip):
         # Existing adapter may canonicalize clip-local unions to absolute names.
         path = Path(name)
-        relative = str(path.relative_to(Path(c.root).resolve())) if path.is_absolute() else name
+        relative = path.relative_to(Path(c.root).resolve()).as_posix() if path.is_absolute() else name
         add(relative)
     families = {family.strip() for faces in font_faces.values() for face in faces
                 for family in face['family'].split(',')}
