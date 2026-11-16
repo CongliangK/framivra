@@ -1,6 +1,8 @@
 """Current-composite producer authorization and sparse native contract."""
 import hashlib
+import io
 import json
+from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 import subprocess
 import sys
@@ -166,9 +168,16 @@ class HtmlFrame(unittest.TestCase):
              patch('vtx.runtime.fstxn.cleanup_identity', return_value='pin'), \
              patch('vtx.runtime.fstxn.remove_pinned') as remove:
             for status in ('live_host', 'broken_ledger', 'kill_failed', 'lineage_denied', 'pid_reuse'):
-                with patch('vtx.runtime.proc_supervisor.reap_run_dir', return_value=status):
+                def noisy_reaper(_directory):
+                    print('native recovery diagnostic')
+                    return status
+                wire, diagnostic = io.StringIO(), io.StringIO()
+                with redirect_stdout(wire), redirect_stderr(diagnostic), \
+                     patch('vtx.runtime.proc_supervisor.reap_run_dir', side_effect=noisy_reaper):
                     with self.assertRaisesRegex(ValueError, 'preserved'):
                         recover_requests(c)
+                self.assertEqual(wire.getvalue(), '')
+                self.assertIn('native recovery diagnostic', diagnostic.getvalue())
                 remove.assert_not_called()
             with patch('vtx.runtime.proc_supervisor.reap_run_dir', return_value='already_dead') as reap:
                 recover_requests(c)

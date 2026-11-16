@@ -46,7 +46,9 @@ def recover_requests(c):
             if not re.fullmatch(r'producer-[0-9]+', ledger.parents[2].name):
                 raise ValueError('unknown preview producer recovery namespace; evidence preserved')
             fstxn.cleanup_identity(ledger.parent)
-            status = reap_run_dir(ledger.parent)
+            # Native recovery warnings are diagnostics, never frame JSON stdout.
+            with redirect_stdout(sys.stderr):
+                status = reap_run_dir(ledger.parent)
             if status not in ('killed', 'already_dead', 'stale_boot'):
                 raise ValueError('preview browser recovery unsettled (' + status + '); evidence preserved')
         fstxn.remove_pinned(request, identity, preserve=lambda _path: False)

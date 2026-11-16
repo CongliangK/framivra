@@ -26,7 +26,7 @@ class LicenseInventory(unittest.TestCase):
         self.assertEqual({k for k, v in data["assets"].items() if v["default_payload"]},
                          {"framivra", "vendored-fpng", "vendored-libspng", "placeholder-media",
                       "electron-worker-source", "gfx-environment-evidence", "html-preview-baseline-screenshot",
-                      "macos-plugin-screenshot-evidence"})
+                      "cold-composite-ui-evidence", "macos-plugin-screenshot-evidence"})
         # Current Demo fonts are external pinned inputs; their full notices stay in source.
         template = ROOT / "templates/demo-timeline-svg"
         fonts = json.loads((template / "fonts.lock.json").read_text())["fonts"]
