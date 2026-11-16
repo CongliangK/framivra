@@ -1337,12 +1337,12 @@ def render_project(project_path, out_dir=None, quiet=False, incremental=False, r
             print(f"· stems 并行计划：{len(pool_items)} 任务 workers={workers}"
                   f" per_task≈{per_task:g}GB（cpu×{_res.DEFAULT_CPU_CAP_FACTOR:g}"
                   f" 地板 {_res.mem_floor_gb():.0f}GB 上限 {_res.DEFAULT_HARD_CAP}）")
-        for name, res in _res.run_pool(pool_items, _render_stem,
-                                       per_task_gb=per_task, workers=workers):
-            stem_results[name] = res
+        for track_name, res in _res.run_pool(pool_items, _render_stem,
+                                             per_task_gb=per_task, workers=workers):
+            stem_results[track_name] = res
     for it in seq_items:                          # GPU 引擎顺序兜底（理论不可达）
-        name, res = _render_stem(it)
-        stem_results[name] = res
+        track_name, res = _render_stem(it)
+        stem_results[track_name] = res
 
     # 2) BG-D5 归一 + 混音总线 + 母带（mixer 内完成 adelay 平移/apad/atrim 定长）
     if not quiet:

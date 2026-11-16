@@ -103,6 +103,7 @@ def test_fresh_synth_project_end_to_end(fresh_env, tmp_path):
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
     assert report["duration_s"] == 4
+    assert report["name"] == "synth-demo"  # project identity, never last stem name
     assert report["qc_ok"] is True
     for name in ("mix.flac", "mix_master.wav", "mix_premaster.wav", "qc.json", "project.json", "stems/keys.synth.wav", "stems/keys.bus.wav"):
         assert (out / name).stat().st_size > 0

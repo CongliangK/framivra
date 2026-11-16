@@ -51,7 +51,7 @@ python3 apps/bgm/bgm.py render apps/bgm/examples/synth.json -o ./out/bgm-demo
 }
 ```
 
-- SF2 动态加载用户安装的 libfluidsynth；SFZ 调用用户的 sfizz_render；sample 读取用户提供的音频。
+- SF2 动态加载用户安装的 libfluidsynth；优先显式配置和系统发现，macOS 再尝试 dylib 与 Apple Silicon/Intel 的 Homebrew `fluid-synth` 标准 opt 路径，无需 ABI 软链。自定义位置写 `tools.fluidsynth_lib` 的绝对路径；解释器与库须同架构。SFZ 调用用户的 sfizz_render；sample 读取用户提供的音频。
 - demucs 强制 `--repo` 本地模型仓（含所选模型 YAML 和其引用的 `.th` 权重；直接签名模型则需对应 `.th`）；缺本地权重立即报错。不会因 `HF_HUB_OFFLINE` 而假定 torch 不下载，明确拒绝 `offline=false`。
 - ai 只提交[ComfyUI API 工作流](<workflows/README.md>)给用户已有服务；用户应先安装节点、模型并审核工作流。不安装或下载模型，不自动启动服务。
 - `doctor` 是完整可选环境诊断，不是最低安装门。manifest 的健康检查仅验证基础代码接口，不要求 GPU、音源、模型、ComfyUI 全装。
@@ -70,6 +70,30 @@ result = render_project("project.json", out_dir="out/music", runtime={})
 `runtime=None` 读取生效用户配置；显式字典（包括 `{}`）不重读 JSON，资产环境变量仍可覆盖根。`engines.run_engine(spec, runtime=...)` 返回引擎 envelope；工程层把同一 runtime 传到轨道和母带引擎。路径解析唯一实现为[paths](<bgm_gen/paths.py>)，其函数支持 `environ=` 快照而不改全局环境。show/edit 连续操作需重新 show 获取索引；编辑会写工程及撤销栈。
 
 详细操作、音色先行审听、许可和乐谱来源分别见[CLI 速查](<docs/USAGE.md>)、[创作手册](<docs/PLAYBOOK_BGM.md>)、[NOTICE](<NOTICE.md>)、[乐谱登记](<catalog/scores/REGISTRY.md>)与[引擎契约](<bgm_gen/engines/README.md>)。编目是资源元数据，不是随仓资源安装承诺；不含音源、模型或媒体试听件。历史预览索引仅保留来源与署名资料。
+
+## macOS 原生验收
+
+运行前确认 `python3`、NumPy、FFmpeg/ffprobe 均为已有可用环境；`platform.machine()` 为 `arm64` 才是 Apple Silicon 原生，Intel/Rosetta 需另跑，不能继承结果。无 `/proc` 时总内存按本机页大小读取；可用内存仍未知，并发保守单发，不把总内存当空闲内存。
+
+以下为**写操作**：输出必须是仓外尚不存在的目录。运行器创建原创 16 秒多轨音乐、one-shot 与普通视频输入，隔离用户配置并显式选择 `cache.mode: aggressive` 保留共享缓存，执行 show/edit/undo、音乐 render/QC、bgm-render 三种选择（各窗 3 帧首尾淡变）、完整冷/暖 `all`、工程/`$ref`/输出选择失效、缺分轨显式失败与恢复、独立 strict QC 与成片音频复测；不会安装工具、音源或模型。
+
+```bash
+python3 apps/bgm/tools/verify_pipeline.py --output "/绝对路径/新的 音乐验收目录"
+```
+
+结果以输出目录的 `summary.json`、步骤退出码和日志为准；失败非零退出。输入、工具、源码与产物身份随包保留。该音乐回归不是 30 秒 SVG 性能主片，不提供性能或跨架构承诺；不要上传包含本机路径的原始日志。自动检查不等于人工听审，母带/母前/总线分轨须分别听审并留人工结论，未听审写 UNRUN。
+
+| 引擎 | macOS 前提与验收边界 |
+|---|---|
+| synth | NumPy；运行器真实执行多轨合成，无模型/采样库 |
+| sample | 用户音频；运行器使用原创 one-shot 验证外置根、中文/空格路径，不代表已验 Kenney 等第三方库 |
+| sf2 | 同架构 libfluidsynth + 授权 SF2；缺任一项不能声称实际渲染通过；legacy GM/MIDI 入口也消费 runtime 的 `sf2.FluidR3_GM`，未配置仍保留历史 Linux 路径 |
+| sfz | 原生 sfizz_render + SFZ 及其全部采样/include；需配置 `tools.sfizz_render`，独立实跑，不能以 SF2/synth 替代 |
+| ai | 用户明确配置并已启动的 ComfyUI、节点/模型/API 工作流；不自动连接运行器外的服务或提交任务 |
+| demucs | 已有解释器、包与完整本地权重仓；Mac 用显式 `device: cpu`；auto 的 NVIDIA 探测在无 NVIDIA 时走 CPU，不承诺 MPS |
+| master | 运行器验证 FFmpeg loudnorm；matchering 另需已有独立 Python 环境与授权参考音频，不随 loudnorm 通过 |
+
+缺可选资源时保留具体缺口与待验步骤，不缩成“七引擎通过”。基础闭环通过不满足 [#374](https://github.com/CongliangK/framivra/issues/374) 全部验收及闭单条件。
 
 ## 测试与迁移来源
 

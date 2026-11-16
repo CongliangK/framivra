@@ -116,7 +116,10 @@ class _Base(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name)
+        # macOS tempfile may use /var -> /private/var. Choose a canonical
+        # fixture root before writing, rather than weakening cleanup's refusal
+        # of symlink ancestors (the production safety rule remains unchanged).
+        self.root = Path(self._tmp.name).resolve()
         (self.root / "music").mkdir()
         # 伪 bgm CLI + 调用日志
         self.log = self.root / "bgm_calls.log"
@@ -935,6 +938,15 @@ class InvariantsAndBranches(_Base):
                         return_value="not_installed"):
             _scan_plugin_keys(c, errs)
         self.assertTrue(any("未安装" in e and "bgm" in e for e in errs))
+
+    def test_three_branch_disabled(self):
+        from vtx.pipeline.stages import _scan_plugin_keys
+        c = self._ctx(True)
+        errs = []
+        with mock.patch("vtx.pluginlib.registry.plugin_state", return_value="disabled"):
+            _scan_plugin_keys(c, errs)
+        self.assertTrue(any("禁用" in e and "bgm" in e for e in errs))
+        self.assertEqual(self._calls(), [])
 
     def test_bus_dispatch_probe_prepare(self):
         c = self._ctx(True)

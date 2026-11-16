@@ -137,6 +137,29 @@ def test_probe_and_mem_available(monkeypatch):
     assert avail is None or avail > 0                        # 现读不缓存
 
 
+@pytest.mark.fast
+@pytest.mark.parametrize("page_size,pages", [(16384, 1048576), (4096, 4194304)])
+def test_total_memory_without_proc_uses_native_page_size(monkeypatch, page_size, pages):
+    monkeypatch.setattr(resources, "_read_meminfo_kb", lambda key: None)
+    monkeypatch.setattr(resources.os, "sysconf",
+                        lambda key: {"SC_PAGE_SIZE": page_size,
+                                     "SC_PHYS_PAGES": pages}[key], raising=False)
+    assert resources.mem_total_gb() == 16.0
+    assert resources.mem_available_gb() is None
+    assert resources.plan_workers(8, 0.5, cpu_threads=16) == 1
+
+
+@pytest.mark.fast
+def test_total_memory_linux_precedes_sysconf_and_unknown_stays_unknown(monkeypatch):
+    monkeypatch.setattr(resources, "_read_meminfo_kb", lambda key: 16 * 1024 ** 2)
+    def unavailable(key):
+        raise ValueError("unsupported sysconf")
+    monkeypatch.setattr(resources.os, "sysconf", unavailable, raising=False)
+    assert resources.mem_total_gb() == 16.0
+    monkeypatch.setattr(resources, "_read_meminfo_kb", lambda key: None)
+    assert resources.mem_total_gb() is None
+
+
 # ---------------------------------------------------------------- DispatchGate
 
 @pytest.mark.fast
