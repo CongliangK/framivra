@@ -1116,6 +1116,20 @@
       "installed_version": "UNVERIFIED: host/runtime/build artifact not inspected",
       "notes": "Bounded host prerequisite scope: Git, curl, shell/PowerShell and standard OS utilities, CMake, Ninja or selected generator, compiler/linker, pip/npm/conda or selected package manager, archive tools and OS package manager. These are invoked or referenced as host/build tools, not bundled by this project. A release including any of their binaries requires an exact component build manifest and notices; this record is not blanket approval of arbitrary external commands. BLOCKER for redistribution of these external components: pin exact versions/hashes and preserve authoritative full license/notice and restrictions before clearance."
     },
+    "html-preview-baseline-screenshot": {
+      "kind": "data",
+      "source": "docs/reports/assets/html-preview/before.png",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT",
+      "default_payload": true,
+      "distribution": ["git-source"],
+      "evidence": "html-preview-baseline-capture",
+      "additional_evidence": ["framivra"],
+      "files_sha256": {
+        "docs/reports/assets/html-preview/before.png": "e9f5683c2b82eb35ef33848631bbaf5fc6cdbdcb4ed0a0028ffb1fe3ed76a585"
+      },
+      "notes": "Real isolated official DSH baseline screenshot, not an After or full-composite acceptance. Project capture contribution and inspected host MIT declaration only; no transitive font/icon/software rights clearance, private media, credentials or runtime redistribution."
+    },
     "gfx-environment-evidence": {
       "kind": "data",
       "source": "tests/runners/run_gfx_environment_acceptance.py",
@@ -1160,6 +1174,13 @@
     }
   },
   "evidence": {
+    "html-preview-baseline-capture": {
+      "revision": "e11e5e8451492d680a76de07412c58fabb075b89",
+      "url": "https://github.com/CongliangK/framivra/blob/e11e5e8451492d680a76de07412c58fabb075b89/docs/reports/assets/html-preview/before.png",
+      "text": "Project-captured real official DSH 0.2.2-rc.1 baseline at global frame 335, selected public chart HTML block dst_in 30 and duration 600, core/sidebar source 03ff6fa. The 1440x1000 DPR1 default light shell/dark workbench capture records platform.unsupported and no generated PNG; it is not After evidence or multi-layer cold-composite acceptance. No private media, conversation content, credentials, font files or runtime binaries are included. Project-authored capture contribution follows root MIT. Inspected official host package declares MIT, Copyright (c) 2026 DeepSeek; shipped LICENSE SHA256 ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be, package.json SHA256 3e14837ceb3bbc0ba419ed08e9b5ba164338369b1268b93c3c25d89f7b1c9953. Provenance and declarations only, not transitive UI/icon/font rights clearance or legal certification.\n",
+      "sha256": "2361063b2c3e9582050af81f8a3287110f048e82198b60344a9a77bbf3845b82",
+      "scope": "Baseline screenshot provenance only; immutable revision identifies screenshot publication, not candidate acceptance"
+    },
     "matanyone2-code": {
       "url": "https://raw.githubusercontent.com/pq-yang/MatAnyone2/0079197acd6d16a741f71558809c06c586c579e0/LICENSE.txt",
       "revision": "0079197acd6d16a741f71558809c06c586c579e0",

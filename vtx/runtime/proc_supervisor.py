@@ -491,22 +491,45 @@ class SupervisedProcessGroup:
             return
         self._stopped = True
         completed = False
+        interrupted = None
+
+        def finish(step):
+            nonlocal interrupted
+            while True:
+                try:
+                    return step()
+                except KeyboardInterrupt as error:
+                    if interrupted is None:
+                        interrupted = error
+                    # Retry only the interrupted operation, not earlier teardown
+                    # or a normal False (unconfirmed termination) result.
+
         try:
-            completed = self._terminate_worker()
-            if completed:
-                self._unlink_ledger()
-        finally:
             try:
-                self._close_pipe_and_reap_guard()
+                completed = finish(self._terminate_worker)
+                if completed:
+                    finish(self._unlink_ledger)
             finally:
-                if self._tmp is not None:
-                    tmp, self._tmp = self._tmp, None
-                    if completed:
-                        tmp.__exit__(None, None, None)
-                    else:
-                        # A half-start may not have published its ledger yet.
-                        # Do not delegate this decision to ledger-only cleanup.
-                        print(f"⚠ 监管器：Worker 组尚未确认清空，保留运行目录/账本: {self.run_dir}")
+                try:
+                    try:
+                        self._close_pipe_and_reap_guard()
+                    except KeyboardInterrupt as error:
+                        # The guard helper defers its own interruption until its
+                        # owned waits/streams have reached their cleanup outcome.
+                        if interrupted is None:
+                            interrupted = error
+                finally:
+                    if self._tmp is not None:
+                        if completed:
+                            finish(lambda: self._tmp.__exit__(None, None, None))
+                        else:
+                            # A half-start may not have published its ledger yet.
+                            # Do not delegate this decision to ledger-only cleanup.
+                            print(f"⚠ 监管器：Worker 组尚未确认清空，保留运行目录/账本: {self.run_dir}")
+                        self._tmp = None
+        finally:
+            if interrupted is not None:
+                raise interrupted
 
     def __enter__(self):
         return self.start()
@@ -558,28 +581,48 @@ class SupervisedProcessGroup:
             print(f"⚠ 监管器：账本删除失败（{e}）——reap 下轮会按陈旧账本兜底")
 
     def _close_pipe_and_reap_guard(self):
-        if self._pipe_w is not None:
-            try:
-                os.close(self._pipe_w)
-            finally:
-                self._pipe_w = None
-        guard, self.guard_proc = self.guard_proc, None
-        if guard is not None:
-            try:
-                guard.wait(3)
-            except subprocess.TimeoutExpired:
-                guard.kill()
+        interrupted = None
+
+        def finish(step):
+            nonlocal interrupted
+            while True:
                 try:
-                    guard.wait(3)
-                except subprocess.TimeoutExpired:   # pragma: no cover
-                    print(f"⚠ 监管器：守卫 pid={guard.pid} 强杀后仍未退出")
-            finally:
-                # A caller may request PIPE for worker diagnostics; the guard
-                # receives its own independent pipe, not the worker's stream.
-                # Reap and close that owned capture instead of relying on GC.
-                for stream in (guard.stdin, guard.stdout, guard.stderr):
-                    if stream is not None:
-                        stream.close()
+                    return step()
+                except KeyboardInterrupt as error:
+                    if interrupted is None:
+                        interrupted = error
+
+        try:
+            if self._pipe_w is not None:
+                pipe_w, self._pipe_w = self._pipe_w, None
+                try:
+                    # A numeric fd may already be closed when KI is delivered.
+                    # Never retry: another thread may have reused that number.
+                    os.close(pipe_w)
+                except KeyboardInterrupt as error:
+                    if interrupted is None:
+                        interrupted = error
+            guard = self.guard_proc
+            if guard is not None:
+                try:
+                    finish(lambda: guard.wait(3))
+                except subprocess.TimeoutExpired:
+                    finish(guard.kill)
+                    try:
+                        finish(lambda: guard.wait(3))
+                    except subprocess.TimeoutExpired:   # pragma: no cover
+                        print(f"⚠ 监管器：守卫 pid={guard.pid} 强杀后仍未退出")
+                finally:
+                    # A caller may request PIPE for worker diagnostics; the guard
+                    # receives its own independent pipe, not the worker's stream.
+                    # Keep ownership through interrupted waits and stream closes.
+                    for stream in (guard.stdin, guard.stdout, guard.stderr):
+                        if stream is not None:
+                            finish(stream.close)
+                self.guard_proc = None
+        finally:
+            if interrupted is not None:
+                raise interrupted
 
     def _write_ledger(self):
         """>>> 红线：账本是 tmp_run 目录内的独立文件，绝不入 manifest.json。"""

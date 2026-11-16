@@ -87,11 +87,9 @@ After generation, a **second explicit click** either copies the verified PNG or 
 
 Clipboard support/permission refusal is visible and never silently falls back to text. OS clipboard writes cannot be recalled after a later invalidation, and the OS may re-encode PNGs. Temporary decode URLs are revoked; applied draft previews belong to DSH. Certificates identify the render-time inputs with **Fast media stat identity**, not live-atomic media at draft-intake time, a final render, QC or an immutable clipboard byte promise.
 
-### HTML layer PNG（显式页面信任与预览写入）
+### 精确时间定位
 
-监视器可切换 HTML 图层预览，目标是当前选中的保存 gfx block；Host 只传版本绑定的规范 block address，不接收任意 HTML 路径或正文。新能力与 API 详见[内核合同](../docs/reference/timeline-api.md#html-图层单帧预览)。额外页面信任框明确脚本/本地文件/网络风险，未确认不生成；不在 DSH DOM 执行页面，不增加模型渲染工具。现有合成模式仍为默认值，权限、单所有者互斥、30 秒预算、取消回收和草稿二次点击不变。
-
-客户端严格按请求验证 `html-layer` 与目标地址、局部帧/原时长及核心引用，再核 PNG hash/字节/解码；拒绝把层图当 current-composite。页面画面、全局/局部帧和草稿文本均明确标作图层，透明区域用棋盘底检查，不改变 PNG。切换模式/信任、选区/帧/版本/编辑状态变化同步作废旧图；生成不自动发送或加入草稿。时间定位新增折叠的整数秒与零基秒内偏移，30fps 下 `10 + 5` 明确换算为全局帧 305；换算定位本身不查询或渲染。
+时间定位提供折叠的整数秒与零基秒内偏移，30fps 下 `10 + 5` 明确换算为全局帧 305；换算定位本身不查询或渲染。完整合成始终使用该规范整数帧，不能把单页图层帧替代 current-composite。
 
 ### Manual editing (writes require explicit authorization)
 

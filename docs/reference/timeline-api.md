@@ -153,22 +153,6 @@ vtx -t /path/to/timeline.json timeline frame --frame 30 --render --include-png
 
 帧 PNG staging/最终产物及完成标记使用 no-follow 全祖先/父 fd/项目根身份固定、普通叶子 O_NOFOLLOW|O_NONBLOCK、读前后 fd/目录项身份核对及 cap+1 有界读取；初始祖先链接（含项目内链接）拒绝。同一不可变 bytes 经原完整 PNG validator（CRC/IDAT/filter/IEND/尾随）产生 hash/size/inline，warm hit 也完整复核，不用另一次 pathname 校验。此边界不升级其他 gfx、源媒体或文档读取。PNG cap 不等于 wire cap：base64 长 `4*ceil(n/3)`，连 reference/raw/metadata/ASCII 转义和 stdout 换行共≤8388608；编码前预算、最终精确门均执行，超限 `ok:false,image:null,reference:null,output.limit`，不缩图/截断/删 raw 伪造成功。证书仅冻结 current-at-render 的保存版本与 Fast 输入身份，不保证之后 draft 暂存瞬间外部源仍 live-current，也不是跨文件系统事务。
 
-## HTML 图层单帧预览
-
-`frame_timeline` 另接受可选 `html_block_address` 与 `trust_html=False`。不传目标时，上述 current-composite 合同完全不变；新模式**只预览保存版本中选中的 gfx HTML 页面**，不合成其他轨、字幕或片段变换/透明度，不是成片或 QC 证明。能力通过 `capabilities.frame.html_layer` 的 `flag:"--html-layer"`、`trust_flag:"--trust-html"`、`kind:"html-layer"`、`saved_block_only:true` 协商；旧内核不广告则拒绝，不猜版本、不回退读路径。
-
-```bash
-# 写操作，并执行可信本地 HTML 的脚本；须同时明确授权两者。
-# 地址与 VERSION 取自本次 inspect/reference，不可跨保存版本复用。
-vtx -t /path/to/timeline.json timeline frame --frame 305 --html-layer /video_tracks/0/clips/0 --expected-content-version sha256:VERSION --render --trust-html --include-png
-```
-
-只接受工程根内已保存的 HTML gfx block、规范数组地址与精确版本；全局帧必须命中该块。内核从保存的 `dst_in` 计算 `local_frame`，保留原始 `dur` 作为页时长及原 HTML 资源基址，复用 CDP 稀疏渲染，不准备整页或生成普通 gfx 完成证书。返回仍为 frame/v1，但 `image.kind:"html-layer"`，另有 `layer:{block_address,local_frame,duration_frames,html}`；`html` 为工程相对路径。`approximate:false` 仅表示请求的页面帧，不把页面作者的随机/异步脚本证明为确定性。消费者必须按请求验证 kind 与目标，不得把页面图送成当前合成帧。
-
-`render=True` 与 `trust_html=True` 分别表示预览写授权和页面执行信任，缺一不启动浏览器。HTML 可执行脚本并访问浏览器允许的本地文件/网络，**不是沙箱或资源闭包**，不要用于不可信工程；页面不会注入 DSH DOM，只有验证后的 PNG 进入侧栏。仅支持本机具进程监管能力的 CDP 路径；strict 项目明确拒绝，不降级成 legacy。该入口不加载 Ctx/插件，也不验证无关媒体或项目完整出片资格。
-
-只在 `cache/preview` 的独立请求目录写入，使用单 tab，保留原透明/Canvas/字体探针和静态跨度语义（可能额外渲染跨度头帧，并非只截图一次）。每次重新生成，`cache_hit:false`；不签完整 gfx 或环境可复用凭证。`input_fingerprint` 绑定保存文档、页面及已声明依赖的内容与请求身份，前后重验拒绝变化；未声明/网络资源及并发恶意替换不在证明内。PNG 字节/完整性、尺寸、base64 和整包上限沿用 frame/v1；同一不可变 bytes 用于 hash 与传输。临时浏览器 profile/账本位于预览命名空间，正常完成/取消回收；终止未确认则保留恢复证据并拒绝成功。现有 30 秒宿主请求预算不延长。
-
 ## 显式写事务第一切片（v1；不是完整编辑器）
 
 **以下调用会写工程及持久历史**，没有 dry-run；先在副本核对请求，不自动迁移现有工程。公共 API 为 `timeline_transaction(path, request)`、`timeline_store_status(path, *, recover=False)`、`timeline_store_capabilities()`；CLI/Python 共用 [内核](../../vtx/timeline_store.py)，无需 Ctx、素材、渲染或插件。
