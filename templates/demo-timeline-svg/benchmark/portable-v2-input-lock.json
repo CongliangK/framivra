@@ -1,0 +1,29 @@
+{
+  "format": "framivra-generated-input-lock/v2",
+  "baseline_id": "framivra-promo-timeline-svg-30s-portable-v2",
+  "source_runtime_sha256": "9b1c62621778de06cc0213f53ce037e4e697ae2fe2698bb761c1ddc1d0aa497e",
+  "provenance": {
+    "algorithm": "integer-pcm24/v1",
+    "generator_sha256": "50129272cd04f72c796a04eece8ee4b1e44c7618b3fe01861d60c8ae97db3e35"
+  },
+  "audio": {
+    "assets/audio/bed-premaster.wav": {
+      "sha256": "2aa8fab3f9edb1eaff28e299764b6f3f1f3f49acd0c5c4f2c07b24e2c772eb12",
+      "size": 8640044,
+      "sample_frames": 1440000,
+      "sample_rate": 48000,
+      "channels": 2,
+      "sample_width": 3,
+      "pcm_sha256": "3fea62a6c0fc2487f3fd3a90f24ae834516117efb8e04385d808f717f1d8ecbc"
+    },
+    "assets/audio/content-cue.wav": {
+      "sha256": "e0a2d22c55a51544d4848781af3db09f00942429124295079cd5686e2ac9833b",
+      "size": 326444,
+      "sample_frames": 54400,
+      "sample_rate": 48000,
+      "channels": 2,
+      "sample_width": 3,
+      "pcm_sha256": "992ac081a140fe438a7750fd803b1633d79842bb632bf7b9261a2a3af64ec44f"
+    }
+  }
+}

@@ -5,7 +5,7 @@
   "motion_plan_sha256": "2fc71524d135b94c4d9c79a233e7f90ef1b9aabfe05eac977592c8fb86d9cc23",
   "audio_score_source": "audio-r1/scripts/build.py",
   "audio_score_source_sha256": "57c80e95529cc464ca8f99cb4d6a41bad7e7cc5d6f1adbaae9727ae677a4e45f",
-  "audio_adaptation": "Preserves score, synthesis, event gains/pans and native-input export. Uses vendored synth subset; omits separate audition mastering.",
+  "audio_adaptation": "Portable-v2 retains arrangement, event timing and native-input binding; new integer wavetable timbres and fixed-point gains/pans replace Scoreweft synthesis. Python standard library only. Legacy vendor sources/notices remain for provenance, not execution.",
   "scoreweft_commit": "aa5e7781952418f5881c41f166f237dc7a24111c",
   "visual_review": "UNRUN_FOR_PRODUCTION",
   "native_render": "UNRUN",
