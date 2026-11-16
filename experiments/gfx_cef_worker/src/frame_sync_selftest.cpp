@@ -1564,6 +1564,43 @@ void TestPairSwapDepthThree() {
         "depth3: permanent fallback invalidates speculation and routes A off");
 }
 
+void TestPairSwapPrewarmTarget() {
+  const auto url = [](int32_t f) { return "file:///page?f=" + std::to_string(f); };
+  pairswap::Planner p{true, 3};
+  uint64_t floor = 999;
+  Check(p.PrewarmTargetAtBind(450, url(451), &floor) == -1,
+        "prewarm: no speculative creation without a recorded N+1 token");
+  p.RecordSignedPrefetch(1, 451, url(451), 42);
+  Check(p.PrewarmTargetAtBind(450, url(451), &floor) == 1 && floor == 42,
+        "prewarm: depth3 selects only idle N+1 with exact navigation floor");
+  Check(p.PrewarmTargetAtBind(450, url(452), &floor) == -1 &&
+            p.PrefetchTargetAtBind(450) == 2 && p.active_pair() == 0,
+        "prewarm: never active N or just-navigated N+2, URL mismatch skips");
+  p.BindNextRequest(450, url(450));
+  p.NotifyRequestFinished(true);
+  Check(p.BindNextRequest(451, url(451)).signed_prefetch == pairswap::Outcome::kHit,
+        "prewarm: target query never consumes the later binding token");
+  p.RecordSignedPrefetch(2, 452, url(452), 43);
+  p.BindNextRequest(460, url(460));
+  Check(p.PrewarmTargetAtBind(460, url(461), &floor) == -1,
+        "prewarm: discontinuity invalidates lookahead");
+  const int32_t max = std::numeric_limits<int32_t>::max();
+  Check(p.PrewarmTargetAtBind(max - 1, url(max), &floor) == -1 &&
+            p.PrewarmTargetAtBind(max, url(max), &floor) == -1,
+        "prewarm: overflow boundary skips without frame arithmetic wrap");
+  p.Disable();
+  Check(p.PrewarmTargetAtBind(450, url(451), &floor) == -1,
+        "prewarm: permanent fallback skips all ticks");
+  pairswap::Planner depth2{true};
+  depth2.RecordSignedPrefetch(1, 451, url(451), 1);
+  Check(depth2.PrewarmTargetAtBind(450, url(451), &floor) == -1,
+        "prewarm: default depth2 unchanged");
+  pairswap::Planner off{false, 3};
+  off.RecordSignedPrefetch(1, 451, url(451), 1);
+  Check(off.PrewarmTargetAtBind(450, url(451), &floor) == -1,
+        "prewarm: disabled depth3 never ticks an auxiliary browser");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -1624,6 +1661,7 @@ int main(int argc, char* argv[]) {
   TestPairSwapPlannerOutOfOrderFallback();
   TestPairSwapPlannerDisabledFallback();
   TestPairSwapDepthThree();
+  TestPairSwapPrewarmTarget();
 
   // --jsonl-out：跑一段混合场景把 JSONL 落盘，供 Python 跨语言全量校验。
   if (!jsonl_out.empty()) {

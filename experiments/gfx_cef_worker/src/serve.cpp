@@ -768,6 +768,21 @@ class ExactBaselineCapture {
     return true;
   }
 
+  // One depth-3 idle compositor tick, never a readiness or proof operation.
+  // Keep snapshot demand OFF: actual Begin/ready establishes fresh paint floors.
+  bool PrewarmPrefetch(int32_t frame, const std::string& url) {
+    if (!options_ || options_->pair_depth != 3 || !mode_n_ ||
+        prefetch_disabled_ || !prefetch_.Matches(frame, url) || !state_ ||
+        !browser_ || state_->closed.load() || state_->capture_armed ||
+        state_->sync_capture_armed || state_->passive_snapshot_enabled ||
+        !state_->loaded.load(std::memory_order_relaxed) ||
+        state_->load_starts.load() <= prefetch_.load_floor || browser_->IsLoading() ||
+        browser_->GetMainFrame()->GetURL().ToString() != url) return false;
+    browser_->GetHost()->Invalidate(PET_VIEW);
+    browser_->GetHost()->SendExternalBeginFrame();
+    return true;
+  }
+
   // Nonblocking except for authenticated renderer fences. Called during BOTH
   // signed load/readiness and signed pumping, so unsigned work is not a serial
   // setup stage. A frame request is issued only while more evidence is needed.
@@ -1780,6 +1795,26 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
     pair_capture(idle_pair).Prefetch(next_frame, next_url);
   };
 
+  // Optional depth-3 N+1 compositor prewarm, once at BIND N. Never tick the
+  // active N or just-navigated N+2 pair, pump/wait, inject JS, or arm capture.
+  const auto prewarm_pair_lookahead = [&](int32_t bound_frame) {
+    if (planner.effective_depth() != 3 || bound_frame < 0 ||
+        bound_frame > INT32_MAX - 2) return;
+    const int32_t next_frame = bound_frame + 1;
+    const auto next_url = ExpandUrlTemplate(opt.url_template, next_frame);
+    uint64_t floor = 0;
+    const int pair = planner.PrewarmTargetAtBind(bound_frame, next_url, &floor);
+    if (pair < 0) return;
+    RunState& st = pair_state(pair);
+    CefRefPtr<CefBrowser> br = pair_browser(pair);
+    if (!br || st.closed.load() || st.capture_armed || st.sync_capture_armed ||
+        !st.loaded.load(std::memory_order_relaxed) || st.load_starts.load() <= floor ||
+        br->IsLoading() || br->GetMainFrame()->GetURL().ToString() != next_url) return;
+    br->GetHost()->Invalidate(PET_VIEW);
+    br->GetHost()->SendExternalBeginFrame();
+    pair_capture(pair).PrewarmPrefetch(next_frame, next_url);
+  };
+
   // 发送帧 N-1 的回执（前提：pool.Done() 已真，或编码已超时排空）。
   // 回执绑定帧 N-1 的身份与本帧编码计时；adapter_timing 用快照经
   // RecordAdapterTimingFor 补记（机器此刻已跟踪帧 N，须按快照身份归属）。
@@ -1978,6 +2013,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
       binding.signed_load_floor = 0;
     }
     trigger_pair_swap_prefetch(req.frame_index);
+    if (!binding.speculation_invalidated) prewarm_pair_lookahead(req.frame_index);
     RunState& active_state = pair_state(binding.pair);
     CefRefPtr<CefBrowser> active_browser = pair_browser(binding.pair);
     ExactBaselineCapture& active_capture = pair_capture(binding.pair);

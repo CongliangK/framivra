@@ -82,6 +82,17 @@ class Planner {
     if (!enabled_ || PrefetchFrame(frame) < 0) return -1;
     return (active_pair_ + depth_ - 1) % depth_;
   }
+  // Only the depth-3 N+1 lookahead may receive one idle compositor tick.
+  // This neither consumes the token nor authorizes a bridge/paint sample.
+  int PrewarmTargetAtBind(int32_t frame, const std::string& next_url,
+                          uint64_t* load_floor) const {
+    if (!enabled_ || depth_ != 3 || frame < 0 || frame > INT32_MAX - 2) return -1;
+    const int pair = (active_pair_ + 1) % depth_;
+    const auto& rec = pairs_[pair];
+    if (!rec.Matches(frame + 1, next_url)) return -1;
+    if (load_floor) *load_floor = rec.load_floor;
+    return pair;
+  }
   int32_t PrefetchFrame(int32_t frame) const {
     const int delta = depth_ - 1;
     return frame < 0 || frame > INT32_MAX - delta ? -1 : frame + delta;

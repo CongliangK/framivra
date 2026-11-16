@@ -78,6 +78,7 @@ namespace vtx_cef {
     std::string reference_context = "shared";
     // These fault scenarios model a single pair; PairSwap has its own planner tests.
     bool pair_swap = false;
+    int pair_depth = 2;
     int frame_budget_ms=20,sync_ready_timeout_ms=20,sync_pump_timeout_ms=20;
   };
   constexpr uint16_t kStatusOk=0,kStatusTimeout=1,kStatusSizeMismatch=2,kStatusJsErr=3,kStatusDuplicate=4;
@@ -105,6 +106,7 @@ namespace vtx_cef {
     fsync::FrameSyncStateMachine*sync_machine=nullptr;
     uint8_t*sync_dst=nullptr;
     bool sync_captured=false,sync_size_mismatch=false,sync_capture_armed=false,js_paint_pending=false;
+    bool capture_armed = false;
     uint32_t sync_actual_w=0,sync_actual_h=0;
     fsync::PaintVerdict sync_last_verdict;
   };
@@ -805,7 +807,68 @@ int tests(){
     }
     x.close();
   }
+  {
+    Fixture x;
+    x.options.pair_depth = 3;
+    x.options.pair_swap = true;
+    ck(x.run(1, 7).status == kStatusOk, "prewarm setup retains actual exact proof");
+    auto browser = browsers[1];
+    auto& state = *browser->s;
+    const std::string url = "file:///page?f=8";
+    ck(x.baseline.Prefetch(8, url), "prewarm navigates only an existing unsigned browser");
+    const auto paint_requests = browser->paint_requests;
+    ck(!x.baseline.PrewarmPrefetch(8, url), "prewarm skips pending load");
+    x.pump.Once();
+    ck(!x.baseline.PrewarmPrefetch(9, url) &&
+       !x.baseline.PrewarmPrefetch(8, "file:///other?f=8"),
+       "prewarm requires exact frame plus URL token");
+    state.loaded = false;
+    ck(!x.baseline.PrewarmPrefetch(8, url), "prewarm loaded gate");
+    state.loaded = true;
+    --state.load_starts;
+    ck(!x.baseline.PrewarmPrefetch(8, url), "prewarm requires new navigation load floor");
+    ++state.load_starts;
+    browser->loading = true;
+    ck(!x.baseline.PrewarmPrefetch(8, url), "prewarm IsLoading gate");
+    browser->loading = false;
+    browser->url = "file:///old";
+    ck(!x.baseline.PrewarmPrefetch(8, url), "prewarm actual document URL gate");
+    browser->url = url;
+    state.capture_armed = true;
+    ck(!x.baseline.PrewarmPrefetch(8, url), "prewarm never overlaps generic capture");
+    state.capture_armed = false;
+    state.sync_capture_armed = true;
+    ck(!x.baseline.PrewarmPrefetch(8, url), "prewarm never overlaps sync capture");
+    state.sync_capture_armed = false;
+    state.passive_snapshot_enabled = true;
+    ck(!x.baseline.PrewarmPrefetch(8, url), "prewarm never enables or uses snapshot demand");
+    state.passive_snapshot_enabled = false;
+    state.closed = true;
+    ck(!x.baseline.PrewarmPrefetch(8, url), "prewarm closed browser receives no methods");
+    state.closed = false;
+    x.options.pair_depth = 2;
+    ck(!x.baseline.PrewarmPrefetch(8, url), "prewarm default depth2 remains unchanged");
+    x.options.pair_depth = 3;
+    ck(browser->paint_requests == paint_requests, "every failed prewarm guard emits zero frames");
+    const auto copies = state.passive_snapshot_copied_paints;
+    const auto fences = state.js_error.sent;
+    const auto navigations = browser->navigation_count;
+    ck(x.baseline.PrewarmPrefetch(8, url), "loaded idle prefetched document receives one prewarm tick");
+    ck(browser->paint_requests == paint_requests + 1, "prewarm emits exactly one existing external frame");
+    x.pump.Once();
+    ck(state.passive_snapshot_copied_paints == copies && state.js_error.sent == fences &&
+       browser->navigation_count == navigations && !state.passive_snapshot_enabled,
+       "prewarm takes no samples, fences, navigation or snapshot demand");
+    ck(x.run(2, 8).status == kStatusOk && x.dst == Original(8),
+       "actual later binding still requires fresh postready native exact proof");
+    ck(x.baseline.Prefetch(9, "file:///page?f=9"), "fallback prewarm setup");
+    x.pump.Once();
+    x.baseline.DisablePrefetch();
+    ck(!x.baseline.PrewarmPrefetch(9, "file:///page?f=9"), "fallback permanently disables prewarm");
+    x.close();
+  }
   std::printf("EXTRACTED_NATIVE_MODEL_PASS checks=%d scenarios=49 (fake CEF events, actual production orchestration/FSM)\n",check_count);
+  std::printf("PREFETCH_PREWARM_MODEL_PASS loaded-idle-guards no-samples-before-bind fresh-postready-proof\n");
   std::printf("BUDGET_CHECKS_OK stable_in_budget_low_delta_accepts + over_budget_or_unstable_rejects (jitter tolerance contract regression)\n");
   return 0;
 }
@@ -1466,6 +1529,7 @@ struct CefBrowser {
   void LoadURL(const CefString& input);
   void CloseBrowser(bool);
   void SendExternalBeginFrame();
+  void Invalidate(int) { GetHost(); }
   void ExecuteJavaScript(const std::string&, const std::string&, int);
   void LoadURL(const char* input) { CefString value; value.FromString(input); LoadURL(value); }
 };
@@ -1681,6 +1745,8 @@ struct ShmRingWriter {
   auto* control() { return &ctrl; }
 };
 #if defined(VTX_MODEL_SERVE_FAILURES)
+constexpr int PET_VIEW = 0;
+void CefBrowser::SendExternalBeginFrame() { GetHost(); ++begin_frames; }
 // PairSwap 后 serve.cpp 拼接体（预取触发/B 对创建/BindNextRequest）引用
 // 生产自由函数 ExpandUrlTemplate；故障模型始终 pair_swap=false，该函数
 // 运行期不可达，仅为拼接体编译提供与 serve.cpp:197 逐字一致的实现。
@@ -1701,6 +1767,8 @@ struct ExactBaselineCapture {
   bool prefetch_disabled = false;
   void InvalidatePrefetch() { prefetch.Consume(); }
   void DisablePrefetch() { InvalidatePrefetch(); prefetch_disabled = true; }
+  // This transport model has no unsigned browser to prewarm.
+  bool PrewarmPrefetch(int32_t, const std::string&) { return false; }
   bool Prefetch(int32_t frame, const std::string& url) {
     if (prefetch_disabled) return false;
     prefetch.Record(frame, url, 0);
