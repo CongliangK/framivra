@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "issue": 376,
+  "host": "official npm @deepseek-ai/dsh 0.2.2-rc.1, unmodified; isolated loopback profiles",
+  "platform": "macOS arm64; Node 24.14.1",
+  "capture_kind": "actual application screenshots, CSS-pixel scale, default 100% browser zoom",
+  "before": {
+    "revision": "8b882fa00426832b8af04a40fb4c447683fb63dd",
+    "plugin_build": "pkg:dcc96798b222bc0e",
+    "plugin_tgz_sha256": "46d968fb536a76d69ad8fd639fa087907b87d477a9066bfb7574cca52eecca03"
+  },
+  "after": {
+    "production_revision": "1754a2ae8f233615e80ffc01f0596998d6977f58",
+    "plugin_build": "pkg:bb58cb0677187798",
+    "plugin_tgz_sha256": "077718b42ee3ca1c6b1fdfb246cba1201b75c416cc05d2926253216b85b63ad2"
+  },
+  "shared_core": {
+    "revision": "8b882fa00426832b8af04a40fb4c447683fb63dd",
+    "wheel_sha256": "8f03ae6daee839252cef54fbd63ec49b50d1a53336986c4aa3ba262333b51f26"
+  },
+  "layout_fixture": {
+    "timeline_sha256": "ce9e7215b052b57624bcc605f7ac01aee7fd6a066c2617f5b392845b4b531662",
+    "synthetic_video_sha256": "fe5819cb8e81963e24a6a9ec8d6b7c1b7524141ec7fc7455eebe3cfef43ca16c",
+    "project": "synthetic 180-frame 1920x1080p30; two video rows, two audio rows, subtitles; source test pattern only",
+    "state": "timeline.json open; file drawer closed; properties open; first video block selected; canonical frame unset; preview-cache consent unchecked; no generated image",
+    "scope": "Kernel read/reference layout fixture, not render acceptance. Empty secondary rows are allowed by read projection but rejected by render validation. The separate dependency-combination AV fixture was repaired and validated rather than weakening that refusal."
+  },
+  "pairs": [
+    {"before":"before-light-expanded-1280-properties.png","after":"after-light-expanded-1280-properties.png","viewport":[1280,720],"theme":"light","layout":"expanded","monitor_scroll_top":0,"details_open":false},
+    {"before":"before-dark-expanded-1280-monitor-scrolled.png","after":"after-dark-expanded-1280-monitor-scrolled.png","viewport":[1280,720],"theme":"dark","layout":"expanded","monitor_scroll_top":118,"details_open":true},
+    {"before":"before-light-narrow-349-properties.png","after":"after-light-narrow-349-properties.png","viewport":[875,1000],"theme":"light","layout":"inline; host divider x525; workbench width349","body_scroll_top":0},
+    {"before":"before-dark-narrow-349-properties.png","after":"after-dark-narrow-349-properties.png","viewport":[875,1000],"theme":"dark","layout":"inline; host divider x525; workbench width349","body_scroll_top":0}
+  ],
+  "observations": {
+    "light_host": {"body_bg":"#fff","body_label":"#0f1115","before_workbench_bg":"rgb(24,26,30)","before_workbench_label":"rgb(233,235,239)"},
+    "after_dark_host": {"body_bg":"#151517","workbench_bg":"rgb(21,21,23)","workbench_label":"rgb(249,250,251)"},
+    "scrolled_monitor": {"clip_y":[85.09,385.39],"scroll_height":418,"client_height":300,"before_transport_y":[-0.9,49.1],"after_transport_y":[95.09,145.09]},
+    "narrow": "Before and After workbench/body scrollWidth == clientWidth == 349; timeline remains reachable through the existing vertical body scroll, not hidden as an overflow workaround.",
+    "live_theme_switch": "After light-to-dark through host Settings retained the identical workbench and frame-input DOM nodes and unsent typed value42. No query/render request was made for that text change.",
+    "independent_visual_review": "Approved actual expanded/narrow/scrolled captures; no actionable visual regression. Unmatched inline-wide captures were excluded from this comparison. Maintainer subjective visual satisfaction remains unconfirmed."
+  },
+  "limitations": [
+    "The main-line core/plugin still refuse macOS frame rendering/semantic writes; this presentation-only change does not bypass those guards.",
+    "Dependency-combination verification against unmerged #367 is supplementary, not proof of merged-main support; its final merged combination requires revalidation.",
+    "No main performance baseline, complete video/QC/audio acceptance, 125% browser zoom, other browsers/platforms or production deployment is claimed."
+  ],
+  "rights": "Only application chrome and synthetic project data. No credentials, private media, font/runtime binaries, or raw launch logs. Exact PNG hashes and preserved upstream DSH MIT notice are in docs/model-license-inventory.json; this is not legal/trademark clearance."
+}

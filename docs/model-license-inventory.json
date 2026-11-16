@@ -1158,6 +1158,27 @@
       },
       "notes": "Generated full-HTML/JS/text test screenshots. No font files, browser/runtime binaries or third-party page media are included. Runtime/font inputs remain separately governed external assets; this registration is not a legal certificate."
     },
+    "dsh-visual-polish-ui-captures": {
+      "kind": "data",
+      "source": "docs/reports/assets/dsh-visual-polish/capture.json",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT; DSH source notice retained separately",
+      "default_payload": true,
+      "distribution": ["git-source"],
+      "evidence": "framivra",
+      "additional_evidence": ["dsh-ui-source-license"],
+      "files_sha256": {
+        "docs/reports/assets/dsh-visual-polish/before-light-expanded-1280-properties.png": "35d5cf6524f50055844af3434d5c885542d56b70ff93b4a8cee920c4093a1eb3",
+        "docs/reports/assets/dsh-visual-polish/after-light-expanded-1280-properties.png": "d519f57f489dbf8d7594963ef3434ede82092f051970de0cffd9ef1279f54736",
+        "docs/reports/assets/dsh-visual-polish/before-dark-expanded-1280-monitor-scrolled.png": "965145a17550ba29399c0011db9a1c6c9ee7084539839da0bfdf96adcdf25c3c",
+        "docs/reports/assets/dsh-visual-polish/after-dark-expanded-1280-monitor-scrolled.png": "8fbac2d0180133d342a9637e8005733b6ccbea1c0c09015a3f3870d5c8bf787f",
+        "docs/reports/assets/dsh-visual-polish/before-light-narrow-349-properties.png": "7f144e4e9b6dd98ec5703cc3b0cd1ae0b5bf08d987e0d6fc4986065de3eab3fd",
+        "docs/reports/assets/dsh-visual-polish/after-light-narrow-349-properties.png": "f198638595b350b40eeacf24306e8fdde61b5b07fb6714dbaec17ffd736e0dcc",
+        "docs/reports/assets/dsh-visual-polish/before-dark-narrow-349-properties.png": "c8a98d681722f0c54c0679a87c77f8a1c163fe0a63b3fa4fb2dffce7e9998722",
+        "docs/reports/assets/dsh-visual-polish/after-dark-narrow-349-properties.png": "81f75995db71d7487fa7639436f5b34c564de53158779e25c8ff325835e6b6ed"
+      },
+      "notes": "Actual official npm DSH 0.2.2-rc.1 application captures with synthetic project data only; not a mock UI. No credentials, private material, media/font files, browser or runtime binaries are included. Framivra authorship and pinned DSH source MIT notice do not constitute legal clearance of trademarks or arbitrary external assets. Layout fixture reads (including intentionally empty tracks) are separate from validated AV functional checks; capture.json states the tested scope. Existing offline audit and unknown-asset rejection remain unchanged."
+    },
     "runtime-font-noto-cjk": {
       "kind": "font",
       "source": "https://deb.debian.org/debian/pool/main/f/fonts-noto-cjk/fonts-noto-cjk_20220127+repack1-1_all.deb",
@@ -1339,6 +1360,13 @@
     }
   },
   "evidence": {
+    "dsh-ui-source-license": {
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/39163dd30f703a79079e2d2446545cff3c453738/LICENSE",
+      "revision": "39163dd30f703a79079e2d2446545cff3c453738",
+      "sha256": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be",
+      "text": "MIT License\n\nCopyright (c) 2026 DeepSeek\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
+      "scope": "Preserved DSH source MIT notice, byte-identical to the installed official npm DSH 0.2.2-rc.1 LICENSE; the pinned source revision identifies this notice, not the npm build. Does not grant trademark rights or certify all screenshot/runtime/font content."
+    },
     "matanyone2-code": {
       "url": "https://raw.githubusercontent.com/pq-yang/MatAnyone2/0079197acd6d16a741f71558809c06c586c579e0/LICENSE.txt",
       "revision": "0079197acd6d16a741f71558809c06c586c579e0",
