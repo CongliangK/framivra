@@ -152,7 +152,13 @@ plist 及 ByHost 文件内容摘要，不读取 Chrome profile/history，也不�
 选中的偏好文件及 ByHost 目录不支持符号链接。未知库、外部 bundle 链接、缺失或
 不可读 cache、loader 覆盖均拒绝；不支持 Rosetta、Darwin CLI/Electron 或其他浏览器。
 首次收集读取实际文件；后续沿用 inode/size/mtime/ctime 哈希 memo，仍复核成员与
-元数据。CPU 合成测试不代表实机验收，输入绑定不证明跨平台像素一致。
+元数据。共享 bundle 采集每次仍重新遍历全成员，每个目录前缀严格解析并核对处理前后
+身份，每个链接独立严格解析和检查边界；普通成员在哈希 memo 命中时也复查完整
+inode/size/mtime/ctime。SVG 库闭包的 Mach-O 元数据仅在一次采集内去重，每次复用
+重新核对文件 token；原生架构、加载上下文、搜索路径歧义、动态模块、系统 cache 和
+loader 检查不省略，不按根目录 mtime 缓存整个环境。此去重不改变证书字段与内容；
+解析器实现身份仍变化，旧 gfx 不可补签，须按新键重新准备。
+CPU 合成测试不代表实机验收，输入绑定不证明跨平台像素一致。
 真实 CDP 缓存验收入口见 [Darwin 集成运行器](../tests/runners/run_macos_cdp_acceptance.py)，
 全链音视频与字幕入口见 [端到端运行器](../tests/runners/run_e2e.py)。本解析器不接纳上述范围之外的平台或运行模式。
 
