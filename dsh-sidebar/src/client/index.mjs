@@ -419,7 +419,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
               h('div', { className: 'fv-monitor-title' }, h('span', null, '节目监视器'), h('span', null, frameValue === undefined ? '尚未定位' : `帧 ${frameValue}`)),
               h(Transport, { frame: frameValue, frameText: frame, frameError, duration, onFrame: pin, onText: pin, onQuery: () => void load(true) }),
               frameError ? h('p', { role: 'alert' }, `${frameError} 引用已暂停；不会暗用旧帧。`) : null,
-              valid && !grantDead && !frameError ? h('fieldset', { disabled: storageBusy, style: { border: 0, padding: 0, margin: 0, minWidth: 0 } }, h(FrameTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, selection, tabSignal: tab.signal, getDraftServices, call: control })) : null,
+              valid && !grantDead && !frameError ? h('fieldset', { disabled: storageBusy, style: { display: 'contents' } }, h(FrameTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, selection, tabSignal: tab.signal, getDraftServices, call: control })) : null,
               h('details', { className: 'fv-output', hidden: !state.opened.media.length },  h('summary', null, `已有成片${state.opened.media.length ? ` · ${state.opened.media.length}` : ' · 暂无'}`),
                 h('h3', null, 'Existing output preview — provenance UNKNOWN'),
                 h('p', null, 'These files are not verified to correspond to this timeline. Playback time is not linked to frame selection. Grants expire after 30 minutes; reopen on expiry.'),
