@@ -43,6 +43,24 @@ async function fixture(t, { withObjectURL = false } = {}) {
   return { owner, root, section, rerender, calls, act }
 }
 
+test('HTML mode and separate trust synchronously invalidate retained previews and operations', async t => {
+  const f = await fixture(t)
+  const select = f.section().querySelector('select[aria-label="帧预览模式"]')
+  assert(select)
+  const operation = f.owner.begin(new AbortController().signal)
+  f.owner.generated = cleanResult()
+  await f.act(async () => {
+    select.value = 'html-layer'; select.dispatchEvent(new window.Event('change', { bubbles: true }))
+    assert.equal(operation.signal.aborted, true); assert.equal(f.owner.generated, undefined)
+  })
+  assert(f.section().textContent.includes('HTML 会执行脚本，可访问本地文件和网络'))
+  assert(f.section().textContent.includes('不是完整合成帧'))
+  const trust = [...f.section().querySelectorAll('input')].find(input => input.parentElement.textContent.includes('仅信任的工程'))
+  const next = f.owner.begin(new AbortController().signal); f.owner.generated = cleanResult()
+  await f.act(async () => { trust.click(); assert.equal(next.signal.aborted, true); assert.equal(f.owner.generated, undefined) })
+  const generate = [...f.section().querySelectorAll('button')].find(button => button.textContent.includes('显式生成并验证'))
+  assert.equal(generate.disabled, true, 'saved block selection remains required')
+})
 test('frame visual: stage placeholders, folded prose/certificate, labels and consent order preserved', async t => {
   const f = await fixture(t)
   const section = f.section()

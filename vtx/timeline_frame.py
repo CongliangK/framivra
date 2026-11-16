@@ -269,8 +269,14 @@ def _render(path, reference, frame, limit):
 
 
 def frame_timeline(path, *, frame, expected_content_version=None, render=False,
-                   max_png_bytes=_LIMIT, include_png=False):
-    """Reference + exact current-composite PNG, only with explicit render=True.
+                   max_png_bytes=_LIMIT, include_png=False,
+                   html_block_address=None, trust_html=False):
+    """Reference + explicitly authorized PNG; default kind is current-composite.
+
+    html_block_address selects a version-bound saved gfx HTML page instead of
+    the composite; this separate mode additionally requires trust_html=True and
+    uses native supervised CDP, with declared-only identity and no image reuse.
+    The remaining notes describe the unchanged default composite path.
 
     Defaults do not construct Ctx, probe assets, lock or create directories.
     Authorized rendering requires Linux fd-anchored writes and core-only projects.
@@ -283,6 +289,13 @@ def frame_timeline(path, *, frame, expected_content_version=None, render=False,
     include_png must be bool; it requests canonical base64, not render authority.
     Default False preserves the metadata-only result shape.
     """
+    if html_block_address is not None:
+        from .timeline_html_frame import frame_html_timeline
+        return frame_html_timeline(path, frame=frame,
+                                   expected_content_version=expected_content_version,
+                                   render=render, max_png_bytes=max_png_bytes,
+                                   include_png=include_png,
+                                   html_block_address=html_block_address, trust_html=trust_html)
     reference = reference_timeline(path, global_frame=frame,
                                    expected_content_version=expected_content_version)
     result = {"schema": _SCHEMA, "operation": "frame", "ok": reference["ok"],
@@ -295,6 +308,8 @@ def frame_timeline(path, *, frame, expected_content_version=None, render=False,
         _error(result, "frame.integer", "/frame", "required integer global frame")
     if type(render) is not bool:
         _error(result, "authorization.type", "/render", "render must be boolean")
+    if type(trust_html) is not bool or trust_html:
+        _error(result, "html.target", "/trust_html", "trust_html requires html_block_address")
     if type(include_png) is not bool:
         _error(result, "image.inline_type", "/include_png", "include_png must be boolean")
     if type(max_png_bytes) is not int or not 1 <= max_png_bytes <= _LIMIT:

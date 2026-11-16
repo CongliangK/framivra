@@ -9,6 +9,9 @@ import { ToolButton, ToolSummary, iconControlCSS } from './icon-controls.mjs'
 const h = React.createElement, rawSHA = /^[a-f0-9]{64}$/, versionSHA = /^sha256:[a-f0-9]{64}$/
 const bad = message => { throw new Error(`FRAME_INVALID: ${message}`) }
 const whole = value => Number.isSafeInteger(value) && value >= 0
+const htmlAddress = value => typeof value === 'string' && value.length <= 4096 && /^\/video_tracks\/(0|[1-9][0-9]*)\/clips\/(0|[1-9][0-9]*)$/.test(value)
+const htmlIdentity = 'Trusted HTML and declared dependencies; not a dependency closure or sandbox'
+const relativeHTML = value => typeof value === 'string' && !!value && !/[\\\\:\u0000-\u001f]/.test(value) && value.split('/').every(part => part && part !== '.' && part !== '..')
 
 /** Exact FPS identity between the certificate rational num/den and the raw core
  * token. Never Number(rawJSON): binary rounding would silently equate
@@ -103,16 +106,18 @@ export async function decodePNG(blob, width, height, signal, browser = globalThi
 }
 
 /** No filesystem paths, image.path access, resizing, data URLs, or lossy reference conversion. */
-export async function verifyFrame(envelope, { frame, contentVersion, signal, limits, crypto = globalThis.crypto, decode = decodePNG, File = globalThis.File }) {
+export async function verifyFrame(envelope, { frame, contentVersion, htmlBlockAddress, signal, limits, crypto = globalThis.crypto, decode = decodePNG, File = globalThis.File }) {
   signal.throwIfAborted()
   const image = envelope?.image, reference = envelope?.reference
   if (envelope?.schema !== 'framivra.timeline.frame/v1' || envelope.operation !== 'frame' || envelope.ok !== true || envelope.content_version !== contentVersion || !versionSHA.test(contentVersion) || !Array.isArray(envelope.diagnostics)) bad('Frame envelope/version/operation')
   if (reference?.schema !== 'framivra.timeline.reference/v1' || reference.operation !== 'reference' || reference.ok !== true || reference.content_version !== contentVersion || reference.selection?.global_frame !== frame || !Array.isArray(reference.selection.tracks) || !Array.isArray(reference.selection.blocks) || typeof reference.document?.raw !== 'string' || reference.document.content_version !== contentVersion || !Array.isArray(reference.diagnostics) || typeof reference.coverage?.complete !== 'boolean') bad('Same saved core reference required')
   for (const item of [...reference.selection.tracks, ...reference.selection.blocks]) if (!item || typeof item.address !== 'string' || item.content_version !== contentVersion || !(item.stable_id === null || typeof item.stable_id === 'string') || !(item.raw === null || typeof item.raw === 'string')) bad('Malformed core reference selection')
-  if (image?.state !== 'generated' || image.kind !== 'current-composite' || image.approximate !== false || image.mime_type !== 'image/png' || image.frame !== frame || image.content_version !== contentVersion || !whole(frame)) bad('Exact current-composite PNG certificate required')
+  const htmlMode = htmlBlockAddress !== undefined
+  if (htmlMode && (!htmlAddress(htmlBlockAddress) || image?.layer?.block_address !== htmlBlockAddress || !whole(image.layer.local_frame) || !whole(image.layer.duration_frames) || image.layer.local_frame >= image.layer.duration_frames || !relativeHTML(image.layer.html) || image.cache_hit !== false || !reference.selection.blocks.some(item => item.address === htmlBlockAddress))) bad('Exact HTML layer and core frame hit association required')
+  if (image?.state !== 'generated' || image.kind !== (htmlMode ? 'html-layer' : 'current-composite') || image.approximate !== false || image.mime_type !== 'image/png' || image.frame !== frame || image.content_version !== contentVersion || !whole(frame)) bad('Exact current-composite PNG certificate required')
   if (!whole(image.width) || !whole(image.height) || !image.width || !image.height || image.width > FRAME_EDGE_LIMIT || image.height > FRAME_EDGE_LIMIT || image.width * image.height > FRAME_PIXEL_LIMIT) bad('Decode dimensions exceed feature limits')
   if (!fpsMatchesReference(image.fps?.num, image.fps?.den, reference.selection?.fps)) bad('FPS does not match core reference')
-  if (!rawSHA.test(image.sha256) || !rawSHA.test(image.render_key) || !rawSHA.test(image.input_fingerprint) || typeof image.identity_semantics !== 'string' || !image.identity_semantics.includes('Fast media stat identity') || !whole(image.bytes) || image.bytes < 33 || image.bytes > FRAME_WIRE_LIMIT) bad('Missing PNG identity/size certificates')
+  if (!rawSHA.test(image.sha256) || !rawSHA.test(image.render_key) || !rawSHA.test(image.input_fingerprint) || typeof image.identity_semantics !== 'string' || !(htmlMode ? image.identity_semantics === htmlIdentity : image.identity_semantics.includes('Fast media stat identity')) || !whole(image.bytes) || image.bytes < 33 || image.bytes > FRAME_WIRE_LIMIT) bad('Missing PNG identity/size certificates')
   if (limits && (!limits.mediaTypes?.includes('image/png') || image.bytes > limits.maxImageBytes || image.bytes > limits.maxMessageImageBytes || limits.maxImagesPerMessage < 1)) bad('DSH image policy rejects this frame')
   const inline = image.inline
   if (inline?.encoding !== 'base64' || typeof inline.data !== 'string' || inline.data.length !== 4 * Math.ceil(image.bytes / 3)) bad('Canonical bounded base64 required')
@@ -138,10 +143,13 @@ export async function verifyFrame(envelope, { frame, contentVersion, signal, lim
   signal.throwIfAborted()
   // Deliberately exclude inline/base64 and path from retained certificate/message.
   const certificate = Object.fromEntries(['state','kind','approximate','mime_type','width','height','frame','fps','content_version','input_fingerprint','identity_semantics','render_key','cache_hit','bytes','sha256'].map(key => [key, image[key]]))
+  if (htmlMode) certificate.layer = Object.fromEntries(['block_address', 'local_frame', 'duration_frames', 'html'].map(key => [key, image.layer[key]]))
   return { file, certificate, reference }
 }
 export function frameDraftText(generated, selection, positionOnly = false) {
   const reference = generated.reference
+  const htmlMode = generated.certificate.kind === 'html-layer'
+  if (htmlMode && (positionOnly || selection?.kind !== 'block' || selection.address !== generated.certificate.layer?.block_address || !reference.selection.blocks.some(item => item.address === selection.address))) throw new Error('FRAME_NOT_HIT: HTML 图层必须关联该保存块的 core 帧命中；不能改为仅位置或其他选区')
   let selected
   if (selection && !positionOnly) {
     const list = selection.kind === 'track' ? reference.selection.tracks : reference.selection.blocks
@@ -149,13 +157,19 @@ export function frameDraftText(generated, selection, positionOnly = false) {
     if (!selected) throw new Error('FRAME_NOT_HIT: 选中对象不在该帧命中集合；明确选择仅位置引用或重新固定帧')
   }
   const payload = { certificate: generated.certificate, association: positionOnly || !selection ? 'position-only; no association to non-hit selection' : 'selected core frame hit', selected: selected ?? null, reference }
-  const text = `\nFramivra 当前合成帧 + core 原文引用（不是 final/QC 证书）。Fast 媒体 stat 身份；证书仅对渲染时输入成立，加入草稿时不保证素材 live-atomic。全局整数帧由 core 给出；无自动发送。\n\`\`\`json\n${stringifyJSON(payload, 2)}\n\`\`\`\n`
+  const description = htmlMode ? 'Framivra HTML 图层预览 + core 原文引用（不是完整合成帧，不是 final/QC 证书）。仅该 HTML 页的精确帧；Trusted HTML and declared dependencies; not a dependency closure or sandbox。' : 'Framivra 当前合成帧 + core 原文引用（不是 final/QC 证书）。Fast 媒体 stat 身份；证书仅对渲染时输入成立，加入草稿时不保证素材 live-atomic。'
+  const text = `\n${description}全局整数帧由 core 给出；无自动发送。\n\`\`\`json\n${stringifyJSON(payload, 2)}\n\`\`\`\n`
   if (new TextEncoder().encode(text).byteLength > FRAME_WIRE_LIMIT) throw new Error('FRAME_REFERENCE_LIMIT: 引用超限，不截断、不加入草稿')
   return text
 }
 
 export function FrameTools({ owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call }) {
   const [state, setState] = useState({}), [consent, setConsent] = useState(false), [positionOnly, setPositionOnly] = useState(false)
+  const [mode, setMode] = useState('current-composite'), [htmlTrust, setHTMLTrust] = useState(false)
+  const htmlMode = mode === 'html-layer'
+  const htmlBlockAddress = htmlMode && selection?.kind === 'block' && htmlAddress(selection.address) ? selection.address : undefined
+  const modeLabel = htmlMode ? 'HTML 图层预览' : '当前合成帧'
+  const changeMode = event => { owner.invalidate(); setMode(event.target.value); setHTMLTrust(false); setPositionOnly(false); setState({ message: '模式已变化；旧画面已失效，请重新生成。' }) }
   const version = opened.snapshot.content_version
   useEffect(() => () => owner.invalidate(), [owner])
   const generated = owner.generated
@@ -172,10 +186,11 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       operation = owner.begin(tabSignal)
       owner.check(operation)
       if (!consent || !whole(frame)) throw new Error('FRAME_CONSENT: 请固定整数帧并明确允许仅 cache/preview 写入')
+      if (htmlMode && (!htmlBlockAddress || !htmlTrust)) throw new Error('HTML_TRUST_REQUIRED: 请选择保存块并单独确认仅信任本地 HTML')
       owner.generated = undefined
-      setState({ busy: true, message: '正在显式生成当前合成 PNG…' })
-      const envelope = await frameRequest(sessionId, { op: 'render', grant: opened.grant, frame, contentVersion: version, renderConsent: 'cache/preview-only', operationId: crypto.randomUUID() }, operation.signal)
-      const verified = await verifyFrame(envelope, { frame, contentVersion: version, signal: operation.signal, limits: imageLimits() })
+      setState({ busy: true, message: `正在显式生成${modeLabel} PNG…` })
+      const envelope = await frameRequest(sessionId, { op: 'render', grant: opened.grant, frame, contentVersion: version, renderConsent: 'cache/preview-only', operationId: crypto.randomUUID(), ...(htmlMode ? { htmlBlockAddress, htmlTrust: 'trusted-local-html' } : {}) }, operation.signal)
+      const verified = await verifyFrame(envelope, { frame, contentVersion: version, htmlBlockAddress, signal: operation.signal, limits: imageLimits() })
       owner.check(operation)
       // Validate association before making either stage/copy available.
       frameDraftText(verified, selection, positionOnly)
@@ -193,7 +208,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       operation = owner.begin(tabSignal)
       owner.check(operation)
       const current = owner.generated
-      if (!current || current.certificate.frame !== frame || current.certificate.content_version !== version) throw new Error('FRAME_STALE: 请重新生成当前固定帧')
+      if (!current || current.certificate.frame !== frame || current.certificate.content_version !== version || current.certificate.kind !== mode || (htmlMode && current.certificate.layer?.block_address !== htmlBlockAddress)) throw new Error('FRAME_STALE: 请重新生成当前固定帧')
       imageLimits(true)
       setState({ busy: true, message: '核对保存版本后追加到点击时草稿…' })
       const fresh = await call(sessionId, { op: 'reference', grant: opened.grant, query: selection && !positionOnly ? referenceQuery(selection, version, frame) : { expected_content_version: version, frame } }, operation.signal)
@@ -240,12 +255,12 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
   const imageTools = h('details', { className: 'fv-frame-tools-details' },
     h(ToolSummary, { icon: 'more', label: '图片与草稿 · 验证详情', tooltip: '展开图片复制 / 入稿与验证详情' }),
     h('div', { className: 'fv-frame-tools-tools' },
-      h(ToolButton, { icon: 'copy', label: '复制已生成 PNG（再次点击）', tooltip: '把已验证的当前合成 PNG 写入剪贴板（再次点击确认）', disabled: !generated || blocked || state.busy, onClick: () => void copy() }),
+      h(ToolButton, { icon: 'copy', label: '复制已生成 PNG（再次点击）', tooltip: `把已验证的${modeLabel} PNG 写入剪贴板（再次点击确认）`, disabled: !generated || blocked || state.busy, onClick: () => void copy() }),
       h(ToolButton, { icon: 'draft', label: '将该帧 + 精确引用加入当前草稿（不发送）', tooltip: '把已验证帧与精确 core 引用追加到当前草稿，不发送', disabled: !generated || blocked || state.busy, onClick: () => void stage() }),
       !state.busy ? cancelButton() : null),
-    h('label', null, h('input', { type: 'checkbox', checked: positionOnly, onChange: event => { owner.invalidate(); setPositionOnly(event.target.checked); setState({}) } }), '仅位置引用，不关联未命中选区'),
+    h('label', null, h('input', { type: 'checkbox', disabled: htmlMode, checked: positionOnly && !htmlMode, onChange: event => { owner.invalidate(); setPositionOnly(event.target.checked); setState({}) } }), '仅位置引用，不关联未命中选区'),
     h('p', null, '生成前须单独允许本次 cache/preview 写入；不授予 timeline/history 写权限。图片和引用仅加入草稿，不发送。'),
-    h('p', null, `保存版本 ${version} · 固定全局帧 ${frame ?? '未设置'}。current-composite / Fast 身份，不是成片 QC。不会准备缺失输入；只接受 core inline PNG，绝不读取 image.path。`),
+    h('p', null, `保存版本 ${version} · 固定全局帧 ${frame ?? '未设置'}。${htmlMode ? 'html-layer / 受信 HTML 与声明依赖身份，仅该页、无复用' : 'current-composite / Fast 身份'}，不是成片 QC。不会准备缺失输入；只接受 core inline PNG，绝不读取 image.path。`),
     generated ? h('pre', null, stringifyJSON(generated.certificate, 2)) : null)
   return h('section', { 'aria-label': '当前合成帧与草稿', className: 'fv-frame-tools', 'aria-busy': state.busy ? 'true' : 'false' },
     h('style', null, `
@@ -269,15 +284,19 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
 .fv-frame-tools pre{white-space:pre-wrap;overflow-wrap:anywhere}
 ` + iconControlCSS),
     h('div', { className: 'fv-frame-tools-head' },
-      h('h3', null, '当前合成帧'),
+      h('h3', null, modeLabel),
+      h('select', { 'aria-label': '帧预览模式', value: mode, onChange: changeMode }, h('option', { value: 'current-composite' }, '当前合成帧'), h('option', { value: 'html-layer' }, 'HTML 图层预览')),
       h('span', { className: 'fv-frame-tools-meta', title: version }, `版本 ${version.slice(7, 19)} · 帧 ${whole(frame) ? frame : '未固定'}`)),
-    h('div', { className: 'fv-frame-tools-stage' },
+    htmlMode ? h('label', { className: 'fv-frame-tools-check' }, h('input', { type: 'checkbox', checked: htmlTrust, onChange: event => { owner.invalidate(); setHTMLTrust(event.target.checked); setState({ message: 'HTML 信任已变化；旧画面已失效，请重新生成。' }) } }), '仅信任的工程：HTML 会执行脚本，可访问本地文件和网络；不是安全沙箱。') : null,
+    htmlMode ? h('p', null, `保存块 ${htmlBlockAddress ?? '未选择；请选择视频块'}；gfx 类型和局部帧由内核校验。不是完整合成帧。`) : null,
+    generated ? h('p', null, `已生成 ${modeLabel} · 全局帧 ${generated.certificate.frame}${generated.certificate.layer ? ` · 局部帧 ${generated.certificate.layer.local_frame} / ${generated.certificate.layer.duration_frames}` : ''}`) : null,
+    h('div', { className: 'fv-frame-tools-stage', style: htmlMode ? { background: 'repeating-conic-gradient(#333 0% 25%, #555 0% 50%) 0 / 16px 16px' } : undefined },
       shownPreview
-        ? h('img', { src: shownPreview, width: generated.certificate.width, height: generated.certificate.height, alt: `已验证合成帧 ${generated.certificate.frame}（${generated.certificate.width}×${generated.certificate.height} PNG）` })
-        : h('div', { className: 'fv-frame-tools-empty' }, h(Icon, { name: state.busy ? 'refresh' : 'film', size: 32 }), h('span', null, state.busy ? '正在生成并验证…' : whole(frame) ? '未生成画面（需显式生成）' : '未固定帧'))),
+        ? h('img', { src: shownPreview, width: generated.certificate.width, height: generated.certificate.height, title: htmlMode ? '已验证 HTML 图层页；不是完整合成帧或 final/QC' : '已验证当前合成帧；不是 final/QC', alt: `${htmlMode ? '已验证 HTML 图层全局帧' : '已验证合成帧'} ${generated.certificate.frame}（${generated.certificate.width}×${generated.certificate.height} PNG）` })
+        : h('div', { className: 'fv-frame-tools-empty' }, h(Icon, { name: state.busy ? 'refresh' : 'film', size: 32 }), h('span', null, state.busy ? '正在生成并验证…' : whole(frame) ? htmlMode ? 'HTML 图层未生成 / 旧画面已失效（需显式生成）' : '未生成画面（需显式生成）' : '未固定帧'))),
     h('div', { className: 'fv-frame-tools-tools' },
       h('label', { title: '单独允许本次点击向此工程 cache/preview 写入；不授予 timeline/history 写权限。' }, h('input', { type: 'checkbox', checked: consent, onChange: event => { owner.invalidate(); setConsent(event.target.checked); setState({}) } }), '允许写入预览缓存（不改时间线）'),
-      h(ToolButton, { icon: 'camera', variant: 'primary', label: '显式生成并验证固定帧 PNG', tooltip: '显式生成当前固定帧合成 PNG 并逐项验证证书', disabled: !consent || blocked || state.busy, onClick: () => void generate() }),
+      h(ToolButton, { icon: 'camera', variant: 'primary', label: '显式生成并验证固定帧 PNG', tooltip: `显式生成${modeLabel} PNG 并逐项验证证书`, disabled: !consent || blocked || state.busy || (htmlMode && (!htmlBlockAddress || !htmlTrust)), onClick: () => void generate() }),
       state.busy ? cancelButton() : null,
       imageTools),
     blocked ? h('p', { role: 'alert' }, '当前未固定帧，或编辑/队列/计划/写结果未解决；拒绝生成和加入草稿。') : null,

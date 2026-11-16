@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { PreviewError, TimelineReader, fail, HOST_IDENTITY, createRequestLogger, BAKED_BUILD_STAMP, BUILD_STAMP_MARKER, HOST_LIB_MODULES, CLIENT_MODULES, composeBuildStamp } from './protocol.mjs'
+import { PreviewError, TimelineReader, htmlLayerArgs, htmlLayerCapable, fail, HOST_IDENTITY, createRequestLogger, BAKED_BUILD_STAMP, BUILD_STAMP_MARKER, HOST_LIB_MODULES, CLIENT_MODULES, composeBuildStamp } from './protocol.mjs'
 import { mediaResponse } from './media.mjs'
 import { boundedText, CONTROL_REQUEST_LIMIT, FRAME_REQUEST_LIMIT, FRAME_WIRE_LIMIT } from './bounded.mjs'
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
@@ -529,7 +529,7 @@ export function createPreviewHost(ctx, config = {}) {
       try { text = await boundedText(request, FRAME_REQUEST_LIMIT, hold.signal) }
       catch (error) { if (error.message?.startsWith('BODY_LIMIT:')) fail('REQUEST_TOO_LARGE', error.message, 413); throw error }
       const data = parseJSON(text)
-      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['op', 'sessionId', 'grant', 'frame', 'contentVersion', 'renderConsent', 'operationId'].includes(key))) fail('BAD_FRAME', 'Only the bounded frame operation fields are accepted')
+      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['op', 'sessionId', 'grant', 'frame', 'contentVersion', 'renderConsent', 'operationId', 'htmlBlockAddress', 'htmlTrust'].includes(key))) fail('BAD_FRAME', 'Only the bounded frame operation fields are accepted')
       if (typeof data.op === 'string') note.op = data.op
       grant = grantFor(data.sessionId, data.grant, data.op === 'cancel')
       if (data.op === 'cancel') {
@@ -545,7 +545,10 @@ export function createPreviewHost(ctx, config = {}) {
       }
       if (data.op !== 'render' || data.renderConsent !== 'cache/preview-only' || !/^[a-f0-9-]{36}$/.test(data.operationId)) fail('RENDER_DENIED', 'A fresh explicit preview-cache write consent is required', 403)
       if (!Number.isSafeInteger(data.frame) || data.frame < 0 || data.contentVersion !== grant.contentVersion || !/^sha256:[a-f0-9]{64}$/.test(data.contentVersion)) fail('STALE_FRAME', 'Use an exact saved version and pinned integer frame', 409)
+      const htmlOptions = Object.hasOwn(data, 'htmlBlockAddress') || Object.hasOwn(data, 'htmlTrust') ? { htmlBlockAddress: data.htmlBlockAddress, htmlTrust: data.htmlTrust } : undefined
+      htmlLayerArgs(htmlOptions) // Validate before admission or spawning; trust alone is not composite consent.
       if (!inlineCapable(grant.capabilities)) fail('FRAME_UNSUPPORTED', 'Installed core must actually advertise --include-png; no path fallback', 422)
+      if (htmlOptions && !htmlLayerCapable(grant.capabilities)) fail('FRAME_UNSUPPORTED', 'Installed core must advertise the saved trusted HTML layer capability', 422)
       if (semanticAdmission || grant.running || grant.outcomeUnknown || grant.plan || agent.hasLive(grant)) fail('WRITE_BUSY', 'Resolve the active/unknown write or pending plan and refresh before a frame', 409)
       if (frameOwners.size || grant.frame || reader.active.size) fail('FRAME_BUSY', 'Previous process ownership has not been reaped', 409)
       grant.frameNonces ??= new Set()
@@ -580,7 +583,7 @@ export function createPreviewHost(ctx, config = {}) {
         return ctx.fs.processPath(timeline)
       }
       const path = await validate()
-      const result = await reader.frame(grant.executable, path, data.frame, data.contentVersion, signal, grant.configSnapshot, grant.id)
+      const result = await reader.frame(grant.executable, path, data.frame, data.contentVersion, signal, grant.configSnapshot, grant.id, htmlOptions)
       await validate()
       signal.throwIfAborted()
       // Exact whole response bound INCLUDING final newline; image.path is never resolved/read.

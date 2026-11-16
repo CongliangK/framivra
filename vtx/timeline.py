@@ -48,6 +48,8 @@ def timeline_capabilities():
         "expands_subtitles_src": False, "executes_plugins": False,
         "write_operations": [],
         "frame": {"schema": "framivra.timeline.frame/v1", "explicit_render_required": True,
+                  "html_layer": {"flag": "--html-layer", "trust_flag": "--trust-html",
+                                 "kind": "html-layer", "saved_block_only": True},
                   "inline_png": {"flag": "--include-png", "encoding": "base64",
                                  "wire_limit_bytes": 8388608}},
     }

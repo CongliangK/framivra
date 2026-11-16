@@ -14,7 +14,7 @@ async function bench(options = {}) {
     calls.push(spec)
     const operation = spec.argv[3] === 'timeline' ? spec.argv[4] : spec.argv[3]
     const value = operation === 'frame' ? { schema: 'framivra.timeline.frame/v1', operation, ok: true, diagnostics: [], content_version: version, image: { path: '/never/read.png' } }
-      : { schema: 'framivra.timeline.read/v1', operation, ok: true, diagnostics: [], content_version: version, document: {}, coverage: { complete: true, scope: 'unit fixture', unexpanded: [] }, capabilities: { operations: ['inspect', 'query'], frame: options.unsupported ? {} : { schema: 'framivra.timeline.frame/v1', explicit_render_required: true, inline_png: { flag: '--include-png', encoding: 'base64', wire_limit_bytes: FRAME_WIRE_LIMIT } } } }
+      : { schema: 'framivra.timeline.read/v1', operation, ok: true, diagnostics: [], content_version: version, document: {}, coverage: { complete: true, scope: 'unit fixture', unexpanded: [] }, capabilities: { operations: ['inspect', 'query'], frame: options.unsupported ? {} : { schema: 'framivra.timeline.frame/v1', explicit_render_required: true, ...(options.htmlCapability ? { html_layer: options.htmlCapability } : {}), inline_png: { flag: '--include-png', encoding: 'base64', wire_limit_bytes: FRAME_WIRE_LIMIT } } } }
     const text = JSON.stringify(value) + '\n'
     if (operation === 'frame' && options.handle) return options.handle(spec, text)
     return { stdout: Readable.from([Buffer.from(text)]), done: Promise.resolve({ exitCode: 0 }), terminate() {}, waitForExit: async () => true, collected: { stdout: { readFrom: () => ({ text, lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
@@ -27,6 +27,29 @@ async function bench(options = {}) {
   const frame = (data = {}, init = {}) => host.frame(new Request('http://unit/api/framivra/frame', { method: 'POST', body: JSON.stringify({ ...request, operationId: randomUUID(), ...data }), ...init }))
   return { host, fs, cwd, sessions, calls, frame, control, grant, request, expire: () => { now = 30 * 60 * 1000 } }
 }
+const htmlCapability = { flag: '--html-layer', trust_flag: '--trust-html', kind: 'html-layer', saved_block_only: true }
+test('HTML layer Host requires separate trust, canonical address and exact advertised capability before spawning', async () => {
+  for (const [capability, payload, status] of [
+    [undefined, { htmlBlockAddress: '/video_tracks/0/clips/0', htmlTrust: 'trusted-local-html' }, 422],
+    [{ ...htmlCapability, saved_block_only: false }, { htmlBlockAddress: '/video_tracks/0/clips/0', htmlTrust: 'trusted-local-html' }, 422],
+    [htmlCapability, { htmlBlockAddress: '/video_tracks/0/clips/0' }, 403],
+    [htmlCapability, { htmlTrust: 'trusted-local-html' }, 400],
+    [htmlCapability, { htmlBlockAddress: '/video_tracks/00/clips/0', htmlTrust: 'trusted-local-html' }, 400],
+    [htmlCapability, { htmlBlockAddress: '/video_tracks/0/clips/0', htmlTrust: 'trusted-local-html', renderConsent: '' }, 403],
+  ]) {
+    const b = await bench({ htmlCapability: capability })
+    try { assert.equal((await b.frame(payload)).status, status); assert.equal(b.calls.filter(s => s.argv[4] === 'frame').length, 0) }
+    finally { await b.host.dispose() }
+  }
+  const b = await bench({ htmlCapability })
+  try {
+    assert.equal((await b.frame({ htmlBlockAddress: '/video_tracks/2/clips/3', htmlTrust: 'trusted-local-html' })).status, 200)
+    assert.deepEqual(b.calls.at(-1).argv.slice(-3), ['--html-layer', '/video_tracks/2/clips/3', '--trust-html'])
+    assert(b.calls.at(-1).argv.includes('--include-png'))
+    assert.equal((await b.frame()).status, 200)
+    assert(!b.calls.at(-1).argv.includes('--html-layer')); assert(!b.calls.at(-1).argv.includes('--trust-html'))
+  } finally { await b.host.dispose() }
+})
 test('frame Host refuses missing consent/capability, stale versions, replacement executable, path/session/cwd/TTL changes without a render', async () => {
   const cases = [
     ['consent', b => ({ renderConsent: '' }), 403],
