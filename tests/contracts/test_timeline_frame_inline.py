@@ -293,7 +293,9 @@ class InlineTransport(unittest.TestCase):
         self.assertTrue(caps['read_only'])
         self.assertEqual(caps['write_operations'], [])
         self.assertEqual(caps['frame'], {'schema': 'framivra.timeline.frame/v1', 'explicit_render_required': True,
-            'inline_png': {'flag': '--include-png', 'encoding': 'base64', 'wire_limit_bytes': 8388608}})
+            'inline_png': {'flag': '--include-png', 'encoding': 'base64', 'wire_limit_bytes': 8388608},
+            'prepare_gfx': {'flag': '--prepare-gfx', 'trust_flag': '--trust-html',
+                            'kind': 'current-composite', 'preview_only': True, 'inline_required': True}})
         from vtx.api import timeline_store_capabilities
         self.assertNotIn('frame', timeline_store_capabilities())
 

@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { PreviewError, TimelineReader, htmlLayerArgs, htmlLayerCapable, fail, HOST_IDENTITY, createRequestLogger, BAKED_BUILD_STAMP, BUILD_STAMP_MARKER, HOST_LIB_MODULES, CLIENT_MODULES, composeBuildStamp } from './protocol.mjs'
+import { PreviewError, TimelineReader, prepareGfxArgs, prepareGfxCapable, fail, HOST_IDENTITY, createRequestLogger, BAKED_BUILD_STAMP, BUILD_STAMP_MARKER, HOST_LIB_MODULES, CLIENT_MODULES, composeBuildStamp } from './protocol.mjs'
 import { mediaResponse } from './media.mjs'
 import { boundedText, CONTROL_REQUEST_LIMIT, FRAME_REQUEST_LIMIT, FRAME_WIRE_LIMIT } from './bounded.mjs'
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
@@ -77,6 +77,9 @@ export function createPreviewHost(ctx, config = {}) {
   const operations = new Set()
   const streams = new Set()
   const frameOwners = new Set()
+  // Explicit FIFO: one running frame plus at most four waiting clicks. Each
+  // entry owns its grant/controller/deadline from admission through cleanup.
+  const frameQueue = []
   let semanticAdmission = 0
   const clock = config.clock ?? Date.now
   const ttlMs = 30 * 60 * 1000
@@ -523,13 +526,13 @@ export function createPreviewHost(ctx, config = {}) {
   async function frame(request, note = {}) {
     if (request.method !== 'POST') fail('METHOD_NOT_ALLOWED', 'Frame is POST-only', 405)
     const hold = lease(request)
-    let grant, controller, settled, monitor, expiry
+    let grant, controller, settled, monitor, expiry, queued
     try {
       let text
       try { text = await boundedText(request, FRAME_REQUEST_LIMIT, hold.signal) }
       catch (error) { if (error.message?.startsWith('BODY_LIMIT:')) fail('REQUEST_TOO_LARGE', error.message, 413); throw error }
       const data = parseJSON(text)
-      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['op', 'sessionId', 'grant', 'frame', 'contentVersion', 'renderConsent', 'operationId', 'htmlBlockAddress', 'htmlTrust'].includes(key))) fail('BAD_FRAME', 'Only the bounded frame operation fields are accepted')
+      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['op', 'sessionId', 'grant', 'frame', 'contentVersion', 'renderConsent', 'operationId', 'prepareGfx', 'htmlTrust'].includes(key))) fail('BAD_FRAME', 'Only the bounded frame operation fields are accepted')
       if (typeof data.op === 'string') note.op = data.op
       grant = grantFor(data.sessionId, data.grant, data.op === 'cancel')
       if (data.op === 'cancel') {
@@ -543,14 +546,15 @@ export function createPreviewHost(ctx, config = {}) {
         frameOwners.delete(grant)
         return json({ ok: true, reaped: true })
       }
-      if (data.op !== 'render' || data.renderConsent !== 'cache/preview-only' || !/^[a-f0-9-]{36}$/.test(data.operationId)) fail('RENDER_DENIED', 'A fresh explicit preview-cache write consent is required', 403)
+      if (data.op !== 'render' || data.renderConsent !== 'cache/preview-only' || typeof data.operationId !== 'string' || !/^[a-f0-9-]{36}$/.test(data.operationId)) fail('RENDER_DENIED', 'A fresh explicit preview-cache write consent is required', 403)
       if (!Number.isSafeInteger(data.frame) || data.frame < 0 || data.contentVersion !== grant.contentVersion || !/^sha256:[a-f0-9]{64}$/.test(data.contentVersion)) fail('STALE_FRAME', 'Use an exact saved version and pinned integer frame', 409)
-      const htmlOptions = Object.hasOwn(data, 'htmlBlockAddress') || Object.hasOwn(data, 'htmlTrust') ? { htmlBlockAddress: data.htmlBlockAddress, htmlTrust: data.htmlTrust } : undefined
-      htmlLayerArgs(htmlOptions) // Validate before admission or spawning; trust alone is not composite consent.
+      const options = Object.hasOwn(data, 'prepareGfx') || Object.hasOwn(data, 'htmlTrust') ? Object.fromEntries(['prepareGfx', 'htmlTrust'].filter(key => Object.hasOwn(data, key)).map(key => [key, data[key]])) : undefined
+      prepareGfxArgs(options) // Validate exact types/combinations before admission or spawning.
       if (!inlineCapable(grant.capabilities)) fail('FRAME_UNSUPPORTED', 'Installed core must actually advertise --include-png; no path fallback', 422)
-      if (htmlOptions && !htmlLayerCapable(grant.capabilities)) fail('FRAME_UNSUPPORTED', 'Installed core must advertise the saved trusted HTML layer capability', 422)
+      if (options?.prepareGfx === true && !prepareGfxCapable(grant.capabilities)) fail('FRAME_UNSUPPORTED', 'Installed core must advertise current-composite preview-only graphics preparation', 422)
       if (semanticAdmission || grant.running || grant.outcomeUnknown || grant.plan || agent.hasLive(grant)) fail('WRITE_BUSY', 'Resolve the active/unknown write or pending plan and refresh before a frame', 409)
-      if (frameOwners.size || grant.frame || reader.active.size) fail('FRAME_BUSY', 'Previous process ownership has not been reaped', 409)
+      if (grant.frame || (!frameQueue.length && (frameOwners.size || reader.active.size))) fail('FRAME_BUSY', 'Previous process ownership has not been reaped; cancel it explicitly', 409)
+      if (frameQueue.length >= 5) fail('FRAME_QUEUE_FULL', 'At most four explicit frame clicks may wait; no automatic retry', 429)
       grant.frameNonces ??= new Set()
       if (grant.frameNonces.has(data.operationId)) fail('FRAME_REPLAY', 'A render click is single-use; no automatic retry', 409)
       if (grant.frameNonces.size >= 128) fail('FRAME_LIMIT', 'Reopen this preview before more captures', 429)
@@ -560,6 +564,11 @@ export function createPreviewHost(ctx, config = {}) {
       frameOwners.add(grant)
       grant.frameDone = new Promise(resolve => { settled = resolve })
       const signal = AbortSignal.any([hold.signal, controller.signal])
+      let start
+      const turn = new Promise(resolve => { start = resolve })
+      queued = { start, grant }
+      frameQueue.push(queued)
+      if (frameQueue.length === 1) start()
       monitor = setInterval(() => {
         // Same fail-closed rule as the edit monitor: a throwing provider must
         // abort this frame, never escape as an uncaught timer exception.
@@ -582,8 +591,20 @@ export function createPreviewHost(ctx, config = {}) {
         signal.throwIfAborted()
         return ctx.fs.processPath(timeline)
       }
+      // Waiting consumes the SAME request lease; no polling, retries or
+      // deadline extension. Abort removes only this entry in finally.
+      await new Promise((resolve, reject) => {
+        const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason) }
+        signal.addEventListener('abort', abort, { once: true })
+        turn.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+        if (signal.aborted) abort()
+      })
+      signal.throwIfAborted()
+      // Predecessor cleanup is complete, but failed cleanup or an unrelated
+      // read may still own a child. Refuse once, never wait/retry behind it.
+      if (reader.active.size || [...frameOwners].some(owner => owner !== grant && !frameQueue.some(entry => entry.grant === owner))) fail('FRAME_BUSY', 'Previous process ownership has not been reaped', 409)
       const path = await validate()
-      const result = await reader.frame(grant.executable, path, data.frame, data.contentVersion, signal, grant.configSnapshot, grant.id, htmlOptions)
+      const result = await reader.frame(grant.executable, path, data.frame, data.contentVersion, signal, grant.configSnapshot, grant.id, options)
       await validate()
       signal.throwIfAborted()
       // Exact whole response bound INCLUDING final newline; image.path is never resolved/read.
@@ -600,6 +621,11 @@ export function createPreviewHost(ctx, config = {}) {
         // semanticBusy) and reap(owner) semantics are unchanged elsewhere.
         if (!reader.activeFor(grant.id, 'frame') && grant.frame === controller) { grant.frame = undefined; frameOwners.delete(grant) }
         settled()
+        const index = frameQueue.indexOf(queued)
+        if (index >= 0) {
+          frameQueue.splice(index, 1)
+          if (index === 0) frameQueue[0]?.start()
+        }
       }
       hold.release()
     }

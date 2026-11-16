@@ -27,13 +27,15 @@ from ..timeline_frame import frame_timeline, _SCHEMA
 
 def run_frame_command(args, parser):
     allowed = {"command", "timeline", "subs_extra", "frame", "expected_content_version",
-               "render", "max_png_bytes", "include_png", "html_layer", "trust_html"}
+               "render", "max_png_bytes", "include_png", "prepare_gfx", "trust_html"}
     unused = [key for key, value in vars(args).items()
               if key not in allowed and value != parser.get_default(key)]
     if args.include_png and not args.render:
         unused.append("--include-png requires --render")
-    if getattr(args, "trust_html", False) and getattr(args, "html_layer", None) is None:
-        unused.append("--trust-html requires --html-layer")
+    if getattr(args, 'trust_html', False) and not getattr(args, 'prepare_gfx', False):
+        unused.append('--trust-html requires --prepare-gfx')
+    if getattr(args, 'prepare_gfx', False) and (not args.render or not args.include_png):
+        unused.append('--prepare-gfx requires --render and --include-png')
     if args.subs_extra != ["frame"] or unused:
         result = {"schema": _SCHEMA, "operation": "frame", "ok": True,
                   "content_version": None, "reference": None, "image": None, "diagnostics": []}
@@ -42,7 +44,7 @@ def run_frame_command(args, parser):
     else:
         kwargs = {"frame": _integer(args.frame), "render": args.render,
                   "include_png": args.include_png,
-                  "html_block_address": getattr(args, "html_layer", None), "trust_html": getattr(args, "trust_html", False),
+                  "prepare_gfx": getattr(args, 'prepare_gfx', False), "trust_html": getattr(args, "trust_html", False),
                   "expected_content_version": args.expected_content_version}
         if args.max_png_bytes is not None:
             kwargs["max_png_bytes"] = _integer(args.max_png_bytes)

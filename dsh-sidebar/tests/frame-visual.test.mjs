@@ -10,7 +10,7 @@ import { FrameEpoch, FrameTools } from '../src/client/frame.mjs'
 const snapshot = { content_version: 'sha256:' + 'a'.repeat(64), document: { project: { duration_frames: 100 } } }
 const cleanResult = () => ({
   file: new File(['png-bytes'], 'framivra-frame-10-0000.png', { type: 'image/png' }),
-  certificate: { frame: 10, content_version: snapshot.content_version, width: 1920, height: 1080 },
+  certificate: { kind: 'current-composite', frame: 10, content_version: snapshot.content_version, width: 1920, height: 1080 },
   reference: { selection: { tracks: [], blocks: [] } },
 })
 
@@ -43,23 +43,59 @@ async function fixture(t, { withObjectURL = false } = {}) {
   return { owner, root, section, rerender, calls, act }
 }
 
-test('HTML mode and separate trust synchronously invalidate retained previews and operations', async t => {
+test('prepare and independent HTML trust synchronously invalidate; no layer mode or automatic render', async t => {
   const f = await fixture(t)
-  const select = f.section().querySelector('select[aria-label="帧预览模式"]')
-  assert(select)
+  assert.equal(f.section().querySelector('select'), null)
+  const prepare = [...f.section().querySelectorAll('input')].find(input => input.parentElement.textContent.includes('允许按需准备当前帧图形'))
+  assert(prepare); assert.equal(prepare.checked, false)
+  assert(!f.section().textContent.includes('仅信任的工程'))
   const operation = f.owner.begin(new AbortController().signal)
   f.owner.generated = cleanResult()
   await f.act(async () => {
-    select.value = 'html-layer'; select.dispatchEvent(new window.Event('change', { bubbles: true }))
+    prepare.click()
     assert.equal(operation.signal.aborted, true); assert.equal(f.owner.generated, undefined)
   })
-  assert(f.section().textContent.includes('HTML 会执行脚本，可访问本地文件和网络'))
-  assert(f.section().textContent.includes('不是完整合成帧'))
+  assert(f.section().textContent.includes('浏览器允许的文件和网络'))
+  assert(f.section().textContent.includes('不是沙箱'))
   const trust = [...f.section().querySelectorAll('input')].find(input => input.parentElement.textContent.includes('仅信任的工程'))
+  assert.equal(trust.checked, false, 'prepare is not HTML trust')
   const next = f.owner.begin(new AbortController().signal); f.owner.generated = cleanResult()
   await f.act(async () => { trust.click(); assert.equal(next.signal.aborted, true); assert.equal(f.owner.generated, undefined) })
-  const generate = [...f.section().querySelectorAll('button')].find(button => button.textContent.includes('显式生成并验证'))
-  assert.equal(generate.disabled, true, 'saved block selection remains required')
+  await f.act(async () => prepare.click())
+  await f.act(async () => prepare.click())
+  assert.equal([...f.section().querySelectorAll('input')].find(input => input.parentElement.textContent.includes('仅信任的工程')).checked, false)
+  assert.equal(f.owner.generated, undefined)
+})
+test('UI prepare allows cold SVG without HTML trust; only explicit clicks send bounded opt-in payloads', async t => {
+  const f = await fixture(t), requests = []
+  const previous = globalThis.fetch
+  globalThis.fetch = async (_url, init) => {
+    requests.push(JSON.parse(init.body))
+    return new Response(JSON.stringify({ ok: false, error: 'FIXTURE_STOP', message: 'request recorded, no render' }), { status: 403 })
+  }
+  t.after(() => { globalThis.fetch = previous })
+  const input = label => [...f.section().querySelectorAll('input')].find(node => node.parentElement.textContent.includes(label))
+  const button = () => [...f.section().querySelectorAll('button')].find(node => node.textContent.startsWith('显式生成并验证'))
+  await f.act(async () => input('允许写入预览缓存').click())
+  const oldButton = button(), oldGenerate = oldButton[Object.keys(oldButton).find(key => key.startsWith('__reactProps$'))].onClick
+  await f.act(async () => {
+    input('允许按需准备').click()
+    oldGenerate() // Retained closure from the previous authorization cannot render.
+  })
+  assert.deepEqual(requests, [])
+  assert.equal(input('仅信任的工程').checked, false)
+  assert.equal(button().disabled, false, 'SVG preparation needs no HTML trust')
+  await f.act(async () => button().click())
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].prepareGfx, true); assert(!Object.hasOwn(requests[0], 'htmlTrust'))
+  await f.act(async () => input('仅信任的工程').click())
+  assert.equal(requests.length, 1, 'trust never automatically generates')
+  await f.act(async () => button().click())
+  assert.equal(requests[1].htmlTrust, 'trusted-local-html'); assert.equal(requests[1].prepareGfx, true)
+  await f.act(async () => input('允许按需准备').click())
+  await f.act(async () => button().click())
+  assert(!Object.hasOwn(requests[2], 'prepareGfx')); assert(!Object.hasOwn(requests[2], 'htmlTrust'))
+  for (const request of requests) { assert.equal(request.renderConsent, 'cache/preview-only'); assert(!Object.hasOwn(request, 'htmlBlockAddress')) }
 })
 test('frame visual: stage placeholders, folded prose/certificate, labels and consent order preserved', async t => {
   const f = await fixture(t)

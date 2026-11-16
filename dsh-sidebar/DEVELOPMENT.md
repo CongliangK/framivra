@@ -87,7 +87,11 @@ After generation, a **second explicit click** either copies the verified PNG or 
 
 Clipboard support/permission refusal is visible and never silently falls back to text. OS clipboard writes cannot be recalled after a later invalidation, and the OS may re-encode PNGs. Temporary decode URLs are revoked; applied draft previews belong to DSH. Certificates identify the render-time inputs with **Fast media stat identity**, not live-atomic media at draft-intake time, a final render, QC or an immutable clipboard byte promise.
 
-### 精确时间定位
+### 冷准备、排队与精确定位
+
+另行勾选冷准备后，Host 仅在内核实际广告 `frame.prepare_gfx` 时传 `--prepare-gfx`；可见 HTML 需额外按保存版本确认执行信任。不发送 HTML 正文/任意路径，不新增图层交付 kind；完整当前帧仍经相同原文/版本/FPS/PNG/SHA/浏览器完整解码及草稿二次点击校验。新模式只交付 inline PNG，`path:null`，请求临时件在成功响应前清理；失败账本的恢复限制见[内核合同](../docs/reference/timeline-api.md#显式冷态图形准备完整当前帧)。HTML 仍非沙箱，不能把声明依赖或执行许可描述为零网络/任意代码隔离。
+
+Host 全局 FIFO 最多 1 个执行 + 4 个等待的不同 grant；同 grant 仍须先取消当前请求，面板忙时不暗中积累点击。等待计入原 30 秒 lease，不续租或自动重试。队列条目在获准时取得 nonce/owner/expiry/config 监控；轮到时仍需实际子进程清空。取消只移除自己的条目并等待回收，失败清理不释放残留的拥有权；grant/cwd/配置/卸载使等待与运行请求同样失效。界面只显示诚实的等待/准备/合成状态，不把有限 JSON 伪装成逐阶段图片流。
 
 时间定位提供折叠的整数秒与零基秒内偏移，30fps 下 `10 + 5` 明确换算为全局帧 305；换算定位本身不查询或渲染。完整合成始终使用该规范整数帧，不能把单页图层帧替代 current-composite。
 
