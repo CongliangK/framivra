@@ -33,6 +33,7 @@
 
 #include "frame_pipeline.h"
 #include "ipc_protocol.hpp"
+#include "invalidation_policy.hpp"
 #include "pair_swap_planner.hpp"
 #include "png_writer.h"
 #include "shm_ring.hpp"
@@ -654,6 +655,7 @@ class ExactBaselineCapture {
   bool Begin(const ServeOptions& opt, uint32_t gen, uint32_t req,
              int32_t frame, uint64_t load_deadline, uint64_t request_begin_us) {
     options_ = &opt;
+    invalidation_.Reset(opt.cef.capture_fps);
     mode_n_ = opt.sync_mode != "p";
     if (!mode_n_ && resident_poisoned_)
       return Fail("resident_request_previously_failed");
@@ -842,7 +844,12 @@ class ExactBaselineCapture {
     if (injected_ && !ready_ && NowUs() >= ready_deadline_)
       return Fail("unsigned_ready_timeout");
     if (samples_count_ < samples_.size()) {
-      browser_->GetHost()->Invalidate(PET_VIEW);
+      // Loading, readiness and each fresh sample have independent demand.
+      // Stale callbacks cannot complete demand; retry within capture/pump cadence
+      // while preserving EVERY existing BeginFrame (including pre-ready rAF).
+      const uint64_t phase = ready_ ? 2u + samples_count_ : injected_ ? 1u : 0u;
+      if (invalidation_.ShouldInvalidate(NowUs(), phase))
+        browser_->GetHost()->Invalidate(PET_VIEW);
       browser_->GetHost()->SendExternalBeginFrame();
     }
     return true;
@@ -989,6 +996,7 @@ class ExactBaselineCapture {
   CefRefPtr<CefRequestContext> request_context_;
   bool creating_ = false;
   const ServeOptions* options_ = nullptr;
+  ActiveInvalidationPolicy invalidation_;
   fsync::PageEvent identity_{};
   std::array<PaintSample, 2> samples_;
   size_t samples_count_ = 0;
@@ -1181,6 +1189,9 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
                         opt.sync_fault),
       "vtx_sync_bridge", 0);
 
+  // Request-local policy: no invalidation state crosses request/pair boundaries.
+  ActiveInvalidationPolicy signed_invalidation;
+  signed_invalidation.Reset(opt.cef.capture_fps);
   // —— S1→S3：就绪信号等待。泵送 BeginFrame 让 rAF/MessageChannel 推进；
   //    期间 OnPaint 走状态机早期丢弃（early_paint_dropped 计数面）。——
   const uint64_t t0 = NowUs();
@@ -1201,7 +1212,9 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
     // The reference fence pumps the signed browser too; it can close even
     // while the unsigned fence succeeds. Check before any signed browser call.
     if (state.closed.load()) return js_fail("signed_browser_closed");
-    browser->GetHost()->Invalidate(PET_VIEW);
+    if (signed_invalidation.ShouldInvalidate(
+            NowUs(), static_cast<uint64_t>(machine.state())))
+      browser->GetHost()->Invalidate(PET_VIEW);
     browser->GetHost()->SendExternalBeginFrame();
     pump.Once();
     DrainSyncReadyQueue(state, machine);
@@ -1237,7 +1250,12 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
       relocated = true;
     }
     if (!exact || !machine.needs_baseline_veto()) {
-      browser->GetHost()->Invalidate(PET_VIEW);
+      // S4 readiness and relocation each force a new invalidation. Same-phase
+      // callbacks never consume demand; retry within capture/8 ms pump cadence.
+      const uint64_t phase = static_cast<uint64_t>(machine.state()) +
+          (relocated ? 16u : 0u);
+      if (signed_invalidation.ShouldInvalidate(NowUs(), phase))
+        browser->GetHost()->Invalidate(PET_VIEW);
       browser->GetHost()->SendExternalBeginFrame();
     }
     pump.Once();

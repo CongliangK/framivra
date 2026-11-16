@@ -32,6 +32,8 @@ import base64
 from ..runtime import fstxn, file_clone
 from itertools import groupby
 import hashlib
+import http.client
+import io
 from pathlib import Path
 import json
 import os
@@ -316,7 +318,8 @@ class WSConn:
 class Tab:
     """一个 page target 的 CDP 会话（线程独占）。"""
 
-    def __init__(self, port, ws_path, width=1920, height=1080):
+    def __init__(self, port, ws_path, width=1920, height=1080, *, optimize_for_speed=False):
+        self.optimize_for_speed = optimize_for_speed
         self.ws = WSConn(port, ws_path)
         try:
             self._mid = 0
@@ -424,8 +427,155 @@ class Tab:
         return r.get("result", {}).get("value")
 
     def shot(self) -> bytes:
-        r = self.call("Page.captureScreenshot", format="png", timeout=30)
+        params = {"format": "png"}
+        if getattr(self, "optimize_for_speed", False):
+            params["optimizeForSpeed"] = True
+        r = self.call("Page.captureScreenshot", timeout=30, **params)
         return base64.b64decode(r["data"])
+
+
+def _screenshot_speed_schema(protocol):
+    """Only a well-formed optional boolean declaration enables the PNG hint."""
+    if not isinstance(protocol, dict) or not isinstance(protocol.get('domains'), list):
+        return 'unknown-schema'
+    if any(not isinstance(d, dict) or not isinstance(d.get('domain'), str)
+           for d in protocol['domains']):
+        return 'unknown-schema'
+    pages = [d for d in protocol['domains'] if d['domain'] == 'Page']
+    if len(pages) != 1 or not isinstance(pages[0].get('commands'), list):
+        return 'unknown-schema'
+    if any(not isinstance(c, dict) or not isinstance(c.get('name'), str)
+           for c in pages[0]['commands']):
+        return 'unknown-schema'
+    commands = [c for c in pages[0]['commands'] if c['name'] == 'captureScreenshot']
+    if len(commands) != 1 or not isinstance(commands[0].get('parameters'), list):
+        return 'unknown-schema'
+    parameters = commands[0]['parameters']
+    names = set()
+    for parameter in parameters:
+        if (not isinstance(parameter, dict) or not isinstance(parameter.get('name'), str)
+                or not parameter['name'] or parameter['name'] in names
+                or (('type' in parameter) == ('$ref' in parameter))
+                or ('type' in parameter and parameter['type'] not in
+                    ('boolean', 'integer', 'number', 'string', 'object', 'array', 'any', 'binary'))
+                or ('$ref' in parameter and (not isinstance(parameter['$ref'], str)
+                                            or not parameter['$ref']))
+                or ('optional' in parameter and type(parameter['optional']) is not bool)):
+            return 'unknown-schema'
+        names.add(parameter['name'])
+    matches = [p for p in parameters if p['name'] == 'optimizeForSpeed']
+    if not matches:
+        return 'unsupported'
+    parameter = matches[0]
+    if parameter.get('type') == 'boolean' and parameter.get('optional') is True:
+        return 'enabled'
+    return 'unknown-schema'
+
+
+class _ProtocolProbeTooLarge(ValueError):
+    pass
+
+
+class _ProtocolProbeReader(io.RawIOBase):
+    """Bound every raw receive, including HTTP headers, to one owned budget."""
+    def __init__(self, sock, deadline):
+        self.sock, self.deadline = sock, deadline
+        # Retain the socket's file reference: HTTPConnection may close its own
+        # reference immediately after headers when the server says close.
+        self.stream = None
+        self.stream = sock.makefile('rb', buffering=0)
+        self.remaining_bytes = 4 * 1024 * 1024 + 65536
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('protocol probe deadline')
+        if self.remaining_bytes <= 0:
+            raise _ProtocolProbeTooLarge()
+        self.sock.settimeout(remaining)
+        n = self.stream.readinto(memoryview(buffer)[:self.remaining_bytes])
+        self.remaining_bytes -= n
+        return n
+
+    def close(self):
+        try:
+            if self.stream is not None:
+                self.stream.close()
+        finally:
+            super().close()
+
+
+class _ProtocolProbeSocket:
+    def __init__(self, sock, deadline):
+        self.sock, self.deadline = sock, deadline
+
+    def __getattr__(self, name):
+        return getattr(self.sock, name)
+
+    def makefile(self, *args, **kwargs):
+        return io.BufferedReader(_ProtocolProbeReader(self.sock, self.deadline))
+
+    def sendall(self, data):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('protocol probe deadline')
+        self.sock.settimeout(remaining)
+        self.sock.sendall(data)
+
+
+class _ProtocolProbeConnection(http.client.HTTPConnection):
+    def __init__(self, port, deadline, timeout):
+        super().__init__('127.0.0.1', port, timeout=timeout)
+        self.deadline = deadline
+
+    def connect(self):
+        super().connect()
+        self.sock = _ProtocolProbeSocket(self.sock, self.deadline)
+
+
+def _probe_screenshot_speed(port, timeout=1.0):
+    """Optional local DevTools probe with total deadline and bounded wire/body.
+
+    Unknown schema/I/O/timeout keeps legacy screenshots. This does not handle
+    errors from actual screenshots, JS evaluation or strict request enforcement.
+    """
+    if timeout <= 0:
+        return 'unknown-timeout'
+    deadline = time.monotonic() + timeout
+    limit = 4 * 1024 * 1024
+    connection = _ProtocolProbeConnection(port, deadline, timeout)
+    try:
+        connection.request('GET', '/json/protocol', headers={'Connection': 'close'})
+        with connection.getresponse() as response:
+            if response.status != 200:
+                return 'unknown-io'
+            chunks, size = [], 0
+            while True:
+                if time.monotonic() >= deadline:
+                    return 'unknown-timeout'
+                chunk = response.read1(min(65536, limit + 1 - size))
+                if time.monotonic() >= deadline:
+                    return 'unknown-timeout'
+                size += len(chunk)
+                if size > limit:
+                    return 'unknown-size'
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        return _screenshot_speed_schema(json.loads(b''.join(chunks)))
+    except (TimeoutError, socket.timeout):
+        return 'unknown-timeout'
+    except _ProtocolProbeTooLarge:
+        return 'unknown-size'
+    except (OSError, http.client.HTTPException):
+        return 'unknown-io'
+    except (ValueError, UnicodeError, RecursionError):
+        return 'unknown-schema'
+    finally:
+        connection.close()
 
 
 _SUPERVISION_WARNED = False
@@ -470,6 +620,7 @@ class Browser:
         self.tab_ws_urls = []
         self.lock = threading.Lock()
         self.generation = 0
+        self.screenshot_speed_capability = 'unknown-unprobed'
 
     def _find_chrome(self):
         if self.chrome:
@@ -479,6 +630,7 @@ class Browser:
             raise RuntimeError("no chrome found")
 
     def start(self):
+        self.screenshot_speed_capability = 'unknown-unprobed'
         self._find_chrome()
         from .gfx_environment import CHROME_VISUAL_FLAGS
         s = socket.socket()
@@ -535,6 +687,11 @@ class Browser:
                 time.sleep(0.2)
         else:
             raise RuntimeError("chrome devtools not ready in 15s")
+        probe_budget = min(1.0, max(0.0, deadline - time.monotonic()))
+        self.screenshot_speed_capability = (
+            _probe_screenshot_speed(self.port, probe_budget) if probe_budget > 0
+            else 'unknown-timeout')
+        print(f"  CDP screenshot optimizeForSpeed: {self.screenshot_speed_capability}")
         req = urllib.request.Request(
             f"http://127.0.0.1:{self.port}/json/new?about:blank", method="PUT")
         self.tab_ws_urls = []
@@ -549,7 +706,8 @@ class Browser:
         tabs = []
         try:
             for u in self.tab_ws_urls:
-                tabs.append(Tab(self.port, u, self.width, self.height))
+                tabs.append(Tab(self.port, u, self.width, self.height,
+                                optimize_for_speed=self.screenshot_speed_capability == 'enabled'))
         except BaseException:
             for t in tabs:
                 t.close()

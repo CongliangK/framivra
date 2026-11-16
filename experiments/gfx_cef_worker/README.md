@@ -158,6 +158,10 @@ VTX_GFX_SPLIT_MAX=3` 后，冷态 `all` 中位 91.749→86.244s，配对减时�
 timeline 帧率、尺寸、codec 与像素证明不变；日志记录请求值，配置变化仍使缓存身份变化。
 无见证浏览器仅在 readiness 后收集两次真实 paint 时复制快照，闲置签名浏览器不复制；
 丢弃的回调仍递增 native paint 序号，重新启用时清旧缓冲并建立新 floor，不减少证明样本。
+活动 producer 对同一需求的强制 `Invalidate` 最多合并到 `min(8ms, 请求采样周期)`，
+新请求、readiness、见证搬移及下一独立样本立即触发；stale 回调不消费需求，仍有界重试。
+每个原有 `SendExternalBeginFrame`、就绪前双 rAF、绘制后围栏、两次 unsigned 样本及超时
+均保留，不是替代 BeginFrame 架构或闲置预热；当前原型的完整性能尚待复验，不能沿用上表收益。
 原生 capture 与 encode 已由深度 2 ticket 流水重叠；后续优化须测量未被隐藏的关键路径，
 不能再次把已重叠的编码时间计为新增收益，也不能把编码线程数当作加速倍数。
 
@@ -225,7 +229,11 @@ BENCH_OUTPUT="${BENCH_PARENT:?}/cef-bench-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 逐轮 events、日志、回执、native/pipeline 证据。报告分别展示 strict QC、900 帧/PTS/音频
 检查及配对 decoded-video/PCM 一致性；它们互不替代，也不等于人工视觉验收。
 RSS 采样会重复计算共享页且漏掉瞬时峰值，不是精确物理内存/完整树峰值；CPU 采样
-只是已观测用量下界。旧 worker 缺失的分项或未知资源写 unavailable/null，不补 0。
+只是已观测用量下界。Mac 另采样当前命令进程树的 `proc_pid_rusage` 磁盘读写字节下界，
+漏短进程/退出尾部，不是逻辑文件字节、IO延迟或完整归因。命令墙钟外的前后快照记录主机
+压力等级、空闲百分比代理及swap；这是整个主机的两个端点，不是本命令造成的变化或峰值。
+未知/不支持/失败分别保留覆盖率和null，不能补0；当前Linux新增IO与压力观察不支持。
+旧 worker 缺失的分项或未知资源写 unavailable/null，不补 0。
 失败与不完整轮次保留，不挑选最好成绩；原始证据可能含本地路径，分享前须审查。
 
 一次成功运行的定位顺序：外层 CLI 墙钟定总边界，execution events 划分程序内串行/
