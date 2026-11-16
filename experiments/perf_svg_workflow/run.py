@@ -12,7 +12,6 @@ import os
 from pathlib import Path
 import shutil
 import sys
-import wave
 from fractions import Fraction
 
 
@@ -170,12 +169,20 @@ def main():
             row['gfx_certificate_build'] = dict(raster_seconds=value['raster_seconds'],
                                                 batch_count=value['batch_count'],
                                                 scope='original cold producer, not warm execution work')
-            with wave.open(str(project / 'out/audio.wav'), 'rb') as audio:
-                row['mix_audio'] = dict(samples=audio.getnframes(), sample_rate=audio.getframerate(),
-                                        channels=audio.getnchannels(), sample_bytes=audio.getsampwidth(),
-                                        sha256=sha(project / 'out/audio.wav'))
-            if row['mix_audio']['samples'] != 1440000 or row['mix_audio']['sample_rate'] != 48000:
-                raise RuntimeError('mixed WAV sample clock mismatch')
+            # core intentionally removes the intermediate WAV. Verify the REAL
+            # final decoded PCM clock; do not change retention just for this study.
+            timing = row['media']['audio_timing']
+            row['decoded_audio'] = dict(samples=timing['sample_frames'], sample_rate=timing['sample_rate'],
+                                         channels=timing['channels'], sample_format=timing['sample_format'],
+                                         decoded_duration=timing['decoded_duration'],
+                                         source_duration=timing['source_duration'],
+                                         pcm_sha256=row['media']['audio_digest'])
+            if (row['decoded_audio']['samples'] != 1440000 or row['decoded_audio']['sample_rate'] != 48000
+                    or row['decoded_audio']['channels'] != 2):
+                raise RuntimeError('final decoded audio sample clock mismatch')
+            receipt = json.loads((output / (state + '-all-receipt.json')).read_text(encoding='utf-8'))
+            row['mixed_audio_receipt'] = receipt['stages']['audio']['post_loudness']
+            row['mixed_audio_receipt_scope'] = 'product post-loudness receipt, not an independently retained WAV snapshot'
             if sha(final) != row['final_sha256']:
                 raise RuntimeError('final changed during independent verification')
             row['status'] = 'passed'
