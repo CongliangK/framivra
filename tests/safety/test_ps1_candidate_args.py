@@ -168,7 +168,9 @@ class Ps1CloneModeStructure(unittest.TestCase):
             ["& $py[0]", "-c $collisionCode", "$Dir $TargetRef"],
             "原始路径传输 helper 的实际调用行")
         self.assert_code_line(
-            ["$LASTEXITCODE = $null"], "路径枚举前清除陈旧退出码")
+            ["$global:LASTEXITCODE = $null"], "路径枚举前清除全局陈旧退出码")
+        self.assert_code_line(
+            ["$probeCode = $global:LASTEXITCODE"], "读取原生命令更新的同一全局退出码")
         self.assert_code_line(
             ["$null -eq $probeCode", "$probeCode -ne 0", "-not $pathJson", "throw"],
             "路径枚举未启动、失败或空输出必须拒绝更新")
