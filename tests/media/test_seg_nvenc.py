@@ -505,7 +505,7 @@ class TestNvencBudget(unittest.TestCase):
                 ('NVENC p7', 2, 8, 2), ('NVENC p7', 8, 2, 2), ('x264', 1, 1, 4)):
             with self.subTest(encoder=encoder, tier=tier), tempfile.TemporaryDirectory() as temp:
                 reset_nvenc_budget()
-                c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=4, dry=False, gpu=True, run=mock.Mock())
+                c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=4, fps=30, dry=False, gpu=True, run=mock.Mock())
                 plan = composite.RenderPlan(c, False, 1, 2, 2, layers=[], nseg=4)
                 workers = []
                 class Executor:
@@ -538,7 +538,7 @@ class TestNvencBudget(unittest.TestCase):
         from vtx.pipeline import composite
 
         with tempfile.TemporaryDirectory() as temp:
-            c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=12,
+            c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=12, fps=30,
                                 dry=False, gpu=False, run=mock.Mock())
             layers = [
                 {"cl": {"dst_in": 0, "dur": 12}},
@@ -586,15 +586,20 @@ class TestNvencBudget(unittest.TestCase):
             self.assertEqual(submitted, [3, 1, 0, 2])
             self.assertEqual(observed_ranges, [[7, 12], [2, 5], [0, 2], [5, 7]])
             entries = (Path(temp) / 'vseg' / 'list.txt').read_text().splitlines()
-            self.assertEqual([Path(line[6:-1]).name.split('_')[0] for line in entries],
+            self.assertEqual([Path(line[6:-1]).name.split('_')[0]
+                              for line in entries[::2]],
                              ['seg00', 'seg01', 'seg02', 'seg03'])
+            self.assertEqual(entries[1::2], ['duration 0.066667', 'duration 0.100000',
+                                            'duration 0.066666', 'duration 0.166667'])
+            self.assertEqual(c.run.call_args.args[0][-3:],
+                             ['-c', 'copy', str(Path(temp) / 'out.mp4')])
 
     def test_native_arm64_x264_failure_waits_for_running_segments(self):
         import tempfile
         from vtx.pipeline import composite
 
         with tempfile.TemporaryDirectory() as temp:
-            c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=4,
+            c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=4, fps=30,
                                 dry=False, gpu=False, run=mock.Mock())
             plan = composite.RenderPlan(c, False, 1, 640, 480, layers=[], nseg=4)
             barrier = threading.Barrier(4)
@@ -726,7 +731,7 @@ class TestNvencBudget(unittest.TestCase):
         ]
         for name, os_name, arch, width, height, cpus, dry, expected in cases:
             with self.subTest(case=name), tempfile.TemporaryDirectory() as temp:
-                c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=4,
+                c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=4, fps=30,
                                     dry=dry, gpu=False, run=mock.Mock())
                 plan = composite.RenderPlan(c, False, 1, width, height, layers=[], nseg=4)
                 worker_counts = []
