@@ -4,7 +4,7 @@
 
 - B 站视频制作工具箱：素材与 timeline.json → 帧精确视频、混音、QC 与缓存；[内核](<vtx/>)永不可关。
 - [apps](<apps/>)产出素材或辅助结果；[plugins](<plugins/>)扩展时间线管线；启用后不得忽略依赖或失败。
-- [DSH 侧栏](<dsh-sidebar/README.md>)提供预览、引用与显式剪辑，独立于 Python 内核发行。
+- [DSH 侧栏](<dsh-sidebar/README.md>)独立于 Python 内核发行，提供预览、引用、显式剪辑与工程配置；配置仍走内核事务，不解除帧率/预览限制。
 - 制作从[技能](<docs/skill/SKILL.md>)进入；科技口播与开发范本见[工作流](<templates/README.md>)；组件查[catalog](<docs/catalog.md>)。
 - 开发先读[架构契约](<docs/ARCHITECTURE.md>)与[DEV](<docs/DEV.md>)；时间线 API/写事务见[接口边界](<docs/reference/timeline-api.md>)。
 - 环境按[README](<README.md#依赖矩阵>)准备：Python ≥3.9，媒体工具按路径配置；模型默认关闭，依赖声明为空不等于仅需标准库。
@@ -38,7 +38,7 @@
 ## 基线与性能
 
 - 唯一主基线为 30秒/900帧/1080p30 SVG；禁用退役12秒基线，机制探针不能代替主片。
-- 准备/核验仅用 `scripts/demo.py prepare/verify`，用法与写态边界见[Demo](<templates/demo-timeline-svg/README.md#主性能基线>)。
+- 准备/核验仅用 `scripts/demo.py prepare/verify`；portable-v2 用公开锁定字体和标准库音频，旧输入不混用，获取与恢复见[Demo](<templates/demo-timeline-svg/README.md#主性能基线>)。
 - 固定输入、同质量/环境/后端/配置分冷暖测全链；留身份、哈希与证据，未跑写 UNRUN，小探针不冒充整体提速。
 - 正式/区间视频拼接共用内核帧端点生成的 concat 时长；不得以容器推断时长或仅总帧数通过替代帧时钟正确性。
 - [PNG 批量校验](<vtx/render/gfx_cli.py>)每调用最多两线程，外层页并发另计；并行不得省略完整字节校验或沿用旧摘要。

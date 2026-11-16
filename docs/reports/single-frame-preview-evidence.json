@@ -1,0 +1,3091 @@
+{
+  "schema": "framivra.single-frame-study-evidence/v1",
+  "date": "2026-11-16",
+  "scope": "Research only; not DSH end-to-end timing, a product optimization, or the 900-frame main baseline. Sequential exploratory series, not randomized AB/BA performance qualification. Fonts/framework/OS caches/background load not frozen; only Chrome launcher binary hash is recorded, not a complete environment certificate.",
+  "series": [
+    {
+      "schema": "framivra.single-frame-research/v1",
+      "revision": "741f74b466605df310334461b9c74e4ec735d0ed",
+      "platform": "macOS-26.5.2-arm64-arm-64bit",
+      "python": "3.9.6 (default, May 22 2026, 11:13:45) \n[Clang 21.0.0 (clang-2100.1.1.101)]",
+      "chrome": "Google Chrome 157.0.8103.52",
+      "chrome_binary_sha256": "5441ca699b9eff7763f2f10765e2e8409a4b05f38917826b5247f6f6bb3b0c6b",
+      "numpy": "2.0.2",
+      "input": {
+        "path": "templates/tech-talk/assets/gfx-templates/chart_curve.html",
+        "sha256": "a4963d195649d7e3351854b35c707ad669262a86ea06a4bb73d8ccf3aca5da9b",
+        "n_frames": 600,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30
+      },
+      "environment": {
+        "VTX_GFX_NAVFREE": "0",
+        "VTX_GFX_STATIC": "1",
+        "VTX_GFX_TABS": "4"
+      },
+      "scope": "Internal render_page only; fresh browser per nonempty call; no OS cache flush; local fonts not pinned; raw early-return reuse is NOT authenticated production cache; no timeline composition, DSH transport or GUI benchmark.",
+      "trials": [
+        {
+          "label": "fresh-1",
+          "frames": [
+            305
+          ],
+          "wall_ms": 5303.0244999999995,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 4900.702333,
+            "ms_per_frame": 4900.702333,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 71.2898330000007,
+                "p95": 71.2898330000007,
+                "sum": 71.2898330000007
+              },
+              "export": {
+                "p50": 134.39537500000043,
+                "p95": 134.39537500000043,
+                "sum": 134.39537500000043
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.5748749999998637,
+                "p95": 0.5748749999998637,
+                "sum": 0.5748749999998637
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              399.32316599999996
+            ],
+            "browser_stop_ms": [
+              62.47883300000012
+            ],
+            "shot_ms": [
+              46.93425000000006,
+              52.42924999999987,
+              109.42404200000011,
+              193.3678330000004,
+              134.3935830000005
+            ],
+            "navigate_ms": [
+              117.82875000000004,
+              18.10370800000016,
+              52.7397500000002,
+              71.28649999999936
+            ]
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "existing-png-1",
+          "frames": [
+            305
+          ],
+          "wall_ms": 1.5788750000007568,
+          "stats": {
+            "n": 600,
+            "rendered": 0,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 0.0,
+            "ms_per_frame": 0.0,
+            "canvas_export": false,
+            "path_counts": {
+              "override": 0,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "static_spans": 0,
+            "timings_ms": {
+              "nav": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "export": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [],
+            "browser_stop_ms": [],
+            "shot_ms": [],
+            "navigate_ms": []
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "neighbor-1",
+          "frames": [
+            306
+          ],
+          "wall_ms": 5100.678167000001,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 4585.27825,
+            "ms_per_frame": 4585.27825,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 117.03349999999979,
+                "p95": 117.03349999999979,
+                "sum": 117.03349999999979
+              },
+              "export": {
+                "p50": 102.29754200000052,
+                "p95": 102.29754200000052,
+                "sum": 102.29754200000052
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.4920420000011916,
+                "p95": 0.4920420000011916,
+                "sum": 0.4920420000011916
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              513.4441249999995
+            ],
+            "browser_stop_ms": [
+              53.743791000000485
+            ],
+            "shot_ms": [
+              43.02854200000006,
+              138.86479199999968,
+              108.1947500000009,
+              36.95324999999983,
+              102.29529200000087
+            ],
+            "navigate_ms": [
+              181.50841699999987,
+              11.408541999999855,
+              81.9167089999997,
+              117.03004099999958
+            ]
+          },
+          "images": [
+            {
+              "frame": 306,
+              "png_bytes": 86127,
+              "base64_bytes": 114836,
+              "sha256": "b2b7244e011aed6d217a2144f51d063a0b4a1e1b90b2d93c4060bce9ea421fe1",
+              "rgba_sha256": "65e83028461b31c9851b81c78fc8fc2808e9a63f34818deee485170cc58b6a31",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png",
+            "f0306.png"
+          ]
+        },
+        {
+          "label": "fresh-2",
+          "frames": [
+            305
+          ],
+          "wall_ms": 4891.245334,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 4574.848041000001,
+            "ms_per_frame": 4574.848041000001,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 45.836125000001005,
+                "p95": 45.836125000001005,
+                "sum": 45.836125000001005
+              },
+              "export": {
+                "p50": 94.42104100000037,
+                "p95": 94.42104100000037,
+                "sum": 94.42104100000037
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.5147920000005968,
+                "p95": 0.5147920000005968,
+                "sum": 0.5147920000005968
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              314.21624999999943
+            ],
+            "browser_stop_ms": [
+              94.24962499999978
+            ],
+            "shot_ms": [
+              44.80062499999882,
+              111.80287500000041,
+              79.21770899999991,
+              111.58775000000176,
+              94.41916699999808
+            ],
+            "navigate_ms": [
+              44.20475000000046,
+              54.06949999999888,
+              74.015833999999,
+              45.833249999997605
+            ]
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "existing-png-2",
+          "frames": [
+            305
+          ],
+          "wall_ms": 1.5421670000002052,
+          "stats": {
+            "n": 600,
+            "rendered": 0,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 0.0,
+            "ms_per_frame": 0.0,
+            "canvas_export": false,
+            "path_counts": {
+              "override": 0,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "static_spans": 0,
+            "timings_ms": {
+              "nav": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "export": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [],
+            "browser_stop_ms": [],
+            "shot_ms": [],
+            "navigate_ms": []
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "neighbor-2",
+          "frames": [
+            306
+          ],
+          "wall_ms": 5141.358499999999,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 4745.961416,
+            "ms_per_frame": 4745.961416,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 108.58091699999761,
+                "p95": 108.58091699999761,
+                "sum": 108.58091699999761
+              },
+              "export": {
+                "p50": 93.31012499999858,
+                "p95": 93.31012499999858,
+                "sum": 93.31012499999858
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.5842909999991264,
+                "p95": 0.5842909999991264,
+                "sum": 0.5842909999991264
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              393.39891600000243
+            ],
+            "browser_stop_ms": [
+              59.1697499999988
+            ],
+            "shot_ms": [
+              37.85129199999915,
+              187.3713749999979,
+              36.50429200000005,
+              107.04745800000026,
+              93.30829199999968
+            ],
+            "navigate_ms": [
+              53.95820899999748,
+              43.89975000000135,
+              178.47525000000175,
+              108.57837500000045
+            ]
+          },
+          "images": [
+            {
+              "frame": 306,
+              "png_bytes": 86127,
+              "base64_bytes": 114836,
+              "sha256": "b2b7244e011aed6d217a2144f51d063a0b4a1e1b90b2d93c4060bce9ea421fe1",
+              "rgba_sha256": "65e83028461b31c9851b81c78fc8fc2808e9a63f34818deee485170cc58b6a31",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png",
+            "f0306.png"
+          ]
+        },
+        {
+          "label": "fresh-3",
+          "frames": [
+            305
+          ],
+          "wall_ms": 5585.818042,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 5124.832874999999,
+            "ms_per_frame": 5124.832874999999,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 158.6563329999997,
+                "p95": 158.6563329999997,
+                "sum": 158.6563329999997
+              },
+              "export": {
+                "p50": 159.90066699999872,
+                "p95": 159.90066699999872,
+                "sum": 159.90066699999872
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.5402500000002419,
+                "p95": 0.5402500000002419,
+                "sum": 0.5402500000002419
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              458.9765839999984
+            ],
+            "browser_stop_ms": [
+              60.901000000001204
+            ],
+            "shot_ms": [
+              120.82870800000123,
+              139.35241700000134,
+              116.13183399999727,
+              195.02004199999945,
+              159.8984580000007
+            ],
+            "navigate_ms": [
+              38.99008300000162,
+              86.51958300000118,
+              91.17187500000057,
+              158.65229200000286
+            ]
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "existing-png-3",
+          "frames": [
+            305
+          ],
+          "wall_ms": 1.5417910000010693,
+          "stats": {
+            "n": 600,
+            "rendered": 0,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 0.0,
+            "ms_per_frame": 0.0,
+            "canvas_export": false,
+            "path_counts": {
+              "override": 0,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "static_spans": 0,
+            "timings_ms": {
+              "nav": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "export": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [],
+            "browser_stop_ms": [],
+            "shot_ms": [],
+            "navigate_ms": []
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "neighbor-3",
+          "frames": [
+            306
+          ],
+          "wall_ms": 5312.534458000002,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 4818.823416999997,
+            "ms_per_frame": 4818.823416999997,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 130.43400000000105,
+                "p95": 130.43400000000105,
+                "sum": 130.43400000000105
+              },
+              "export": {
+                "p50": 92.37833400000284,
+                "p95": 92.37833400000284,
+                "sum": 92.37833400000284
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.5446669999997766,
+                "p95": 0.5446669999997766,
+                "sum": 0.5446669999997766
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              491.7191249999959
+            ],
+            "browser_stop_ms": [
+              62.701666999998906
+            ],
+            "shot_ms": [
+              61.78029200000168,
+              64.12899999999411,
+              80.75408399999873,
+              110.87595800000116,
+              92.37599999999446
+            ],
+            "navigate_ms": [
+              105.68041599999844,
+              182.50216700000266,
+              179.63849999999582,
+              130.42979200000104
+            ]
+          },
+          "images": [
+            {
+              "frame": 306,
+              "png_bytes": 86127,
+              "base64_bytes": 114836,
+              "sha256": "b2b7244e011aed6d217a2144f51d063a0b4a1e1b90b2d93c4060bce9ea421fe1",
+              "rgba_sha256": "65e83028461b31c9851b81c78fc8fc2808e9a63f34818deee485170cc58b6a31",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png",
+            "f0306.png"
+          ]
+        },
+        {
+          "label": "ordered-neighbors",
+          "frames": [
+            304,
+            305,
+            306
+          ],
+          "wall_ms": 5266.7320420000015,
+          "stats": {
+            "n": 600,
+            "rendered": 3,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 4953.902541999994,
+            "ms_per_frame": 1651.3008473333314,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 3,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 44.29666699999757,
+                "p95": 44.421954200004166,
+                "sum": 97.53983400000266
+              },
+              "export": {
+                "p50": 163.7997909999953,
+                "p95": 178.9367793999972,
+                "sum": 398.76904199999075
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.5412089999978775,
+                "p95": 0.5489714999974638,
+                "sum": 1.5232089999912546
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              308.02525
+            ],
+            "browser_stop_ms": [
+              66.63533399999721
+            ],
+            "shot_ms": [
+              61.24491700000334,
+              61.627375000000484,
+              162.5008749999992,
+              95.38316699999427,
+              54.34933300000466,
+              163.79820899999942,
+              180.6180000000026
+            ],
+            "navigate_ms": [
+              192.4500000000009,
+              115.12220899999903,
+              85.71629100000422,
+              8.804208000000813,
+              44.29483299999504,
+              44.434541000001104
+            ]
+          },
+          "images": [
+            {
+              "frame": 304,
+              "png_bytes": 85469,
+              "base64_bytes": 113960,
+              "sha256": "be5d8e93a69a372e006559de9429e9c7d852d52a8b6bff37d95137e638c4b254",
+              "rgba_sha256": "490600620ee7191a7bcf6be669d44da87a7a4a03dedb2cabfe52d50f0b603621",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            },
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            },
+            {
+              "frame": 306,
+              "png_bytes": 86127,
+              "base64_bytes": 114836,
+              "sha256": "b2b7244e011aed6d217a2144f51d063a0b4a1e1b90b2d93c4060bce9ea421fe1",
+              "rgba_sha256": "65e83028461b31c9851b81c78fc8fc2808e9a63f34818deee485170cc58b6a31",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0304.png",
+            "f0305.png",
+            "f0306.png"
+          ]
+        }
+      ],
+      "public_frame_probe": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "code": "platform.unsupported",
+            "address": "",
+            "severity": "error",
+            "message": "render requires Linux fd-anchored writes"
+          }
+        ],
+        "new_root_entries": []
+      },
+      "probe_source": "\"\"\"Research mechanism probe, not a public API or DSH benchmark; writes fresh /tmp fixture.\"\"\"\nimport base64\nimport hashlib\nimport json\nimport os\nfrom pathlib import Path\nimport platform\nimport shutil\nimport subprocess\nimport sys\nimport tempfile\nimport time\nfrom unittest.mock import patch\n\nrepo = Path.cwd()\nsys.path.insert(0, str(repo))\nfrom vtx.render import gfx_render as gfx\nfrom vtx.api import frame_timeline\n\nroot = Path(tempfile.mkdtemp(prefix='f363-', dir='/tmp'))\nsource = repo / 'templates/tech-talk/assets/gfx-templates/chart_curve.html'\npage = root / 'chart_curve.html'\nshutil.copyfile(source, page)\nchrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'\nos.environ.update(VTX_GFX_NAVFREE='0', VTX_GFX_STATIC='1', VTX_GFX_TABS='4')\nconfig = root / 'config.json'\nconfig.write_text('{}')\nos.environ['VTX_CONFIG'] = str(config)\nsummary = {'schema':'framivra.single-frame-research/v1', 'revision':subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip(), 'platform':platform.platform(), 'python':sys.version, 'chrome':subprocess.check_output([chrome,'--version'], text=True).strip(), 'chrome_binary_sha256':hashlib.sha256(Path(chrome).read_bytes()).hexdigest(), 'numpy':gfx.numpy.__version__, 'input':{'path':str(source.relative_to(repo)), 'sha256':hashlib.sha256(page.read_bytes()).hexdigest(), 'n_frames':600, 'width':1920, 'height':1080, 'fps':30}, 'environment':{k:os.environ[k] for k in ('VTX_GFX_NAVFREE','VTX_GFX_STATIC','VTX_GFX_TABS')}, 'scope':'Internal render_page only; fresh browser per nonempty call; no OS cache flush; local fonts not pinned; raw early-return reuse is NOT authenticated production cache; no timeline composition, DSH transport or GUI benchmark.', 'trials':[]}\noriginal_start, original_stop = gfx.Browser.start, gfx.Browser.stop\noriginal_shot, original_navigate = gfx.Tab.shot, gfx.Tab.navigate\n\ndef run(label, directory, frames):\n    obs = {'browser_start_ms':[], 'browser_stop_ms':[], 'shot_ms':[], 'navigate_ms':[]}\n    def timed(name, original):\n        def wrapper(*args, **kwargs):\n            t = time.perf_counter()\n            try: return original(*args, **kwargs)\n            finally: obs[name].append((time.perf_counter()-t)*1000)\n        return wrapper\n    t = time.perf_counter()\n    try:\n        with patch.object(gfx.Browser, 'start', timed('browser_start_ms', original_start)), patch.object(gfx.Browser, 'stop', timed('browser_stop_ms', original_stop)), patch.object(gfx.Tab, 'shot', timed('shot_ms', original_shot)), patch.object(gfx.Tab, 'navigate', timed('navigate_ms', original_navigate)):\n            stats = gfx.render_page(str(page), str(directory), 600, chrome_path=chrome, tabs=4, width=1920, height=1080, frames=frames)\n        wall = (time.perf_counter()-t)*1000\n        images = []\n        for f in frames:\n            data = (directory / ('f%04d.png' % f)).read_bytes()\n            rgba = gfx.png_decode_rgba(data)\n            images.append({'frame':f,'png_bytes':len(data),'base64_bytes':len(base64.b64encode(data)),'sha256':hashlib.sha256(data).hexdigest(),'rgba_sha256':hashlib.sha256(rgba.tobytes()).hexdigest(),'shape':list(rgba.shape)})\n        result = {'label':label,'frames':frames,'wall_ms':wall,'stats':stats,'observations':obs,'images':images,'files':sorted(p.name for p in directory.iterdir())}\n    except Exception as exc:\n        result = {'label':label,'frames':frames,'wall_ms':(time.perf_counter()-t)*1000,'error':type(exc).__name__+': '+str(exc),'observations':obs}\n    summary['trials'].append(result)\n    (root / 'results.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\\n')\n\nfor i in range(3):\n    directory = root / ('trial-%d' % (i+1))\n    run('fresh-%d' % (i+1), directory, [305])\n    run('existing-png-%d' % (i+1), directory, [305])\n    run('neighbor-%d' % (i+1), directory, [306])\nrun('ordered-neighbors', root / 'ordered', [304,305,306])\ntimeline = root / 'timeline.json'\ntimeline.write_text(json.dumps({'version':2,'project':{'fps':30,'width':1920,'height':1080,'duration_frames':600},'sources':[],'video_tracks':[{'name':'chart','kind':'gfx','clips':[{'src':'chart_curve.html','dst_in':0,'dur':600}]}],'audio_tracks':[],'subtitles':[]}))\nbefore = sorted(p.name for p in root.iterdir())\nresult = frame_timeline(timeline, frame=305, render=True, include_png=True)\nsummary['public_frame_probe'] = {'ok':result['ok'],'diagnostics':result['diagnostics'],'new_root_entries':sorted(set(p.name for p in root.iterdir())-set(before))}\nsummary['probe_source'] = Path(__file__).read_text()\n(root / 'results.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\\n')\nprint(json.dumps({'root':str(root),'result':str(root/'results.json'),'attempts':len(summary['trials']),'errors':[t['label'] for t in summary['trials'] if 'error' in t],'public_frame_probe':summary['public_frame_probe']}))\nif any('error' in t or t['stats']['failed'] for t in summary['trials']):\n    raise SystemExit(1)\n",
+      "series": "discovery-no-pillow",
+      "pillow": null,
+      "probe_source_sha256": "45d6e5b93e56bcfcfb088251261d259090702dc7c12e0e57db315c65bb2eab39",
+      "summary": {
+        "fresh-": {
+          "wall_ms": [
+            5303.0244999999995,
+            4891.245334,
+            5585.818042
+          ],
+          "median_wall_ms": 5303.0244999999995
+        },
+        "existing-png-": {
+          "wall_ms": [
+            1.5788750000007568,
+            1.5421670000002052,
+            1.5417910000010693
+          ],
+          "median_wall_ms": 1.5421670000002052
+        },
+        "neighbor-": {
+          "wall_ms": [
+            5100.678167000001,
+            5141.358499999999,
+            5312.534458000002
+          ],
+          "median_wall_ms": 5141.358499999999
+        },
+        "fresh_median_observation_sums_ms": {
+          "browser_start_ms": 399.32316599999996,
+          "browser_stop_ms": 62.47883300000012,
+          "shot_ms": 536.5489580000009,
+          "navigate_ms": 259.9587079999998
+        }
+      }
+    },
+    {
+      "schema": "framivra.single-frame-research/v1",
+      "revision": "741f74b466605df310334461b9c74e4ec735d0ed",
+      "platform": "macOS-26.5.2-arm64-arm-64bit",
+      "python": "3.9.6 (default, May 22 2026, 11:13:45) \n[Clang 21.0.0 (clang-2100.1.1.101)]",
+      "chrome": "Google Chrome 157.0.8103.52",
+      "chrome_binary_sha256": "5441ca699b9eff7763f2f10765e2e8409a4b05f38917826b5247f6f6bb3b0c6b",
+      "numpy": "2.0.2",
+      "input": {
+        "path": "templates/tech-talk/assets/gfx-templates/chart_curve.html",
+        "sha256": "a4963d195649d7e3351854b35c707ad669262a86ea06a4bb73d8ccf3aca5da9b",
+        "n_frames": 600,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30
+      },
+      "environment": {
+        "VTX_GFX_NAVFREE": "0",
+        "VTX_GFX_STATIC": "1",
+        "VTX_GFX_TABS": "4"
+      },
+      "scope": "Internal render_page only; fresh browser per nonempty call; no OS cache flush; local fonts not pinned; raw early-return reuse is NOT authenticated production cache; no timeline composition, DSH transport or GUI benchmark.",
+      "trials": [
+        {
+          "label": "fresh-1",
+          "frames": [
+            305
+          ],
+          "wall_ms": 5350.262333000001,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 4738.872375000001,
+            "ms_per_frame": 4738.872375000001,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 48.65462500000017,
+                "p95": 48.65462500000017,
+                "sum": 48.65462500000017
+              },
+              "export": {
+                "p50": 142.98254200000036,
+                "p95": 142.98254200000036,
+                "sum": 142.98254200000036
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.5422500000005215,
+                "p95": 0.5422500000005215,
+                "sum": 0.5422500000005215
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              609.030833
+            ],
+            "browser_stop_ms": [
+              81.44545800000014
+            ],
+            "shot_ms": [
+              142.8792080000001,
+              178.23737500000016,
+              37.238875000000334,
+              92.60070799999997,
+              142.9805420000001
+            ],
+            "navigate_ms": [
+              109.76754099999997,
+              37.03262499999993,
+              80.9887090000001,
+              48.65224999999995
+            ],
+            "open_tabs_ms": [
+              16.312458000000028
+            ],
+            "png_decode_rgb_ms": [
+              875.0784999999998,
+              922.9759159999995
+            ],
+            "png_decode_rgba_ms": [
+              905.0322920000002,
+              903.6836669999997
+            ],
+            "page_transparent_ms": [
+              1933.2768749999998
+            ]
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "existing-png-1",
+          "frames": [
+            305
+          ],
+          "wall_ms": 1.5943750000007029,
+          "stats": {
+            "n": 600,
+            "rendered": 0,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 0.0,
+            "ms_per_frame": 0.0,
+            "canvas_export": false,
+            "path_counts": {
+              "override": 0,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "static_spans": 0,
+            "timings_ms": {
+              "nav": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "export": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [],
+            "browser_stop_ms": [],
+            "shot_ms": [],
+            "navigate_ms": [],
+            "open_tabs_ms": [],
+            "png_decode_rgb_ms": [],
+            "png_decode_rgba_ms": [],
+            "page_transparent_ms": []
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "neighbor-1",
+          "frames": [
+            306
+          ],
+          "wall_ms": 5092.007874999999,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 4615.128542,
+            "ms_per_frame": 4615.128542,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 67.45650000000047,
+                "p95": 67.45650000000047,
+                "sum": 67.45650000000047
+              },
+              "export": {
+                "p50": 70.61512500000156,
+                "p95": 70.61512500000156,
+                "sum": 70.61512500000156
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.5078750000002685,
+                "p95": 0.5078750000002685,
+                "sum": 0.5078750000002685
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              474.8605000000001
+            ],
+            "browser_stop_ms": [
+              70.75291700000008
+            ],
+            "shot_ms": [
+              100.2945000000004,
+              160.86549999999988,
+              98.6306250000002,
+              99.3697909999991,
+              70.61304099999965
+            ],
+            "navigate_ms": [
+              56.26770800000003,
+              53.94691600000101,
+              62.92866699999955,
+              67.45408299999944
+            ],
+            "open_tabs_ms": [
+              13.496959000000253
+            ],
+            "png_decode_rgb_ms": [
+              863.1748749999986,
+              887.019500000001
+            ],
+            "png_decode_rgba_ms": [
+              897.2357080000002,
+              895.0090839999998
+            ],
+            "page_transparent_ms": [
+              1954.1821660000007
+            ]
+          },
+          "images": [
+            {
+              "frame": 306,
+              "png_bytes": 86127,
+              "base64_bytes": 114836,
+              "sha256": "b2b7244e011aed6d217a2144f51d063a0b4a1e1b90b2d93c4060bce9ea421fe1",
+              "rgba_sha256": "65e83028461b31c9851b81c78fc8fc2808e9a63f34818deee485170cc58b6a31",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png",
+            "f0306.png"
+          ]
+        },
+        {
+          "label": "fresh-2",
+          "frames": [
+            305
+          ],
+          "wall_ms": 5102.750375,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 4812.268459,
+            "ms_per_frame": 4812.268459,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 30.79233400000092,
+                "p95": 30.79233400000092,
+                "sum": 30.79233400000092
+              },
+              "export": {
+                "p50": 136.84216700000107,
+                "p95": 136.84216700000107,
+                "sum": 136.84216700000107
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.5106250000004309,
+                "p95": 0.5106250000004309,
+                "sum": 0.5106250000004309
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              288.3197500000012
+            ],
+            "browser_stop_ms": [
+              79.45383299999875
+            ],
+            "shot_ms": [
+              45.726125000001616,
+              75.67420800000058,
+              112.5263330000017,
+              98.33416699999731,
+              136.8402919999987
+            ],
+            "navigate_ms": [
+              51.73412499999941,
+              147.70066700000052,
+              179.64766600000104,
+              30.790250000002573
+            ],
+            "open_tabs_ms": [
+              18.51608399999982
+            ],
+            "png_decode_rgb_ms": [
+              888.2420419999982,
+              915.522708000001
+            ],
+            "png_decode_rgba_ms": [
+              919.0207499999996,
+              918.8853340000005
+            ],
+            "page_transparent_ms": [
+              2021.0058750000003
+            ]
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "existing-png-2",
+          "frames": [
+            305
+          ],
+          "wall_ms": 1.530375000001527,
+          "stats": {
+            "n": 600,
+            "rendered": 0,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 0.0,
+            "ms_per_frame": 0.0,
+            "canvas_export": false,
+            "path_counts": {
+              "override": 0,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "static_spans": 0,
+            "timings_ms": {
+              "nav": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "export": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [],
+            "browser_stop_ms": [],
+            "shot_ms": [],
+            "navigate_ms": [],
+            "open_tabs_ms": [],
+            "png_decode_rgb_ms": [],
+            "png_decode_rgba_ms": [],
+            "page_transparent_ms": []
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "neighbor-2",
+          "frames": [
+            306
+          ],
+          "wall_ms": 5296.37675,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 4805.269667000001,
+            "ms_per_frame": 4805.269667000001,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 124.91129200000017,
+                "p95": 124.91129200000017,
+                "sum": 124.91129200000017
+              },
+              "export": {
+                "p50": 86.88295900000043,
+                "p95": 86.88295900000043,
+                "sum": 86.88295900000043
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.5472090000004926,
+                "p95": 0.5472090000004926,
+                "sum": 0.5472090000004926
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              488.987875000003
+            ],
+            "browser_stop_ms": [
+              70.04454200000154
+            ],
+            "shot_ms": [
+              66.03320800000034,
+              134.8187079999974,
+              84.5206669999996,
+              79.20408300000048,
+              86.88100000000176
+            ],
+            "navigate_ms": [
+              46.855540999999334,
+              182.0980419999998,
+              34.258083000000994,
+              124.9083750000004
+            ],
+            "open_tabs_ms": [
+              11.452792000000045
+            ],
+            "png_decode_rgb_ms": [
+              869.8646249999981,
+              900.849375
+            ],
+            "png_decode_rgba_ms": [
+              899.8522499999985,
+              900.1595830000007
+            ],
+            "page_transparent_ms": [
+              1940.6865000000018
+            ]
+          },
+          "images": [
+            {
+              "frame": 306,
+              "png_bytes": 86127,
+              "base64_bytes": 114836,
+              "sha256": "b2b7244e011aed6d217a2144f51d063a0b4a1e1b90b2d93c4060bce9ea421fe1",
+              "rgba_sha256": "65e83028461b31c9851b81c78fc8fc2808e9a63f34818deee485170cc58b6a31",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png",
+            "f0306.png"
+          ]
+        },
+        {
+          "label": "fresh-3",
+          "frames": [
+            305
+          ],
+          "wall_ms": 5146.3803339999995,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 4840.661208,
+            "ms_per_frame": 4840.661208,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 30.93304200000091,
+                "p95": 30.93304200000091,
+                "sum": 30.93304200000091
+              },
+              "export": {
+                "p50": 109.8877920000021,
+                "p95": 109.8877920000021,
+                "sum": 109.8877920000021
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.5000829999985967,
+                "p95": 0.5000829999985967,
+                "sum": 0.5000829999985967
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              303.57337500000267
+            ],
+            "browser_stop_ms": [
+              73.21787500000099
+            ],
+            "shot_ms": [
+              82.5416660000009,
+              53.19437500000035,
+              89.08962499999973,
+              106.66683300000201,
+              109.88612499999917
+            ],
+            "navigate_ms": [
+              120.26308400000119,
+              34.35104199999728,
+              112.86383300000224,
+              30.93037500000051
+            ],
+            "open_tabs_ms": [
+              16.994000000000398
+            ],
+            "png_decode_rgb_ms": [
+              905.3538330000031,
+              937.1792919999997
+            ],
+            "png_decode_rgba_ms": [
+              927.0574160000002,
+              927.9621670000005
+            ],
+            "page_transparent_ms": [
+              2044.4159999999983
+            ]
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "existing-png-3",
+          "frames": [
+            305
+          ],
+          "wall_ms": 1.5463340000039238,
+          "stats": {
+            "n": 600,
+            "rendered": 0,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 0.0,
+            "ms_per_frame": 0.0,
+            "canvas_export": false,
+            "path_counts": {
+              "override": 0,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "static_spans": 0,
+            "timings_ms": {
+              "nav": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "export": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [],
+            "browser_stop_ms": [],
+            "shot_ms": [],
+            "navigate_ms": [],
+            "open_tabs_ms": [],
+            "png_decode_rgb_ms": [],
+            "png_decode_rgba_ms": [],
+            "page_transparent_ms": []
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "neighbor-3",
+          "frames": [
+            306
+          ],
+          "wall_ms": 5097.094624999997,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 4718.732833999994,
+            "ms_per_frame": 4718.732833999994,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 134.6470410000009,
+                "p95": 134.6470410000009,
+                "sum": 134.6470410000009
+              },
+              "export": {
+                "p50": 87.24308299999706,
+                "p95": 87.24308299999706,
+                "sum": 87.24308299999706
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.531583000004332,
+                "p95": 0.531583000004332,
+                "sum": 0.531583000004332
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              376.1980420000057
+            ],
+            "browser_stop_ms": [
+              74.48195799999979
+            ],
+            "shot_ms": [
+              54.9565410000028,
+              52.82924999999494,
+              74.45320800000133,
+              66.17975000000342,
+              87.23779099999973
+            ],
+            "navigate_ms": [
+              162.73774999999802,
+              68.96649999999482,
+              35.54862500000411,
+              134.64412500000122
+            ],
+            "open_tabs_ms": [
+              18.828416000005177
+            ],
+            "png_decode_rgb_ms": [
+              877.3613749999995,
+              889.9336670000012
+            ],
+            "png_decode_rgba_ms": [
+              908.2169590000007,
+              901.0497920000021
+            ],
+            "page_transparent_ms": [
+              1913.505917000002
+            ]
+          },
+          "images": [
+            {
+              "frame": 306,
+              "png_bytes": 86127,
+              "base64_bytes": 114836,
+              "sha256": "b2b7244e011aed6d217a2144f51d063a0b4a1e1b90b2d93c4060bce9ea421fe1",
+              "rgba_sha256": "65e83028461b31c9851b81c78fc8fc2808e9a63f34818deee485170cc58b6a31",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png",
+            "f0306.png"
+          ]
+        },
+        {
+          "label": "ordered-neighbors",
+          "frames": [
+            304,
+            305,
+            306
+          ],
+          "wall_ms": 5056.410040999999,
+          "stats": {
+            "n": 600,
+            "rendered": 3,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 4748.991416999999,
+            "ms_per_frame": 1582.9971389999998,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 3,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 47.137999999996794,
+                "p95": 47.28038810000186,
+                "sum": 103.15816800000022
+              },
+              "export": {
+                "p50": 122.90704200000135,
+                "p95": 137.24734230000024,
+                "sum": 318.9972510000061
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.4269589999950085,
+                "p95": 0.47439529999664387,
+                "sum": 1.220833999987292
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              302.2772090000032
+            ],
+            "browser_stop_ms": [
+              67.50808299999989
+            ],
+            "shot_ms": [
+              46.51395799999847,
+              99.68641700000092,
+              56.58175000000654,
+              95.56795900000026,
+              57.247833000005244,
+              122.90595900000056,
+              138.83941599999616
+            ],
+            "navigate_ms": [
+              60.978959000003385,
+              45.91670800000003,
+              58.20554199999606,
+              8.721375000000364,
+              47.1361669999979,
+              47.294957999994836
+            ],
+            "open_tabs_ms": [
+              18.485667000000205
+            ],
+            "png_decode_rgb_ms": [
+              897.1680000000006,
+              924.2576249999956
+            ],
+            "png_decode_rgba_ms": [
+              968.1247919999976,
+              929.3141249999976
+            ],
+            "page_transparent_ms": [
+              1979.251542
+            ]
+          },
+          "images": [
+            {
+              "frame": 304,
+              "png_bytes": 85469,
+              "base64_bytes": 113960,
+              "sha256": "be5d8e93a69a372e006559de9429e9c7d852d52a8b6bff37d95137e638c4b254",
+              "rgba_sha256": "490600620ee7191a7bcf6be669d44da87a7a4a03dedb2cabfe52d50f0b603621",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            },
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            },
+            {
+              "frame": 306,
+              "png_bytes": 86127,
+              "base64_bytes": 114836,
+              "sha256": "b2b7244e011aed6d217a2144f51d063a0b4a1e1b90b2d93c4060bce9ea421fe1",
+              "rgba_sha256": "65e83028461b31c9851b81c78fc8fc2808e9a63f34818deee485170cc58b6a31",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0304.png",
+            "f0305.png",
+            "f0306.png"
+          ]
+        }
+      ],
+      "public_frame_probe": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "code": "platform.unsupported",
+            "address": "",
+            "severity": "error",
+            "message": "render requires Linux fd-anchored writes"
+          }
+        ],
+        "new_root_entries": []
+      },
+      "probe_source": "\"\"\"Research mechanism probe, not a public API or DSH benchmark; writes fresh /tmp fixture.\"\"\"\nimport base64\nimport hashlib\nimport json\nimport os\nfrom pathlib import Path\nimport platform\nimport shutil\nimport subprocess\nimport sys\nimport tempfile\nimport time\nfrom unittest.mock import patch\n\nrepo = Path.cwd()\nsys.path.insert(0, str(repo))\nfrom vtx.render import gfx_render as gfx\nfrom vtx.api import frame_timeline\n\nroot = Path(tempfile.mkdtemp(prefix='f363-', dir='/tmp'))\nsource = repo / 'templates/tech-talk/assets/gfx-templates/chart_curve.html'\npage = root / 'chart_curve.html'\nshutil.copyfile(source, page)\nchrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'\nos.environ.update(VTX_GFX_NAVFREE='0', VTX_GFX_STATIC='1', VTX_GFX_TABS='4')\nconfig = root / 'config.json'\nconfig.write_text('{}')\nos.environ['VTX_CONFIG'] = str(config)\nsummary = {'schema':'framivra.single-frame-research/v1', 'revision':subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip(), 'platform':platform.platform(), 'python':sys.version, 'chrome':subprocess.check_output([chrome,'--version'], text=True).strip(), 'chrome_binary_sha256':hashlib.sha256(Path(chrome).read_bytes()).hexdigest(), 'numpy':gfx.numpy.__version__, 'input':{'path':str(source.relative_to(repo)), 'sha256':hashlib.sha256(page.read_bytes()).hexdigest(), 'n_frames':600, 'width':1920, 'height':1080, 'fps':30}, 'environment':{k:os.environ[k] for k in ('VTX_GFX_NAVFREE','VTX_GFX_STATIC','VTX_GFX_TABS')}, 'scope':'Internal render_page only; fresh browser per nonempty call; no OS cache flush; local fonts not pinned; raw early-return reuse is NOT authenticated production cache; no timeline composition, DSH transport or GUI benchmark.', 'trials':[]}\noriginal_start, original_stop = gfx.Browser.start, gfx.Browser.stop\noriginal_shot, original_navigate = gfx.Tab.shot, gfx.Tab.navigate\noriginal_open, original_rgb, original_rgba, original_transparent = gfx.Browser.open_tabs, gfx.png_decode_rgb, gfx.png_decode_rgba, gfx.page_transparent\n\ndef run(label, directory, frames):\n    obs = {'browser_start_ms':[], 'browser_stop_ms':[], 'shot_ms':[], 'navigate_ms':[], 'open_tabs_ms':[], 'png_decode_rgb_ms':[], 'png_decode_rgba_ms':[], 'page_transparent_ms':[]}\n    def timed(name, original):\n        def wrapper(*args, **kwargs):\n            t = time.perf_counter()\n            try: return original(*args, **kwargs)\n            finally: obs[name].append((time.perf_counter()-t)*1000)\n        return wrapper\n    t = time.perf_counter()\n    try:\n        with patch.object(gfx.Browser, 'start', timed('browser_start_ms', original_start)), patch.object(gfx.Browser, 'stop', timed('browser_stop_ms', original_stop)), patch.object(gfx.Tab, 'shot', timed('shot_ms', original_shot)), patch.object(gfx.Tab, 'navigate', timed('navigate_ms', original_navigate)), patch.object(gfx.Browser, 'open_tabs', timed('open_tabs_ms', original_open)), patch.object(gfx, 'png_decode_rgb', timed('png_decode_rgb_ms', original_rgb)), patch.object(gfx, 'png_decode_rgba', timed('png_decode_rgba_ms', original_rgba)), patch.object(gfx, 'page_transparent', timed('page_transparent_ms', original_transparent)):\n            stats = gfx.render_page(str(page), str(directory), 600, chrome_path=chrome, tabs=4, width=1920, height=1080, frames=frames)\n        wall = (time.perf_counter()-t)*1000\n        images = []\n        for f in frames:\n            data = (directory / ('f%04d.png' % f)).read_bytes()\n            rgba = gfx.png_decode_rgba(data)\n            images.append({'frame':f,'png_bytes':len(data),'base64_bytes':len(base64.b64encode(data)),'sha256':hashlib.sha256(data).hexdigest(),'rgba_sha256':hashlib.sha256(rgba.tobytes()).hexdigest(),'shape':list(rgba.shape)})\n        result = {'label':label,'frames':frames,'wall_ms':wall,'stats':stats,'observations':obs,'images':images,'files':sorted(p.name for p in directory.iterdir())}\n    except Exception as exc:\n        result = {'label':label,'frames':frames,'wall_ms':(time.perf_counter()-t)*1000,'error':type(exc).__name__+': '+str(exc),'observations':obs}\n    summary['trials'].append(result)\n    (root / 'results.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\\n')\n\nfor i in range(3):\n    directory = root / ('trial-%d' % (i+1))\n    run('fresh-%d' % (i+1), directory, [305])\n    run('existing-png-%d' % (i+1), directory, [305])\n    run('neighbor-%d' % (i+1), directory, [306])\nrun('ordered-neighbors', root / 'ordered', [304,305,306])\ntimeline = root / 'timeline.json'\ntimeline.write_text(json.dumps({'version':2,'project':{'fps':30,'width':1920,'height':1080,'duration_frames':600},'sources':[],'video_tracks':[{'name':'chart','kind':'gfx','clips':[{'src':'chart_curve.html','dst_in':0,'dur':600}]}],'audio_tracks':[],'subtitles':[]}))\nbefore = sorted(p.name for p in root.iterdir())\nresult = frame_timeline(timeline, frame=305, render=True, include_png=True)\nsummary['public_frame_probe'] = {'ok':result['ok'],'diagnostics':result['diagnostics'],'new_root_entries':sorted(set(p.name for p in root.iterdir())-set(before))}\nsummary['probe_source'] = Path(__file__).read_text()\n(root / 'results.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\\n')\nprint(json.dumps({'root':str(root),'result':str(root/'results.json'),'attempts':len(summary['trials']),'errors':[t['label'] for t in summary['trials'] if 'error' in t],'public_frame_probe':summary['public_frame_probe']}))\nif any('error' in t or t['stats']['failed'] for t in summary['trials']):\n    raise SystemExit(1)\n",
+      "series": "attribution-no-pillow",
+      "pillow": null,
+      "probe_source_sha256": "fcabf84686207b7f074801775b1cf7ea0b2e60f9ffc680759376d2fac84e62cc",
+      "summary": {
+        "fresh-": {
+          "wall_ms": [
+            5350.262333000001,
+            5102.750375,
+            5146.3803339999995
+          ],
+          "median_wall_ms": 5146.3803339999995
+        },
+        "existing-png-": {
+          "wall_ms": [
+            1.5943750000007029,
+            1.530375000001527,
+            1.5463340000039238
+          ],
+          "median_wall_ms": 1.5463340000039238
+        },
+        "neighbor-": {
+          "wall_ms": [
+            5092.007874999999,
+            5296.37675,
+            5097.094624999997
+          ],
+          "median_wall_ms": 5097.094624999997
+        },
+        "fresh_median_observation_sums_ms": {
+          "browser_start_ms": 303.57337500000267,
+          "browser_stop_ms": 79.45383299999875,
+          "shot_ms": 469.1011249999999,
+          "navigate_ms": 298.4083340000012,
+          "open_tabs_ms": 16.994000000000398,
+          "png_decode_rgb_ms": 1803.7647499999991,
+          "png_decode_rgba_ms": 1837.9060840000002,
+          "page_transparent_ms": 2021.0058750000003
+        }
+      }
+    },
+    {
+      "schema": "framivra.single-frame-research/v1",
+      "revision": "741f74b466605df310334461b9c74e4ec735d0ed",
+      "platform": "macOS-26.5.2-arm64-arm-64bit",
+      "python": "3.9.6 (default, May 22 2026, 11:13:45) \n[Clang 21.0.0 (clang-2100.1.1.101)]",
+      "chrome": "Google Chrome 157.0.8103.52",
+      "chrome_binary_sha256": "5441ca699b9eff7763f2f10765e2e8409a4b05f38917826b5247f6f6bb3b0c6b",
+      "numpy": "2.0.2",
+      "input": {
+        "path": "templates/tech-talk/assets/gfx-templates/chart_curve.html",
+        "sha256": "a4963d195649d7e3351854b35c707ad669262a86ea06a4bb73d8ccf3aca5da9b",
+        "n_frames": 600,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30
+      },
+      "environment": {
+        "VTX_GFX_NAVFREE": "0",
+        "VTX_GFX_STATIC": "1",
+        "VTX_GFX_TABS": "4"
+      },
+      "scope": "Internal render_page only; fresh browser per nonempty call; no OS cache flush; local fonts not pinned; raw early-return reuse is NOT authenticated production cache; no timeline composition, DSH transport or GUI benchmark.",
+      "trials": [
+        {
+          "label": "fresh-1",
+          "frames": [
+            305
+          ],
+          "wall_ms": 1809.9581249999999,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 1411.568333,
+            "ms_per_frame": 1411.568333,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 43.326541000000105,
+                "p95": 43.326541000000105,
+                "sum": 43.326541000000105
+              },
+              "export": {
+                "p50": 91.016459,
+                "p95": 91.016459,
+                "sum": 91.016459
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.5225420000001257,
+                "p95": 0.5225420000001257,
+                "sum": 0.5225420000001257
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              395.80366599999996
+            ],
+            "browser_stop_ms": [
+              36.192124999999905
+            ],
+            "shot_ms": [
+              43.70054099999998,
+              147.5750840000001,
+              109.48087500000003,
+              171.7739170000001,
+              91.01312500000014
+            ],
+            "navigate_ms": [
+              178.78379199999995,
+              13.08324999999999,
+              90.85199999999993,
+              43.32475000000002
+            ],
+            "open_tabs_ms": [
+              14.542916999999989
+            ],
+            "png_decode_rgb_ms": [
+              9.788792000000157,
+              8.356958000000025
+            ],
+            "png_decode_rgba_ms": [
+              121.92500000000007,
+              17.568999999999946
+            ],
+            "page_transparent_ms": [
+              305.3372080000001
+            ]
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "existing-png-1",
+          "frames": [
+            305
+          ],
+          "wall_ms": 1.6387909999999728,
+          "stats": {
+            "n": 600,
+            "rendered": 0,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 0.0,
+            "ms_per_frame": 0.0,
+            "canvas_export": false,
+            "path_counts": {
+              "override": 0,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "static_spans": 0,
+            "timings_ms": {
+              "nav": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "export": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [],
+            "browser_stop_ms": [],
+            "shot_ms": [],
+            "navigate_ms": [],
+            "open_tabs_ms": [],
+            "png_decode_rgb_ms": [],
+            "png_decode_rgba_ms": [],
+            "page_transparent_ms": []
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "neighbor-1",
+          "frames": [
+            306
+          ],
+          "wall_ms": 1713.5515420000002,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 1125.9265000000003,
+            "ms_per_frame": 1125.9265000000003,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 44.0937090000002,
+                "p95": 44.0937090000002,
+                "sum": 44.0937090000002
+              },
+              "export": {
+                "p50": 94.93391600000001,
+                "p95": 94.93391600000001,
+                "sum": 94.93391600000001
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.5765829999999639,
+                "p95": 0.5765829999999639,
+                "sum": 0.5765829999999639
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              585.3831250000003
+            ],
+            "browser_stop_ms": [
+              43.633790999999974
+            ],
+            "shot_ms": [
+              52.0232909999998,
+              176.7548750000003,
+              108.58783400000016,
+              55.4687920000001,
+              94.93183299999997
+            ],
+            "navigate_ms": [
+              55.49466699999961,
+              37.75187499999966,
+              178.03716599999976,
+              44.09162499999964
+            ],
+            "open_tabs_ms": [
+              12.968000000000313
+            ],
+            "png_decode_rgb_ms": [
+              8.004792000000371,
+              7.34729199999995
+            ],
+            "png_decode_rgba_ms": [
+              16.720042000000213,
+              17.916915999999894
+            ],
+            "page_transparent_ms": [
+              185.4060409999998
+            ]
+          },
+          "images": [
+            {
+              "frame": 306,
+              "png_bytes": 86127,
+              "base64_bytes": 114836,
+              "sha256": "b2b7244e011aed6d217a2144f51d063a0b4a1e1b90b2d93c4060bce9ea421fe1",
+              "rgba_sha256": "65e83028461b31c9851b81c78fc8fc2808e9a63f34818deee485170cc58b6a31",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png",
+            "f0306.png"
+          ]
+        },
+        {
+          "label": "fresh-2",
+          "frames": [
+            305
+          ],
+          "wall_ms": 1524.7399579999997,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 1157.6953339999995,
+            "ms_per_frame": 1157.6953339999995,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 50.06749999999993,
+                "p95": 50.06749999999993,
+                "sum": 50.06749999999993
+              },
+              "export": {
+                "p50": 90.71579199999924,
+                "p95": 90.71579199999924,
+                "sum": 90.71579199999924
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.5321660000001671,
+                "p95": 0.5321660000001671,
+                "sum": 0.5321660000001671
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              364.81366699999995
+            ],
+            "browser_stop_ms": [
+              33.21662499999967
+            ],
+            "shot_ms": [
+              134.58183299999948,
+              95.92408399999997,
+              68.60262500000047,
+              187.54875000000038,
+              90.71345799999975
+            ],
+            "navigate_ms": [
+              38.49391699999938,
+              19.834999999999603,
+              135.0220000000002,
+              50.065375000000856
+            ],
+            "open_tabs_ms": [
+              17.153249999999787
+            ],
+            "png_decode_rgb_ms": [
+              9.640500000000607,
+              8.364750000000143
+            ],
+            "png_decode_rgba_ms": [
+              15.560958000000014,
+              17.420249999999804
+            ],
+            "page_transparent_ms": [
+              279.9064170000003
+            ]
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "existing-png-2",
+          "frames": [
+            305
+          ],
+          "wall_ms": 1.6201250000005274,
+          "stats": {
+            "n": 600,
+            "rendered": 0,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 0.0,
+            "ms_per_frame": 0.0,
+            "canvas_export": false,
+            "path_counts": {
+              "override": 0,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "static_spans": 0,
+            "timings_ms": {
+              "nav": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "export": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [],
+            "browser_stop_ms": [],
+            "shot_ms": [],
+            "navigate_ms": [],
+            "open_tabs_ms": [],
+            "png_decode_rgb_ms": [],
+            "png_decode_rgba_ms": [],
+            "page_transparent_ms": []
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "neighbor-2",
+          "frames": [
+            306
+          ],
+          "wall_ms": 1436.1317499999996,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 1139.937208,
+            "ms_per_frame": 1139.937208,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 175.64708300000032,
+                "p95": 175.64708300000032,
+                "sum": 175.64708300000032
+              },
+              "export": {
+                "p50": 79.45562500000048,
+                "p95": 79.45562500000048,
+                "sum": 79.45562500000048
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 1.8613329999999095,
+                "p95": 1.8613329999999095,
+                "sum": 1.8613329999999095
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              293.894667
+            ],
+            "browser_stop_ms": [
+              42.24804099999968
+            ],
+            "shot_ms": [
+              47.40520899999989,
+              114.77316700000006,
+              63.96187500000039,
+              93.40920899999983,
+              79.45050000000009
+            ],
+            "navigate_ms": [
+              55.840167000000385,
+              53.99533299999959,
+              30.75204199999959,
+              175.64229200000003
+            ],
+            "open_tabs_ms": [
+              21.38795800000004
+            ],
+            "png_decode_rgb_ms": [
+              8.250832999999957,
+              7.559207999999984
+            ],
+            "png_decode_rgba_ms": [
+              15.380750000000276,
+              15.702458000000696
+            ],
+            "page_transparent_ms": [
+              178.6667919999996
+            ]
+          },
+          "images": [
+            {
+              "frame": 306,
+              "png_bytes": 86127,
+              "base64_bytes": 114836,
+              "sha256": "b2b7244e011aed6d217a2144f51d063a0b4a1e1b90b2d93c4060bce9ea421fe1",
+              "rgba_sha256": "65e83028461b31c9851b81c78fc8fc2808e9a63f34818deee485170cc58b6a31",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png",
+            "f0306.png"
+          ]
+        },
+        {
+          "label": "fresh-3",
+          "frames": [
+            305
+          ],
+          "wall_ms": 1437.2065409999993,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 1072.3920830000004,
+            "ms_per_frame": 1072.3920830000004,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 45.88549999999891,
+                "p95": 45.88549999999891,
+                "sum": 45.88549999999891
+              },
+              "export": {
+                "p50": 94.45174999999928,
+                "p95": 94.45174999999928,
+                "sum": 94.45174999999928
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.536165999999838,
+                "p95": 0.536165999999838,
+                "sum": 0.536165999999838
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              362.54695800000025
+            ],
+            "browser_stop_ms": [
+              32.679958999999315
+            ],
+            "shot_ms": [
+              104.25299999999993,
+              148.98137499999996,
+              60.83762500000045,
+              110.82449999999966,
+              94.45008399999999
+            ],
+            "navigate_ms": [
+              24.119542000000216,
+              43.805457999999575,
+              136.509792,
+              45.883584000000255
+            ],
+            "open_tabs_ms": [
+              13.335582999999929
+            ],
+            "png_decode_rgb_ms": [
+              8.733166000000736,
+              7.937208999999612
+            ],
+            "png_decode_rgba_ms": [
+              15.49429099999955,
+              18.529959000000318
+            ],
+            "page_transparent_ms": [
+              193.85624999999962
+            ]
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "existing-png-3",
+          "frames": [
+            305
+          ],
+          "wall_ms": 1.6230000000003741,
+          "stats": {
+            "n": 600,
+            "rendered": 0,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 0.0,
+            "ms_per_frame": 0.0,
+            "canvas_export": false,
+            "path_counts": {
+              "override": 0,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "static_spans": 0,
+            "timings_ms": {
+              "nav": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "export": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [],
+            "browser_stop_ms": [],
+            "shot_ms": [],
+            "navigate_ms": [],
+            "open_tabs_ms": [],
+            "png_decode_rgb_ms": [],
+            "png_decode_rgba_ms": [],
+            "page_transparent_ms": []
+          },
+          "images": [
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png"
+          ]
+        },
+        {
+          "label": "neighbor-3",
+          "frames": [
+            306
+          ],
+          "wall_ms": 1423.0473750000012,
+          "stats": {
+            "n": 600,
+            "rendered": 1,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 1122.4946669999997,
+            "ms_per_frame": 1122.4946669999997,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 1,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 116.52433400000106,
+                "p95": 116.52433400000106,
+                "sum": 116.52433400000106
+              },
+              "export": {
+                "p50": 124.1600000000016,
+                "p95": 124.1600000000016,
+                "sum": 124.1600000000016
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 1.1560419999998572,
+                "p95": 1.1560419999998572,
+                "sum": 1.1560419999998572
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              298.2597079999998
+            ],
+            "browser_stop_ms": [
+              38.12716700000074
+            ],
+            "shot_ms": [
+              42.763624999999195,
+              133.03325000000044,
+              59.83333299999849,
+              81.60445799999927,
+              124.15625000000041
+            ],
+            "navigate_ms": [
+              162.27325000000013,
+              18.89187499999956,
+              94.91891699999933,
+              116.52175000000042
+            ],
+            "open_tabs_ms": [
+              17.83195800000037
+            ],
+            "png_decode_rgb_ms": [
+              8.202084000000553,
+              7.507041000000214
+            ],
+            "png_decode_rgba_ms": [
+              14.972207999999654,
+              16.943833000000907
+            ],
+            "page_transparent_ms": [
+              162.1870000000012
+            ]
+          },
+          "images": [
+            {
+              "frame": 306,
+              "png_bytes": 86127,
+              "base64_bytes": 114836,
+              "sha256": "b2b7244e011aed6d217a2144f51d063a0b4a1e1b90b2d93c4060bce9ea421fe1",
+              "rgba_sha256": "65e83028461b31c9851b81c78fc8fc2808e9a63f34818deee485170cc58b6a31",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0305.png",
+            "f0306.png"
+          ]
+        },
+        {
+          "label": "ordered-neighbors",
+          "frames": [
+            304,
+            305,
+            306
+          ],
+          "wall_ms": 1729.8687079999997,
+          "stats": {
+            "n": 600,
+            "rendered": 3,
+            "failed": [],
+            "transparent": null,
+            "tabs": 4,
+            "ms_total": 1355.1105830000001,
+            "ms_per_frame": 451.70352766666673,
+            "canvas_export": false,
+            "static_spans": 0,
+            "path_counts": {
+              "override": 3,
+              "canvas": 0,
+              "twoshot": 0,
+              "opaque": 0,
+              "navfree": 0,
+              "canvas_fallback": 0,
+              "static_copied": 0,
+              "failed": 0
+            },
+            "timings_ms": {
+              "nav": {
+                "p50": 42.41670800000108,
+                "p95": 42.46845799999992,
+                "sum": 94.73754100000065
+              },
+              "export": {
+                "p50": 118.0948750000006,
+                "p95": 132.7550874999991,
+                "sum": 305.9583339999978
+              },
+              "decode": {
+                "p50": 0.0,
+                "p95": 0.0,
+                "sum": 0.0
+              },
+              "write": {
+                "p50": 0.42649999999966326,
+                "p95": 0.5113996999995152,
+                "sum": 1.2506249999990615
+              }
+            }
+          },
+          "observations": {
+            "browser_start_ms": [
+              369.62916699999937
+            ],
+            "browser_stop_ms": [
+              42.893999999998655
+            ],
+            "shot_ms": [
+              92.26858300000096,
+              58.17354099999861,
+              89.98037499999967,
+              109.78933400000024,
+              53.47754100000124,
+              118.0936250000002,
+              134.3828339999984
+            ],
+            "navigate_ms": [
+              40.13050000000007,
+              181.18441699999897,
+              183.00333400000034,
+              9.844582999999574,
+              42.472667000000186,
+              42.41508299999985
+            ],
+            "open_tabs_ms": [
+              15.860624999998407
+            ],
+            "png_decode_rgb_ms": [
+              8.95666699999964,
+              7.994458000000648
+            ],
+            "png_decode_rgba_ms": [
+              18.720666000000108,
+              16.707166999999856
+            ],
+            "page_transparent_ms": [
+              222.51262500000024
+            ]
+          },
+          "images": [
+            {
+              "frame": 304,
+              "png_bytes": 85469,
+              "base64_bytes": 113960,
+              "sha256": "be5d8e93a69a372e006559de9429e9c7d852d52a8b6bff37d95137e638c4b254",
+              "rgba_sha256": "490600620ee7191a7bcf6be669d44da87a7a4a03dedb2cabfe52d50f0b603621",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            },
+            {
+              "frame": 305,
+              "png_bytes": 85910,
+              "base64_bytes": 114548,
+              "sha256": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b",
+              "rgba_sha256": "fa917bb54156d551bb287f55e0a2c2e78ac03ccd522c70f16575a837401e14e2",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            },
+            {
+              "frame": 306,
+              "png_bytes": 86127,
+              "base64_bytes": 114836,
+              "sha256": "b2b7244e011aed6d217a2144f51d063a0b4a1e1b90b2d93c4060bce9ea421fe1",
+              "rgba_sha256": "65e83028461b31c9851b81c78fc8fc2808e9a63f34818deee485170cc58b6a31",
+              "shape": [
+                1080,
+                1920,
+                4
+              ]
+            }
+          ],
+          "files": [
+            "f0304.png",
+            "f0305.png",
+            "f0306.png"
+          ]
+        }
+      ],
+      "public_frame_probe": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "code": "platform.unsupported",
+            "address": "",
+            "severity": "error",
+            "message": "render requires Linux fd-anchored writes"
+          }
+        ],
+        "new_root_entries": []
+      },
+      "probe_source": "\"\"\"Research mechanism probe, not a public API or DSH benchmark; writes fresh /tmp fixture.\"\"\"\nimport base64\nimport hashlib\nimport json\nimport os\nfrom pathlib import Path\nimport platform\nimport shutil\nimport subprocess\nimport sys\nimport tempfile\nimport time\nfrom unittest.mock import patch\n\nrepo = Path.cwd()\nsys.path.insert(0, str(repo))\nfrom vtx.render import gfx_render as gfx\nfrom vtx.api import frame_timeline\n\nroot = Path(tempfile.mkdtemp(prefix='f363-', dir='/tmp'))\nsource = repo / 'templates/tech-talk/assets/gfx-templates/chart_curve.html'\npage = root / 'chart_curve.html'\nshutil.copyfile(source, page)\nchrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'\nos.environ.update(VTX_GFX_NAVFREE='0', VTX_GFX_STATIC='1', VTX_GFX_TABS='4')\nconfig = root / 'config.json'\nconfig.write_text('{}')\nos.environ['VTX_CONFIG'] = str(config)\nsummary = {'schema':'framivra.single-frame-research/v1', 'revision':subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip(), 'platform':platform.platform(), 'python':sys.version, 'chrome':subprocess.check_output([chrome,'--version'], text=True).strip(), 'chrome_binary_sha256':hashlib.sha256(Path(chrome).read_bytes()).hexdigest(), 'numpy':gfx.numpy.__version__, 'input':{'path':str(source.relative_to(repo)), 'sha256':hashlib.sha256(page.read_bytes()).hexdigest(), 'n_frames':600, 'width':1920, 'height':1080, 'fps':30}, 'environment':{k:os.environ[k] for k in ('VTX_GFX_NAVFREE','VTX_GFX_STATIC','VTX_GFX_TABS')}, 'scope':'Internal render_page only; fresh browser per nonempty call; no OS cache flush; local fonts not pinned; raw early-return reuse is NOT authenticated production cache; no timeline composition, DSH transport or GUI benchmark.', 'trials':[]}\noriginal_start, original_stop = gfx.Browser.start, gfx.Browser.stop\noriginal_shot, original_navigate = gfx.Tab.shot, gfx.Tab.navigate\noriginal_open, original_rgb, original_rgba, original_transparent = gfx.Browser.open_tabs, gfx.png_decode_rgb, gfx.png_decode_rgba, gfx.page_transparent\n\ndef run(label, directory, frames):\n    obs = {'browser_start_ms':[], 'browser_stop_ms':[], 'shot_ms':[], 'navigate_ms':[], 'open_tabs_ms':[], 'png_decode_rgb_ms':[], 'png_decode_rgba_ms':[], 'page_transparent_ms':[]}\n    def timed(name, original):\n        def wrapper(*args, **kwargs):\n            t = time.perf_counter()\n            try: return original(*args, **kwargs)\n            finally: obs[name].append((time.perf_counter()-t)*1000)\n        return wrapper\n    t = time.perf_counter()\n    try:\n        with patch.object(gfx.Browser, 'start', timed('browser_start_ms', original_start)), patch.object(gfx.Browser, 'stop', timed('browser_stop_ms', original_stop)), patch.object(gfx.Tab, 'shot', timed('shot_ms', original_shot)), patch.object(gfx.Tab, 'navigate', timed('navigate_ms', original_navigate)), patch.object(gfx.Browser, 'open_tabs', timed('open_tabs_ms', original_open)), patch.object(gfx, 'png_decode_rgb', timed('png_decode_rgb_ms', original_rgb)), patch.object(gfx, 'png_decode_rgba', timed('png_decode_rgba_ms', original_rgba)), patch.object(gfx, 'page_transparent', timed('page_transparent_ms', original_transparent)):\n            stats = gfx.render_page(str(page), str(directory), 600, chrome_path=chrome, tabs=4, width=1920, height=1080, frames=frames)\n        wall = (time.perf_counter()-t)*1000\n        images = []\n        for f in frames:\n            data = (directory / ('f%04d.png' % f)).read_bytes()\n            rgba = gfx.png_decode_rgba(data)\n            images.append({'frame':f,'png_bytes':len(data),'base64_bytes':len(base64.b64encode(data)),'sha256':hashlib.sha256(data).hexdigest(),'rgba_sha256':hashlib.sha256(rgba.tobytes()).hexdigest(),'shape':list(rgba.shape)})\n        result = {'label':label,'frames':frames,'wall_ms':wall,'stats':stats,'observations':obs,'images':images,'files':sorted(p.name for p in directory.iterdir())}\n    except Exception as exc:\n        result = {'label':label,'frames':frames,'wall_ms':(time.perf_counter()-t)*1000,'error':type(exc).__name__+': '+str(exc),'observations':obs}\n    summary['trials'].append(result)\n    (root / 'results.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\\n')\n\nfor i in range(3):\n    directory = root / ('trial-%d' % (i+1))\n    run('fresh-%d' % (i+1), directory, [305])\n    run('existing-png-%d' % (i+1), directory, [305])\n    run('neighbor-%d' % (i+1), directory, [306])\nrun('ordered-neighbors', root / 'ordered', [304,305,306])\ntimeline = root / 'timeline.json'\ntimeline.write_text(json.dumps({'version':2,'project':{'fps':30,'width':1920,'height':1080,'duration_frames':600},'sources':[],'video_tracks':[{'name':'chart','kind':'gfx','clips':[{'src':'chart_curve.html','dst_in':0,'dur':600}]}],'audio_tracks':[],'subtitles':[]}))\nbefore = sorted(p.name for p in root.iterdir())\nresult = frame_timeline(timeline, frame=305, render=True, include_png=True)\nsummary['public_frame_probe'] = {'ok':result['ok'],'diagnostics':result['diagnostics'],'new_root_entries':sorted(set(p.name for p in root.iterdir())-set(before))}\nsummary['probe_source'] = Path(__file__).read_text()\n(root / 'results.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\\n')\nprint(json.dumps({'root':str(root),'result':str(root/'results.json'),'attempts':len(summary['trials']),'errors':[t['label'] for t in summary['trials'] if 'error' in t],'public_frame_probe':summary['public_frame_probe']}))\nif any('error' in t or t['stats']['failed'] for t in summary['trials']):\n    raise SystemExit(1)\n",
+      "series": "attribution-pillow",
+      "pillow": "11.3.0",
+      "probe_source_sha256": "fcabf84686207b7f074801775b1cf7ea0b2e60f9ffc680759376d2fac84e62cc",
+      "summary": {
+        "fresh-": {
+          "wall_ms": [
+            1809.9581249999999,
+            1524.7399579999997,
+            1437.2065409999993
+          ],
+          "median_wall_ms": 1524.7399579999997
+        },
+        "existing-png-": {
+          "wall_ms": [
+            1.6387909999999728,
+            1.6201250000005274,
+            1.6230000000003741
+          ],
+          "median_wall_ms": 1.6230000000003741
+        },
+        "neighbor-": {
+          "wall_ms": [
+            1713.5515420000002,
+            1436.1317499999996,
+            1423.0473750000012
+          ],
+          "median_wall_ms": 1436.1317499999996
+        },
+        "fresh_median_observation_sums_ms": {
+          "browser_start_ms": 364.81366699999995,
+          "browser_stop_ms": 33.21662499999967,
+          "shot_ms": 563.5435420000003,
+          "navigate_ms": 250.31837600000006,
+          "open_tabs_ms": 14.542916999999989,
+          "png_decode_rgb_ms": 18.00525000000075,
+          "png_decode_rgba_ms": 34.02424999999987,
+          "page_transparent_ms": 279.9064170000003
+        }
+      }
+    }
+  ],
+  "quality": {
+    "all_30_calls_successful": true,
+    "public_frame_each_series": "platform.unsupported; no new root entries",
+    "frame_305_and_306_hashes_equal_across_all_series_and_ordered_control": true,
+    "different_requested_frames_have_distinct_pixels": true,
+    "frames_checked": [
+      304,
+      305,
+      306
+    ],
+    "limits": "Only sampled frames, not all600 frames or cross-platform exactness; PNG fully decoded and hashed after timing. Raw internal cache has no input certificate."
+  },
+  "checks": {
+    "node_focused": "51 passed,0 failed,0 skip after npm ci --ignore-scripts; initial attempt38 pass and2 module-load failures from missing React retained as environment failure",
+    "python_initial": "20 tests:10 pass,1 failure,9 errors; macOS /var symlink ancestor plus Linux-only guard",
+    "python_physical_tmp": "20 tests:16 pass,1 failure,3 errors; platform guard, Linux fd anchoring and /proc assumption",
+    "python_portable_contracts": "10 passed,0 failed,0 skip",
+    "graphics_mocks": "24 passed,0 failed,0 skip",
+    "unrun": [
+      "Linux current-composite real media",
+      "DSH GUI/end-to-end latency",
+      "900-frame main baseline",
+      "full repository suite",
+      "p95/peak RSS/IO/energy",
+      "transparent/complex/multipage exactness"
+    ]
+  }
+}
