@@ -105,6 +105,12 @@ A confirmed `ok` / `applied` write receipt is not relabeled `outcome_unknown` if
 
 Trim is inward-only; gfx trim/split and external subtitle edits are explicitly unsupported. Subtitle split requires duplicate-text or two-text choice. Ripple crossing/fade policies and participating tracks are explicit; there is no implicit AV link. Undo is the actual current-head core transaction, not a browser inverse cache; **redo is unsupported**. Unknown/interrupted commits show the original `op_id`, not “saved” or “failed before writing”. Explicit status/recover and reopen consult core history; the Host has no second publisher, journal or persistent timeline. Revoke, HTTP disconnect and unload terminate and reap owned processes, but cannot promise rollback after a possible commit.
 
+### 工程配置（沿用现有语义事务）
+
+「属性与编辑」内的工程配置面板展示保存版本的 FPS、画布、时长与插件声明；30fps / 1920×1080 保持只读。时长、gfx_dependency_policy、cache_dependencies，以及素材 denoise / bgm、音轨 duck_strategy 使用专用配置入口，编译到既有 project.resize、parameters.update/unset 或 track.references，不扩大通用属性白名单、不整文替换、不写 registry 或 VTX_CONFIG。缺失值不自动落默认值；移除字段与设置 false/null 分开。root.blender_bridge 仅展示，未知扩展仍由完整数据详情保留。
+
+配置输入与待提交批次共用写授权、受管身份、旧计划失效、冻结确认、权威刷新和未知结果锁。改输入不写盘、不渲染；加入批次后仍须显式预检与确认。计划只检查结构，不验证插件安装/依赖或渲染效果；插件声明可能使逐帧预览被内核拒绝。PNG 仍仅对应已保存版本和现有平台/纯内核/warm-input 边界，不提供未保存配置的实时画面。后续契约与能力缺口集中跟踪 [#372](https://github.com/CongliangK/framivra/issues/372)。
+
 ### Agent tools → human confirmation → authoritative refresh
 
 The same loaded plugin registers three model tools: `framivra_timeline_read` (inspect/query/source-exact reference), `framivra_timeline_propose` (zero-write semantic plan), and `framivra_proposal_status` (in-memory proposal receipt). Their timeline path is relative to the invoking agent's actual Session workspace. Tools never accept a Session/cwd override, browser grant or write token, and cannot commit, adopt, undo, recover or render. Inspect includes the installed core's edit capabilities; `operation_fields` describes required/optional **top-level keys only**, not value types or a complete schema. Unsupported semantic capabilities do not disable ordinary reads; cleanup failures still fail closed. Project content is untrusted data, not instructions.

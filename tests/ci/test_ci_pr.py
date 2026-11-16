@@ -204,6 +204,9 @@ class CuratedRegressionGate(unittest.TestCase):
             'tests.distribution.test_version_sources',
             'tests.cache.test_graph_digest',
             'tests.plugins.test_config_unified',
+            'tests.contracts.test_demo_audio',
+            'tests.contracts.test_demo_fonts',
+            'tests.contracts.test_demo_portable',
         ))
 
     def test_unrecognized_argument_is_an_error(self):

@@ -69,8 +69,7 @@ function prepareAudio(python) {
   const output = path.join(ROOT, '.generated/audio');
   const result = spawnSync(python, [path.join(ROOT, 'audio/build.py'), '--out', output], {
     cwd: ROOT, stdio: 'inherit', timeout: 420000,
-    env: {...process.env, PYTHONDONTWRITEBYTECODE: '1', BGM_NO_PARALLEL: '1',
-      OMP_NUM_THREADS: '1', OPENBLAS_NUM_THREADS: '1'}});
+    env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}});
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`Audio preparation failed (${result.status ?? result.signal})`);
   for (const name of ['bed-premaster.wav', 'content-cue.wav'])
@@ -102,7 +101,7 @@ function main(args) {
   if (mode === 'check') {
     console.log(JSON.stringify({status: 'INPUTS_AVAILABLE', node: process.version,
       fonts: fonts.map(f => ({path: f.path, source: f.source, sha256: f.sha256})),
-      audio_dependencies: 'Python 3 + NumPy + FFmpeg required; not probed by this read-only check',
+      audio_dependencies: 'Python >=3.9 standard library only; not probed by this read-only check',
       native_render: 'UNRUN', human_review: 'UNRUN'}, null, 2));
     return;
   }

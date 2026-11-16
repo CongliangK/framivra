@@ -49,7 +49,7 @@ export const BAKED_BUILD_STAMP = '__FRAMIVRA_BUILD_STAMP__'
 export const HOST_LIB_MODULES = ['configuration', 'kernel-config', 'kernel-management', 'protocol', 'bounded', 'json', 'media', 'agent', 'tools', 'host', 'index']
 /** Client-side modules that participate in the build stamp, in fixed order. */
 export const CLIENT_MODULES = [
-  'icons', 'icon-controls', 'editor-controls', 'viewport', 'timeline', 'manual',
+  'icons', 'icon-controls', 'editor-controls', 'viewport', 'timeline', 'timeline-settings', 'manual',
   'selection', 'reference', 'frame', 'settings', 'kernel-settings', 'draft-services', 'proposals',
   'grant-lifecycle', 'official-draft', 'workbench', 'storage', 'index',
 ]
