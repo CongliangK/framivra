@@ -1,6 +1,6 @@
 """Bounded Inkscape shell producer; independent static SVG completion evidence.
 
-Large cold clips use at most four isolated shell processes. Timeout/exception
+Large cold clips use at most five isolated shell processes. Timeout/exception
 attempts bounded termination/reaping of every owned shell before returning;
 failed cleanup is fatal. This is not browser parent-death supervision.
 """
@@ -96,15 +96,15 @@ def run_shell(executable, directory, count, width, height, *, root=None, indices
 def shell_batches(indices):
     """Bound startup/memory cost; scheduling does not change the SVG grammar."""
     value = os.environ.get('VTX_SVG_WORKERS')
-    if value is not None and value not in ('1', '2', '3', '4'):
-        raise ValueError('VTX_SVG_WORKERS must be an integer from 1 to 4')
-    workers = int(value) if value is not None else min(4, max(1, (os.cpu_count() or 1) // 2))
+    if value is not None and value not in ('1', '2', '3', '4', '5'):
+        raise ValueError('VTX_SVG_WORKERS must be an integer from 1 to 5')
+    workers = int(value) if value is not None else min(5, max(1, (os.cpu_count() or 1) // 2))
     workers = min(workers, max(1, len(indices) // 120))
     return [indices[i * len(indices) // workers:(i + 1) * len(indices) // workers]
             for i in range(workers)]
 
 
-def run_shell_batches(executable, directory, count, width, height, *, root, indices):
+def run_shell_batches(executable, directory, count, width, height, *, root, indices, outputs=None):
     batches = shell_batches(indices)
     if len(batches) == 1:
         run_shell(executable, directory, count, width, height, root=root, indices=indices)
@@ -151,7 +151,12 @@ def run_shell_batches(executable, directory, count, width, height, *, root, indi
             raise cleanup_error
     for shard, batch in jobs:
         for i in batch:
-            fstxn.replace(shard / f'f{i:04d}.png', directory / f'f{i:04d}.png', root=root)
+            if outputs is None:
+                fstxn.replace(shard / f'f{i:04d}.png', directory / f'f{i:04d}.png', root=root)
+            else:
+                # Keep owned outputs in place until full validation and final
+                # pinned publication; do not rename them through staging twice.
+                outputs[i] = shard / f'f{i:04d}.png'
     return len(jobs)
 
 
@@ -249,12 +254,13 @@ def render_stage(c):
                     reused = set(group)  # Rebuild after any byte-inequality fallback.
                     skipped = set(group[1:])
                     indices = [i for i in range(clip['dur']) if i not in skipped]
+                    outputs = [staging / f'f{i:04d}.png' for i in range(clip['dur'])]
                     batch_count = run_shell_batches(record['engine']['executable'], staging,
                                                     clip['dur'], c.w, c.h,
-                                                    root=c.root, indices=indices)
+                                                    root=c.root, indices=indices, outputs=outputs)
                     copied_fingerprint = None
                     if skipped:
-                        source = staging / f'f{group[0]:04d}.png'
+                        source = outputs[group[0]]
                         observed, sizes = [], []
                         reason = png_invalid_reason(source, width=c.w, height=c.h,
                                                     _fingerprint=observed, _verified_size=sizes)
@@ -262,13 +268,13 @@ def render_stage(c):
                             raise ValueError(f'Inkscape representative invalid: {reason}')
                         copied_fingerprint = observed[0]
                         for i in group[1:]:
-                            copy_png(source, staging / f'f{i:04d}.png', copied_fingerprint, sizes[0], root=c.root)
+                            copy_png(source, outputs[i], copied_fingerprint, sizes[0], root=c.root)
                     raster_seconds = time.monotonic() - started
                     def check_batch(indices):
                         checked = []
                         for i in indices:
                             observed = []
-                            reason = png_invalid_reason(staging / f'f{i:04d}.png',
+                            reason = png_invalid_reason(outputs[i],
                                                         width=c.w, height=c.h, _fingerprint=observed)
                             if reason:
                                 raise ValueError(f'Inkscape output frame {i} invalid: {reason}')
@@ -289,7 +295,7 @@ def render_stage(c):
                     if gfx_svg.resolve(c, clip) != record:
                         raise ValueError('SVG identity changed during rendering')
                     for i in range(clip['dur']):
-                        fstxn.replace(staging / f'f{i:04d}.png', directory / f'f{i:04d}.png', root=c.root)
+                        fstxn.replace(outputs[i], directory / f'f{i:04d}.png', root=c.root)
                     marker.write_text(json.dumps({'format': 'framivra-svg-completion/v1',
                         'key': key, 'input': record, 'sha256': hashes,
                         'experimental': True, 'batch_count': batch_count, 'raster_seconds': raster_seconds,

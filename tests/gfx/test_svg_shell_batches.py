@@ -1,6 +1,7 @@
 """Bounded SVG scheduling contracts; fake shells, never media qualification."""
 import contextlib
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -34,21 +35,21 @@ class ShellBatches(unittest.TestCase):
 
     def test_exact_order_coverage_threshold_and_bounds(self):
         with mock.patch.object(stage.os, 'cpu_count', return_value=10):
-            for count, expected in [(1, 1), (120, 1), (239, 1), (240, 2), (359, 2), (360, 3), (479, 3), (480, 4), (900, 4)]:
+            for count, expected in [(1, 1), (120, 1), (239, 1), (240, 2), (359, 2), (360, 3), (479, 3), (480, 4), (599, 4), (600, 5), (900, 5)]:
                 indices = list(range(count))
                 batches = stage.shell_batches(indices)
                 self.assertEqual(len(batches), expected)
                 self.assertEqual(sum(batches, []), indices)
                 self.assertLessEqual(max(map(len, batches)) - min(map(len, batches)), 1)
-            for value in ['1', '2', '3', '4']:
+            for value in ['1', '2', '3', '4', '5']:
                 os.environ['VTX_SVG_WORKERS'] = value
                 self.assertEqual(len(stage.shell_batches(list(range(900)))), int(value))
-            for value in ['', '0', '5', '-1', '1.0', ' 2', '02', 'auto']:
+            for value in ['', '0', '6', '-1', '1.0', ' 2', '02', 'auto']:
                 os.environ['VTX_SVG_WORKERS'] = value
                 with self.assertRaisesRegex(ValueError, 'VTX_SVG_WORKERS'):
                     stage.shell_batches(list(range(900)))
         os.environ.pop('VTX_SVG_WORKERS')
-        for cpus, expected in [(None, 1), (1, 1), (2, 1), (4, 2), (128, 4)]:
+        for cpus, expected in [(None, 1), (1, 1), (2, 1), (4, 2), (128, 5)]:
             with mock.patch.object(stage.os, 'cpu_count', return_value=cpus):
                 self.assertEqual(len(stage.shell_batches(list(range(900)))), expected)
         sparse = [i for i in range(900) if i % 7]
@@ -214,14 +215,14 @@ class ShellBatches(unittest.TestCase):
         for mode in ['missing', 'corrupt']:
             root = self.root / mode
             root.mkdir()
-            clip = dict(src='manifest.json', format='svg-sequence', dur=240)
-            frames = [f'f{i}.svg' for i in range(240)]
+            clip = dict(src='manifest.json', format='svg-sequence', dur=241)
+            frames = [f'f{i}.svg' for i in range(241)]
             for name in frames:
                 (root / name).write_bytes(b'verified-svg')
-            (root / 'font.ttf').write_bytes(b'font')
-            record = dict(frames=frames, fonts=['font.ttf'],
+            record = dict(frames=frames, fonts=[],
                           files={name: hashlib.sha256((root / name).read_bytes()).hexdigest()
-                                 for name in frames + ['font.ttf']},
+                                 for name in frames},
+                          export_reuse={'proof': 'font-free-rects/v1', 'frames': [frames[0], frames[240]]},
                           engine={'executable': '/inkscape'})
             c = SimpleNamespace(root=root, cache=root / 'cache', fps=30, w=64, h=64,
                                 dry=False, tl={'video_tracks': [{'kind': 'gfx', 'clips': [clip]}]},
@@ -236,7 +237,7 @@ class ShellBatches(unittest.TestCase):
                             if mode == 'corrupt':
                                 (cwd / f'f{i:04d}.png').write_bytes(b'not a PNG')
                         else:
-                            write_png(cwd / f'f{i:04d}.png', 64, 64)
+                            write_png(cwd / f'f{i:04d}.png', 64, 64, frame=i)
                     return '', ''
                 process.communicate.side_effect = communicate
                 return process
@@ -255,6 +256,10 @@ class ShellBatches(unittest.TestCase):
                 stage.render_stage(c)
                 self.assertEqual(shells.call_count, 2)
                 c.receipt.assert_called_once()
+                marker = json.loads(next(c.cache.rglob(stage.gfx_svg.COMPLETE_FILE)).read_text())
+                self.assertEqual((marker['export_count'], marker['materialized_count']), (240, 1))
+                self.assertEqual(marker['sha256'][0], marker['sha256'][240])
+                self.assertNotEqual(marker['sha256'][0], marker['sha256'][1])
                 stage.render_stage(c)
                 self.assertEqual(shells.call_count, 2)  # Repaired cache is warm and reusable.
 
