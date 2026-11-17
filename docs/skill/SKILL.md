@@ -61,7 +61,7 @@ export VIDEO_TOOLS
 4. **剪辑永远走 timeline.json + vtx**：不手写 ffmpeg 剪辑命令；改 timeline 必重跑 validate。
 5. **gfx 页面必须帧驱动**：动画状态 = 帧号 f 的纯函数，禁 CSS animation/transition、Date.now()、Math.random()、rAF 时序。
 6. **tech-talk 调研走 R0-R6 编排**：主编只编排不采集，采集与评分分离，红队质疑必逐条回应。
-7. 时间量一律**整数帧**；时基 30fps（≠29.97）、48kHz（每帧整 1600 采样）；区间 `[in, out)` 左闭右开。
+7. 时间量一律**整数帧**；项目帧率取 [schema](../../vtx/timeline.schema.json) 允许值，NTSC 标签对应精确 N/1001；48kHz 音频按绝对帧端点舍入到采样，区间 `[in, out)` 左闭右开。
 8. **修改本产线程序或文档一律改 Framivra 仓源件**（live 挂载点为符号链接），不改挂载副本或擅改外部音乐仓。
 
 ## CLI 速查（组件真实路径）

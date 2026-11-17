@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import React, { act } from 'react'
 import { JSDOM } from 'jsdom'
-import { stepFrame, Transport, LayoutDivider, SelectionSummary } from '../src/client/editor-controls.mjs'
+import { stepFrame, secondsFrame, Transport, LayoutDivider, SelectionSummary } from '../src/client/editor-controls.mjs'
 import { ManualEditor } from '../src/client/manual.mjs'
 
 const h = React.createElement
@@ -43,6 +43,13 @@ test('stepFrame: negative/empty/out-of-range frames fall back to 0 as current fr
   assert.equal(stepFrame(10, 10, 1), 1, 'frame === duration is out of range → current 0 → forward 1')
   assert.equal(stepFrame(99, 10, 1), 1)
   assert.equal(stepFrame(0, 10, 0), 1, 'direction 0 is treated as forward')
+})
+
+test('secondsFrame uses the saved integer rate and refuses fractional clocks', () => {
+  assert.equal(secondsFrame('10', '5', 25), 255)
+  assert.equal(secondsFrame('1', '119', 120), 239)
+  assert.throws(() => secondsFrame('1', '25', 25))
+  for (const fps of [29.97, '30000/1001']) assert.throws(() => secondsFrame('10', '5', fps), /全局整数帧/)
 })
 
 // ---------- Transport: navigation only, zero network ----------

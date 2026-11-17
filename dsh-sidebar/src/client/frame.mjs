@@ -15,12 +15,17 @@ const whole = value => Number.isSafeInteger(value) && value >= 0
  * 30.0000000000000000000001 with 30. Canonical safe-integer numbers (the only
  * numbers parseJSON keeps) compare by exact integer math; rawJSON tokens are
  * compared as exact decimals with tightly bounded digit/exponent ranges, so a
- * second JSON parser is not needed. Strings and lookalikes are rejected. */
+ * second JSON parser is not needed. Only supported exact rational strings pass. */
 export const FPS_TOKEN_LIMIT = 64, FPS_DIGIT_LIMIT = 40, FPS_EXPONENT_LIMIT = 60
 const fpsTokenPattern = /^([+-]?)(0|[1-9][0-9]*)(?:\.([0-9]+))?(?:[eE]([+-]?[0-9]+))?$/
 export function fpsMatchesReference(num, den, referenceFps) {
   if (!whole(num) || !whole(den) || num < 1 || den < 1) return false
   if (typeof referenceFps === 'number') return Number.isSafeInteger(referenceFps) && referenceFps >= 1 && num % den === 0 && num / den === referenceFps
+  if (typeof referenceFps === 'string') {
+    if (!['24000/1001', '30000/1001', '48000/1001', '60000/1001', '120000/1001'].includes(referenceFps)) return false
+    const [n, d] = referenceFps.split('/').map(BigInt)
+    return BigInt(num) * d === BigInt(den) * n
+  }
   if (typeof JSON.isRawJSON !== 'function' || !JSON.isRawJSON(referenceFps)) return false
   const token = stringifyJSON(referenceFps)
   if (typeof token !== 'string' || token.length > FPS_TOKEN_LIMIT) return false
@@ -35,6 +40,13 @@ export function fpsMatchesReference(num, den, referenceFps) {
   if (magnitude === 0n) return false
   const signedMagnitude = sign === '-' ? -magnitude : magnitude
   const numerator = BigInt(num), denominator = BigInt(den)
+  // Decimal NTSC labels denote exact N/1001 clocks, just as in the core parser.
+  for (const [label, rate] of [[23976n, 24000n], [29970n, 30000n], [47952n, 48000n], [59940n, 60000n], [119880n, 120000n]]) {
+    const alias = exponent >= 0
+      ? signedMagnitude * 10n ** BigInt(exponent) * 1000n === label
+      : signedMagnitude * 1000n === label * 10n ** BigInt(-exponent)
+    if (alias) return numerator * 1001n === denominator * rate
+  }
   // referenceFps = signedMagnitude * 10^exponent must equal num/den exactly.
   return exponent >= 0
     ? numerator === denominator * signedMagnitude * 10n ** BigInt(exponent)

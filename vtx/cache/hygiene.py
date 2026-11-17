@@ -260,7 +260,8 @@ def gfx_key(c, cl) -> str:
     environment = environment_identity(c)
     if environment:
         blob += b"|environment:" + environment.encode()
-    return _sha1(blob + f"|{c.fps}|{c.w}x{c.h}|{cl['dur']}".encode())
+    from ..pipeline.constraints import fps_expression
+    return _sha1(blob + f"|{fps_expression(c.fps)}|{c.w}x{c.h}|{cl['dur']}".encode())
 
 
 
@@ -324,13 +325,14 @@ def seg_key(c, cl, ti: int, ci: int, windowed: bool, need_alpha: bool, encoder: 
     src = c.src_path(cl["src"])
     # Bind decoding to the same first video stream used by Ctx.probe. Legacy
     # auto-selected (default/largest) streams can differ even for opaque clips.
+    from ..pipeline.constraints import fps_expression
     spec = ["seg:decode-v0-alpha-v2", _fp(src), str(cl["src_in"]), str(cl["src_out"]), str(cl["dur"]),
             repr(cl.get("scale")), repr(cl.get("x")), repr(cl.get("y")),
             repr(cl.get("opacity")), repr(cl.get("fade_in_frames")),
             repr(cl.get("fade_out_frames")),
             "win" if windowed else "full", "alpha" if need_alpha else "opaque",
             encoder,
-            f"{c.fps}|{c.w}x{c.h}"]
+            f"{fps_expression(c.fps)}|{c.w}x{c.h}"]
     # Full-frame normalization now centers wide inputs horizontally too. Old
     # left-cropped segs have valid media certificates but the wrong pixels;
     # invalidate only this path, leaving explicit window geometry unchanged.

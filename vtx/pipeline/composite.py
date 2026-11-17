@@ -4,9 +4,12 @@
 RenderPlan.composite(a=0/b=None) 保留（VTX_VIDEO_SEGMENTS=1 与
 --draft --frames 回落路径共用同一段代码）。
 """
-import ast, contextlib, functools, hashlib, inspect, json, os, platform, subprocess, sys, textwrap
+import ast, contextlib, functools, hashlib, inspect, json, os, platform, re, subprocess, sys, textwrap
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from fractions import Fraction
+
+from .constraints import fps_expression, parse_fps
 
 from ..media.encoders import pick_vcodec, nvenc_budget, nvenc_concurrency, seg_encoder_kind, seg_needs_alpha
 from ..cache.hygiene import budget_gate, manifest_record, seg_key
@@ -32,18 +35,31 @@ def _concat_manifest(segments, fps):
     independently, so rounding error cannot accumulate across cuts. At 30 fps
     these boundaries rescale back to the exact MP4 video ticks.
     """
+    rate = parse_fps(fps)
+    def microseconds(frame):
+        value = Fraction(frame) * 1_000_000 / rate
+        return (2 * value.numerator + value.denominator) // (2 * value.denominator)
     lines = []
     origin = None
     for path, a, b in segments:
         if origin is None:
             origin = a
-        start = ((a - origin) * 1_000_000 + fps // 2) // fps
-        end = ((b - origin) * 1_000_000 + fps // 2) // fps
+        start = microseconds(a - origin)
+        end = microseconds(b - origin)
         duration = end - start
         # Absolute POSIX paths preserve Windows paths containing '#' as well.
         name = path.resolve().as_posix().replace("'", "'\\''")
         lines.append(f"file '{name}'\nduration {duration // 1_000_000}.{duration % 1_000_000:06d}\n")
     return "".join(lines)
+
+
+def subtitle_timing_error(text, fps):
+    """Timed overrides cannot preserve wall-clock semantics on stretched ASS."""
+    if parse_fps(fps) > 50 and re.search(
+            r"\{[^}]*\\(?:t|fad|fade|move|[kK](?:f|o|t)?)(?![A-Za-z])", text):
+        return ("time-dependent ASS override tags are unsupported above 50fps "
+                "(frame-exact subtitles use a stretched render clock); use static styling")
+    return None
 
 
 # ---------------------------------------------------------------- 合成代码摘要（段缓存防洗白）
@@ -140,6 +156,8 @@ def _graph_code_digest() -> str:
     source += _normalized_ast_src(inspect.getsource(gfx_cli))
     source += _normalized_ast_src(inspect.getsource(_clip_alpha_filters))
     source += _normalized_ast_src(inspect.getsource(_gfx_scaled_size))
+    source += _normalized_ast_src(inspect.getsource(RenderPlan._subtitle_filter))
+    source += _normalized_ast_src(inspect.getsource(RenderPlan._subtitle_clock))
     return hashlib.sha1(source.encode("utf-8")).hexdigest()[:12]
 
 
@@ -190,7 +208,7 @@ def pass_content_key(previous, index, layer, graph_digest):
 
 
 def segment_content_key(a, b, width, height, draft, gpu, layers, subtitle_bytes,
-                        graph_digest):
+                        graph_digest, fps=None):
     """Pure cache identity shared by rendering and impact snapshots.
 
     Layers are ordered (identity, clip, x, y, width, height) tuples. Identity
@@ -199,6 +217,8 @@ def segment_content_key(a, b, width, height, draft, gpu, layers, subtitle_bytes,
     h = hashlib.sha1()
     h.update(f"{a}|{b}|{width}x{height}|{int(bool(draft))}|{int(bool(gpu))}\n".encode())
     h.update(f"graph={graph_digest}\n".encode())
+    if fps is not None:
+        h.update(f"fps={fps_expression(fps)}\n".encode())
     for ident, clip, x, y, w2, h2 in layers:
         h.update((ident + "|" + json.dumps(clip, sort_keys=True, ensure_ascii=False)
                   + f"|{x}|{y}|{w2}|{h2}\n").encode())
@@ -231,23 +251,44 @@ class RenderPlan:
             raise ValueError(f"subtitle frame boundary must be a non-negative integer: {fr!r}")
         return int(fr)
 
+    def _subtitle_clock(self):
+        """Stretch only libass's clock until every frame has a safe CS edge.
+
+        ASS event times have centisecond precision; at 100/120fps some frame
+        windows contain no representable edge. A <=50fps virtual clock leaves
+        room between adjacent frames even after libass's millisecond truncation.
+        The compositor restores the exact delivery clock immediately afterward.
+        """
+        rate = parse_fps(self.c.fps)
+        stretch = (rate.numerator + 50 * rate.denominator - 1) // (50 * rate.denominator)
+        return rate, stretch
+
     def _fc(self, fr):
-        # Place both edges strictly between the previous and target frame.
-        # At supported 30fps a centisecond near the midpoint leaves >=6ms
-        # clearance, including FFmpeg's floating PTS -> libass integer-ms
-        # truncation (e.g. frame111 may arrive at 3699ms, not 3700ms).
-        # Merely flooring the exact frame time fails on those clock boundaries.
-        # Frame zero has no preceding frame; clamp its boundary to zero.
-        # JSON Schema's integer type also admits 310.0. Normalize only after
-        # checking mathematical integrality; int(310.5) would change intent.
+        # Floor the midpoint on the virtual clock, not the delivery clock.
+        # At <=50fps the edge stays strictly after the previous frame and
+        # before the target, including floating PTS -> integer-ms underflow.
         fr = self._frame_number(fr)
-        cs = max(0, (2 * fr - 1) * 100 // (2 * int(self.c.fps)))
+        rate, stretch = self._subtitle_clock()
+        cs = max(0, (2 * fr - 1) * 100 * stretch * rate.denominator // (2 * rate.numerator))
         hh, rem = divmod(cs, 360000); mm, rem = divmod(rem, 6000); ss, cs2 = divmod(rem, 100)
         return f"{hh}:{mm:02d}:{ss:02d}.{cs2:02d}"
 
+    def _subtitle_filter(self, sub_file):
+        rate, stretch = self._subtitle_clock()
+        burn = f"subtitles=filename={filter_filename(sub_file)}"
+        if stretch == 1:
+            return burn
+        # Derive PTS from frame number, not an intermediate Matroska's rounded
+        # 1ms timestamps. Keep integer ticks through both clock conversions.
+        return (f"settb=expr={rate.denominator}/{rate.numerator},setpts=N*{stretch},"
+                f"{burn},setpts=N")
+
     def ass_head(self):
         f, W, H = self.f, self.W, self.H
-        return ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {W}", f"PlayResY: {H}", "WrapStyle: 2", "",
+        rate, stretch = self._subtitle_clock()
+        clock = ([f"; VTX render-only ASS: fps={rate}; clock stretch={stretch}; "
+                  "requires matching compositor PTS transform"] if stretch > 1 else [])
+        return ["[Script Info]", *clock, "ScriptType: v4.00+", f"PlayResX: {W}", f"PlayResY: {H}", "WrapStyle: 2", "",
                 "[V4+ Styles]",
                 "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
                 f"Style: Def,Noto Sans CJK SC,{58*f:.0f},&H00F8FBFF,&H00000000,&H80000000,1,1,{3*f:.1f},{2*f:.1f},2,{60*f:.0f},{60*f:.0f},{60*f:.0f},1",
@@ -257,6 +298,9 @@ class RenderPlan:
         c = self.c
         lines = self.ass_head()
         for s in c.tl["subtitles"]:
+            problem = subtitle_timing_error(s['text'], c.fps)
+            if problem:
+                raise ValueError(problem)
             lines.append(f"Dialogue: 0,{self._fc(s['in'])},{self._fc(s['out'])},Def,,0,0,0,,{s['text']}")
         fstxn.atomic_write(path, "\n".join(lines), root=self.c.root)
 
@@ -269,6 +313,9 @@ class RenderPlan:
         """
         lines = self.ass_head()
         for s in self.c.tl["subtitles"]:
+            problem = subtitle_timing_error(s['text'], self.c.fps)
+            if problem:
+                raise ValueError(problem)
             # Validate before clipping: clipping must not hide a fractional or
             # boolean endpoint that lies outside this segment.
             start, end = self._frame_number(s["in"]), self._frame_number(s["out"])
@@ -313,7 +360,7 @@ class RenderPlan:
         if sub_file is None:
             sub_file = c.cache / ("subs_draft.ass" if draft else "subs.ass")
         cmd = ["ffmpeg", "-v", "error", "-y",
-               "-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r={c.fps}:d={seglen * c.spf:.3f}"]
+               "-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r={fps_expression(c.fps)}:d={seglen * c.spf:.6f}"]
         for L in layers_subset:
             rel_in = L["cl"]["dst_in"] - a
             # 头窗草稿（--frames）：截短每路输入（仅回落路径；否则 -frames:v 触发
@@ -326,7 +373,7 @@ class RenderPlan:
             slave, ov, cur = self._layer_chain(L, k, cur, a, seglen, idx=k + 1)
             parts += [slave, ov]
         if with_subs:
-            parts.append(f"[{cur}]subtitles=filename={filter_filename(sub_file)}[vout]")
+            parts.append(f"[{cur}]{self._subtitle_filter(sub_file)}[vout]")
         else:
             parts.append(f"[{cur}]null[vout]")
         vcodec, enc = ((["-c:v", "png", "-pix_fmt", "rgb24", "-threads", "1", "-f", "image2", "-update", "1"], "png")
@@ -358,7 +405,7 @@ class RenderPlan:
         c.run(cmd + ["-filter_complex_threads", str(filter_threads()),
                      "-filter_complex", ";".join(parts), "-map", "[vout]",
                      "-frames:v", str(nframes if (draft and nframes) else seglen),
-                     "-fps_mode", "cfr", "-r", str(c.fps),
+                     "-fps_mode", "cfr", "-r", fps_expression(c.fps),
                      *vcodec, str(out_path)])
         return enc
 
@@ -441,14 +488,15 @@ class RenderPlan:
                + f"stop_duration={stop / c.fps:.6f}:stop_mode=clone,")
         shift = eff - pre - head
         shrink = f"scale=trunc(iw*{f}/2)*2:trunc(ih*{f}/2)*2," if draft else ""
-        timing = f"setpts=PTS+{shift}/{c.fps}/TB"
+        timing = f"setpts=PTS+{shift}/({fps_expression(c.fps)})/TB"
         if L["gfx"]:
             # image2 has TB=1/fps: its integer PTS cannot represent the
             # half-frame lead, so setpts truncation selects PNG n+1 at frame n.
             # Use two ticks per frame and an integer offset; dividing by fps/TB
             # again can round even a nominally integral offset (e.g. dst=63).
             ticks = 2 * int(eff) - 3 * head
-            timing = f"settb=1/{2 * c.fps},setpts=PTS+{ticks}"
+            rate = parse_fps(c.fps)
+            timing = f"settb={rate.denominator}/{2 * rate.numerator},setpts=PTS+{ticks}"
         # PNG inputs can change between RGB and RGBA. Reinit is disabled at
         # input, so convert each frame through swscale before tpad/framesync;
         # doing only format=rgba can be negotiated away for initially-RGBA input.
@@ -472,7 +520,7 @@ class RenderPlan:
                 effects.append(f"setpts=PTS-{offset}")
                 # setpts can clear frame-rate metadata; restore the PNG's CFR
                 # before tpad converts durations and timestamps cloned frames.
-                effects.append(f"fps={c.fps}")
+                effects.append(f"fps={fps_expression(c.fps)}")
         postprocess = "".join(effect + "," for effect in effects)
         slave = f"[{idx}:v]{png_rgba}{postprocess}{shrink}{pad}{timing}[L{k}T]"
         ov = (f"[{cur}][L{k}T]overlay=x='if(between(t,{lo:.6f},{t1:.6f}),"
@@ -513,7 +561,8 @@ class RenderPlan:
         if retention not in ("checkpoint", "all", "none"):
             raise ValueError("VTX_PASS_CACHE must be checkpoint, all or none")
         pdir = self.scratch_dir if self.scratch_dir is not None else self.c.cache / "vseg_pass"
-        seed = f"{a}|{b}|{self.W}x{self.H}|{int(bool(self.draft))}|{int(bool(with_subs))}"
+        seed = (f"{a}|{b}|{self.W}x{self.H}|{int(bool(self.draft))}|{int(bool(with_subs))}"
+                f"|fps={fps_expression(self.c.fps)}")
 
         def render_chain():
             """段内逐层 pass 合成（R4-E1-v2 核心修复，2026-09-14）：每 pass 恰 2 输入
@@ -592,7 +641,7 @@ class RenderPlan:
                 cmd = ["ffmpeg", "-v", "error", "-y"]
                 if prev is None:
                     cmd += ["-f", "lavfi", "-i",
-                            f"color=c=black:s={self.W}x{self.H}:r={c.fps}:d={seglen * c.spf:.3f}"]
+                            f"color=c=black:s={self.W}x{self.H}:r={fps_expression(c.fps)}:d={seglen * c.spf:.6f}"]
                 else:
                     cmd += ["-i", str(prev)]
                 cmd += self._layer_input_args(L, a)
@@ -606,7 +655,7 @@ class RenderPlan:
                     parts = ["[0:v]format=rgba,setparams=range=unspecified:colorspace=unknown[base]",
                              slave, ov]
                 if last and with_subs:
-                    parts.append(f"[{cur}]subtitles=filename={filter_filename(sub_file)}[vout]")
+                    parts.append(f"[{cur}]{self._subtitle_filter(sub_file)}[vout]")
                 elif last:
                     parts.append(f"[{cur}]format=yuv420p[vout]")
                 elif with_subs:
@@ -630,7 +679,7 @@ class RenderPlan:
                     # 逐位同构——该承诺只在正式段路径 with_subs=True 下成立）。
                     parts.append(f"[{cur}]null[vout]")
                 if last:
-                    tail = ["-frames:v", str(seglen), "-fps_mode", "cfr", "-r", str(c.fps),
+                    tail = ["-frames:v", str(seglen), "-fps_mode", "cfr", "-r", fps_expression(c.fps),
                             *vcodec, str(out_path)]
                 else:
                     # FFV1 intra（-g 1）无损：像素/alpha/位深零漂移，解码域确定
@@ -711,7 +760,7 @@ class RenderPlan:
                      and sfile.exists() else b"")
         return segment_content_key(a, b, self.W, self.H, self.draft,
                                    getattr(self.c, "gpu", False), layers, subtitles,
-                                   _graph_code_digest())
+                                   _graph_code_digest(), self.c.fps)
 
     def render_segmented(self, out_path, layer_set=None, with_subs=True, tag="vseg"):
         c, draft = self.c, self.draft
@@ -890,7 +939,7 @@ def prepare_layers(c: Ctx, *, run_tasks=None):
             windowed, x, y, w2, h2, geometry = _media_geometry(c, cl)
             need_alpha = seg_needs_alpha(cl, c.probe(c.src_path(cl['src'])))
             vf = [f"trim=start_frame={cl['src_in']}:end_frame={cl['src_out']}", "setpts=PTS-STARTPTS",
-                  f"fps={c.fps}"]
+                  f"fps={fps_expression(c.fps)}"]
             vf += geometry
             # seg 内容寻址键（2026-09-11 治理升级）：键 = sha1(源指纹+切片/窗口/fade/编码
             # 参数)[:12]。源或 clip 参数变了键就变，旧 seg 由 gc 回收——不再依赖
@@ -973,7 +1022,7 @@ def render_source_frame(c, clip, frame, directory):
     _, x, y, width, height, geometry = _media_geometry(c, clip)
     source_frame = clip['src_in'] + frame
     seek = max(0, (source_frame - .2) / c.fps)
-    filters = [f'setpts=PTS-STARTPTS+{frame}/{c.fps}/TB', *geometry,
+    filters = [f'setpts=PTS-STARTPTS+{frame}/({fps_expression(c.fps)})/TB', *geometry,
                'format=yuva420p', *_clip_alpha_filters(clip, c.spf)]
     c.run(['ffmpeg', '-v', 'error', '-y', '-ss', f'{seek:.6f}',
            '-i', str(c.src_path(clip['src'])), '-map', '0:v:0', '-an',

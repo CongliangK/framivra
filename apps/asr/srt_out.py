@@ -20,7 +20,10 @@ from pathlib import Path
 
 def frame_to_srt_time(frames, fps=30):
     """帧数 → "HH:MM:SS,mmm"（SRT 1.0 时间码，毫秒段用逗号）。"""
-    total_ms = round(frames * 1000.0 / fps)
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from vtx.pipeline.constraints import parse_fps
+    total_ms = round(frames * 1000 / parse_fps(fps))
     h, rem = divmod(total_ms, 3600 * 1000)
     m, rem = divmod(rem, 60 * 1000)
     s, ms = divmod(rem, 1000)
@@ -52,7 +55,10 @@ if __name__ == "__main__":
     import sys
     ap = argparse.ArgumentParser(description="subtitles[]（stdin json）→ SRT（stdout / -o 文件）")
     ap.add_argument("-o", "--out", default=None)
-    ap.add_argument("--fps", type=int, default=30)
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from vtx.pipeline.constraints import parse_fps
+    ap.add_argument("--fps", type=lambda value: float(parse_fps(float(value) if '/' not in value else value)), default=30)
     args = ap.parse_args()
     subs = json.load(sys.stdin)
     text = render_srt(subs, fps=args.fps)

@@ -25,6 +25,7 @@ class SharedIdentity(unittest.TestCase):
             old = hashlib.sha1()
             old.update(b'30|90|64x64|0|0\n')
             old.update(f'graph={_graph_code_digest()}\n'.encode())
+            old.update(b'fps=30\n')
             old.update(('abc|' + json.dumps(layers[0]['cl'], sort_keys=True,
                                             ensure_ascii=False) + '|0|0|None|None\n').encode())
             old.update(path.read_bytes())
@@ -80,6 +81,19 @@ class SnapshotImpact(unittest.TestCase):
     def snapshot(self):
         from vtx.inspection.impact import capture
         return capture(self.tl, self.root)
+
+    def test_equivalent_rate_spellings_share_predicted_keys(self):
+        self.tl['project']['fps'] = 29.97
+        aliases = self.snapshot()
+        self.tl['project']['fps'] = '30000/1001'
+        exact = self.snapshot()
+        self.assertEqual({k: v['key'] for k, v in aliases['nodes'].items()},
+                         {k: v['key'] for k, v in exact['nodes'].items()})
+        self.tl['project']['fps'] = 30
+        integer = self.snapshot()
+        self.assertNotEqual(aliases['nodes']['vseg:0']['key'], integer['nodes']['vseg:0']['key'])
+        self.assertEqual(aliases['audio_mix'], exact['audio_mix'])
+        self.assertNotEqual(aliases['audio_mix'], integer['audio_mix'])
 
     def test_scene_eight_edit_has_no_unrelated_page_misses(self):
         from vtx.inspection.impact import compare

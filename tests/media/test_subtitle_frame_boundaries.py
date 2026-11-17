@@ -116,8 +116,21 @@ def ass_for(p, path, origin, stop):
 
 
 class FrameBoundaryContracts(unittest.TestCase):
-    def test_supported_fps_matrix_is_explicit(self):
-        self.assertEqual(ALLOWED_FPS, (FPS,))
+    def test_common_rates_have_frame_exact_ass_edges_on_the_render_clock(self):
+        from vtx.pipeline.constraints import parse_fps
+        for fps in ALLOWED_FPS:
+            p = plan([]); p.c.fps = fps
+            rate = parse_fps(fps)
+            stretch = (rate.numerator + 50 * rate.denominator - 1) // (50 * rate.denominator)
+            for frame in range(250):
+                p.c.tl['subtitles'] = [{'in': frame, 'out': frame + 1, 'text': 'ONE'}]
+                start, end, _ = parse_ass(p.segment_ass_bytes(0, 252))[0]
+                for n in (max(0, frame - 1), frame, frame + 1):
+                    now = Fraction((n * stretch * 1000 / rate).__floor__(), 1000)
+                    self.assertEqual(start <= now < end, n == frame, (fps, frame, n))
+                    if n:
+                        self.assertEqual(start <= now - Fraction(1, 1000) < end,
+                                         n == frame, (fps, frame, n, '1ms early'))
 
     def test_quantized_edges_and_active_set_match_frame_intent(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -182,6 +195,33 @@ class FrameBoundaryContracts(unittest.TestCase):
                 plan([sub]).segment_ass_bytes(315, 320)  # clipping cannot conceal invalid input
             with self.assertRaises(ValueError):
                 _active_subs(plan([sub]).c, 315)
+
+    def test_high_rate_timed_ass_tags_fail_explicitly_and_static_styles_remain_valid(self):
+        from vtx.pipeline.stages import validate_core
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline = root / 'timeline.json'
+            timeline.write_text(json.dumps({'version': 2, 'project': {'fps': 120,
+                'width': 160, 'height': 90, 'duration_frames': 10}, 'sources': [],
+                'video_tracks': [], 'audio_tracks': [], 'subtitles': []}))
+            c = Ctx(timeline)
+            p = RenderPlan(c, False, 1, 160, 90)
+            for tag in (r'\t(0,50,\alpha&HFF&)', r'\fad(20,30)', r'\fade(0,255,0,0,20,30,40)',
+                        r'\move(1,2,3,4)', r'\k10', r'\K10', r'\kf10', r'\ko10', r'\kt10'):
+                with self.subTest(tag=tag):
+                    c.tl['subtitles'] = [{'in': 1, 'out': 2, 'text': '{' + tag + '}TEST'}]
+                    self.assertTrue(any('time-dependent ASS' in error for error in validate_core(c)))
+                    with self.assertRaisesRegex(ValueError, 'time-dependent ASS'):
+                        p.segment_ass_bytes(0, 10)
+                    with self.assertRaisesRegex(ValueError, 'time-dependent ASS'):
+                        p.write_global_ass(root / 'subs.ass')
+                    c.fps = 50
+                    self.assertFalse(validate_core(c))
+                    c.fps = 120
+            for text in (r'{\bord2\b1}TEST', r'{\pos(10,20)\c&HFFFFFF&}TEST', r'literal \k10 TEST'):
+                c.tl['subtitles'] = [{'in': 1, 'out': 2, 'text': text}]
+                self.assertFalse(validate_core(c))
+                self.assertIn(b'clock stretch=3', p.segment_ass_bytes(0, 10))
 
     def test_long_timecode_is_integer_exact(self):
         self.assertEqual(plan([])._fc(30 * 3600 + 2), '1:00:00.05')
@@ -265,6 +305,49 @@ class SubtitleFrameIntegration(unittest.TestCase):
         observed_pts = emitted_showinfo_pts(log, count)
         self.assertEqual(observed_pts, [(n, n) for n in range(count)])
         return [raw[i * 14400:(i + 1) * 14400] for i in range(count)]
+
+    def test_production_common_rate_single_frames_preserve_pixels_and_pts(self):
+        from vtx.pipeline.constraints import parse_fps
+        rates = (24, 25, 30, 48, 50, 60, 100, 120, '24000/1001',
+                 '30000/1001', '48000/1001', '60000/1001', '120000/1001')
+        count, width, height = 128, 320, 180
+        for index, fps in enumerate(rates):
+            rate = parse_fps(fps)
+            project = self.root / f'rate-{index}'; project.mkdir()
+            # Exercise every early-frame rounding phase and one-ms PTS underflow.
+            subs = [{'in': 309 + n, 'out': 310 + n, 'text': 'TEST'}
+                    for n in range(count) if n % 3 == 1]
+            timeline = project / 'timeline.json'
+            timeline.write_text(json.dumps({'version': 2, 'project': {'fps': fps,
+                'width': width, 'height': height, 'duration_frames': 309 + count},
+                'sources': [], 'video_tracks': [], 'audio_tracks': [], 'subtitles': subs}))
+            c = Ctx(timeline)
+            p = RenderPlan(c, False, 1, width, height)
+            ass = project / 'subs.ass'; p.write_seg_ass(ass, 309, 309 + count)
+            for passes in (False, True) if fps in (120, '60000/1001') else (False,):
+                with self.subTest(fps=fps, passes=passes):
+                    layers = []
+                    if passes:
+                        source = project / 'black.mp4'
+                        self.run_tool([self.ff, '-v', 'error', '-f', 'lavfi', '-i',
+                            f'color=black:s={width}x{height}:r={rate}:d=8', '-c:v',
+                            'libx264', '-preset', 'ultrafast', source], f'rate-{index}-source')
+                        layers = [dict(cl={'dst_in': 309, 'dur': count}, gfx=False,
+                                       seg=source, x=0, y=0, w2=None, h2=None)] * 2
+                    movie = project / f'output-{passes}.mp4'
+                    p.composite(layers, movie, True, a=309, b=309 + count, sub_file=ass)
+                    meta = json.loads(self.run_tool(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                        '-show_streams', '-show_frames', '-of', 'json', movie], f'rate-{index}-{passes}-pts'))
+                    stream = meta['streams'][0]
+                    self.assertEqual(Fraction(stream['r_frame_rate']), rate)
+                    self.assertEqual([Fraction(f['pts']) * Fraction(stream['time_base'])
+                                      for f in meta['frames']], [n / rate for n in range(count)])
+                    raw = self.run_tool([self.ff, '-v', 'error', '-i', movie, '-vf', 'format=gray',
+                        '-threads', '1', '-f', 'rawvideo', 'pipe:1'], f'rate-{index}-{passes}-pixels')
+                    size = width * height
+                    self.assertEqual(len(raw), count * size)
+                    self.assertEqual([max(raw[n * size:(n + 1) * size]) > 100 for n in range(count)],
+                                     [bool(intended(subs, 309 + n)) for n in range(count)])
 
     def test_libass_cartesian_boundary_matrix(self):
         references = {}

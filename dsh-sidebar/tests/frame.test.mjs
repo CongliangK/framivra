@@ -61,6 +61,10 @@ test('fps identity: kernel non-canonical 30.0 rawJSON token verifies exactly; ro
   assert.equal(fpsMatchesReference(60,2,30),true)
   assert.equal(fpsMatchesReference(30,1,30.5),false)
   assert.equal(fpsMatchesReference(30,1,31),false)
+  assert.equal(fpsMatchesReference(30000,1001,'30000/1001'),true)
+  assert.equal(fpsMatchesReference(30000,1001,parseJSON('{"fps":29.970}').fps),true)
+  assert.equal(fpsMatchesReference(30000,1001,parseJSON('{"fps":29.97000000000000001}').fps),false)
+  assert.equal(fpsMatchesReference(30,1,'30000/1001'),false)
   // Exact rational comparison: 30.0000000000000000000001 !== 30 even though
   // Number(rawJSON) would round both to 30.
   assert.equal(fpsMatchesReference(30,1,parseJSON('{"fps":30.0000000000000000000001}').fps),false)

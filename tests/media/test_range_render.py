@@ -77,6 +77,19 @@ class TestConcatManifest(unittest.TestCase):
         self.assertEqual(self.durations(self.manifest([110, 112, 225, 230])),
                          [Fraction(n, 1_000_000) for n in (66667, 3766666, 166667)])
 
+    def test_ntsc_boundaries_are_exact_and_do_not_accumulate(self):
+        from vtx.pipeline.composite import _concat_manifest
+        edges = [10**12 + n for n in range(1001)]
+        for fps in (29.97, '30000/1001', '120000/1001'):
+            rate = Fraction(30000 if fps != '120000/1001' else 120000, 1001)
+            manifest = _concat_manifest([(Path('segment.mp4'), a, b)
+                                        for a, b in zip(edges, edges[1:])], fps)
+            elapsed = Fraction(0)
+            for frame, duration in enumerate(self.durations(manifest)):
+                self.assertLessEqual(abs(elapsed - frame / rate), Fraction(1, 2_000_000))
+                elapsed += duration
+            self.assertLessEqual(abs(elapsed - 1000 / rate), Fraction(1, 2_000_000))
+
     def test_paths_keep_absolute_posix_quote_and_unicode_escaping(self):
         from vtx.pipeline.composite import _concat_manifest
         path = Path("剪辑 # /take's.mp4")
@@ -378,35 +391,36 @@ class TestRangeIntegration(unittest.TestCase):
     def test_irregular_medium_b_frame_concat_keeps_exact_pts(self):
         """Small clock probe; canonical 1080p acceptance remains separate."""
         from vtx.pipeline.composite import _concat_manifest
-        with tempfile.TemporaryDirectory(prefix="vtx-concat-clock-") as directory:
-            root = Path(directory)
-            edges = [0, 112, 225, 338, 450, 562, 675, 788, 900]
-            segments = []
-            for n, (a, b) in enumerate(zip(edges, edges[1:])):
-                path = root / f"segment{n}.mp4"
-                subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
-                    'color=black:s=160x90:r=30', '-frames:v', str(b - a),
-                    '-c:v', 'libx264', '-preset', 'medium', '-threads', '1',
-                    '-pix_fmt', 'yuv420p', str(path)], check=True, capture_output=True, timeout=60)
-                segments.append((path, a, b))
-            manifest = root / 'list.txt'
-            manifest.write_text(_concat_manifest(segments, FPS), encoding='utf-8')
-            movie = root / 'concat.mp4'
-            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'concat', '-safe', '0',
-                '-i', str(manifest), '-c', 'copy', str(movie)],
-                check=True, capture_output=True, timeout=60)
-            probe = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
-                '-show_streams', '-show_frames', '-of', 'json', str(movie)],
-                check=True, capture_output=True, timeout=60)
-            metadata = json.loads(probe.stdout)
-            stream = metadata['streams'][0]
-            time_base = Fraction(stream['time_base'])
-            self.assertGreater(stream['has_b_frames'], 0)
-            self.assertEqual(int(stream['nb_frames']), 900)
-            self.assertEqual(Fraction(stream['avg_frame_rate']), FPS)
-            self.assertEqual(int(stream['duration_ts']) * time_base, 30)
-            self.assertEqual([int(frame['pts']) * time_base for frame in metadata['frames']],
-                             [Fraction(n, FPS) for n in range(900)])
+        for fps in (Fraction(30), Fraction(30000, 1001), Fraction(120000, 1001)):
+            with self.subTest(fps=fps), tempfile.TemporaryDirectory(prefix="vtx-concat-clock-") as directory:
+                root = Path(directory)
+                edges = [0, 112, 225, 338, 450, 562, 675, 788, 900]
+                segments = []
+                for n, (a, b) in enumerate(zip(edges, edges[1:])):
+                    path = root / f"segment{n}.mp4"
+                    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                        f'color=black:s=160x90:r={fps}', '-frames:v', str(b - a),
+                        '-c:v', 'libx264', '-preset', 'medium', '-threads', '1',
+                        '-pix_fmt', 'yuv420p', str(path)], check=True, capture_output=True, timeout=60)
+                    segments.append((path, a, b))
+                manifest = root / 'list.txt'
+                manifest.write_text(_concat_manifest(segments, fps), encoding='utf-8')
+                movie = root / 'concat.mp4'
+                subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'concat', '-safe', '0',
+                    '-i', str(manifest), '-c', 'copy', str(movie)],
+                    check=True, capture_output=True, timeout=60)
+                probe = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                    '-show_streams', '-show_frames', '-of', 'json', str(movie)],
+                    check=True, capture_output=True, timeout=60)
+                metadata = json.loads(probe.stdout)
+                stream = metadata['streams'][0]
+                time_base = Fraction(stream['time_base'])
+                self.assertGreater(stream['has_b_frames'], 0)
+                self.assertEqual(int(stream['nb_frames']), 900)
+                self.assertEqual(Fraction(stream['avg_frame_rate']), fps)
+                self.assertEqual(int(stream['duration_ts']) * time_base, 900 / fps)
+                self.assertEqual([int(frame['pts']) * time_base for frame in metadata['frames']],
+                                 [n / fps for n in range(900)])
 
     def test_silent_gap_window_renders_exact_audio_without_formal_writes(self):
         import math
@@ -459,6 +473,47 @@ class TestRangeIntegration(unittest.TestCase):
                         self.assertFalse((root / 'cache' / 'audio').exists())
                         self.assertEqual(source.read_bytes(), source_before)
                         self.assertEqual(timeline.read_bytes(), timeline_before)
+
+    def test_short_ntsc_range_keeps_all_video_frames_when_audio_rounds_down(self):
+        import wave
+        from vtx.pipeline.infra import Ctx
+        from vtx.pipeline.range import run_range
+        with tempfile.TemporaryDirectory(prefix='vtx-range-ntsc-tail-') as directory:
+            root = Path(directory)
+            source = root / 'tone.wav'
+            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                'sine=frequency=440:sample_rate=48000:duration=1', '-ac', '2',
+                '-c:a', 'pcm_s16le', str(source)], check=True, capture_output=True, timeout=60)
+            timeline = root / 'timeline.json'
+            timeline.write_text(json.dumps({'version': 2, 'project': {'fps': 29.97,
+                'width': 320, 'height': 180, 'duration_frames': 29},
+                'sources': [{'id': 'tone', 'path': source.name}], 'video_tracks': [],
+                'subtitles': [], 'audio_tracks': [{'name': 'voice', 'events': [
+                    {'src': 'tone', 'in': 0, 'out': 29, 'volume': 1}]}]}))
+            c = Ctx(timeline)
+            c.range_window = (0, 7)
+            with mock.patch.dict(os.environ, {'VTX_NO_NVENC': '1', 'VTX_SEG_NVENC': '0'}):
+                output = run_range(c, 0, 7)
+            # 7 * 48000 / (30000/1001) = 11211.2 samples: rounded audio is
+            # shorter by 0.2 sample. Mux -shortest used to discard two video
+            # packets despite the already exact seven-frame range segment.
+            rate = Fraction(30000, 1001)
+            with wave.open(str(output.with_suffix('.wav'))) as audio:
+                self.assertEqual(audio.getnframes(), 11211)
+                self.assertEqual(audio.getframerate(), 48000)
+            probe = subprocess.run(['ffprobe', '-v', 'error', '-show_streams',
+                '-show_frames', '-of', 'json', str(output)],
+                check=True, capture_output=True, timeout=60)
+            metadata = json.loads(probe.stdout)
+            video = next(stream for stream in metadata['streams'] if stream['codec_type'] == 'video')
+            self.assertTrue(any(stream['codec_type'] == 'audio' for stream in metadata['streams']))
+            self.assertEqual(int(video['nb_frames']), 7)
+            self.assertEqual(Fraction(video['avg_frame_rate']), rate)
+            self.assertEqual([int(frame['pts']) * Fraction(video['time_base'])
+                              for frame in metadata['frames'] if frame['media_type'] == 'video'],
+                             [frame / rate for frame in range(7)])
+            self.assertEqual(int(video['duration_ts']) * Fraction(video['time_base']), 7 / rate)
+            self.assertFalse((root / 'out').exists(), 'range must not publish formal outputs')
 
     def test_range_render(self):
         from vtx.pipeline.range import run_range  # noqa: F401  （经 CLI 子进程实跑，见下）

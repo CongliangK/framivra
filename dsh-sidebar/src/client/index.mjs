@@ -415,7 +415,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
           h('main', { className: 'fv-monitor', 'aria-label': ready ? '画面预览' : '时间线启动区' },
             ready ? h(React.Fragment, null,
               h('div', { className: 'fv-monitor-title' }, h('span', null, '节目监视器'), h('span', null, frameValue === undefined ? '尚未定位' : `帧 ${frameValue}`)),
-              h(Transport, { frame: frameValue, frameText: frame, frameError, duration, onFrame: pin, onText: pin, onQuery: () => void load(true) }),
+              h(Transport, { frame: frameValue, frameText: frame, frameError, duration, fps: state.opened.snapshot.document?.project?.fps, onFrame: pin, onText: pin, onQuery: () => void load(true) }),
               frameError ? h('p', { role: 'alert' }, `${frameError} 引用已暂停；不会暗用旧帧。`) : null,
               valid && !grantDead && !frameError ? h(FrameTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, selection, tabSignal: tab.signal, getDraftServices, call: control }) : null,
               h('details', { className: 'fv-output', hidden: !state.opened.media.length },  h('summary', null, `已有成片${state.opened.media.length ? ` · ${state.opened.media.length}` : ' · 暂无'}`),

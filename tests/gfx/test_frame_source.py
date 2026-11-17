@@ -45,6 +45,12 @@ class TestPngSequence(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.source.input_args(a, b, ready=False)
 
+    def test_fractional_rate_has_exact_timebase_and_ffmpeg_expression(self):
+        for fps in (29.97, '30000/1001', 30000 / 1001):
+            source = dataclasses.replace(self.source, fps=fps)
+            self.assertEqual(source.time_base, Fraction(1001, 30000))
+            self.assertEqual(source.input_args(ready=False)[3], '30000/1001')
+
     def test_ready_rejects_hole_corruption_and_recovers(self):
         for i in range(4):
             write_png(self.path / f'f{i:04d}.png', frame=i)
@@ -160,6 +166,8 @@ class TestMigrationIdentity(unittest.TestCase):
         source += composite._normalized_ast_src(inspect.getsource(composite.gfx_cli))
         source += composite._normalized_ast_src(inspect.getsource(composite._clip_alpha_filters))
         source += composite._normalized_ast_src(inspect.getsource(composite._gfx_scaled_size))
+        source += composite._normalized_ast_src(inspect.getsource(composite.RenderPlan._subtitle_filter))
+        source += composite._normalized_ast_src(inspect.getsource(composite.RenderPlan._subtitle_clock))
         current = composite._graph_code_digest()
         self.assertEqual(current, hashlib.sha1(source.encode('utf-8')).hexdigest()[:12])
         self.assertNotEqual(current, expected)
@@ -192,6 +200,8 @@ class TestMigrationIdentity(unittest.TestCase):
         source += unknown(inspect.getsource(composite.gfx_cli))
         source += unknown(inspect.getsource(composite._clip_alpha_filters))
         source += unknown(inspect.getsource(composite._gfx_scaled_size))
+        source += unknown(inspect.getsource(composite.RenderPlan._subtitle_filter))
+        source += unknown(inspect.getsource(composite.RenderPlan._subtitle_clock))
         with mock.patch.object(composite, '_normalized_ast_src',
                                side_effect=unknown):
             composite._graph_code_digest.cache_clear()
@@ -199,7 +209,7 @@ class TestMigrationIdentity(unittest.TestCase):
                              hashlib.sha1(source.encode('utf-8')).hexdigest()[:12])
 
     def test_identity_ignores_location_but_not_content(self):
-        c = SimpleNamespace(gpu=False)
+        c = SimpleNamespace(gpu=False, fps=30)
         plan = composite.RenderPlan(c=c, draft=False, f=1, W=16, H=16)
         layer = {'gfx': True, 'source': PngSequence(Path('/one/key'), 'key', 4, 30, 16, 16),
                  'cl': {'dur': 4, 'dst_in': 0}, 'x': 0, 'y': 0, 'w2': None, 'h2': None}

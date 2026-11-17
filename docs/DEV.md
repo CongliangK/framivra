@@ -51,7 +51,7 @@
   if ($LASTEXITCODE -ne 0) { throw "capability verification failed" }
   ```
 - **模型与素材限制**：ASR 兼容探测 `.venv/Scripts/`，不代表 Windows qwen-asr 解释器已验收，手动路线见 [ASR](../apps/asr/README.md)。`apps/aroll/trim_takes.py` 按 `raw[44:]` 读取既定 float32 WAV，不是通用 WAV 解析器。
-- **桥接 fps 身份**：constraints 接受数值等值的 `30.0`，Ctx 归一为 int；json2blend 的只读上下文保留原文 fps，而 gfx_key 纳入 fps 文本。不能以“非 int 已拒绝”排除差异；该输入的缓存复用须单独核对。
+- **帧率时钟**：允许值和别名只由 `vtx/pipeline/constraints.py` 定义；FFmpeg、帧元数据与缓存使用精确有理数身份，音频用绝对帧端点到 48kHz 采样的映射，不以四舍五入的每帧采样数累乘。
 - **声明依赖**：未列入 cache_dependencies 的外链变化不保证触发重渲，必须按工程检查声明，见 [缓存语义](cache-provenance.md)。
 
 实现存在、实验结论、实际验收是不同事实：线性调度与可选 Electron 复现仍有实现；路线资格、性能、帧数/PTS 正确性必须以对应输入和环境的实际证据判断，不能由文档整理升级。历史数据、裁定与停用实验从[研究记录](reports/development-history.md)追溯，不构成当前吞吐 SLA。

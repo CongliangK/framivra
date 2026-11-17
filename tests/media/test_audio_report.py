@@ -402,6 +402,45 @@ class TestMeasurePrimitives(unittest.TestCase):
                         "[0:a][1:a][2:a]concat=n=3:v=0:a=1[aout]",
                         "-map", "[aout]", "-c:a", "pcm_s16le", str(cls.wav)], check=True)
 
+    def test_fractional_full_range_and_silent_range_lengths_use_absolute_samples(self):
+        from fractions import Fraction
+        from vtx.pipeline import stages
+        source = Path(self.tmp.name) / 'constant.wav'
+        subprocess.run([FF, '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                        'aevalsrc=0.1+0.05*sin(2*PI*997*t):s=48000:d=1', '-c:a', 'pcm_s16le', str(source)], check=True)
+        for rate in (Fraction(25), Fraction(120), Fraction(24000, 1001),
+                     Fraction(30000, 1001), Fraction(60000, 1001), Fraction(120000, 1001)):
+            c = _event_context(float(rate)); c.dur = 8
+            c.tl = {'audio_tracks': [{'name': 'voice', 'events': [
+                {'src': 'a', 'in': 1, 'out': 2, 'src_in': 0, 'volume': 1},
+                {'src': 'a', 'in': 2, 'out': 3, 'src_in': 1, 'volume': 1}]}]}
+            def boundary(frame):
+                value = frame * 48000 / rate
+                return (2 * value.numerator + value.denominator) // (2 * value.denominator)
+            with mock.patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
+                 mock.patch.object(stages._plugin_hooks, 'resolve_source_wav', return_value=source):
+                for win in (None, (1, 2), (2, 3), (4, 5)):
+                    with self.subTest(rate=rate, win=win):
+                        cmd, chains, _, _ = stages._audio_graph(c, win, margin_frames=0)
+                        result = subprocess.run(cmd + ['-filter_complex', ';'.join(chains) + '[out]',
+                            '-map', '[out]', '-c:a', 'pcm_s16le', '-ac', '2', '-f', 's16le', 'pipe:1'],
+                            capture_output=True, check=True)
+                        a, b = (0, c.dur) if win is None else win
+                        self.assertEqual(len(result.stdout) // 4, boundary(b) - boundary(a))
+                        if win == (4, 5):
+                            self.assertFalse(any(result.stdout))
+                        else:
+                            self.assertTrue(any(result.stdout))
+                        if win is None:
+                            split = result.stdout
+                c.tl['audio_tracks'][0]['events'] = [
+                    {'src': 'a', 'in': 1, 'out': 3, 'src_in': 0, 'volume': 1}]
+                cmd, chains, _, _ = stages._audio_graph(c)
+                unsplit = subprocess.run(cmd + ['-filter_complex', ';'.join(chains) + '[out]',
+                    '-map', '[out]', '-c:a', 'pcm_s16le', '-ac', '2', '-f', 's16le', 'pipe:1'],
+                    capture_output=True, check=True)
+                self.assertEqual(split, unsplit.stdout, (rate, 'splitting must not change source PCM'))
+
     def test_silences_detects_head_hole(self):
         sil = ar.silences(self.c, self.wav, "-45dB", 0.5)
         self.assertTrue(any(s < 1.2 and e - s > 0.9 for s, e in sil), sil)
@@ -611,8 +650,8 @@ class TestMeasurePrimitives(unittest.TestCase):
         import struct
         import wave
         from vtx.pipeline import stages
-        from vtx.pipeline.constraints import ALLOWED_FPS, AUDIO_SAMPLE_RATE
-        self.assertEqual((ALLOWED_FPS, AUDIO_SAMPLE_RATE), ((30,), 48000))
+        from vtx.pipeline.constraints import AUDIO_SAMPLE_RATE
+        self.assertEqual(AUDIO_SAMPLE_RATE, 48000)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / 'source.wav'
@@ -933,6 +972,18 @@ class TestSharedEventFilters(unittest.TestCase):
                 self.assertNotIn(bus_filter, chain)
             # Audio events have no speed field in the timeline contract.
             self.assertEqual(e['fade_out_frames'], 30)
+
+    def test_ntsc_source_and_destination_endpoint_rounding_phases(self):
+        from vtx.media.audio_filters import event_chain, track_mix
+        c = _event_context(30000 / 1001); c.dur = 3
+        first = event_chain(c, 0, {'in': 1, 'out': 2, 'src_in': 0, 'volume': 1})
+        second = event_chain(c, 1, {'in': 2, 'out': 3, 'src_in': 1, 'volume': 1})
+        self.assertIn('atrim=start_sample=0:end_sample=1601', first)
+        self.assertIn('adelay=delays=1602S', first)
+        self.assertIn('atrim=start_sample=1601:end_sample=3203', second)
+        self.assertNotIn('apad=', second)
+        self.assertIn('adelay=delays=3203S', second)
+        self.assertIn('apad=whole_len=4805,atrim=end_sample=4805', track_mix(c, ['[e0]'], '[t]'))
 
     def test_main_and_report_graphs_share_fades_and_window_offsets(self):
         from unittest.mock import patch
