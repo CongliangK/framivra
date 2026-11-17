@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from unittest import mock
@@ -32,6 +33,51 @@ class ProducerIdentity(_Base):
         newer = self.state(c)
         self.assertTrue(all(a != b for a, b in zip(after, newer)))
         self.assertNotIn("never-publish-plaintext", json.dumps(_bgm.input_identity(c)))
+
+    def test_invalid_ref_slots_not_opened_by_full_producer(self):
+        sentinel = self.root / "sentinel.json"
+        sentinel.write_text('{"engine":"sample"}', encoding="utf-8")
+        c = mock.Mock()
+        c.src_path.return_value = self.proj
+        original_open = Path.open
+        opened = []
+        def record_open(path, *args, **kwargs):
+            opened.append(path)
+            return original_open(path, *args, **kwargs)
+        for version, tracks in [
+            ("1", [{"$ref": "../sentinel.json"}]),
+            ("2", [{"$ref": "../sentinel.json", "engine": "sample"},
+                   {"nested": {"$ref": "../sentinel.json"}},
+                   {"$ref": "  \t"}]),
+        ]:
+            with self.subTest(version=version):
+                self.proj.write_text(json.dumps({"meta": {"spec_version": version},
+                                                 "tracks": tracks}), encoding="utf-8")
+                opened.clear()
+                with mock.patch.object(Path, "open", record_open):
+                    producer = _bgm._producer_identity(c, "bgm_main")
+                self.assertEqual(producer["assets"], {})
+                self.assertNotIn(sentinel.resolve(), [p.resolve() for p in opened])
+                self.assertNotIn(self.proj.parent / "  \t", opened)
+
+    def test_inline_and_referenced_assets_remain_bound(self):
+        samples = self.root / "samples"
+        sfz = self.root / "assets" / "sfz"
+        sf2 = self.root / "bank.sf2"
+        samples.mkdir()
+        sfz.mkdir(parents=True)
+        sf2.write_bytes(b"bank")
+        self.ref_file.write_text(json.dumps({"engine": "sf2", "instrument": "bank:1:2"}), encoding="utf-8")
+        self.proj.write_text(json.dumps({"meta": {"spec_version": 2}, "tracks": [
+            {"$ref": self.ref_file.name}, {"engine": "sample"}, {"engine": "sfz"}]}), encoding="utf-8")
+        runtime = {"samples_root": str(samples), "assets_root": str(sfz.parent),
+                   "sf2": {"bank": str(sf2)}}
+        self.assertEqual(set(identity.asset_dependencies(self.proj, runtime)),
+                         {str(samples), str(sfz), str(sf2)})
+        self.ref_file.write_text("bad JSON", encoding="utf-8")
+        self.assertEqual(set(identity.asset_dependencies(self.proj, runtime)), {str(samples), str(sfz)})
+        self.ref_file.unlink()
+        self.assertEqual(set(identity.asset_dependencies(self.proj, runtime)), {str(samples), str(sfz)})
 
     def test_master_reference_changes_all_identities_same_context(self):
         reference = self.root / "reference.wav"
@@ -109,6 +155,37 @@ class ProducerIdentity(_Base):
         before = identity.code_identity(root)
         descriptor.write_text('{"version": 2}', encoding="utf-8")
         self.assertNotEqual(identity.code_identity(root), before)
+        helper = root / "bgm_gen" / "ref_slots.py"
+        before = identity.code_identity(root)
+        helper.write_text("# new filter\n", encoding="utf-8")
+        self.assertNotEqual(identity.code_identity(root), before)
+
+    def test_helper_package_layouts_and_plugin_missing_app(self):
+        repo = identity.APP_ROOT.parent.parent
+        code = '''import builtins, importlib, sys
+original = builtins.__import__
+def blocked(name, *args, **kwargs):
+    if name == "apps.bgm" or name.startswith("apps.bgm."):
+        raise ImportError("app unavailable")
+    return original(name, *args, **kwargs)
+builtins.__import__ = blocked
+plugin = importlib.import_module("plugins.bgm-render")
+try:
+    plugin._track_refs({})
+except ImportError:
+    pass
+else:
+    raise AssertionError("missing app must fail on use")
+builtins.__import__ = original
+sys.path.insert(0, sys.argv[1])
+a = importlib.import_module("bgm_gen.ref_slots")
+b = importlib.import_module("apps.bgm.bgm_gen.ref_slots")
+project = {"meta": {"spec_version": 2}, "tracks": [{"$ref": " x.json"}]}
+assert a.track_ref_slots(project) == b.track_ref_slots(project) == [(0, " x.json")]
+assert "numpy" not in sys.modules
+'''
+        subprocess.run([sys.executable, "-c", code, str(identity.APP_ROOT)],
+                       cwd=str(repo), check=True)
 
     def test_other_project_only_invalidates_own_render_and_receipt(self):
         second = self.root / "music" / "other.json"

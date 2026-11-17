@@ -133,14 +133,8 @@ def _params(s):
 
 def _track_refs(project):
     """只收集 v2 tracks 的纯字符串引用槽位；这不是路径安全校验。"""
-    if not isinstance(project, dict):
-        return []
-    meta, tracks = project.get("meta"), project.get("tracks")
-    if not isinstance(meta, dict) or str(meta.get("spec_version")) != "2" or not isinstance(tracks, list):
-        return []
-    return [track["$ref"] for track in tracks
-            if isinstance(track, dict) and set(track) == {"$ref"}
-            and isinstance(track["$ref"], str) and track["$ref"].strip()]
+    from apps.bgm.bgm_gen.ref_slots import track_ref_slots
+    return [ref for _, ref in track_ref_slots(project)]
 
 
 # 目录递归签名的伴生件豁免（对齐 hygiene gc 的 .lock/.tmp/__pycache__ 惯例）：
