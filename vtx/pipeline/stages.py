@@ -316,11 +316,15 @@ def _validate(c: Ctx, *, plugin_hooks=True, reporting=True):
     for si, s in indexed(c, field(c.tl, "subtitles", "$"), "$.subtitles"):
         observed.clear()
         subpath, subsource = subtitle_location(c, si)
-        timing_problem = subtitle_timing_error(field(s, 'text', subpath), c.fps)
-        if timing_problem:
-            err(timing_problem, subpath + '.text', 'validate.subtitle_timed_override',
-                {'fps': c.fps}, {'timed_ass_max_fps': 50}, subsource)
         if not (native(subpath, lambda: 0 <= field(s, 'in', subpath) < field(s, 'out', subpath) <= c.dur, 'comparison', paths=[key_path(subpath, 'in'), key_path(subpath, 'out'), '$.project.duration_frames'], source=subsource)): err(f"字幕区间非法: {native(subpath, lambda: field(s, 'text', subpath)[:10], 'native operation', paths=[key_path(subpath, 'text')], source=subsource)}", subpath, 'validate.subtitle_bounds', {'start': observed.get(key_path(subpath, 'in'), {'status': 'not_observed'}), 'end': observed.get(key_path(subpath, 'out'), {'status': 'not_observed'}), 'unit': 'frames'}, {'min': 0, 'max': c.dur, 'start_before_end': True, 'unit': 'frames'}, subsource)
+        # Preserve legacy interval failure order and permissive text handling;
+        # this gate rejects timed overrides, not missing/non-string text.
+        if c.fps > 50:
+            text = native(subpath, lambda: s.get('text'), 's.get', source=subsource)
+            timing_problem = subtitle_timing_error(text, c.fps)
+            if timing_problem:
+                err(timing_problem, subpath + '.text', 'validate.subtitle_timed_override',
+                    {'fps': c.fps}, {'timed_ass_max_fps': 50}, subsource)
     for ti, tr in indexed(c, field(c.tl, "audio_tracks", "$"), "$.audio_tracks"):
         ap = f"$.audio_tracks[{ti}]"
         # 容器与必填键防御（P6 修复 B-P2-3）：schema 声明 events[].volume 等必填

@@ -184,10 +184,9 @@ class Routing(unittest.TestCase):
             self.assertNotEqual(first, receipt_fingerprint(cef))
 
     def test_downstream_segment_keys_include_namespace_route(self):
-        plan = SimpleNamespace(c=SimpleNamespace(cache=self.root / 'cache'),
-                               W=64, H=48, draft=False)
-        from vtx.render.frame_source import png_source
         c = Ctx(self.p)
+        plan = SimpleNamespace(c=c, W=64, H=48, draft=False)
+        from vtx.render.frame_source import png_source
         clip = c.tl['video_tracks'][0]['clips'][0]
         with mock.patch.dict(os.environ, VTX_GFX_CACHE_NS='one'):
             source = png_source(c, clip)

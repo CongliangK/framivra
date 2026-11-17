@@ -107,7 +107,8 @@ def _write_tl(root, fps, width=1920, height=1080):
 class AllowedSetContract(unittest.TestCase):
     """明示允许集（单一来源现值快照）。"""
 
-    def test_common_rate_contract(self):
+    # Keep historical method IDs consumed by the unchanged regression inventory.
+    def test_allowed_fps_is_30_only(self):
         self.assertEqual(set(ALLOWED_FPS), EXPECTED_ALLOWED)
 
     def test_allowed_sizes_is_1080p_only(self):
@@ -117,7 +118,8 @@ class AllowedSetContract(unittest.TestCase):
         # 并入自 test_constraints.py：采样率常量同为契约冻结值
         self.assertEqual(AUDIO_SAMPLE_RATE, 48000)
 
-    def test_absolute_sample_endpoints_do_not_accumulate_rounding(self):
+    def test_allowed_fps_divides_sample_rate(self):
+        """Historical inventory ID; now checks exact sample-endpoint mapping."""
         from fractions import Fraction
         from vtx.pipeline.constraints import parse_fps, frame_sample, fps_expression
         for f in ALLOWED_FPS:

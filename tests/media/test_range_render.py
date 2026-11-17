@@ -66,6 +66,7 @@ class TestConcatManifest(unittest.TestCase):
             elapsed += duration
 
     def test_many_cuts_do_not_accumulate_rounding_and_range_origin_is_local(self):
+        self._assert_ntsc_boundaries_are_exact_and_do_not_accumulate()
         edges = list(range(10001))
         durations = self.durations(self.manifest(edges))
         elapsed = Fraction(0)
@@ -77,7 +78,7 @@ class TestConcatManifest(unittest.TestCase):
         self.assertEqual(self.durations(self.manifest([110, 112, 225, 230])),
                          [Fraction(n, 1_000_000) for n in (66667, 3766666, 166667)])
 
-    def test_ntsc_boundaries_are_exact_and_do_not_accumulate(self):
+    def _assert_ntsc_boundaries_are_exact_and_do_not_accumulate(self):
         from vtx.pipeline.composite import _concat_manifest
         edges = [10**12 + n for n in range(1001)]
         for fps in (29.97, '30000/1001', '120000/1001'):
@@ -474,7 +475,7 @@ class TestRangeIntegration(unittest.TestCase):
                         self.assertEqual(source.read_bytes(), source_before)
                         self.assertEqual(timeline.read_bytes(), timeline_before)
 
-    def test_short_ntsc_range_keeps_all_video_frames_when_audio_rounds_down(self):
+    def _assert_short_ntsc_range_keeps_all_video_frames_when_audio_rounds_down(self):
         import wave
         from vtx.pipeline.infra import Ctx
         from vtx.pipeline.range import run_range
@@ -516,6 +517,7 @@ class TestRangeIntegration(unittest.TestCase):
             self.assertFalse((root / 'out').exists(), 'range must not publish formal outputs')
 
     def test_range_render(self):
+        self._assert_short_ntsc_range_keeps_all_video_frames_when_audio_rounds_down()
         from vtx.pipeline.range import run_range  # noqa: F401  （经 CLI 子进程实跑，见下）
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

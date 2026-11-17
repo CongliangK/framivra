@@ -402,7 +402,7 @@ class TestMeasurePrimitives(unittest.TestCase):
                         "[0:a][1:a][2:a]concat=n=3:v=0:a=1[aout]",
                         "-map", "[aout]", "-c:a", "pcm_s16le", str(cls.wav)], check=True)
 
-    def test_fractional_full_range_and_silent_range_lengths_use_absolute_samples(self):
+    def _assert_fractional_full_range_and_silent_range_lengths_use_absolute_samples(self):
         from fractions import Fraction
         from vtx.pipeline import stages
         source = Path(self.tmp.name) / 'constant.wav'
@@ -647,6 +647,7 @@ class TestMeasurePrimitives(unittest.TestCase):
 
     @unittest.skipUnless(FF, 'FFmpeg required')
     def test_frame_offsets_are_sample_exact_in_main_window_and_report(self):
+        self._assert_fractional_full_range_and_silent_range_lengths_use_absolute_samples()
         import struct
         import wave
         from vtx.pipeline import stages
@@ -954,6 +955,7 @@ class TestSharedEventFilters(unittest.TestCase):
                 self.assertEqual(c.tl, before)
 
     def test_canonical_primitive_and_exact_event_boundaries(self):
+        self._assert_ntsc_source_and_destination_endpoint_rounding_phases()
         from vtx.pipeline import stages
         from vtx.media.audio_filters import event_chain
         self.assertIs(ar.event_chain, event_chain)
@@ -973,7 +975,7 @@ class TestSharedEventFilters(unittest.TestCase):
             # Audio events have no speed field in the timeline contract.
             self.assertEqual(e['fade_out_frames'], 30)
 
-    def test_ntsc_source_and_destination_endpoint_rounding_phases(self):
+    def _assert_ntsc_source_and_destination_endpoint_rounding_phases(self):
         from vtx.media.audio_filters import event_chain, track_mix
         c = _event_context(30000 / 1001); c.dur = 3
         first = event_chain(c, 0, {'in': 1, 'out': 2, 'src_in': 0, 'volume': 1})

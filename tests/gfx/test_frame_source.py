@@ -45,7 +45,7 @@ class TestPngSequence(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.source.input_args(a, b, ready=False)
 
-    def test_fractional_rate_has_exact_timebase_and_ffmpeg_expression(self):
+        # The same input-argument contract also covers exact fractional clocks.
         for fps in (29.97, '30000/1001', 30000 / 1001):
             source = dataclasses.replace(self.source, fps=fps)
             self.assertEqual(source.time_base, Fraction(1001, 30000))

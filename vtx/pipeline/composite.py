@@ -55,7 +55,7 @@ def _concat_manifest(segments, fps):
 
 def subtitle_timing_error(text, fps):
     """Timed overrides cannot preserve wall-clock semantics on stretched ASS."""
-    if parse_fps(fps) > 50 and re.search(
+    if isinstance(text, str) and parse_fps(fps) > 50 and re.search(
             r"\{[^}]*\\(?:t|fad|fade|move|[kK](?:f|o|t)?)(?![A-Za-z])", text):
         return ("time-dependent ASS override tags are unsupported above 50fps "
                 "(frame-exact subtitles use a stretched render clock); use static styling")

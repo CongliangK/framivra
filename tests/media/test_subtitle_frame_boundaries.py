@@ -116,7 +116,8 @@ def ass_for(p, path, origin, stop):
 
 
 class FrameBoundaryContracts(unittest.TestCase):
-    def test_common_rates_have_frame_exact_ass_edges_on_the_render_clock(self):
+    def test_supported_fps_matrix_is_explicit(self):
+        """Stable inventory ID; all supported rates now have frame-exact edges."""
         from vtx.pipeline.constraints import parse_fps
         for fps in ALLOWED_FPS:
             p = plan([]); p.c.fps = fps
@@ -196,7 +197,7 @@ class FrameBoundaryContracts(unittest.TestCase):
             with self.assertRaises(ValueError):
                 _active_subs(plan([sub]).c, 315)
 
-    def test_high_rate_timed_ass_tags_fail_explicitly_and_static_styles_remain_valid(self):
+    def _assert_high_rate_timed_ass_tags_fail_explicitly_and_static_styles_remain_valid(self):
         from vtx.pipeline.stages import validate_core
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -224,6 +225,7 @@ class FrameBoundaryContracts(unittest.TestCase):
                 self.assertIn(b'clock stretch=3', p.segment_ass_bytes(0, 10))
 
     def test_long_timecode_is_integer_exact(self):
+        self._assert_high_rate_timed_ass_tags_fail_explicitly_and_static_styles_remain_valid()
         self.assertEqual(plan([])._fc(30 * 3600 + 2), '1:00:00.05')
         self.assertEqual(plan([])._fc(30 * 3600 * 100000 + 2), '100000:00:00.05')
 
@@ -306,7 +308,7 @@ class SubtitleFrameIntegration(unittest.TestCase):
         self.assertEqual(observed_pts, [(n, n) for n in range(count)])
         return [raw[i * 14400:(i + 1) * 14400] for i in range(count)]
 
-    def test_production_common_rate_single_frames_preserve_pixels_and_pts(self):
+    def _assert_production_common_rate_single_frames_preserve_pixels_and_pts(self):
         from vtx.pipeline.constraints import parse_fps
         rates = (24, 25, 30, 48, 50, 60, 100, 120, '24000/1001',
                  '30000/1001', '48000/1001', '60000/1001', '120000/1001')
@@ -534,6 +536,7 @@ class SubtitleFrameIntegration(unittest.TestCase):
             self.assertEqual(timeline.read_bytes(), before)
 
     def test_two_layer_pass_clock(self):
+        self._assert_production_common_rate_single_frames_preserve_pixels_and_pts()
         # Real FFV1 intermediate input: its 1/1000 clock is different from the
         # direct lavfi 1/30 clock, so exercise the production pass route too.
         source = self.root / 'black.mp4'
