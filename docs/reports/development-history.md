@@ -85,7 +85,7 @@ A臂冷态中位：启动覆盖0.289s；608次截图（600目标帧+8探针）�
 
 [回归](../../tests/cache/test_storage_diagnostics.py)检查 quiet 不做展示遍历/账本读取、verbose top-20 与稳定全排序一致和缺失布局零写态；[锁生命周期回归](../../tests/safety/test_fstxn_lock_lifetime.py)检查闲置路径回收、活动持有者/等待者共享锁。这些是机制证明，不是 RSS 上限或整片提速证明。
 
-用户已明确本次档位仅指既有 `off/core/aggressive`。DSH 复用原全局三档确认/CAS 保存，不新增 CPU/RAM/并发档位；[资源预算](../reference/resource-budget.md)仍是未接入渲染 CLI 的 Linux 协作记账原语，不是 OS 限制。空间管理实现与有界响应、过期/替换/失败等机制回归见[接口](<../reference/storage-api.md>)、[内核测试](<../../tests/cache/test_storage_api.py>)和[侧栏记录](<../../dsh-sidebar/DEVELOPMENT.md#project-storage-controls-362>)。[真实 UI 对比及 owner 交互](<resource-management-362/README.md>)已用独立 DSH 与合成项目核验显示、停写确认及实际回收，保留了原件/输出；不以此冒充整片性能、私人项目或所有平台验收。
+用户已明确本次档位仅指既有 `off/core/aggressive`。DSH 复用原全局三档确认/CAS 保存，不新增 CPU/RAM/并发档位；[资源预算](../reference/resource-budget.md)仍是未接入渲染 CLI 的 Linux 协作记账原语，不是 OS 限制。空间管理实现与有界响应、过期/替换/失败等机制回归见[接口](<../reference/storage-api.md>)、[内核测试](<../../tests/cache/test_storage_api.py>)和[侧栏记录](<../../dsh-sidebar/DEVELOPMENT.md#project-storage-controls-362>)。[原真实 UI 对比及 owner 交互](<https://github.com/CongliangK/framivra/blob/501e6a0a8b4fcd56c7a9fd1f4859989c1ed4e5fd/docs/reports/resource-management-362/README.md>)已用独立 DSH 与合成项目核验显示、停写确认及实际回收，保留了原件/输出；不以此冒充整片性能、私人项目或所有平台验收。
 
 本机只读主片 preflight 返回完整诊断，但 `prepare_ready=false`：缺已有固定字体与合规 Inkscape；Python 3.14 的依赖检查通过，默认 Python 3.9 另缺 jsonschema。未下载替代字节、改锁或用小片替代主基线，未执行 prepare/verify/all/strict QC。另以 Python 3.14 跑通既有[缓存档位机制集成](<../../tests/cache/test_cache_modes_integration.py>)三项：小型 CPU fixture 的三档解码等价、阶段交接及私有工作集回收；其测试耗时不是主片阶段性能，不能证明长期无泄漏。
 

@@ -26,7 +26,7 @@ class LicenseInventory(unittest.TestCase):
         self.assertEqual({k for k, v in data["assets"].items() if v["default_payload"]},
                          {"framivra", "vendored-fpng", "vendored-libspng", "placeholder-media",
                           "electron-worker-source", "gfx-environment-evidence",
-                          "resource-management-ui-captures", "timeline-config-ui-captures",
+                          "timeline-config-ui-captures",
                           "single-frame-chart-evidence", "html-workflow-chart-evidence",
                           "html-preview-baseline-screenshot", "cold-composite-ui-evidence",
                           "macos-plugin-screenshot-evidence"})
