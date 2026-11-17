@@ -30,7 +30,7 @@ export const HOST_PROTOCOL_OPS = [
   'inspect', 'query', 'reference',
   'storage-inspect', 'storage-plan', 'storage-clean', 'storage-cancel',
 ]
-export const HOST_IDENTITY = { plugin: '0.2.2', protocol: 1, ops: HOST_PROTOCOL_OPS }
+export const HOST_IDENTITY = { plugin: '0.2.4', protocol: 1, ops: HOST_PROTOCOL_OPS }
 
 /**
  * Deterministic build fingerprint inputs — the single home for WHICH source
@@ -51,7 +51,7 @@ export const HOST_LIB_MODULES = ['configuration', 'kernel-config', 'kernel-manag
 export const CLIENT_MODULES = [
   'icons', 'icon-controls', 'editor-controls', 'viewport', 'timeline', 'timeline-settings', 'manual',
   'selection', 'reference', 'frame', 'settings', 'kernel-settings', 'draft-services', 'proposals',
-  'grant-lifecycle', 'official-draft', 'workbench', 'storage', 'index',
+  'grant-lifecycle', 'official-draft', 'timecode', 'monitor', 'workbench', 'storage', 'index',
 ]
 /** Stamp recipe: prefix + first 16 hex of sha256 over the per-file sha256
  *  digests of the modules above (joined with '\n'), in the listed order.

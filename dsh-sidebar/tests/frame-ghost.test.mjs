@@ -30,7 +30,11 @@ async function fixture(t) {
     async stageDraft(args) { events.push('stage'); faults.stageSignal = args.signal; if (faults.holdStage) await new Promise(resolve => { stageResolve = resolve }); return { status: 'rejected', reason: 'test-adapter-no-mutation' } },
   } }
   const call = async (_id, _body, signal) => { events.push('reference'); faults.referenceSignal = signal; if (faults.holdReference) await new Promise(resolve => { referenceResolve = resolve }); return { ok: true, content_version: 'old', selection: { global_frame: 0 } } }
-  globalThis.fetch = async (_url, init) => { events.push('render'); faults.renderSignal = init.signal; return new Promise((_resolve, reject) => { renderReject = reject; init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true }) }) }
+  globalThis.fetch = async (_url, init) => {
+    if (JSON.parse(init.body).op === 'cancel') { faults.cancelled = true; return new Response('{"ok":true}') }
+    events.push('render'); faults.renderSignal = init.signal
+    return new Promise((_resolve, reject) => { renderReject = reject; init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true }) })
+  }
   Object.defineProperty(dom.window.navigator, 'clipboard', { value: { write: async () => { events.push('copy') } } })
   globalThis.ClipboardItem = class { static supports() { return true } }
   let props = { snapshot, result, frame: 0, selectionIntent: emptySelection() }, refresh

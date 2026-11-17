@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { parseJSON, stringifyJSON } from '../json.mjs'
 import { boundedText, FRAME_WIRE_LIMIT } from '../bounded.mjs'
 import { captureCurrentDraft, referenceQuery, selectedReference } from './reference.mjs'
@@ -168,9 +168,11 @@ export function frameDraftText(generated, selection, positionOnly = false) {
   return text
 }
 
-export function FrameTools({ owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call }) {
+export function FrameTools({ owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call, active = true }) {
   const [state, setState] = useState({}), [consent, setConsent] = useState(false), [positionOnly, setPositionOnly] = useState(false)
   const [prepareGfx, setPrepareGfx] = useState(false), [htmlTrust, setHTMLTrust] = useState(false)
+  const [follow, setFollow] = useState(false)
+  const serial = useRef(), generation = useRef(0), cleanupFailed = useRef(false)
   const modeLabel = '当前合成帧'
   const changePrepare = event => { owner.invalidate(); setPrepareGfx(event.target.checked); setHTMLTrust(false); setState({ busy: !!state.busy, message: '准备授权已变化；旧画面已失效，请重新生成。' }) }
   const changeTrust = event => { owner.invalidate(); setHTMLTrust(event.target.checked); setState({ busy: !!state.busy, message: 'HTML 信任已变化；旧画面已失效，请重新生成。' }) }
@@ -187,10 +189,12 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
     if (required && !limits) throw new Error('DRAFT_UNAVAILABLE: DSH imageLimits 尚未就绪')
     return limits
   }
-  async function generate() {
+  async function generate(automatic = false) {
     let operation
+    const sequence = ++generation.current
     try {
       assertCurrent()
+      if (cleanupFailed.current) throw new Error('FRAME_CLEANUP: 请先显式取消并确认回收')
       operation = owner.begin(tabSignal)
       owner.check(operation)
       if (!consent || !whole(frame)) throw new Error('FRAME_CONSENT: 请固定整数帧并明确允许仅 cache/preview 写入')
@@ -202,10 +206,22 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       const verified = await verifyFrame(envelope, { frame, contentVersion: version, signal: operation.signal, limits: imageLimits() })
       owner.check(operation)
       // Validate association before making either stage/copy available.
-      frameDraftText(verified, selection, positionOnly)
+      if (!automatic) frameDraftText(verified, selection, positionOnly)
       owner.generated = verified
       setState({ message: '已验证 PNG，未发送。复制与入稿请展开图片工具。' })
-    } catch (error) { if (!operation?.signal.aborted) setState({ message: `错误：${error.message}` }); else setState({ message: '操作已失效/取消；未加入草稿。' }) }
+    } catch (error) {
+      if (sequence === generation.current) {
+        if (!operation?.signal.aborted) { setState({ message: `错误：${error.message}` }); if (automatic) setFollow(false) }
+        else setState({ message: '操作已失效/取消；未加入草稿。' })
+      }
+    } finally {
+      // The HTTP abort may settle before the Host's managed child is reaped.
+      // A following frame must wait for explicit cleanup, never race or retry it.
+      if (operation?.signal.aborted && !tabSignal.aborted) {
+        try { await frameRequest(sessionId, { op: 'cancel', grant: opened.grant }, tabSignal) }
+        catch (error) { cleanupFailed.current = true; setFollow(false); setState({ message: `回收未确认：${error.message}；请显式取消后重新启用实时预览。` }) }
+      }
+    }
   }
   async function stage() {
     // Guard even retained handlers before capture; clean clicks still capture
@@ -245,6 +261,22 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
     } catch (error) { setState({ message: `图片未确认复制：${error.message}；无自动文本降级。` }) }
   }
   const blocked = !whole(frame) || !!owner.ghost || owner.edit.dirty || owner.edit.busy || owner.edit.unknown
+  function enqueue(automatic = false) {
+    const start = () => {
+      // A superseded debounced intent must not begin work or abort a newer one.
+      if (owner.epoch !== viewEpoch || !active || tabSignal.aborted) return
+      return generate(automatic)
+    }
+    const task = serial.current ? serial.current.then(start) : start()
+    serial.current = task
+    void task?.finally(() => { if (serial.current === task) serial.current = undefined })
+    return task
+  }
+  useEffect(() => {
+    if (!active || !follow || !consent || blocked) return
+    const timer = setTimeout(() => { void enqueue(true) }, 120)
+    return () => clearTimeout(timer)
+  }, [active, follow, consent, blocked, frame, viewEpoch, prepareGfx, htmlTrust])
   // Verified preview object URL: created only from the verified owner.generated.file
   // (never image.path or unverified bytes), revoked on replacement/invalidation/unmount.
   // jsdom has no URL.createObjectURL; the guard keeps tests and non-browser hosts clean.
@@ -259,7 +291,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
     return () => { URL.revokeObjectURL(url); setPreview(undefined) }
   }, [verifiedFile])
   const shownPreview = generated && preview && preview.file === generated.file ? preview.url : null
-  const cancel = () => { owner.invalidate(); setState({ busy: true, message: '取消并等待实际进程退出…' }); void frameRequest(sessionId, { op: 'cancel', grant: opened.grant }, tabSignal).then(() => setState({ message: '已回收；未自动重试。' }), error => setState({ message: error.message })) }
+  const cancel = () => { owner.invalidate(); setFollow(false); setState({ busy: true, message: '取消并等待实际进程退出…' }); void frameRequest(sessionId, { op: 'cancel', grant: opened.grant }, tabSignal).then(() => { cleanupFailed.current = false; setState({ message: '已回收；未自动重试。' }) }, error => setState({ message: error.message })) }
   const cancelButton = () => h(ToolButton, { icon: 'cancel', variant: 'danger', label: '显式取消帧并等待回收', tooltip: '取消当前帧操作并等待实际进程回收', onClick: cancel })
   const imageTools = h('details', { className: 'fv-frame-tools-details' },
     h(ToolSummary, { icon: 'more', label: '图片与草稿 · 验证详情', tooltip: '展开图片复制 / 入稿与验证详情' }),
@@ -271,7 +303,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
     h('p', null, '生成前须单独允许本次 cache/preview 写入；不授予 timeline/history 写权限。图片和引用仅加入草稿，不发送。'),
     h('p', null, `保存版本 ${version} · 固定全局帧 ${frame ?? '未设置'}。current-composite / Fast 身份，不是成片 QC（也不是音频 QC）。${prepareGfx ? '仅显式准备当前帧图形；可见 HTML 另需信任。' : '默认不会准备缺失输入。'}只接受 core inline PNG，绝不读取 image.path。`),
     generated ? h('pre', null, stringifyJSON(generated.certificate, 2)) : null)
-  return h('section', { 'aria-label': '当前合成帧与草稿', className: 'fv-frame-tools', 'aria-busy': state.busy ? 'true' : 'false' },
+  return h('section', { 'aria-label': '当前合成帧与草稿', className: 'fv-frame-tools', hidden: !active, style: !active ? { display: 'none' } : undefined, 'aria-busy': state.busy ? 'true' : 'false' },
     h('style', null, `
 .fv-frame-tools{min-width:0;max-width:100%;font:inherit;color:inherit}.fv-frame-tools *{box-sizing:border-box}.fv-frame-tools button,.fv-frame-tools input{font:inherit}
 .fv-frame-tools .fv-frame-tools-head{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;margin:0 0 6px}
@@ -296,7 +328,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       h('h3', null, modeLabel),
       h('span', { className: 'fv-frame-tools-meta', title: version }, `版本 ${version.slice(7, 19)} · 帧 ${whole(frame) ? frame : '未固定'}`)),
     generated ? h('p', null, `已生成 ${modeLabel} · 全局帧 ${generated.certificate.frame}`) : null,
-    h('div', { className: 'fv-frame-tools-stage' },
+    h('div', { className: 'fv-frame-tools-stage fv-program-stage', 'data-mode': 'live' },
       shownPreview
         ? h('img', { src: shownPreview, width: generated.certificate.width, height: generated.certificate.height, title: '已验证当前完整合成帧；不是 final/音频 QC', alt: `已验证合成帧 ${generated.certificate.frame}（${generated.certificate.width}×${generated.certificate.height} PNG）` })
         : h('div', { className: 'fv-frame-tools-empty' }, h(Icon, { name: state.busy ? 'refresh' : 'film', size: 32 }), h('span', null, state.busy ? '等待 / 准备 / 合成 / 验证；可显式取消' : whole(frame) ? '未生成画面（需显式生成）' : '未固定帧'))),
@@ -304,7 +336,8 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       h('label', { title: '单独允许本次点击向此工程 cache/preview 写入；不授予 timeline/history 写权限。' }, h('input', { type: 'checkbox', checked: consent, onChange: event => { owner.invalidate(); setConsent(event.target.checked); setState({}) } }), '允许写入预览缓存（不改时间线）'),
       h('label', null, h('input', { type: 'checkbox', checked: prepareGfx, onChange: changePrepare }), '允许按需准备当前帧图形（仅预览域）'),
       prepareGfx ? h('label', null, h('input', { type: 'checkbox', checked: htmlTrust, onChange: changeTrust }), '仅信任的工程：允许执行已保存的可见 HTML / 脚本，可访问浏览器允许的文件和网络；不是沙箱，不授予更广泛的未知权限。') : null,
-      h(ToolButton, { icon: 'camera', variant: 'primary', label: '显式生成并验证固定帧 PNG', tooltip: `显式生成${modeLabel} PNG 并逐项验证证书`, disabled: !consent || blocked || state.busy, onClick: () => void generate() }),
+      h('label', { title: '明确启用后，播放头变化将按需写入预览缓存并验证完整合成帧；停止拖动后更新，不承诺视频帧率播放。' }, h('input', { type: 'checkbox', checked: follow, disabled: !consent, onChange: event => { owner.invalidate(); setFollow(event.target.checked); setState({}) } }), '随播放头实时生成（写预览缓存）'),
+      h(ToolButton, { icon: 'camera', variant: 'primary', label: '显式生成并验证固定帧 PNG', tooltip: `显式生成${modeLabel} PNG 并逐项验证证书`, disabled: !active || !consent || blocked || state.busy || follow, onClick: () => { void enqueue() } }),
       state.busy ? cancelButton() : null,
       imageTools),
     blocked ? h('p', { role: 'alert' }, '当前未固定帧，或编辑/队列/计划/写结果未解决；拒绝生成和加入草稿。') : null,
