@@ -50,10 +50,10 @@
     {
       "id": "agents",
       "path_company": "video_tools:AGENTS.md(产品仓根)",
-      "ceiling": 2000,
+      "ceiling": 5000,
       "unit": "char",
       "extract_cmd": "wc -m < AGENTS.md",
-      "warning": 1800,
+      "warning": 4500,
       "headroom_min": 0.1,
       "generated_budget": null,
       "measured": 1658,
