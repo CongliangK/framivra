@@ -16,13 +16,15 @@
 |---|---|---|
 | Linux | `~/.local/share/framivra` | apt-get/dnf/pacman；保留发行版/组件/架构与签名，不跨装发行版包。精简容器或缺库时明确失败；主干既有 [#381](https://github.com/CongliangK/framivra/issues/381) 阻止隔离安装 ready，本轮不修不绕 |
 | macOS | `~/.local/share/framivra` | 当前自动 bottles 路线仅 Apple Silicon、macOS ≥15、原生 Google Chrome.app；Intel/旧系统不静默转源码编译。实机安装 UNRUN |
-| Windows | `%LOCALAPPDATA%\framivra`（缺失时用户 AppData/Local） | x64 原生 Python/Git、Chrome 或 Edge；真实原生安装 UNRUN，不声明 SVG 主 Demo 支持。Linux portable PowerShell 7 测试不证明 Windows PowerShell 5 通过 |
+| Windows | `%LOCALAPPDATA%\framivra`（缺失时用户 AppData/Local） | Win10 x64 已实跑到字体/CLI 协议，旧 Git 权限修复后可用；soxr 缺 C++ 运行库阻塞制作验收。新 MinGit/自动运行库修复待实机复验，不声明 SVG 主 Demo 支持；Linux portable PS7 夹具不证明 PS5 整体验收 |
 
 根内含 `source/`、`venv/`、`config.json`、`fonts/`、`verification/`、`installation.json` 和下载缓存；POSIX 入口 `bin/vtx`，Windows 入口 `venv/Scripts/vtx.exe`。配置、字体、验证产物在源码外。Linux 只用根内 fontconfig；macOS/Windows 另复制到用户字体目录，不覆盖不同字节的同名文件。已合格工具复用，缺失或 FFmpeg 能力不足才准备；keg-only/私有工具路径由受管 CLI 真实加载，重跑仍核验，不把登记路径当合格证明。
 
 登记 schema 为 `framivra.installation/v1`，含绝对 source/python/vtx/config 路径、完整 commit、版本、`non-ai`/`cdp`、工具、字体环境与验收输出。仅实际 import、协议、音乐合成/QC、HTML/字幕/音视频冷暖全链、严格 QC、解码通过后登记 `ready`；失败保留 `preparing` 并非零退出。capability scope 不替代 900 帧 SVG 主片、发行冻结或跨平台实测。
 
 DSH 先只读验证默认登记再扫描旧位置，候选不自动执行/切换，须选择、保存并检查真实 read/store。Windows 的 ExecutionPolicy Bypass 仅限子进程，不改持久策略或绕企业组策略；使用绝对 exe，不把 Windows 分号 PATH 填入 POSIX 受信 PATH。显式 `VTX_CONFIG` 仍优先。
+
+Windows 主流程须普通非提升 PowerShell；提升写态在引导下载前拒绝，`--plan` 仍只读。新持久用户根继承可信父目录 ACL，不自动修既有 ACL。私有 Git 改用 MinGit ZIP，同主体解包完整运行库，不启动提权 Git 安装器。旧 Inno 目录原样保留，健康已登记工具仍复用；受限旧树不自动 takeown/reset、授 Everyone 或设置 `safe.directory=*`。
 
 ### 国内优先与系统副作用
 
@@ -34,7 +36,8 @@ DSH 先只读验证默认登记再扫描旧位置，候选不自动执行/切换
 - Fedora：受限 `ffmpeg-free` 不当完整成功；额外确认后，从已信任 Fedora 安装 `distribution-gpg-keys`，临时启 RPM Fusion **free** 并验证签名，可能导入 RPM key 数据库、执行 `swap --allowerasing`；不自行持久注册 RPM Fusion、不启 nonfree/tainted。Arch 明示并确认 `-Syu` 整机升级，避免 partial upgrade；自定义外部下载器不在当前自动恢复支持内。
 - Ubuntu：优先已有合格原生浏览器；缺失时仅 amd64 选择 Google 官方签名 apt Chrome（核对锁定 key 及公开指纹），不静默走 Snap。额外确认 **Google 包正常 postinst 可能注册其自己的持久更新源**，这是厂商包副作用，不等于安装器获准重写其他源；其他架构需自行提供合格原生浏览器。
 - Homebrew：TUNA API/bottles 使用其官方回退；不改已有 brew remote、不把 cask/API 镜像当 Chrome DMG 镜像。普通 `ffmpeg` 缺 libass 时明确选 `ffmpeg-full`，仅受管环境取 keg-only prefix 下同套 ffmpeg/ffprobe，不 force-link；递归依赖也强制 bottle，无匹配 bottle 就失败。Chrome 仍是厂商 DMG。缺 Homebrew 时执行官方安装脚本，cn 下**新建 brew** 的 Git/API/bottles 优先 TUNA、失败官方，新 origin 可能保留所选镜像；CLT 仍是 Apple 渠道。Linux 尚无 Python 的 stage-zero 只能先用用户现有可信系统源及原生缓存/网络超时，不冒称此阶段已强制国内镜像。
-- Windows：Python/Git 使用固定官方原 exe 的国内候选及独立引导缓存；FFmpeg 仍取 Gyan 官方同一原 ZIP，SoX 私有解包完整归档。已有 Edge 可复用；缺浏览器时 winget 使用官方动态元数据，不冒称固定字节或高校镜像覆盖。
+- Windows：Python 原 exe、普通 MinGit 原 ZIP 使用固定身份的国内候选/官方回退；FFmpeg 仍取 Gyan 官方同一原 ZIP，SoX 私有解包完整归档。保留全部 helper/DLL/许可，不拿 busybox 实验变体代替。已有 Edge 可复用；缺浏览器时 winget 使用官方动态元数据，不冒称固定字节或高校镜像覆盖。
+- Windows C++：先真实 import 全套依赖并做 soxr 最小重采样；仅 ImportError 且白名单 CRT 确定缺失（含 ctypes 包装的 126）才准备固定微软 VC++ 14.44.35211 x64 原件。SHA256 与 Windows Authenticode Valid/Microsoft 发布者均须通过；没有已证实的高校等价镜像。确认/`--yes` 后仅厂商 exe 请求 UAC，会更新系统共享运行库、包缓存和卸载登记，可能影响其他应用。不拷 DLL/改 PATH/强制降级或自动重启；`--no-system` 在下载前阻止，取消/信任失败硬停。3010/1641 要求用户重启后重跑；0/1638 也仅在新进程实际 import/重采样通过后继续原制作验收。
 
 `--yes` 授权已展示的事务，不绕系统管理员权限；没有它时上述新增仓库/替换/厂商源注册/整机升级须明示确认。原生包安装本身会改包数据库/缓存并执行厂商脚本，不承诺无系统副作用。包源真实性与编解码 GPL/专利/再分发义务是不同问题，国内镜像不消除许可风险。
 

@@ -16,6 +16,10 @@ from vtx.runtime.managed import configure_environment
 
 class SourceInstall(unittest.TestCase):
     def setUp(self):
+        # These local filesystem fixtures do not perform elevated deployments.
+        elevation = mock.patch.object(install, 'windows_elevated', return_value=False)
+        elevation.start()
+        self.addCleanup(elevation.stop)
         self.temp = tempfile.TemporaryDirectory(prefix='framivra-source-test-')
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name).resolve()
@@ -58,6 +62,42 @@ class SourceInstall(unittest.TestCase):
             self.assertEqual(install.main(['--root', str(destination), '--plan']), 0)
         self.assertFalse(destination.exists())
         run.assert_not_called()
+
+    def test_elevated_windows_install_stops_before_creating_root_or_tools(self):
+        destination = self.base / 'elevated-root'
+        with mock.patch.object(install, 'windows_elevated', return_value=True), \
+                mock.patch.object(install, 'prepare_tools') as prepare, \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(install.main(['--root', str(destination), '--yes']), 1)
+        self.assertIn('non-administrator PowerShell', errors.getvalue())
+        self.assertFalse(destination.exists())
+        prepare.assert_not_called()
+
+    def test_elevated_read_only_plan_never_probes_elevation_or_writes(self):
+        destination = self.base / 'plan-root'
+        found = {name: '/tools/' + name for name in (*install.TOOL_NAMES, 'chrome')}
+        with mock.patch.object(install, 'windows_elevated', return_value=True) as elevation, \
+                mock.patch.object(install, 'tools', return_value=found), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(install.main(['--root', str(destination), '--plan']), 0)
+        elevation.assert_not_called()
+        self.assertFalse(destination.exists())
+
+    def test_persistent_root_inherits_windows_acl_but_keeps_posix_private_mode(self):
+        for system in ('win32', 'linux'):
+            destination = self.base / (system + '-root')
+            with self.subTest(system=system), \
+                    mock.patch.object(install.sys, 'platform', system), \
+                    mock.patch.object(install.platform, 'machine', return_value='AMD64'), \
+                    mock.patch.object(install, 'windows_elevated', return_value=False), \
+                    mock.patch.object(Path, 'mkdir', autospec=True) as mkdir, \
+                    mock.patch.object(install, 'installation_lock', side_effect=install.InstallError('after root creation')), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+                self.assertEqual(install.main(['--root', str(destination), '--yes']), 1)
+            self.assertIn('after root creation', errors.getvalue())
+            options = {} if system == 'win32' else {'mode': 0o700}
+            mkdir.assert_called_once_with(destination, parents=True, exist_ok=True, **options)
+            self.assertFalse(destination.exists())
 
     def test_real_clone_pin_resume_and_explicit_update(self):
         first = self.deploy()
@@ -246,6 +286,42 @@ class SourceInstall(unittest.TestCase):
         self.assertIn('ChrisBagwell.SoX', ids)
         self.assertNotIn('torch', ' '.join(install.PYTHON_PACKAGES).lower())
         self.assertIn('scipy', ' '.join(install.PYTHON_PACKAGES))
+
+    def test_windows_plan_names_portable_git_and_conditional_runtime_without_probes(self):
+        with mock.patch.object(install.windows, 'ensure_python_runtime') as runtime:
+            plans = install.platform_packages({}, 'win32')
+            self.assertIn(['managed-original-download', '--id', 'Git.MinGit'], plans)
+            conditional = ['conditional-python-runtime', '--id', 'Microsoft.VCRedist.2015+.x64']
+            self.assertIn(conditional, plans)
+            found = {name: '/tools/' + name for name in (*install.TOOL_NAMES, 'chrome')}
+            self.assertEqual(install.platform_packages(found, 'win32'), [conditional])
+        runtime.assert_not_called()
+
+    def test_windows_runtime_failure_preserves_prepared_dependencies_and_never_reaches_ready(self):
+        def prepared(root, source, found, **kwargs):
+            state = install.json_record(root / 'installation.json')
+            install.atomic_json(root / 'installation.json', dict(state, pythonDependenciesPrepared=True))
+            return root / 'venv/Scripts/python.exe', {'PATH': '/fixture'}
+        with mock.patch.object(install.sys, 'platform', 'win32'), \
+                mock.patch.object(install.platform, 'machine', return_value='AMD64'), \
+                mock.patch.object(install, 'prepare_tools', return_value={}), \
+                mock.patch.object(install, 'verify_native_tools'), \
+                mock.patch.object(install, 'prepare_python', side_effect=prepared), \
+                mock.patch.object(install.windows, 'ensure_python_runtime',
+                                  side_effect=install.InstallError('runtime requires restart')) as runtime, \
+                mock.patch.object(install, 'prepare_configuration') as configure, \
+                mock.patch.object(install, 'verify') as verify, \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(install.main(['--root', str(self.root), '--repo', str(self.upstream), '--yes']), 1)
+        state = install.json_record(self.root / 'installation.json')
+        self.assertEqual(state['status'], 'preparing')
+        self.assertTrue(state['sourceApproved'])
+        self.assertTrue(state['pythonDependenciesPrepared'])
+        self.assertEqual(runtime.call_args.kwargs['network'], 'cn')
+        self.assertTrue(runtime.call_args.kwargs['yes'])
+        self.assertFalse(runtime.call_args.kwargs['no_system'])
+        configure.assert_not_called()
+        verify.assert_not_called()
 
     def test_linux_fontconfig_and_ensurepip_are_planned_without_replacing_browser(self):
         found = {name: '/tools/' + name for name in (*install.TOOL_NAMES, 'chrome')}

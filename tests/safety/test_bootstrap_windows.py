@@ -38,7 +38,8 @@ class BootstrapPowerShell(unittest.TestCase):
 
     def run_ps(self, body):
         script = self.base / 'test.ps1'
-        prefix = "$ErrorActionPreference = 'Stop'\n. $env:FRAMIVRA_TEST_BOOTSTRAP\n"
+        prefix = ("$ErrorActionPreference = 'Stop'\n. $env:FRAMIVRA_TEST_BOOTSTRAP\n"
+                  "function Test-ElevatedWindows { return $false }\n")
         script.write_text(prefix + body, encoding='utf-8-sig')
         env = dict(os.environ, FRAMIVRA_TEST_BOOTSTRAP=str(BOOTSTRAP),
                    FRAMIVRA_TEST_PYTHON=sys.executable, FRAMIVRA_TEST_TEMP=str(self.base),
@@ -58,6 +59,32 @@ $statePath = Join-Path $env:FRAMIVRA_TEST_TEMP 'resume.json'
 Write-ResumeState $statePath @{ validator = 'first' }
 Write-ResumeState $statePath @{ validator = 'second' }
 if ((Get-Content $statePath -Raw | ConvertFrom-Json).validator -ne 'second') { throw 'Atomic resume-state replacement failed' }
+''')
+
+    def test_elevated_write_stops_before_python_probe_network_or_root_creation(self):
+        self.run_ps('''
+$script:InstallerArgs = @('--yes')
+function Test-ElevatedWindows { return $true }
+function Find-Python { throw 'Python must not be probed in the rejected context' }
+function Get-LockedPython { throw 'No download is permitted' }
+function Get-SmallText { throw 'No bundle network is permitted' }
+$failed = $false
+try { Invoke-Bootstrap } catch {
+    if ($_.Exception.Message -notmatch 'non-administrator PowerShell') { throw }
+    $failed = $true
+}
+if (-not $failed) { throw 'Elevated write was accepted' }
+if (Test-Path -LiteralPath $env:LOCALAPPDATA) { throw 'Rejected install created a root' }
+''')
+
+    def test_elevated_plan_remains_read_only(self):
+        self.run_ps('''
+$script:InstallerArgs = @('--plan')
+function Test-ElevatedWindows { throw 'Read-only plan does not need elevation detection' }
+function Find-Python { return $env:FRAMIVRA_TEST_PYTHON }
+function Get-SmallText { throw 'Read-only plan must not access the network' }
+Invoke-Bootstrap
+if (Test-Path -LiteralPath $env:LOCALAPPDATA) { throw 'Plan created a root' }
 ''')
 
     def test_nonzero_installer_is_not_failure_if_real_python_is_now_usable(self):

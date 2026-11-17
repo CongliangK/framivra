@@ -3,6 +3,15 @@ param([Parameter(ValueFromRemainingArguments = $true)][string[]]$InstallerArgs =
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+function Test-ElevatedWindows {
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { return $false }
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    try {
+        $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+        return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    } finally { $identity.Dispose() }
+}
+
 function Refresh-ProcessPath {
     # Re-read after a previous installer ran in this same, otherwise stale shell.
     $parts = @([Environment]::GetEnvironmentVariable('Path', 'Machine'),
@@ -247,6 +256,9 @@ function Invoke-Bootstrap {
     $network = Get-InstallerOption '--network' 'cn'
     $root = Get-InstallerOption '--root' (Join-Path $env:LOCALAPPDATA 'framivra')
     if ($network -notin @('cn', 'official')) { throw '--network must be cn or official' }
+    if (-not ($InstallerArgs -contains '--plan') -and (Test-ElevatedWindows)) {
+        throw 'Per-user Windows installation requires a non-administrator PowerShell; rerun from an ordinary PowerShell. Existing files and ACLs were not changed.'
+    }
     $python = Find-Python
     if (-not $python) {
         if (($InstallerArgs -contains '--plan') -or ($InstallerArgs -contains '--no-system')) { throw 'Python x64 >=3.9 is missing; no changes made.' }
