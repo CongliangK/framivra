@@ -47,7 +47,10 @@ rule IDs; it does not imply that the separate diagnostic producer is installed.
 `read_events` is a pure reducer: it never executes recorded commands. Exact
 repeated event IDs may be deduplicated in explicit replay mode; conflicting
 records reject. Receipt observations must belong to an active task and match
-the committed stage. Timing/resource shapes, units, finite bounds and unavailable
+the committed stage. If a stage rebuilds another stage (for example standalone
+QC rebuilding SVG gfx), the receipt transaction gets a nested task for its actual
+stage; its reference still reserves the post-commit event only after task creation.
+Timing/resource shapes, units, finite bounds and unavailable
 reasons are validated. Duration must equal end offset minus start within the
 clock-resolution/rounding tolerance defined in the validator; task/attempt
 terminals use their matching start. Child tasks and attempts stay within enclosing

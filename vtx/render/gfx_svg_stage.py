@@ -1,7 +1,8 @@
 """Bounded Inkscape shell producer; independent static SVG completion evidence.
 
-One shell process per cold clip. Timeout/exception closes that process. This is
-not the browser worker's IPC/parent-death supervision protocol.
+Large cold clips use at most five isolated shell processes. Timeout/exception
+attempts bounded termination/reaping of every owned shell before returning;
+failed cleanup is fatal. This is not browser parent-death supervision.
 """
 import json
 import hashlib
@@ -9,7 +10,9 @@ import os
 import stat
 import subprocess
 import time
+import threading
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..runtime import fstxn
 from . import gfx_svg
@@ -17,36 +20,144 @@ from .gfx_cli import png_invalid_reason
 from ..cache.hygiene import manifest_record, tmp_run
 
 
-def run_shell(executable, directory, count, width, height, *, root=None, indices=None):
+def _start_shell(executable, directory, *, root):
     gfx_svg.private_configuration(directory, root=root)
-    env = gfx_svg.process_environment(directory)
-    # Pin transparent background RGB as well as alpha; Inkscape defaults to white.
-    # The stage source digest in resolve() also invalidates pre-change PNG caches.
+    return subprocess.Popen([executable, '--shell'], cwd=directory,
+                            env=gfx_svg.process_environment(directory),
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+
+
+def _export(proc, indices, width, height, *, count=None, stop=None):
     # Every action operand is generated locally; user paths never enter this language.
     actions = '\n'.join(
         f'file-open:f{i:04d}.svg;export-type:png;export-area-page;'
         f'export-width:{width};export-height:{height};'
         'export-background:#000000;export-background-opacity:0;'
         f'export-filename:f{i:04d}.png;export-do;file-close'
-        for i in (range(count) if indices is None else indices)) + '\nquit\n'
-    proc = subprocess.Popen([executable, '--shell'], cwd=directory, env=env,
-                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True)
-    try:
-        stdout, stderr = proc.communicate(actions, timeout=max(30, min(3600, count * 5)))
-        if proc.returncode:
-            raise RuntimeError(f'Inkscape failed ({proc.returncode}): {stderr[-1500:]}')
-    finally:
-        if proc.poll() is None:
-            proc.terminate()
+        for i in indices) + '\nquit\n'
+    budget = len(indices) if count is None else count
+    timeout = max(30, min(3600, budget * 5))
+    if stop is None:
+        stdout, stderr = proc.communicate(actions, timeout=timeout)
+    else:
+        deadline = time.monotonic() + timeout
+        while True:
+            if stop.is_set():
+                raise RuntimeError('SVG shell export cancelled')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(proc.args, timeout)
             try:
-                proc.wait(timeout=5)
+                stdout, stderr = proc.communicate(actions, timeout=min(0.5, remaining))
+                break
             except subprocess.TimeoutExpired:
+                # communicate retains its input offset and captured output.
+                # This event bounds thread shutdown, not child termination;
+                # the parent still has to terminate/reap every owned shell.
+                actions = None
+    if proc.returncode:
+        raise RuntimeError(f'Inkscape failed ({proc.returncode}): {stderr[-1500:]}')
+
+
+def _stop_shell(proc):
+    if proc.poll() is None:
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            pass  # It exited between poll and signal; still reap it below.
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
                 proc.kill()
-                proc.wait(timeout=5)
-        for stream in (proc.stdin, proc.stdout, proc.stderr):
-            if stream is not None:
-                stream.close()
+            except ProcessLookupError:
+                pass
+            proc.wait(timeout=5)
+
+
+def _close_shell(proc):
+    for stream in (proc.stdin, proc.stdout, proc.stderr):
+        if stream is not None:
+            stream.close()
+
+
+def run_shell(executable, directory, count, width, height, *, root=None, indices=None):
+    proc = _start_shell(executable, directory, root=root)
+    try:
+        _export(proc, list(range(count) if indices is None else indices), width, height, count=count)
+    finally:
+        try:
+            _stop_shell(proc)
+        finally:
+            _close_shell(proc)
+
+
+def shell_batches(indices):
+    """Bound startup/memory cost; scheduling does not change the SVG grammar."""
+    value = os.environ.get('VTX_SVG_WORKERS')
+    if value is not None and value not in ('1', '2', '3', '4', '5'):
+        raise ValueError('VTX_SVG_WORKERS must be an integer from 1 to 5')
+    workers = int(value) if value is not None else min(5, max(1, (os.cpu_count() or 1) // 2))
+    workers = min(workers, max(1, len(indices) // 120))
+    return [indices[i * len(indices) // workers:(i + 1) * len(indices) // workers]
+            for i in range(workers)]
+
+
+def run_shell_batches(executable, directory, count, width, height, *, root, indices, outputs=None):
+    batches = shell_batches(indices)
+    if len(batches) == 1:
+        run_shell(executable, directory, count, width, height, root=root, indices=indices)
+        return 1
+    # Each process owns its HOME, Inkscape profile, fontconfig and font cache.
+    # Fonts are independent files, never hardlinks into project or sibling state.
+    fonts = [(p.name, p.read_bytes()) for p in sorted((directory / 'fonts').glob('*'))]
+    jobs = []
+    for number, batch in enumerate(batches):
+        shard = directory / f'shell-{number}'
+        fstxn.mkdir(shard, root=root)
+        for name, data in fonts:
+            fstxn.atomic_write(shard / 'fonts' / name, data, root=root)
+        for i in batch:
+            fstxn.replace(directory / f'f{i:04d}.svg', shard / f'f{i:04d}.svg', root=root)
+        jobs.append((shard, batch))
+    processes, futures = [], []
+    stop = threading.Event()
+    executor = ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix='svg-shell')
+    try:
+        # Admission is parent-owned. A launch/submit failure cannot leave an
+        # untracked child or let a late task launch after cleanup has started.
+        for shard, batch in jobs:
+            proc = _start_shell(executable, shard, root=root)
+            processes.append(proc)
+            futures.append(executor.submit(_export, proc, batch, width, height, stop=stop))
+        for future in as_completed(futures):
+            future.result()
+    finally:
+        stop.set()
+        cleanup_error = None
+        try:
+            for proc in processes:
+                try:
+                    _stop_shell(proc)
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    # Attempt every sibling even if one cannot be reaped.
+                    cleanup_error = cleanup_error or error
+        finally:
+            executor.shutdown(wait=True)
+            for proc in processes:
+                _close_shell(proc)
+        if cleanup_error is not None:
+            raise cleanup_error
+    for shard, batch in jobs:
+        for i in batch:
+            if outputs is None:
+                fstxn.replace(shard / f'f{i:04d}.png', directory / f'f{i:04d}.png', root=root)
+            else:
+                # Keep owned outputs in place until full validation and final
+                # pinned publication; do not rename them through staging twice.
+                outputs[i] = shard / f'f{i:04d}.png'
+    return len(jobs)
 
 
 def reuse_group(record):
@@ -143,11 +254,13 @@ def render_stage(c):
                     reused = set(group)  # Rebuild after any byte-inequality fallback.
                     skipped = set(group[1:])
                     indices = [i for i in range(clip['dur']) if i not in skipped]
-                    run_shell(record['engine']['executable'], staging, clip['dur'], c.w, c.h,
-                              root=c.root, indices=indices)
+                    outputs = [staging / f'f{i:04d}.png' for i in range(clip['dur'])]
+                    batch_count = run_shell_batches(record['engine']['executable'], staging,
+                                                    clip['dur'], c.w, c.h,
+                                                    root=c.root, indices=indices, outputs=outputs)
                     copied_fingerprint = None
                     if skipped:
-                        source = staging / f'f{group[0]:04d}.png'
+                        source = outputs[group[0]]
                         observed, sizes = [], []
                         reason = png_invalid_reason(source, width=c.w, height=c.h,
                                                     _fingerprint=observed, _verified_size=sizes)
@@ -155,26 +268,37 @@ def render_stage(c):
                             raise ValueError(f'Inkscape representative invalid: {reason}')
                         copied_fingerprint = observed[0]
                         for i in group[1:]:
-                            copy_png(source, staging / f'f{i:04d}.png', copied_fingerprint, sizes[0], root=c.root)
+                            copy_png(source, outputs[i], copied_fingerprint, sizes[0], root=c.root)
                     raster_seconds = time.monotonic() - started
-                    hashes = []
-                    for i in range(clip['dur']):
-                        path = staging / f'f{i:04d}.png'
-                        observed = []
-                        reason = png_invalid_reason(path, width=c.w, height=c.h, _fingerprint=observed)
-                        if reason:
-                            raise ValueError(f'Inkscape output frame {i} invalid: {reason}')
-                        if i in reused and observed[0] != copied_fingerprint:
-                            raise ValueError('SVG reused PNG changed after materialization')
-                        hashes.append(observed[0])
+                    def check_batch(indices):
+                        checked = []
+                        for i in indices:
+                            observed = []
+                            reason = png_invalid_reason(outputs[i],
+                                                        width=c.w, height=c.h, _fingerprint=observed)
+                            if reason:
+                                raise ValueError(f'Inkscape output frame {i} invalid: {reason}')
+                            if i in reused and observed[0] != copied_fingerprint:
+                                raise ValueError('SVG reused PNG changed after materialization')
+                            checked.append((i, observed[0]))
+                        return checked
+                    # Decode/CRC/SHA every PNG as before. Independent streams
+                    # share only immutable inputs; at most one batch per shell
+                    # runs, and all validation finishes before any publication.
+                    hashes = [None] * clip['dur']
+                    with ThreadPoolExecutor(max_workers=batch_count) as executor:
+                        batches = [range(n, clip['dur'], batch_count) for n in range(batch_count)]
+                        for checked in executor.map(check_batch, batches):
+                            for i, fingerprint in checked:
+                                hashes[i] = fingerprint
                     c.verify_inputs('gfx')
                     if gfx_svg.resolve(c, clip) != record:
                         raise ValueError('SVG identity changed during rendering')
                     for i in range(clip['dur']):
-                        fstxn.replace(staging / f'f{i:04d}.png', directory / f'f{i:04d}.png', root=c.root)
+                        fstxn.replace(outputs[i], directory / f'f{i:04d}.png', root=c.root)
                     marker.write_text(json.dumps({'format': 'framivra-svg-completion/v1',
                         'key': key, 'input': record, 'sha256': hashes,
-                        'experimental': True, 'batch_count': 1, 'raster_seconds': raster_seconds,
+                        'experimental': True, 'batch_count': batch_count, 'raster_seconds': raster_seconds,
                         'export_count': len(indices), 'materialized_count': len(skipped)}, sort_keys=True), encoding='utf-8')
             manifest_record(c, directory, 'gfx', key)
     c.receipt('gfx', True, f'{total} SVG gfx clips; {warm} cache hits; Inkscape static sequence',
