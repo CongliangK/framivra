@@ -51,7 +51,7 @@ python3 apps/bgm/bgm.py render apps/bgm/examples/synth.json -o ./out/bgm-demo
 }
 ```
 
-- SF2 动态加载用户安装的 libfluidsynth；优先显式配置和系统发现，macOS 再尝试 dylib 与 Apple Silicon/Intel 的 Homebrew `fluid-synth` 标准 opt 路径，无需 ABI 软链。自定义位置写 `tools.fluidsynth_lib` 的绝对路径；解释器与库须同架构。SFZ 调用用户的 sfizz_render；sample 读取用户提供的音频。
+- SF2 动态加载用户安装的 libfluidsynth；显式 `tools.fluidsynth_lib` 只试载该值，错误不回退。未配置时先系统发现，macOS 再尝试 dylib 与 Apple Silicon/Intel 的 Homebrew `fluid-synth` 标准 opt 路径，无需 ABI 软链；解释器与库须同架构。SFZ 调用用户的 sfizz_render；sample 读取用户提供的音频。
 - demucs 强制 `--repo` 本地模型仓（含所选模型 YAML 和其引用的 `.th` 权重；直接签名模型则需对应 `.th`）；缺本地权重立即报错。不会因 `HF_HUB_OFFLINE` 而假定 torch 不下载，明确拒绝 `offline=false`。
 - ai 只提交[ComfyUI API 工作流](<workflows/README.md>)给用户已有服务；用户应先安装节点、模型并审核工作流。不安装或下载模型，不自动启动服务。
 - `doctor` 是完整可选环境诊断，不是最低安装门。manifest 的健康检查仅验证基础代码接口，不要求 GPU、音源、模型、ComfyUI 全装。
@@ -75,23 +75,29 @@ result = render_project("project.json", out_dir="out/music", runtime={})
 
 运行前确认 `python3`、NumPy、FFmpeg/ffprobe 均为已有可用环境；`platform.machine()` 为 `arm64` 才是 Apple Silicon 原生，Intel/Rosetta 需另跑，不能继承结果。无 `/proc` 时总内存按本机页大小读取；可用内存仍未知，并发保守单发，不把总内存当空闲内存。
 
-以下为**写操作**：输出必须是仓外尚不存在的目录。运行器创建原创 16 秒多轨音乐、one-shot 与普通视频输入，隔离用户配置并显式选择 `cache.mode: aggressive` 保留共享缓存，执行 show/edit/undo、音乐 render/QC、bgm-render 三种选择（各窗 3 帧首尾淡变）、完整冷/暖 `all`、工程/`$ref`/输出选择失效、缺分轨显式失败与恢复、独立 strict QC 与成片音频复测；不会安装工具、音源或模型。
+验收用仓外新目录、自有隔离 HOME/XDG 与显式 `MUSIC_RUNTIME`、`VTX_CONFIG`；不得读取日常音乐配置或借用私有音源。准备原创多轨 synth/sample 工程、one-shot 和视频输入，工程/运行资产路径覆盖中文、空格与 `#`。以下为**写操作**，变量替换为该隔离目录的实际绝对路径；通过官方 CLI 顺序执行，不安装或下载资产：
 
 ```bash
-python3 apps/bgm/tools/verify_pipeline.py --output "/绝对路径/新的 音乐验收目录"
+python3 apps/bgm/bgm.py show structure --json "$MUSIC_PROJECT"
+python3 apps/bgm/bgm.py render "$MUSIC_PROJECT" -o "$MUSIC_OUT" --quiet
+python3 apps/bgm/bgm.py qc "$MUSIC_OUT/mix.flac" --project "$MUSIC_PROJECT" -o "$MUSIC_OUT/independent-qc.json"
+python3 vtx/vtx.py -t "$VIDEO_TIMELINE" all
+python3 vtx/vtx.py -t "$VIDEO_TIMELINE" qc --strict
 ```
 
-结果以输出目录的 `summary.json`、步骤退出码和日志为准；失败非零退出。输入、工具、源码与产物身份随包保留。该音乐回归不是 30 秒 SVG 性能主片，不提供性能或跨架构承诺；不要上传包含本机路径的原始日志。自动检查不等于人工听审，母带/母前/总线分轨须分别听审并留人工结论，未听审写 UNRUN。
+音乐须检查 `qc_ok` 与独立 QC。另用 `edit set`/`edit undo` 验证原文恢复；按[插件输出契约](<../../plugins/bgm-render/README.md>)把同工程的 master/premaster/总线分轨挂三源，逐源比对 PCM、总线增益/声像与工程全长。缓存复验显式设置 `cache.mode: aggressive`，冷/暖均跑完整 `all`，沿现有身份验证 runtime、工程、`$ref`、输出选择及缺分轨失败恢复。全片解码并核对逐帧精确 PTS、采样数、响度与真峰，不以进程成功代替 QC；启用的 finish 仍须执行，侧栏插件拒绝门不绕过。
+
+记录当前源码/解释器/库/音源/插件/产物身份、退出码与 PASS/FAIL/SKIP/UNRUN；该音乐机制工程不是 900 帧 SVG 性能主片。母带/母前/总线分轨与成片人工听审另记，未听审为 UNRUN。无淡变 AAC 瞬态可能超冲，正常淡变输入通过不证明任意瞬态安全，不能降低 TP 门。一次性运行器与其自测已退役，原文可从[固定候选](https://github.com/CongliangK/framivra/tree/49ce3ff9a6c3cfa762033597d0192015fa3fbe02)恢复；有效产品回归继续保留。不要上传含本机路径的原始日志。
 
 | 引擎 | macOS 前提与验收边界 |
 |---|---|
-| synth | NumPy；运行器真实执行多轨合成，无模型/采样库 |
-| sample | 用户音频；运行器使用原创 one-shot 验证外置根、中文/空格路径，不代表已验 Kenney 等第三方库 |
-| sf2 | 同架构 libfluidsynth + 授权 SF2；缺任一项不能声称实际渲染通过；legacy GM/MIDI 入口也消费 runtime 的 `sf2.FluidR3_GM`，未配置仍保留历史 Linux 路径 |
+| synth | NumPy；用原创多轨合成，无模型/采样库 |
+| sample | 用户音频；用原创 one-shot 验证外置根与路径，不代表 Kenney 等第三方库通过 |
+| sf2 | 同架构 libfluidsynth + 授权 SF2；缺任一项不能声称实际渲染通过。原创最小 SF2 仅证明通用加载/出声，不代替 FluidR3_GM/整套 GM；legacy GM/MIDI 入口消费 runtime 的 `sf2.FluidR3_GM`，未配置仍保留历史 Linux 路径 |
 | sfz | 原生 sfizz_render + SFZ 及其全部采样/include；需配置 `tools.sfizz_render`，独立实跑，不能以 SF2/synth 替代 |
-| ai | 用户明确配置并已启动的 ComfyUI、节点/模型/API 工作流；不自动连接运行器外的服务或提交任务 |
+| ai | 用户明确配置并已启动的 ComfyUI、节点/模型/API 工作流；不自动探测默认服务或提交任务 |
 | demucs | 已有解释器、包与完整本地权重仓；Mac 用显式 `device: cpu`；auto 的 NVIDIA 探测在无 NVIDIA 时走 CPU，不承诺 MPS |
-| master | 运行器验证 FFmpeg loudnorm；matchering 另需已有独立 Python 环境与授权参考音频，不随 loudnorm 通过 |
+| master | 基础验 FFmpeg loudnorm；matchering 另需已有独立 Python 环境与授权参考音频，不随 loudnorm 通过 |
 
 缺可选资源时保留具体缺口与待验步骤，不缩成“七引擎通过”。基础闭环通过不满足 [#374](https://github.com/CongliangK/framivra/issues/374) 全部验收及闭单条件。
 

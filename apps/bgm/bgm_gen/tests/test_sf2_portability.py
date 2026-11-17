@@ -45,12 +45,12 @@ def test_darwin_homebrew_fallback(monkeypatch, prefix):
     ("darwin", "/native/libfluidsynth.3.dylib"),
     ("linux", "libfluidsynth.so.3"),
 ])
-def test_runtime_then_discovery_precede_fallback(monkeypatch, platform, discovered):
+def test_unconfigured_discovery_precedes_fallback(monkeypatch, platform, discovered):
     monkeypatch.setattr(sf2.sys, "platform", platform)
     monkeypatch.setattr(sf2.ctypes.util, "find_library", lambda name: discovered)
     calls, lib = _fake_cdll(monkeypatch, discovered)
-    assert sf2._load_lib({"tools": {"fluidsynth_lib": "configured-library"}}) is lib
-    assert calls == ["configured-library", discovered]
+    assert sf2._load_lib({}) is lib
+    assert calls == [discovered]
 
 
 def test_explicit_library_first_and_not_reloaded(monkeypatch):
@@ -61,11 +61,20 @@ def test_explicit_library_first_and_not_reloaded(monkeypatch):
     assert calls == ["configured-library"]
 
 
+def test_explicit_invalid_library_does_not_fall_back(monkeypatch):
+    monkeypatch.setattr(sf2.ctypes.util, "find_library",
+                        lambda name: pytest.fail("explicit value must not discover"))
+    calls, _ = _fake_cdll(monkeypatch, "libfluidsynth.so.3")
+    with pytest.raises(base.EngineError, match="invalid-explicit"):
+        sf2._load_lib({"tools": {"fluidsynth_lib": "invalid-explicit"}})
+    assert calls == ["invalid-explicit"]
+
+
 def test_linux_fallback_unchanged_and_deduplicated(monkeypatch):
     monkeypatch.setattr(sf2.sys, "platform", "linux")
     monkeypatch.setattr(sf2.ctypes.util, "find_library", lambda name: "libfluidsynth.so.3")
     calls, lib = _fake_cdll(monkeypatch, "libfluidsynth.so.2")
-    assert sf2._load_lib({"tools": {"fluidsynth_lib": "libfluidsynth.so.3"}}) is lib
+    assert sf2._load_lib({}) is lib
     assert calls == ["libfluidsynth.so.3", "libfluidsynth.so.2"]
 
 

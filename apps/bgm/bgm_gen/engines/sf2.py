@@ -61,7 +61,11 @@ def _runtime_fluidsynth_lib(runtime=None):
 
 def _fluidsynth_candidates(configured=None):
     """Shared read-only discovery order for the renderer and doctor."""
-    names = [configured] if configured else []
+    # Explicit selection is authoritative: a broken path/ABI must not silently
+    # select another installation (doctor and actual rendering must agree).
+    if configured:
+        return [configured]
+    names = []
     found = ctypes.util.find_library("fluidsynth")
     if found:
         names.append(found)
@@ -71,10 +75,10 @@ def _fluidsynth_candidates(configured=None):
 
 def _load_lib(runtime=None):
     """libfluidsynth 三级解析（M-1）：
-      ① runtime.json tools.fluidsynth_lib（用户/doctor 显式指定的 so/DLL 路径）；
-      ② ctypes.util.find_library("fluidsynth")（系统探测）；
-      ③ 兜底 soname 列表逐个 CDLL 试载。
-    全部失败抛 EngineError（带 doctor 排障指引），不裸 OSError。"""
+      ① 显式 runtime.json tools.fluidsynth_lib 只试载该值，失败不回退；
+      ② 未配置时 ctypes.util.find_library("fluidsynth")（系统探测）；
+      ③ 未配置时兜底 soname 列表逐个 CDLL 试载。
+    加载失败抛 EngineError（带 doctor 排障指引），不裸 OSError。"""
     names = _fluidsynth_candidates(_runtime_fluidsynth_lib(runtime))
     lib, tried = None, []
     for name in names:
