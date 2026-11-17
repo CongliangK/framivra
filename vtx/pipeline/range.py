@@ -238,7 +238,10 @@ def run_range(c, fa: int, fb: int):
     fstxn.mkdir(delivery_dir, root=c.root)
     out = delivery_dir / f"range_{la}_{lb}.mp4"
     c.run(["ffmpeg", "-v", "error", "-y", "-i", str(tmpv), "-i", str(wav),
-           "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest",
+           # Both inputs are already bounded to the exact frame/sample window.
+           # -shortest can discard trailing copied video packets when rounded
+           # audio ends a fraction of one sample before the last frame endpoint.
+           "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
            "-movflags", "+faststart", str(out)])
     tmpv.unlink(missing_ok=True)
     # 自检：总帧数必须精确 == 窗口帧数（复合段边界丢帧不静默）。dry-run 无产物

@@ -1068,7 +1068,10 @@ def certificate(c):
                                + record.get('error', 'incomplete resolver'))
     if record is None:
         return None
-    axes = dict(record, viewport={'width': c.w, 'height': c.h}, fps=c.fps)
+    from ..pipeline.constraints import parse_fps
+    rate = parse_fps(c.fps)
+    axes = dict(record, viewport={'width': c.w, 'height': c.h},
+                fps=int(rate) if rate.denominator == 1 else str(rate))
     return {'schema': SCHEMA, 'sha256': digest(axes), 'status': record['status'], 'axes': axes}
 
 

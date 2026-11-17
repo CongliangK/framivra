@@ -236,9 +236,10 @@ class TestQCDiagnosticsCPU(unittest.TestCase):
                 listing = root / 'cache/vseg/list.txt'
                 if segments == 4:
                     lines = listing.read_text().splitlines()
-                    self.assertEqual(len(lines), 4, lines)
+                    self.assertEqual(len(lines), 8, lines)
+                    self.assertEqual(lines[1::2], ['duration 2.000000'] * 4)
                     starts = []
-                    for index, line in enumerate(lines):
+                    for index, line in enumerate(lines[::2]):
                         entry = re.fullmatch(r"file '(.+)'", line)
                         self.assertIsNotNone(entry, line)
                         segment = Path(entry.group(1))

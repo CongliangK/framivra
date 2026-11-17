@@ -77,11 +77,11 @@ def build_spec(timeline_path: str, ids=None, cfg: dict = None) -> dict:
     cfg = cfg if cfg is not None else load_config()
     with open(timeline_path, encoding="utf-8") as f:
         tl = json.load(f)
-    fps = FPS_DEFAULT
-    proj = tl.get("project")
-    if isinstance(proj, dict) and isinstance(proj.get("fps"), (int, float)) \
-            and proj["fps"] > 0:
-        fps = proj["fps"]
+    if DEFAULT_REPO_ROOT not in sys.path:
+        sys.path.append(DEFAULT_REPO_ROOT)
+    from vtx.pipeline.constraints import parse_fps
+    rate = parse_fps(tl.get("project", {}).get("fps", FPS_DEFAULT))
+    fps = int(rate) if rate.denominator == 1 else float(rate)
 
     vtrack = None
     for tr in tl.get("audio_tracks", []):

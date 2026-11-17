@@ -309,7 +309,8 @@ def _render_inner(path, reference, frame, limit, *, prepare_gfx, trust_html, req
         return ({"state": "generated", "kind": "current-composite", "approximate": False,
                 "path": None if prepare_gfx else str(image.relative_to(c.root)),
                 **({'delivery': 'inline-only'} if prepare_gfx else {}), "mime_type": "image/png",
-                "width": c.w, "height": c.h, "frame": frame, "fps": {"num": int(c.fps), "den": 1},
+                "width": c.w, "height": c.h, "frame": frame,
+                "fps": {"num": c.frame_rate.numerator, "den": c.frame_rate.denominator},
                 "content_version": version, "input_fingerprint": c.input_fingerprint,
                 "identity_semantics": ('Fast media stat identity; native producer input/environment certificates; '
                                        'legacy HTML dynamic closure unproven; trusted HTML is not sandboxed'

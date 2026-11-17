@@ -51,7 +51,14 @@ class ImpactRepairRegressions(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(after['nodes']['clip:0:0']['key'],
                          gfx_key(ctx, ctx.tl['video_tracks'][0]['clips'][0]))
-        for fps in (True, '30', 29.97, 24, None):
+        for fps in (24, 29.97, '30000/1001'):
+            self.tl['project']['fps'] = fps
+            self.path.write_text(json.dumps(self.tl))
+            ctx = Ctx(self.path)
+            snapshot = capture(self.tl, self.root, nseg=2)
+            self.assertEqual(snapshot['nodes']['clip:0:0']['key'],
+                             gfx_key(ctx, ctx.tl['video_tracks'][0]['clips'][0]))
+        for fps in (True, '30', 29.5, 27, None):
             self.tl['project']['fps'] = fps
             with self.subTest(fps=fps), self.assertRaises(ValueError):
                 capture(self.tl, self.root)
@@ -115,7 +122,7 @@ with patch('vtx.cache.cache_state.os.open', side_effect=swapped):
             self.assertTrue(all(parent.startswith('clip:0:') for parent in node['parents']))
             if key.startswith('qc:pass:'):
                 inputs = node['inputs']; a, b = inputs['range']
-                previous = f'{a}|{b}|64x64|0|0'
+                previous = f'{a}|{b}|64x64|0|0|fps=30'
                 for k, layer in enumerate(inputs['layers']):
                     previous = pass_content_key(previous, k, layer, _graph_code_digest())
                 self.assertEqual(node['key'], previous)

@@ -4,7 +4,7 @@
 subs render 写 cache 走 manifest_record 记账。检查逻辑核心是纯函数
 check_subtitles(subs, voice_windows, fps)——可脱离视频/音频产物独立测试。
 """
-import hashlib, json, re, sys
+import hashlib, json, math, re, sys
 from pathlib import Path
 
 from ..runtime import fstxn
@@ -164,6 +164,9 @@ def run_check(c: Ctx, align_fail: float, dry: bool):
 def run_render(c: Ctx, dry: bool):
     """subs render：纯 ass 生成（不渲染），内容寻址——字节一致则已缓存跳过。"""
     dst = c.cache / "subs.ass"
+    stretch = RenderPlan(c=c, draft=False, f=1.0, W=c.w, H=c.h)._subtitle_clock()[1]
+    if stretch > 1:
+        print(f"⚠ ASS 使用 {stretch}× 虚拟字幕时钟；仅供内核/Blender 字幕滤镜消费，不能直接按成片时钟播放。")
     if dry:
         # dry-run 不写任何文件（含临时 ass），只报告意图与现状
         act = "已缓存（字节一致性留待真实运行比对）" if dst.exists() else "将生成写入"
@@ -227,7 +230,7 @@ def _write_point_ass(c: Ctx, path: Path, subs):
     plan = RenderPlan(c=c, draft=False, f=1.0, W=c.w, H=c.h, nframes=None, layers=[])
     lines = plan.ass_head()
     for s in subs:
-        lines.append(f"Dialogue: 0,{plan._fc(0)},{plan._fc(c.fps)},Def,,0,0,0,,{s['text']}")
+        lines.append(f"Dialogue: 0,{plan._fc(0)},{plan._fc(math.ceil(c.fps))},Def,,0,0,0,,{s['text']}")
     fstxn.atomic_write(path, "\n".join(lines), root=c.root)
 
 

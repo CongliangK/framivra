@@ -567,7 +567,11 @@ def resolve(c, clip):
     manifest = json.loads(raw.decode('utf-8'))
     if not isinstance(manifest, dict) or manifest.get('format') != FORMAT:
         raise ValueError(f'SVG manifest.format must be {FORMAT}')
-    for field, value in [('fps', c.fps), ('width', c.w), ('height', c.h), ('frame_count', clip['dur'])]:
+    from ..pipeline.constraints import parse_fps, fps_expression
+    rate = parse_fps(c.fps)
+    if parse_fps(manifest.get('fps')) != rate:
+        raise ValueError(f'SVG manifest.fps must equal {fps_expression(c.fps)}')
+    for field, value in [('width', c.w), ('height', c.h), ('frame_count', clip['dur'])]:
         if type(manifest.get(field)) is not int or manifest[field] != value:
             raise ValueError(f'SVG manifest.{field} must equal {value}')
     if type(clip['dur']) is not int or not 1 <= clip['dur'] <= MAX_FRAMES:
@@ -627,7 +631,9 @@ def resolve(c, clip):
     return {'producer': PRODUCER, 'manifest': clip['src'], 'files': files,
             'frames': frames, 'fonts': fonts, 'font_faces': font_faces,
             'export_reuse': {'proof': 'font-free-rects/v1', 'frames': reusable},
-            'fontconfig': fontconfig, 'fps': c.fps, 'width': c.w,
+            'fontconfig': fontconfig,
+            'fps': int(rate) if rate.denominator == 1 else str(rate),
+            'width': c.w,
             'height': c.h, 'frame_count': clip['dur'], 'engine': engine_identity(),
             'implementation': code,
             'parameters': {'export': 'png', 'area': 'page', 'background_opacity': 0,

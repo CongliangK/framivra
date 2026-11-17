@@ -24,7 +24,7 @@
 
 ```html
 <script>
-const FPS = 30, N = <总帧数>;              // 全管线精确 30fps；N = 该 gfx clip 的 dur（整数帧）
+const FPS = 30, N = <总帧数>;              // 改成项目的数值帧率，如 60000/1001；N = clip.dur
 const f = parseInt(new URLSearchParams(location.search).get("f") || "0");
 const t = Math.min(f / FPS, N / FPS);      // t：本图层局部时间（秒）
 /* 全部动画状态 = t 的纯函数。禁止：CSS animation/transition、Date.now()、
@@ -125,7 +125,7 @@ function rng(a){return function(){a|=0;a=a+0x6D2B79F5|0;let x=Math.imul(a^a>>>15
 | 半透明卡片 | 透明底色 + 描边/阴影；按项目风格选择色调，tech-talk 使用下方 D22 约定 | gfxA |
 | 漂移渐变背景 | 径向渐变 div 按 `sin/cos(t)` 平移；配色按项目约定，实际渲染需检查边界与性能 | motion / endboard.html |
 
-本 skill 的 `assets/title-card.html` 与 `assets/lower-third.html` 是保留原样的历史 24fps 基准输入，不是可直接用于当前 30fps 协议的起手模板。新页可从 [现有 30fps 模板用途索引](../../../templates/tech-talk/assets/gfx-templates/INDEX.md) 按全屏或透明叠层用途选取；仍须核对各页的布局边界与所属工作流约定。
+本 skill 的 `assets/title-card.html` 与 `assets/lower-third.html` 保留历史 24fps 基准时钟；[现有 30fps 模板](../../../templates/tech-talk/assets/gfx-templates/INDEX.md) 也不自动换基。取用时核对页面 FPS、帧窗与项目时基，不能仅改 timeline.fps 就假定动效秒数不变；冻结基准原件不修改。
 
 页面写好后如何挂进时间线（timeline 里 kind=gfx 的 clip、帧序列渲染），见 [剪辑配方](edit.md)。
 
