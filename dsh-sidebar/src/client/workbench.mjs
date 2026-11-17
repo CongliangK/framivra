@@ -97,11 +97,11 @@ export const workbenchCSS = `
 .fv-program-monitor{display:flex;flex-direction:column;min-width:0;min-height:0;gap:8px}
 .fv-preview-modes{display:flex;gap:4px;flex-wrap:wrap;flex:none}
 .fv-preview-modes button{font-size:12px;flex:1}
-.fv-preview-modes button[aria-pressed=true]{background:#344740;border-color:var(--fv-accent);color:#d9f3e8}
+.fv-preview-modes button[aria-pressed=true]{background:color-mix(in srgb,var(--fv-accent) 12%,var(--fv-surface));border-color:var(--fv-accent);color:var(--fv-text)}
 .fv-rendered{display:flex;flex-direction:column;gap:6px;min-height:0}
 .fv-program-stage{position:relative;width:100%;aspect-ratio:16/9;max-height:320px;min-height:100px;background:#000;border-radius:6px;overflow:hidden}
 .fv-program-stage video{display:block;width:100%;height:100%;object-fit:contain;background:#000}
-.fv-program-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:16px;text-align:center;font-size:12px;color:var(--fv-muted)}
+.fv-program-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:16px;text-align:center;font-size:12px;color:#b1b8c4}
 .fv-output-provenance,.fv-rendered [role=status]{font-size:11px;color:var(--fv-muted)}
 .fv-output-choice{font-size:12px}
 .fv-frame-query .fv-timecode-input{width:116px;font-variant-numeric:tabular-nums}
