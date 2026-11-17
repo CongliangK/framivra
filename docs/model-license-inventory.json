@@ -1179,6 +1179,185 @@
         "tests/fixtures/gfx-environment/cli-font-b/f0003.png": "2e12c46452e53198d6f312eef19476a25149b5a22f7dcf82c0f114f2551a7d42"
       },
       "notes": "Generated full-HTML/JS/text test screenshots. No font files, browser/runtime binaries or third-party page media are included. Runtime/font inputs remain separately governed external assets; this registration is not a legal certificate."
+    },
+    "runtime-font-noto-cjk": {
+      "kind": "font",
+      "source": "https://deb.debian.org/debian/pool/main/f/fonts-noto-cjk/fonts-noto-cjk_20220127+repack1-1_all.deb",
+      "license_status": "DECLARED",
+      "license_identifier": "OFL-1.1",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ],
+      "managed_non_ai_install_default": true,
+      "installed_version": "UNVERIFIED_RUNTIME_VERSION: acquisition pins are not an assertion about arbitrary host-selected font files.",
+      "source_references": [
+        "scripts/install_runtime_fonts.py",
+        "scripts/install_source.py"
+      ],
+      "evidence": "runtime-font-noto-cjk",
+      "acquisition_artifacts": [
+        {
+          "filename": "NotoSansCJK-Regular.ttc",
+          "url": "https://deb.debian.org/debian/pool/main/f/fonts-noto-cjk/fonts-noto-cjk_20220127+repack1-1_all.deb",
+          "member": "./usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+          "sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a",
+          "package_sha256": "4a2515eb6db3978b897fef9709ed0d2b1f4c6c4df4d83d6c4ef65f71f1b1f502",
+          "package_size": 56547048,
+          "version": "2.004"
+        },
+        {
+          "filename": "NotoSansCJK-Bold.ttc",
+          "url": "https://deb.debian.org/debian/pool/main/f/fonts-noto-cjk/fonts-noto-cjk_20220127+repack1-1_all.deb",
+          "member": "./usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+          "sha256": "faa5f3656a78b2e2d450d27fe8382c778bc2b6bb5ea29c986664a6a435056ceb",
+          "package_sha256": "4a2515eb6db3978b897fef9709ed0d2b1f4c6c4df4d83d6c4ef65f71f1b1f502",
+          "package_size": 56547048,
+          "version": "2.004"
+        },
+        {
+          "filename": "Noto-COPYRIGHT.txt",
+          "url": "https://deb.debian.org/debian/pool/main/f/fonts-noto-cjk/fonts-noto-cjk_20220127+repack1-1_all.deb",
+          "member": "./usr/share/doc/fonts-noto-cjk/copyright",
+          "sha256": "5bb218343ded506b258d86186d460fc47d9b6b28f0e642cf32676c396b7df763",
+          "size": 14716,
+          "package_sha256": "4a2515eb6db3978b897fef9709ed0d2b1f4c6c4df4d83d6c4ef65f71f1b1f502",
+          "package_size": 56547048,
+          "version": "2.004"
+        }
+      ],
+      "preserved_notice_filename": "Noto-COPYRIGHT.txt",
+      "notes": "Debian fonts-noto-cjk 1:20220127+repack1-1; Git tag debian/1%20220127+repack1-1 peels to this packaging commit. Font files use SIL OFL 1.1. The complete original copyright also lists GPL-3+ for debian/* packaging; those packaging scripts are not installed or relicensed as fonts. Git/source archives and the kernel wheel contain no font binary payload. Explicit invocation of the full managed non-AI source installer acquires this group by default; on-demand-download describes this install-time boundary, not an extra per-font opt-in. Exact matching local bytes may be reused. The installer retains the unmodified notice and source/SHA provenance under root/fonts and with native user-font copies. Existing host fonts, system font preference, external packages and transitive/bundled code rights remain separate and are not cleared by this declaration."
+    },
+    "runtime-font-dejavu": {
+      "kind": "font",
+      "source": "https://deb.debian.org/debian/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb",
+      "license_status": "DECLARED",
+      "license_identifier": "Bitstream-Vera; DejaVu changes public domain",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ],
+      "managed_non_ai_install_default": true,
+      "installed_version": "UNVERIFIED_RUNTIME_VERSION: acquisition pins are not an assertion about arbitrary host-selected font files.",
+      "source_references": [
+        "scripts/install_runtime_fonts.py",
+        "scripts/install_source.py"
+      ],
+      "evidence": "runtime-font-dejavu",
+      "acquisition_artifacts": [
+        {
+          "filename": "DejaVuSans.ttf",
+          "url": "https://deb.debian.org/debian/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb",
+          "member": "./usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+          "sha256": "57f73e11f51999432bf7ab22ce55b6f945d5eca1bf824404cfa9ec2e3718c84e",
+          "package_sha256": "86635b3d25b3655fc11cb3ecc3af59f0bf19643b02b94f2de48bd10253cdba12",
+          "package_size": 840460,
+          "version": "2.37 (Debian 2.37-8)"
+        },
+        {
+          "filename": "DejaVuSans-Bold.ttf",
+          "url": "https://deb.debian.org/debian/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb",
+          "member": "./usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+          "sha256": "a4c5bc453ca281d90ea079e596da7ae0dfeb5777497c29ec254e76d97ff6f890",
+          "package_sha256": "86635b3d25b3655fc11cb3ecc3af59f0bf19643b02b94f2de48bd10253cdba12",
+          "package_size": 840460,
+          "version": "2.37 (Debian 2.37-8)"
+        },
+        {
+          "filename": "DejaVu-COPYRIGHT.txt",
+          "url": "https://deb.debian.org/debian/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb",
+          "member": "./usr/share/doc/fonts-dejavu-core/copyright",
+          "sha256": "63d3ba759d12804c5b31a9d5940d855c1820d1f5999e6b0872eb1c7ff045fbc9",
+          "size": 3859,
+          "package_sha256": "86635b3d25b3655fc11cb3ecc3af59f0bf19643b02b94f2de48bd10253cdba12",
+          "package_size": 840460,
+          "version": "2.37 (Debian 2.37-8)"
+        }
+      ],
+      "preserved_notice_filename": "DejaVu-COPYRIGHT.txt",
+      "notes": "Debian fonts-dejavu-core 2.37-8; Git tag debian/2.37-8 peels to this packaging commit. Font files carry the Bitstream Vera permission and public-domain DejaVu changes. The complete original copyright also lists GPL-2+ for debian/* packaging; those packaging scripts are not installed or relicensed as fonts. Git/source archives and the kernel wheel contain no font binary payload. Explicit invocation of the full managed non-AI source installer acquires this group by default; on-demand-download describes this install-time boundary, not an extra per-font opt-in. Exact matching local bytes may be reused. The installer retains the unmodified notice and source/SHA provenance under root/fonts and with native user-font copies. Existing host fonts, system font preference, external packages and transitive/bundled code rights remain separate and are not cleared by this declaration."
+    },
+    "runtime-font-inter": {
+      "kind": "font",
+      "source": "https://raw.githubusercontent.com/google/fonts/0b58fb370093f9a9f4ff785d94405710b79de67c/ofl/inter/Inter%5Bopsz,wght%5D.ttf",
+      "license_status": "DECLARED",
+      "license_identifier": "OFL-1.1",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ],
+      "managed_non_ai_install_default": true,
+      "installed_version": "UNVERIFIED_RUNTIME_VERSION: acquisition pins are not an assertion about arbitrary host-selected font files.",
+      "source_references": [
+        "scripts/install_runtime_fonts.py",
+        "scripts/install_source.py"
+      ],
+      "evidence": "runtime-font-inter",
+      "acquisition_artifacts": [
+        {
+          "filename": "InterVariable.ttf",
+          "url": "https://raw.githubusercontent.com/google/fonts/0b58fb370093f9a9f4ff785d94405710b79de67c/ofl/inter/Inter%5Bopsz,wght%5D.ttf",
+          "sha256": "29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031",
+          "size": 876576,
+          "version": "Google Fonts 0b58fb370093f9a9f4ff785d94405710b79de67c"
+        },
+        {
+          "filename": "Inter-OFL.txt",
+          "url": "https://raw.githubusercontent.com/google/fonts/0b58fb370093f9a9f4ff785d94405710b79de67c/ofl/inter/OFL.txt",
+          "sha256": "5b9321a4298cfeb6b34354164a1c3afc3db114569984c502b9b35d988fd58c57",
+          "size": 4377,
+          "version": "0b58fb370093f9a9f4ff785d94405710b79de67c"
+        }
+      ],
+      "preserved_notice_filename": "Inter-OFL.txt",
+      "notes": "Official Google Fonts distribution of Inter variable opsz/wght, not a local build of rsms/inter. File is saved as InterVariable.ttf without modifying its bytes or internal names. Copyright 2020 The Inter Project Authors; full original OFL notice is preserved. Git/source archives and the kernel wheel contain no font binary payload. Explicit invocation of the full managed non-AI source installer acquires this group by default; on-demand-download describes this install-time boundary, not an extra per-font opt-in. Exact matching local bytes may be reused. The installer retains the unmodified notice and source/SHA provenance under root/fonts and with native user-font copies. Existing host fonts, system font preference, external packages and transitive/bundled code rights remain separate and are not cleared by this declaration."
+    },
+    "runtime-font-jetbrains-mono": {
+      "kind": "font",
+      "source": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/02bb50b082dad9ef8a0f33ac393839202b760223/fonts/ttf/JetBrainsMono-Regular.ttf",
+      "license_status": "DECLARED",
+      "license_identifier": "OFL-1.1",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ],
+      "managed_non_ai_install_default": true,
+      "installed_version": "UNVERIFIED_RUNTIME_VERSION: acquisition pins are not an assertion about arbitrary host-selected font files.",
+      "source_references": [
+        "scripts/install_runtime_fonts.py",
+        "scripts/install_source.py"
+      ],
+      "evidence": "runtime-font-jetbrains-mono",
+      "acquisition_artifacts": [
+        {
+          "filename": "JetBrainsMono-Regular.ttf",
+          "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/02bb50b082dad9ef8a0f33ac393839202b760223/fonts/ttf/JetBrainsMono-Regular.ttf",
+          "sha256": "e6fd0d7e91550b3ed2b735d4312474362c4716edc4fc0577a0f61ed782d5aed1",
+          "size": 270224,
+          "version": "02bb50b082dad9ef8a0f33ac393839202b760223"
+        },
+        {
+          "filename": "JetBrainsMono-Bold.ttf",
+          "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/02bb50b082dad9ef8a0f33ac393839202b760223/fonts/ttf/JetBrainsMono-Bold.ttf",
+          "sha256": "d22c4f3821d725eb01210d278d95dfcfcaadc34699a06658d47c8a5cc5830ada",
+          "size": 274096,
+          "version": "02bb50b082dad9ef8a0f33ac393839202b760223"
+        },
+        {
+          "filename": "JetBrainsMono-OFL.txt",
+          "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/02bb50b082dad9ef8a0f33ac393839202b760223/OFL.txt",
+          "sha256": "30f0c136e3c88e422d0791acd97238870f9054a9729bc34cf2ff0d4ed8cac4ad",
+          "size": 4399,
+          "version": "02bb50b082dad9ef8a0f33ac393839202b760223"
+        }
+      ],
+      "preserved_notice_filename": "JetBrainsMono-OFL.txt",
+      "notes": "Official JetBrains/JetBrainsMono distribution, Regular and Bold TTF files at the same fixed commit as the full OFL notice. Copyright 2020 The JetBrains Mono Project Authors; no font-byte modifications. Git/source archives and the kernel wheel contain no font binary payload. Explicit invocation of the full managed non-AI source installer acquires this group by default; on-demand-download describes this install-time boundary, not an extra per-font opt-in. Exact matching local bytes may be reused. The installer retains the unmodified notice and source/SHA provenance under root/fonts and with native user-font copies. Existing host fonts, system font preference, external packages and transitive/bundled code rights remain separate and are not cleared by this declaration."
     }
   },
   "evidence": {
@@ -1431,6 +1610,42 @@
       "revision": "d7ed2cc90ab19d1bd7208cdfb0af54deb42440c9",
       "text": "Project-generated gfx environment test evidence (#48). HTML/CSS/JavaScript fixture is authored in tests/run_gfx_environment_acceptance.py; generated output and observed font/runtime hashes are recorded in tests/fixtures/gfx-environment/acceptance-2026-10-18.json at source revision d7ed2cc90ab19d1bd7208cdfb0af54deb42440c9. The PNGs show only the authored fixture, not external web content. Root MIT applies to project-authored fixture/data declarations. Font files, browsers, CEF and other runtime binaries are external and are not shipped or relicensed by this entry. This is provenance/inventory evidence, not independent legal clearance of external software or fonts.\n",
       "sha256": "b637b86212140aba0a28eecc7e7f3c7c9596898eb280e3b8c5c0bc29ee26a71a"
+    },
+    "runtime-font-noto-cjk": {
+      "url": "https://salsa.debian.org/fonts-team/fonts-noto-cjk/-/raw/56bf6990fec39d5c12b9d5b345e39432cfbcf68b/debian/copyright",
+      "revision": "56bf6990fec39d5c12b9d5b345e39432cfbcf68b",
+      "sha256": "5bb218343ded506b258d86186d460fc47d9b6b28f0e642cf32676c396b7df763",
+      "text": "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\nUpstream-Name: noto-cjk\nUpstream-Contact: https://github.com/googlefonts/noto-cjk/issues\nSource: https://github.com/googlefonts/noto-cjk\nFiles-Excluded:\n .gitattributes\n .gitignore\n Sans/Mono/NotoSansMonoCJKhk-Bold.otf\n Sans/Mono/NotoSansMonoCJKhk-Regular.otf\n Sans/Mono/NotoSansMonoCJKjp-Bold.otf\n Sans/Mono/NotoSansMonoCJKjp-Regular.otf\n Sans/Mono/NotoSansMonoCJKkr-Bold.otf\n Sans/Mono/NotoSansMonoCJKkr-Regular.otf\n Sans/Mono/NotoSansMonoCJKsc-Bold.otf\n Sans/Mono/NotoSansMonoCJKsc-Regular.otf\n Sans/Mono/NotoSansMonoCJKtc-Bold.otf\n Sans/Mono/NotoSansMonoCJKtc-Regular.otf\n Sans/OTF/Japanese/NotoSansCJKjp-Black.otf\n Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf\n Sans/OTF/Japanese/NotoSansCJKjp-DemiLight.otf\n Sans/OTF/Japanese/NotoSansCJKjp-Light.otf\n Sans/OTF/Japanese/NotoSansCJKjp-Medium.otf\n Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf\n Sans/OTF/Japanese/NotoSansCJKjp-Thin.otf\n Sans/OTF/Korean/NotoSansCJKkr-Black.otf\n Sans/OTF/Korean/NotoSansCJKkr-Bold.otf\n Sans/OTF/Korean/NotoSansCJKkr-DemiLight.otf\n Sans/OTF/Korean/NotoSansCJKkr-Light.otf\n Sans/OTF/Korean/NotoSansCJKkr-Medium.otf\n Sans/OTF/Korean/NotoSansCJKkr-Regular.otf\n Sans/OTF/Korean/NotoSansCJKkr-Thin.otf\n Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Black.otf\n Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf\n Sans/OTF/SimplifiedChinese/NotoSansCJKsc-DemiLight.otf\n Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Light.otf\n Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Medium.otf\n Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf\n Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Thin.otf\n Sans/OTF/TraditionalChinese/NotoSansCJKtc-Black.otf\n Sans/OTF/TraditionalChinese/NotoSansCJKtc-Bold.otf\n Sans/OTF/TraditionalChinese/NotoSansCJKtc-DemiLight.otf\n Sans/OTF/TraditionalChinese/NotoSansCJKtc-Light.otf\n Sans/OTF/TraditionalChinese/NotoSansCJKtc-Medium.otf\n Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf\n Sans/OTF/TraditionalChinese/NotoSansCJKtc-Thin.otf\n Sans/OTF/TraditionalChineseHK/NotoSansCJKhk-Black.otf\n Sans/OTF/TraditionalChineseHK/NotoSansCJKhk-Bold.otf\n Sans/OTF/TraditionalChineseHK/NotoSansCJKhk-DemiLight.otf\n Sans/OTF/TraditionalChineseHK/NotoSansCJKhk-Light.otf\n Sans/OTF/TraditionalChineseHK/NotoSansCJKhk-Medium.otf\n Sans/OTF/TraditionalChineseHK/NotoSansCJKhk-Regular.otf\n Sans/OTF/TraditionalChineseHK/NotoSansCJKhk-Thin.otf\n Sans/SubsetOTF/HK/NotoSansHK-Black.otf\n Sans/SubsetOTF/HK/NotoSansHK-Bold.otf\n Sans/SubsetOTF/HK/NotoSansHK-DemiLight.otf\n Sans/SubsetOTF/HK/NotoSansHK-Light.otf\n Sans/SubsetOTF/HK/NotoSansHK-Medium.otf\n Sans/SubsetOTF/HK/NotoSansHK-Regular.otf\n Sans/SubsetOTF/HK/NotoSansHK-Thin.otf\n Sans/SubsetOTF/JP/NotoSansJP-Black.otf\n Sans/SubsetOTF/JP/NotoSansJP-Bold.otf\n Sans/SubsetOTF/JP/NotoSansJP-DemiLight.otf\n Sans/SubsetOTF/JP/NotoSansJP-Light.otf\n Sans/SubsetOTF/JP/NotoSansJP-Medium.otf\n Sans/SubsetOTF/JP/NotoSansJP-Regular.otf\n Sans/SubsetOTF/JP/NotoSansJP-Thin.otf\n Sans/SubsetOTF/KR/NotoSansKR-Black.otf\n Sans/SubsetOTF/KR/NotoSansKR-Bold.otf\n Sans/SubsetOTF/KR/NotoSansKR-DemiLight.otf\n Sans/SubsetOTF/KR/NotoSansKR-Light.otf\n Sans/SubsetOTF/KR/NotoSansKR-Medium.otf\n Sans/SubsetOTF/KR/NotoSansKR-Regular.otf\n Sans/SubsetOTF/KR/NotoSansKR-Thin.otf\n Sans/SubsetOTF/SC/NotoSansSC-Black.otf\n Sans/SubsetOTF/SC/NotoSansSC-Bold.otf\n Sans/SubsetOTF/SC/NotoSansSC-DemiLight.otf\n Sans/SubsetOTF/SC/NotoSansSC-Light.otf\n Sans/SubsetOTF/SC/NotoSansSC-Medium.otf\n Sans/SubsetOTF/SC/NotoSansSC-Regular.otf\n Sans/SubsetOTF/SC/NotoSansSC-Thin.otf\n Sans/SubsetOTF/TC/NotoSansTC-Black.otf\n Sans/SubsetOTF/TC/NotoSansTC-Bold.otf\n Sans/SubsetOTF/TC/NotoSansTC-DemiLight.otf\n Sans/SubsetOTF/TC/NotoSansTC-Light.otf\n Sans/SubsetOTF/TC/NotoSansTC-Medium.otf\n Sans/SubsetOTF/TC/NotoSansTC-Regular.otf\n Sans/SubsetOTF/TC/NotoSansTC-Thin.otf\n Sans/SuperOTC/NotoSansCJK.ttc.zip\n Sans/Variable/OTC/NotoSansCJK-VF.ttf.ttc\n Sans/Variable/OTC/NotoSansMonoCJK-VF.ttf.ttc\n Sans/Variable/OTF/Mono/NotoSansMonoCJKhk-VF.otf\n Sans/Variable/OTF/Mono/NotoSansMonoCJKjp-VF.otf\n Sans/Variable/OTF/Mono/NotoSansMonoCJKkr-VF.otf\n Sans/Variable/OTF/Mono/NotoSansMonoCJKsc-VF.otf\n Sans/Variable/OTF/Mono/NotoSansMonoCJKtc-VF.otf\n Sans/Variable/OTF/NotoSansCJKhk-VF.otf\n Sans/Variable/OTF/NotoSansCJKjp-VF.otf\n Sans/Variable/OTF/NotoSansCJKkr-VF.otf\n Sans/Variable/OTF/NotoSansCJKsc-VF.otf\n Sans/Variable/OTF/NotoSansCJKtc-VF.otf\n Sans/Variable/OTF/Subset/NotoSansHK-VF.otf\n Sans/Variable/OTF/Subset/NotoSansJP-VF.otf\n Sans/Variable/OTF/Subset/NotoSansKR-VF.otf\n Sans/Variable/OTF/Subset/NotoSansSC-VF.otf\n Sans/Variable/OTF/Subset/NotoSansTC-VF.otf\n Sans/Variable/TTF/Mono/NotoSansMonoCJKhk-VF.ttf\n Sans/Variable/TTF/Mono/NotoSansMonoCJKjp-VF.ttf\n Sans/Variable/TTF/Mono/NotoSansMonoCJKkr-VF.ttf\n Sans/Variable/TTF/Mono/NotoSansMonoCJKsc-VF.ttf\n Sans/Variable/TTF/Mono/NotoSansMonoCJKtc-VF.ttf\n Sans/Variable/TTF/NotoSansCJKhk-VF.ttf\n Sans/Variable/TTF/NotoSansCJKjp-VF.ttf\n Sans/Variable/TTF/NotoSansCJKkr-VF.ttf\n Sans/Variable/TTF/NotoSansCJKsc-VF.ttf\n Sans/Variable/TTF/NotoSansCJKtc-VF.ttf\n Sans/Variable/TTF/Subset/NotoSansHK-VF.ttf\n Sans/Variable/TTF/Subset/NotoSansJP-VF.ttf\n Sans/Variable/TTF/Subset/NotoSansKR-VF.ttf\n Sans/Variable/TTF/Subset/NotoSansSC-VF.ttf\n Sans/Variable/TTF/Subset/NotoSansTC-VF.ttf\n Serif/OTF/Japanese/NotoSerifCJKjp-Black.otf\n Serif/OTF/Japanese/NotoSerifCJKjp-Bold.otf\n Serif/OTF/Japanese/NotoSerifCJKjp-ExtraLight.otf\n Serif/OTF/Japanese/NotoSerifCJKjp-Light.otf\n Serif/OTF/Japanese/NotoSerifCJKjp-Medium.otf\n Serif/OTF/Japanese/NotoSerifCJKjp-Regular.otf\n Serif/OTF/Japanese/NotoSerifCJKjp-SemiBold.otf\n Serif/OTF/Korean/NotoSerifCJKkr-Black.otf\n Serif/OTF/Korean/NotoSerifCJKkr-Bold.otf\n Serif/OTF/Korean/NotoSerifCJKkr-ExtraLight.otf\n Serif/OTF/Korean/NotoSerifCJKkr-Light.otf\n Serif/OTF/Korean/NotoSerifCJKkr-Medium.otf\n Serif/OTF/Korean/NotoSerifCJKkr-Regular.otf\n Serif/OTF/Korean/NotoSerifCJKkr-SemiBold.otf\n Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Black.otf\n Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Bold.otf\n Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-ExtraLight.otf\n Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Light.otf\n Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Medium.otf\n Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Regular.otf\n Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-SemiBold.otf\n Serif/OTF/TraditionalChinese/NotoSerifCJKtc-Black.otf\n Serif/OTF/TraditionalChinese/NotoSerifCJKtc-Bold.otf\n Serif/OTF/TraditionalChinese/NotoSerifCJKtc-ExtraLight.otf\n Serif/OTF/TraditionalChinese/NotoSerifCJKtc-Light.otf\n Serif/OTF/TraditionalChinese/NotoSerifCJKtc-Medium.otf\n Serif/OTF/TraditionalChinese/NotoSerifCJKtc-Regular.otf\n Serif/OTF/TraditionalChinese/NotoSerifCJKtc-SemiBold.otf\n Serif/OTF/TraditionalChineseHK/NotoSerifCJKhk-Black.otf\n Serif/OTF/TraditionalChineseHK/NotoSerifCJKhk-Bold.otf\n Serif/OTF/TraditionalChineseHK/NotoSerifCJKhk-ExtraLight.otf\n Serif/OTF/TraditionalChineseHK/NotoSerifCJKhk-Light.otf\n Serif/OTF/TraditionalChineseHK/NotoSerifCJKhk-Medium.otf\n Serif/OTF/TraditionalChineseHK/NotoSerifCJKhk-Regular.otf\n Serif/OTF/TraditionalChineseHK/NotoSerifCJKhk-SemiBold.otf\n Serif/SubsetOTF/HK/NotoSerifHK-Black.otf\n Serif/SubsetOTF/HK/NotoSerifHK-Bold.otf\n Serif/SubsetOTF/HK/NotoSerifHK-ExtraLight.otf\n Serif/SubsetOTF/HK/NotoSerifHK-Light.otf\n Serif/SubsetOTF/HK/NotoSerifHK-Medium.otf\n Serif/SubsetOTF/HK/NotoSerifHK-Regular.otf\n Serif/SubsetOTF/HK/NotoSerifHK-SemiBold.otf\n Serif/SubsetOTF/JP/NotoSerifJP-Black.otf\n Serif/SubsetOTF/JP/NotoSerifJP-Bold.otf\n Serif/SubsetOTF/JP/NotoSerifJP-ExtraLight.otf\n Serif/SubsetOTF/JP/NotoSerifJP-Light.otf\n Serif/SubsetOTF/JP/NotoSerifJP-Medium.otf\n Serif/SubsetOTF/JP/NotoSerifJP-Regular.otf\n Serif/SubsetOTF/JP/NotoSerifJP-SemiBold.otf\n Serif/SubsetOTF/KR/NotoSerifKR-Black.otf\n Serif/SubsetOTF/KR/NotoSerifKR-Bold.otf\n Serif/SubsetOTF/KR/NotoSerifKR-ExtraLight.otf\n Serif/SubsetOTF/KR/NotoSerifKR-Light.otf\n Serif/SubsetOTF/KR/NotoSerifKR-Medium.otf\n Serif/SubsetOTF/KR/NotoSerifKR-Regular.otf\n Serif/SubsetOTF/KR/NotoSerifKR-SemiBold.otf\n Serif/SubsetOTF/SC/NotoSerifSC-Black.otf\n Serif/SubsetOTF/SC/NotoSerifSC-Bold.otf\n Serif/SubsetOTF/SC/NotoSerifSC-ExtraLight.otf\n Serif/SubsetOTF/SC/NotoSerifSC-Light.otf\n Serif/SubsetOTF/SC/NotoSerifSC-Medium.otf\n Serif/SubsetOTF/SC/NotoSerifSC-Regular.otf\n Serif/SubsetOTF/SC/NotoSerifSC-SemiBold.otf\n Serif/SubsetOTF/TC/NotoSerifTC-Black.otf\n Serif/SubsetOTF/TC/NotoSerifTC-Bold.otf\n Serif/SubsetOTF/TC/NotoSerifTC-ExtraLight.otf\n Serif/SubsetOTF/TC/NotoSerifTC-Light.otf\n Serif/SubsetOTF/TC/NotoSerifTC-Medium.otf\n Serif/SubsetOTF/TC/NotoSerifTC-Regular.otf\n Serif/SubsetOTF/TC/NotoSerifTC-SemiBold.otf\n Serif/Variable/OTC/NotoSerifCJK-VF.ttf.ttc\n Serif/Variable/OTF/NotoSerifCJKhk-VF.otf\n Serif/Variable/OTF/NotoSerifCJKjp-VF.otf\n Serif/Variable/OTF/NotoSerifCJKkr-VF.otf\n Serif/Variable/OTF/NotoSerifCJKsc-VF.otf\n Serif/Variable/OTF/NotoSerifCJKtc-VF.otf\n Serif/Variable/OTF/Subset/NotoSerifHK-VF.otf\n Serif/Variable/OTF/Subset/NotoSerifJP-VF.otf\n Serif/Variable/OTF/Subset/NotoSerifKR-VF.otf\n Serif/Variable/OTF/Subset/NotoSerifSC-VF.otf\n Serif/Variable/OTF/Subset/NotoSerifTC-VF.otf\n Serif/Variable/TTF/NotoSerifCJKhk-VF.ttf\n Serif/Variable/TTF/NotoSerifCJKjp-VF.ttf\n Serif/Variable/TTF/NotoSerifCJKkr-VF.ttf\n Serif/Variable/TTF/NotoSerifCJKsc-VF.ttf\n Serif/Variable/TTF/NotoSerifCJKtc-VF.ttf\n Serif/Variable/TTF/Subset/NotoSerifHK-VF.ttf\n Serif/Variable/TTF/Subset/NotoSerifJP-VF.ttf\n Serif/Variable/TTF/Subset/NotoSerifKR-VF.ttf\n Serif/Variable/TTF/Subset/NotoSerifSC-VF.ttf\n Serif/Variable/TTF/Subset/NotoSerifTC-VF.ttf\n\nFiles: *\nCopyright: 2010-2012, Google Corporation\nLicense: SIL-1.1\n\nFiles: debian/*\nCopyright: 2013, Vasudev Kamath <kamathvasudev@gmail.com>\n           2013-2015, Jonas Smedegaard <dr@jones.dk>\n           2015-2022, ChangZhuo Chen (陳昌倬) <czchen@debian.org>\nLicense: GPL-3+\n\nLicense: SIL-1.1\n -----------------------------------------------------------\n SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007\n -----------------------------------------------------------\n .\n PREAMBLE\n .\n The goals of the Open Font License (OFL) are to stimulate worldwide\n development of collaborative font projects, to support the font\n creation efforts of academic and linguistic communities, and to provide\n a free and open framework in which fonts may be shared and improved in\n partnership with others.\n .\n The OFL allows the licensed fonts to be used, studied, modified and\n redistributed freely as long as they are not sold by themselves. The\n fonts, including any derivative works, can be bundled, embedded,\n redistributed and/or sold with any software provided that any reserved\n names are not used by derivative works. The fonts and derivatives,\n however, cannot be released under any other type of license. The\n requirement for fonts to remain under this license does not apply to\n any document created using the fonts or their derivatives.\n .\n DEFINITIONS\n .\n \"Font Software\" refers to the set of files released by the Copyright\n Holder(s) under this license and clearly marked as such. This may\n include source files, build scripts and documentation.\n .\n \"Reserved Font Name\" refers to any names specified as such after the\n copyright statement(s).\n .\n \"Original Version\" refers to the collection of Font Software components\n as distributed by the Copyright Holder(s).\n .\n \"Modified Version\" refers to any derivative made by adding to,\n deleting, or substituting -- in part or in whole -- any of the\n components of the Original Version, by changing formats or by porting\n the Font Software to a new environment.\n .\n \"Author\" refers to any designer, engineer, programmer, technical writer\n or other person who contributed to the Font Software.\n .\n PERMISSION & CONDITIONS\n .\n Permission is hereby granted, free of charge, to any person obtaining a\n copy of the Font Software, to use, study, copy, merge, embed, modify,\n redistribute, and sell modified and unmodified copies of the Font\n Software, subject to the following conditions:\n .\n 1) Neither the Font Software nor any of its individual components, in\n Original or Modified Versions, may be sold by itself.\n .\n 2) Original or Modified Versions of the Font Software may be bundled,\n redistributed and/or sold with any software, provided that each copy\n contains the above copyright notice and this license. These can be\n included either as stand-alone text files, human-readable headers or\n in the appropriate machine-readable metadata fields within text or\n binary files as long as those fields can be easily viewed by the user.\n .\n 3) No Modified Version of the Font Software may use the Reserved Font\n Name(s) unless explicit written permission is granted by the\n corresponding Copyright Holder. This restriction only applies to the\n primary font name as presented to the users.\n .\n 4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font\n Software shall not be used to promote, endorse or advertise any\n Modified Version, except to acknowledge the contribution(s) of the\n Copyright Holder(s) and the Author(s) or with their explicit written\n permission.\n .\n 5) The Font Software, modified or unmodified, in part or in whole, must\n be distributed entirely under this license, and must not be distributed\n under any other license. The requirement for fonts to remain under this\n license does not apply to any document created using the Font Software.\n .\n TERMINATION\n .\n This license becomes null and void if any of the above conditions are\n not met.\n .\n DISCLAIMER\n .\n THE FONT SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\n EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF\n MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT\n OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE\n COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,\n INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL\n DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\n FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM\n OTHER DEALINGS IN THE FONT SOFTWARE.\n\nLicense: GPL-3+\n This program is free software: you can redistribute it and/or modify\n it under the terms of the GNU General Public License as published by\n the Free Software Foundation, either version 3 of the License, or\n (at your option) any later version.\n .\n This program is distributed in the hope that it will be useful,\n but WITHOUT ANY WARRANTY; without even the implied warranty of\n MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n GNU General Public License for more details.\n .\n On Debian systems, the complete text of the GNU General\n Public License version 3 can be found in \"/usr/share/common-licenses/GPL-3\".\n",
+      "scope": "Complete original font copyright/license notice, byte-identical to the pinned installer notice; not a legal opinion, host-installation attestation or clearance of all contents of the source package/runtime dependency chain.",
+      "package_url": "https://deb.debian.org/debian/pool/main/f/fonts-noto-cjk/fonts-noto-cjk_20220127+repack1-1_all.deb",
+      "package_sha256": "4a2515eb6db3978b897fef9709ed0d2b1f4c6c4df4d83d6c4ef65f71f1b1f502",
+      "package_size": 56547048,
+      "package_member": "./usr/share/doc/fonts-noto-cjk/copyright"
+    },
+    "runtime-font-dejavu": {
+      "url": "https://salsa.debian.org/fonts-team/fonts-dejavu/-/raw/96b86ac99e7cf3be4b2ff8c7e03637d29ca4e800/debian/copyright",
+      "revision": "96b86ac99e7cf3be4b2ff8c7e03637d29ca4e800",
+      "sha256": "63d3ba759d12804c5b31a9d5940d855c1820d1f5999e6b0872eb1c7ff045fbc9",
+      "text": "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\nUpstream-Name: DejaVu fonts\nUpstream-Author: Stepan Roh <src@users.sourceforge.net> (original author),\n                  see /usr/share/doc/fonts-dejavu-core/AUTHORS for full list\nSource: https://dejavu-fonts.github.io/\n\nFiles: *\nCopyright: Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved. \n Bitstream Vera is a trademark of Bitstream, Inc.\n DejaVu changes are in public domain.\nLicense: bitstream-vera\n Permission is hereby granted, free of charge, to any person obtaining a copy\n of the fonts accompanying this license (\"Fonts\") and associated\n documentation files (the \"Font Software\"), to reproduce and distribute the\n Font Software, including without limitation the rights to use, copy, merge,\n publish, distribute, and/or sell copies of the Font Software, and to permit\n persons to whom the Font Software is furnished to do so, subject to the\n following conditions:\n .\n The above copyright and trademark notices and this permission notice shall\n be included in all copies of one or more of the Font Software typefaces.\n .\n The Font Software may be modified, altered, or added to, and in particular\n the designs of glyphs or characters in the Fonts may be modified and\n additional glyphs or characters may be added to the Fonts, only if the fonts\n are renamed to names not containing either the words \"Bitstream\" or the word\n \"Vera\".\n .\n This License becomes null and void to the extent applicable to Fonts or Font\n Software that has been modified and is distributed under the \"Bitstream\n Vera\" names.\n .\n The Font Software may be sold as part of a larger software package but no\n copy of one or more of the Font Software typefaces may be sold by itself.\n .\n THE FONT SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS\n OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF MERCHANTABILITY,\n FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF COPYRIGHT, PATENT,\n TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL BITSTREAM OR THE GNOME\n FOUNDATION BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, INCLUDING\n ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES,\n WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF\n THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER DEALINGS IN THE\n FONT SOFTWARE.\n .\n Except as contained in this notice, the names of Gnome, the Gnome\n Foundation, and Bitstream Inc., shall not be used in advertising or\n otherwise to promote the sale, use or other dealings in this Font Software\n without prior written authorization from the Gnome Foundation or Bitstream\n Inc., respectively. For further information, contact: fonts at gnome dot\n org.\n\nFiles: debian/*\nCopyright: (C) 2005-2006 Peter Cernak <pce@users.sourceforge.net> \n           (C) 2006-2011 Davide Viti <zinosat@tiscali.it>\n           (C) 2011-2013 Christian Perrier <bubulle@debian.org>\n           (C) 2013 Fabian Greffrath <fabian+debian@greffrath.com>\nLicense: GPL-2+\n This program is free software; you can redistribute it\n and/or modify it under the terms of the GNU General Public\n License as published by the Free Software Foundation; either\n version 2 of the License, or (at your option) any later\n version.\n .\n This program is distributed in the hope that it will be\n useful, but WITHOUT ANY WARRANTY; without even the implied\n warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR\n PURPOSE.  See the GNU General Public License for more\n details.\n .\n You should have received a copy of the GNU General Public\n License along with this package; if not, write to the Free\n Software Foundation, Inc., 51 Franklin St, Fifth Floor,\n Boston, MA  02110-1301 USA\n .\n On Debian systems, the full text of the GNU General Public\n License version 2 can be found in the file\n /usr/share/common-licenses/GPL-2'.\n",
+      "scope": "Complete original font copyright/license notice, byte-identical to the pinned installer notice; not a legal opinion, host-installation attestation or clearance of all contents of the source package/runtime dependency chain.",
+      "package_url": "https://deb.debian.org/debian/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb",
+      "package_sha256": "86635b3d25b3655fc11cb3ecc3af59f0bf19643b02b94f2de48bd10253cdba12",
+      "package_size": 840460,
+      "package_member": "./usr/share/doc/fonts-dejavu-core/copyright"
+    },
+    "runtime-font-inter": {
+      "url": "https://raw.githubusercontent.com/google/fonts/0b58fb370093f9a9f4ff785d94405710b79de67c/ofl/inter/OFL.txt",
+      "revision": "0b58fb370093f9a9f4ff785d94405710b79de67c",
+      "sha256": "5b9321a4298cfeb6b34354164a1c3afc3db114569984c502b9b35d988fd58c57",
+      "text": "Copyright 2020 The Inter Project Authors (https://github.com/rsms/inter)\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license is copied below, and is also available with a FAQ at:\nhttps://scripts.sil.org/OFL\n\n\n-----------------------------------------------------------\nSIL OPEN FONT LICENSE Version 1.1 - 26 February 2007\n-----------------------------------------------------------\n\nPREAMBLE\nThe goals of the Open Font License (OFL) are to stimulate worldwide\ndevelopment of collaborative font projects, to support the font creation\nefforts of academic and linguistic communities, and to provide a free and\nopen framework in which fonts may be shared and improved in partnership\nwith others.\n\nThe OFL allows the licensed fonts to be used, studied, modified and\nredistributed freely as long as they are not sold by themselves. The\nfonts, including any derivative works, can be bundled, embedded, \nredistributed and/or sold with any software provided that any reserved\nnames are not used by derivative works. The fonts and derivatives,\nhowever, cannot be released under any other type of license. The\nrequirement for fonts to remain under this license does not apply\nto any document created using the fonts or their derivatives.\n\nDEFINITIONS\n\"Font Software\" refers to the set of files released by the Copyright\nHolder(s) under this license and clearly marked as such. This may\ninclude source files, build scripts and documentation.\n\n\"Reserved Font Name\" refers to any names specified as such after the\ncopyright statement(s).\n\n\"Original Version\" refers to the collection of Font Software components as\ndistributed by the Copyright Holder(s).\n\n\"Modified Version\" refers to any derivative made by adding to, deleting,\nor substituting -- in part or in whole -- any of the components of the\nOriginal Version, by changing formats or by porting the Font Software to a\nnew environment.\n\n\"Author\" refers to any designer, engineer, programmer, technical\nwriter or other person who contributed to the Font Software.\n\nPERMISSION & CONDITIONS\nPermission is hereby granted, free of charge, to any person obtaining\na copy of the Font Software, to use, study, copy, merge, embed, modify,\nredistribute, and sell modified and unmodified copies of the Font\nSoftware, subject to the following conditions:\n\n1) Neither the Font Software nor any of its individual components,\nin Original or Modified Versions, may be sold by itself.\n\n2) Original or Modified Versions of the Font Software may be bundled,\nredistributed and/or sold with any software, provided that each copy\ncontains the above copyright notice and this license. These can be\nincluded either as stand-alone text files, human-readable headers or\nin the appropriate machine-readable metadata fields within text or\nbinary files as long as those fields can be easily viewed by the user.\n\n3) No Modified Version of the Font Software may use the Reserved Font\nName(s) unless explicit written permission is granted by the corresponding\nCopyright Holder. This restriction only applies to the primary font name as\npresented to the users.\n\n4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font\nSoftware shall not be used to promote, endorse or advertise any\nModified Version, except to acknowledge the contribution(s) of the\nCopyright Holder(s) and the Author(s) or with their explicit written\npermission.\n\n5) The Font Software, modified or unmodified, in part or in whole,\nmust be distributed entirely under this license, and must not be\ndistributed under any other license. The requirement for fonts to\nremain under this license does not apply to any document created\nusing the Font Software.\n\nTERMINATION\nThis license becomes null and void if any of the above conditions are\nnot met.\n\nDISCLAIMER\nTHE FONT SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT\nOF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE\nCOPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,\nINCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL\nDAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM\nOTHER DEALINGS IN THE FONT SOFTWARE.\n",
+      "scope": "Complete original font copyright/license notice, byte-identical to the pinned installer notice; not a legal opinion, host-installation attestation or clearance of all contents of the source package/runtime dependency chain."
+    },
+    "runtime-font-jetbrains-mono": {
+      "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/02bb50b082dad9ef8a0f33ac393839202b760223/OFL.txt",
+      "revision": "02bb50b082dad9ef8a0f33ac393839202b760223",
+      "sha256": "30f0c136e3c88e422d0791acd97238870f9054a9729bc34cf2ff0d4ed8cac4ad",
+      "text": "Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license is copied below, and is also available with a FAQ at:\nhttps://scripts.sil.org/OFL\n\n\n-----------------------------------------------------------\nSIL OPEN FONT LICENSE Version 1.1 - 26 February 2007\n-----------------------------------------------------------\n\nPREAMBLE\nThe goals of the Open Font License (OFL) are to stimulate worldwide\ndevelopment of collaborative font projects, to support the font creation\nefforts of academic and linguistic communities, and to provide a free and\nopen framework in which fonts may be shared and improved in partnership\nwith others.\n\nThe OFL allows the licensed fonts to be used, studied, modified and\nredistributed freely as long as they are not sold by themselves. The\nfonts, including any derivative works, can be bundled, embedded, \nredistributed and/or sold with any software provided that any reserved\nnames are not used by derivative works. The fonts and derivatives,\nhowever, cannot be released under any other type of license. The\nrequirement for fonts to remain under this license does not apply\nto any document created using the fonts or their derivatives.\n\nDEFINITIONS\n\"Font Software\" refers to the set of files released by the Copyright\nHolder(s) under this license and clearly marked as such. This may\ninclude source files, build scripts and documentation.\n\n\"Reserved Font Name\" refers to any names specified as such after the\ncopyright statement(s).\n\n\"Original Version\" refers to the collection of Font Software components as\ndistributed by the Copyright Holder(s).\n\n\"Modified Version\" refers to any derivative made by adding to, deleting,\nor substituting -- in part or in whole -- any of the components of the\nOriginal Version, by changing formats or by porting the Font Software to a\nnew environment.\n\n\"Author\" refers to any designer, engineer, programmer, technical\nwriter or other person who contributed to the Font Software.\n\nPERMISSION & CONDITIONS\nPermission is hereby granted, free of charge, to any person obtaining\na copy of the Font Software, to use, study, copy, merge, embed, modify,\nredistribute, and sell modified and unmodified copies of the Font\nSoftware, subject to the following conditions:\n\n1) Neither the Font Software nor any of its individual components,\nin Original or Modified Versions, may be sold by itself.\n\n2) Original or Modified Versions of the Font Software may be bundled,\nredistributed and/or sold with any software, provided that each copy\ncontains the above copyright notice and this license. These can be\nincluded either as stand-alone text files, human-readable headers or\nin the appropriate machine-readable metadata fields within text or\nbinary files as long as those fields can be easily viewed by the user.\n\n3) No Modified Version of the Font Software may use the Reserved Font\nName(s) unless explicit written permission is granted by the corresponding\nCopyright Holder. This restriction only applies to the primary font name as\npresented to the users.\n\n4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font\nSoftware shall not be used to promote, endorse or advertise any\nModified Version, except to acknowledge the contribution(s) of the\nCopyright Holder(s) and the Author(s) or with their explicit written\npermission.\n\n5) The Font Software, modified or unmodified, in part or in whole,\nmust be distributed entirely under this license, and must not be\ndistributed under any other license. The requirement for fonts to\nremain under this license does not apply to any document created\nusing the Font Software.\n\nTERMINATION\nThis license becomes null and void if any of the above conditions are\nnot met.\n\nDISCLAIMER\nTHE FONT SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT\nOF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE\nCOPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,\nINCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL\nDAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM\nOTHER DEALINGS IN THE FONT SOFTWARE.\n",
+      "scope": "Complete original font copyright/license notice, byte-identical to the pinned installer notice; not a legal opinion, host-installation attestation or clearance of all contents of the source package/runtime dependency chain."
     }
   },
   "legacy_downloads": {
