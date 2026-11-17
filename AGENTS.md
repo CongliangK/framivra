@@ -4,7 +4,7 @@
 
 - timeline.json/素材→帧精确视频/混音/QC/缓存；[内核](<vtx/>)永不可关
 - [应用](<apps/>)产素材/辅助结果；[插件](<plugins/>)扩时间线，启用不忽略依赖/失败。
-- [侧栏](<dsh-sidebar/README.md>)独立发行：完整合成非单页；生效插件在身份/钩子前拒绝；HTML信任≠沙箱；写态走内核事务，帧率/预览限制不变。
+- [侧栏](<dsh-sidebar/README.md>)独立发行：完整合成非单页，预览共用整数播放头、成片联动非合成证书；生效插件在身份/钩子前拒绝；HTML信任≠沙箱；写态走内核事务，帧率/预览限制不变。
 - macOS授权见接口；目录fd≠proc-fd Path；单帧复用须全输入前后复核；运行库须复查全成员/链接，Linux缺RECORD仅凭元数据所属RPM清单识别，仍哈希文件。
 - 制作读[技能](<docs/skill/SKILL.md>)；范本[工作流](<templates/README.md>)、组件[目录](<docs/catalog.md>)。
 - 开发读[架构](<docs/ARCHITECTURE.md>)/[开发](<docs/DEV.md>)；API/事务见[接口](<docs/reference/timeline-api.md>)。

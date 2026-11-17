@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { displayExtent, windowFor, zoomWindow, panWindow, framePercent, clipGeometry, pointerFrame, frameTicks, displayLanes, safeFrame } from './viewport.mjs'
 import { Icon } from './icons.mjs'
 import { ToolButton, iconControlCSS } from './icon-controls.mjs'
+import { formatTimecode, projectClock } from './timecode.mjs'
 
 import { emptySelection, transitionSelection } from './selection.mjs'
 
@@ -86,6 +87,8 @@ export function TimelineHelp({ result, onGesture }) {
 
 export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, compact = false }) {
   const extent = displayExtent(snapshot, result)
+  const fps = snapshot.document?.project?.fps, clock = projectClock(fps)
+  const time = value => formatTimecode(value, fps) ?? '时间码不可显示'
   const [window, setWindow] = useState()
   const [hover, setHover] = useState()
   // Standalone presentation consumers can remain uncontrolled. PreviewBody always
@@ -281,9 +284,10 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
         h(ToolButton, { icon: 'previous', label: '前一帧', tooltip: '播放头后退一帧', disabled: !onFrame || pinned === undefined, onClick: () => step(-1) }),
         h(ToolButton, { icon: 'next', label: '后一帧', tooltip: '播放头前进一帧', disabled: !onFrame || pinned === undefined, onClick: () => step(1) }))),
     h('div', { className: 'fv-status', role: 'status' },
-      h('span', { 'aria-label': '可见帧范围' }, `帧窗口 [${view.start}, ${view.end}) / 全片 [0, ${extent.end})`),
-      h('span', null, `播放头 ${pinned ?? '未固定'}`),
-      h('span', null, `悬停帧：${hover ?? '—'}`),
+      h('span', { 'aria-label': '可见帧范围' }, `时间码窗口 [${time(view.start)}, ${time(view.end)}) / 全片 [${time(0)}, ${time(extent.end)})`),
+      h('span', null, `播放头 ${pinned === undefined ? '未固定' : time(pinned)}`),
+      h('span', null, `悬停时间码：${hover === undefined ? '—' : time(hover)}`),
+      clock?.den === 1001 ? h('span', null, `NTSC non-drop · 名义 ${clock.nominal} fps（不是墙钟）`) : null,
       h('span', null, `已选 ${selected.length}`),
       h('span', { 'aria-label': '活动引用' }, `活动引用：${activeSelection ? `${activeSelection.kind} ${activeSelection.address}` : '无'}`)),
     ghost ? h('p', { role: 'status', 'aria-label': '未保存拖动 ghost', style: { margin: '4px 0', fontSize: '12px' } }, `未保存 ghost · ${ghost.mode} 偏移 ${ghost.delta} 帧 → ${ghost.target.data?.name ?? ghost.target.address}（未改文件/引用）`) : null,
@@ -294,7 +298,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     h('div', { className: 'fv-scroll', tabIndex: 0, role: 'region', 'aria-label': '轨道垂直滚动区' },
       h('div', { className: 'fv-overview-row' },
         h('div', { className: 'fv-corner', 'aria-hidden': true }, '全片'),
-        h('div', { className: 'fv-overview', ref: overview, role: 'slider', tabIndex: 0, 'aria-label': '全片导航条（只平移/缩放显示窗口）', 'aria-valuemin': 0, 'aria-valuemax': Math.max(0, extent.end - span), 'aria-valuenow': view.start, 'aria-valuetext': `窗口 [${view.start}, ${view.end}) / 全片 [0, ${extent.end})`,
+        h('div', { className: 'fv-overview', ref: overview, role: 'slider', tabIndex: 0, 'aria-label': '全片导航条（只平移/缩放显示窗口）', 'aria-valuemin': 0, 'aria-valuemax': Math.max(0, extent.end - span), 'aria-valuenow': view.start, 'aria-valuetext': `窗口 [${time(view.start)}, ${time(view.end)}) / 全片 [${time(0)}, ${time(extent.end)})`,
           onKeyDown: event => {
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) return
             event.preventDefault()
@@ -319,12 +323,12 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
           onLostPointerCapture: event => { if (overviewPointer.current === event.pointerId) overviewPointer.current = undefined },
         },
           result.blocks.map(block => { const geometry = clipGeometry(block.range, extent); if (!geometry) return null
-            return h('span', { key: block.address, className: `fv-ov fv-ov-${kindOf.get(`${block.family}:${block.track_index}`) ?? block.family}`, style: { left: `${geometry.left}%`, width: `${Math.max(geometry.width, 0.4)}%` }, title: `${label(block.data, block.address)} · [${block.range[0]}, ${block.range[1]})`, 'aria-hidden': true }) }),
+            return h('span', { key: block.address, className: `fv-ov fv-ov-${kindOf.get(`${block.family}:${block.track_index}`) ?? block.family}`, style: { left: `${geometry.left}%`, width: `${Math.max(geometry.width, 0.4)}%` }, title: `${label(block.data, block.address)} · [${time(block.range[0])}, ${time(block.range[1])})`, 'aria-hidden': true }) }),
           h('span', { className: 'fv-ov-window', style: { left: `${framePercent(view.start, extent)}%`, width: `${Math.max(framePercent(view.end, extent) - framePercent(view.start, extent), 0.6)}%` }, 'aria-hidden': true }),
           pinned !== undefined ? h('span', { className: 'fv-ov-pin', style: { left: `${framePercent(pinned, extent)}%` }, 'aria-hidden': true }) : null)),
       h('div', { className: 'fv-ruler-row' },
-        h('div', { className: 'fv-corner', 'aria-hidden': true }, '帧'),
-        h('div', { className: 'fv-ruler', ref: ruler, role: 'slider', tabIndex: 0, 'aria-label': '固定播放头帧标尺', 'aria-valuemin': 0, 'aria-valuemax': extent.end - 1, ...(pinned === undefined ? { 'aria-valuetext': '未设置，按 Home 设置为首帧' } : { 'aria-valuenow': pinned }),
+        h('div', { className: 'fv-corner', 'aria-hidden': true }, '时间码'),
+        h('div', { className: 'fv-ruler', ref: ruler, role: 'slider', tabIndex: 0, 'aria-label': '固定播放头帧标尺', 'aria-valuemin': 0, 'aria-valuemax': extent.end - 1, ...(pinned === undefined ? { 'aria-valuetext': '未设置，按 Home 设置为首帧' } : { 'aria-valuenow': pinned, 'aria-valuetext': time(pinned) }),
           onKeyDown: event => {
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
             event.preventDefault()
@@ -347,7 +351,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
           onPointerCancel: event => { if (drag.current === event.pointerId) drag.current = undefined },
           onLostPointerCapture: event => { if (drag.current === event.pointerId) drag.current = undefined },
           onPointerLeave: () => { if (drag.current === undefined) setHover(undefined) },
-        }, frameTicks(view).map((tick, index, all) => h('span', { key: tick, className: 'fv-tick', style: { left: `${framePercent(tick, view)}%`, transform: index === all.length - 1 ? 'translateX(-100%)' : undefined }, 'aria-hidden': true }, tick)), lines())),
+        }, frameTicks(view).map((tick, index, all) => h('span', { key: tick, className: 'fv-tick', style: { left: `${framePercent(tick, view)}%`, transform: index === all.length - 1 ? 'translateX(-100%)' : undefined }, 'aria-hidden': true }, time(tick))), lines())),
       result.tracks.map(track => {
         const key = `${track.family}:${track.track_index}`
         const blocks = groups.get(key) ?? []
@@ -367,10 +371,10 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
                 const duration = block.range[1] - block.range[0]
                 const events = mode => ({ onPointerDown: e => beginGesture(e, block, track, mode), onPointerMove: updateGesture, onPointerUp: endGesture, onPointerCancel: e => { cancelGesture(e); if (!gesture.current) setGhost(undefined) }, onLostPointerCapture: e => { cancelGesture(e); if (!gesture.current) setGhost(undefined) } })
                 const button = h('button', { key: 'body', type: 'button', className: `fv-clip fv-${kind}`, style: { left: `${geometry.left}%`, width: `${geometry.width}%`, maxWidth: `${100 - geometry.left}%`, touchAction: onGesture ? 'none' : undefined },
-                  title: `${text}\n${block.address} · [${block.range[0]}, ${block.range[1]}) · ${duration} 帧`, 'aria-label': `选择块 ${block.address} · ${text} · 帧 [${block.range[0]}, ${block.range[1]})`,
+                  title: `${text}\n${block.address} · [${time(block.range[0])}, ${time(block.range[1])}) · 长度 ${time(duration)}`, 'aria-label': `选择块 ${block.address} · ${text} · 帧 [${block.range[0]}, ${block.range[1]})`,
                   'aria-pressed': selected.includes(`block:${block.address}`), 'data-hit': hitSet?.has(block.address) ?? false,
                   onClick: event => pick({ kind: 'block', address: block.address }, event), ...events('move'),
-                }, h('span', { className: 'fv-clip-name' }, text), Number.isSafeInteger(duration) && duration >= 0 ? h('span', { className: 'fv-clip-len' }, `${duration} 帧`) : null)
+                }, h('span', { className: 'fv-clip-name' }, text), Number.isSafeInteger(duration) && duration >= 0 ? h('span', { className: 'fv-clip-len' }, time(duration)) : null)
                 const handles = onGesture && block.data?.id ? ['left','right'].map(mode => h('button',{ key:mode,type:'button',className:'fv-trim','aria-label':`${mode === 'left' ? '左' : '右'} trim 手柄 ${block.address}`,title:'仅 inward trim；拖动后内核预检。触控请用下方精确帧表单。',style:{position:'absolute',top:3,left:`${mode === 'left' ? geometry.left : geometry.left+geometry.width}%`,transform:mode==='right'?'translateX(-100%)':undefined,width:7,height:40,padding:0,zIndex:3,touchAction:'none',cursor:'ew-resize'},...events(mode)})) : []
                 return h(React.Fragment,{key:block.address},button,...handles)
               }), ghost && index === 0 && ghost.target.address === track.address ? (() => { const range = ghost.mode === 'move' ? ghost.block.range.map(f => f + ghost.delta) : [ghost.block.range[0] + (ghost.mode === 'left' ? ghost.delta : 0), ghost.block.range[1] + (ghost.mode === 'right' ? ghost.delta : 0)]; const geometry = clipGeometry(range, view); return geometry ? h('span', { 'aria-hidden':true, style:{position:'absolute',left:`${geometry.left}%`,width:`${geometry.width}%`,height:40,top:3,border:'2px dashed var(--fv-tl-hit,#e1ae50)',borderRadius:4,pointerEvents:'none',zIndex:4,opacity:.8} }) : null })() : null, lines()))))
