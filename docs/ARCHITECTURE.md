@@ -203,6 +203,8 @@ wheel 包含 `vtx` 内核及其职责子包、仓级 vt 模块、schema/preview 
 
 `dsh-sidebar/` 是 DSH 外宿主适配器的源码 home，不新增运行时层；该适配器由 DSH 管理，不注册为 vtx app/hook，也不进入 Python wheel。
 
+受管源码安装由 `scripts/bootstrap.sh` / `bootstrap.ps1` 引导 `scripts/install_source.py`，完整仓与独立 editable venv 分离；布局和登记字段归[安装指南](<guides/installation.md#受管非-ai-制作环境>)。只在真实安装测试通过后发布 `framivra.installation/v1` 的 ready 回执，DSH 只发现、验证和显式连接。`vtx.runtime.managed` 仅在 CLI 入口、当前 venv 邻接登记绑定本源码时补充已登记工具 PATH、字体环境及默认 CDP/VTX_CONFIG；普通 clone/wheel 不扫描 HOME/工作区，也不自动采用另一份安装配置。显式 VTX_CONFIG 优先语义不变。
+
 ### 5.3 配置
 
 唯一加载器 `vtx/pluginlib/config.py`：**`VTX_CONFIG` > 仓根 `config.local.json`**。imgen 与其他组件同入口，不读 IMGEN_CONFIG、不迁移或改写旧配置；坏 JSON 警告后按空配置继续，兼容读取 comfyui/asr/tts/imgen/denoise 键。已知路径型键自动展开 `~`，其他路径消费方用 expand_path/expanduser，不展开任意 URL/文本。config.example.json 与 gitignored config.local.json 均在仓根，插件通过 `vtx.api.cfg_get` 读取。

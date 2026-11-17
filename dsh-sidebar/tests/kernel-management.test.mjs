@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { createKernelManagement, validateKernelConfigSelection, INSTALL_SCRIPT, KERNEL_CONFIG_LIMIT, KERNEL_WHEEL_LIMIT } from '../src/kernel-management.mjs'
+import { createKernelManagement, validateKernelConfigSelection, INSTALL_SCRIPT, KERNEL_CONFIG_LIMIT, KERNEL_WHEEL_LIMIT, INSTALLATION_LIMIT, managedInstallationPaths } from '../src/kernel-management.mjs'
 import { readConfiguration, validateVtxConfigFile, isVolatileConfig } from '../src/configuration.mjs'
 import { updateKernelConfigField } from '../src/kernel-config.mjs'
 import { TimelineReader } from '../src/protocol.mjs'
@@ -122,7 +122,7 @@ test('scan reads only bounded common roots and current/trusted paths; never spaw
   assert.equal(env.calls.length, 0)
   assert.equal(env.fs.reads.length, 0)
   assert.equal(env.fs.writes.length, 0)
-  assert.equal(result.suggestedConfigFile, join(homedir(), '.config/framivra/config.json'))
+  assert.equal(result.suggestedConfigFile, managedInstallationPaths().configFile)
   assert.equal(env.config.vtxExecutable, '/opt/trusted/bin/vtx')
   await env.service.dispose()
 })
@@ -177,11 +177,129 @@ test('scan truncates each venv directory and rejects request roots', async () =>
   await env.service.dispose()
 })
 
+function managedInstall(env, overrides = {}) {
+  const paths = managedInstallationPaths()
+  const manifest = { schema: 'framivra.installation/v1', sourceRoot: paths.sourceRoot, commit: 'a'.repeat(40), version: '0.0.1-unknown-compatibility', vtxExecutable: paths.vtxExecutable, pythonExecutable: paths.pythonExecutable, configFile: paths.configFile, installedAt: '2026-11-16T10:00:00Z', profile: 'non-ai', renderer: 'cdp', status: 'ready', ...overrides }
+  env.fs.add(paths.sourceRoot, null, 'directory')
+  env.fs.add(paths.vtxExecutable, '#!/bin/sh\nexec fixed-venv-vtx "$@"')
+  env.fs.add(paths.pythonExecutable, 'venv-python')
+  env.fs.add(paths.configFile, '{}\n')
+  env.fs.add(paths.manifest, JSON.stringify(manifest))
+  return { paths, manifest }
+}
+
+test('managed layouts use the same POSIX root and native Windows LOCALAPPDATA/fallback paths', () => {
+  for (const platform of ['linux', 'darwin']) {
+    const paths = managedInstallationPaths({ platform, home: '/Users/Owner', localAppData: '/ignored' })
+    assert.equal(paths.root, '/Users/Owner/.local/share/framivra')
+    assert.equal(paths.vtxExecutable, `${paths.root}/bin/vtx`)
+    assert.equal(paths.pythonExecutable, `${paths.root}/venv/bin/python`)
+    assert.equal(paths.configFile, `${paths.root}/config.json`)
+  }
+  const paths = managedInstallationPaths({ platform: 'win32', home: 'C:\\Users\\Owner', localAppData: 'D:\\Local Data' })
+  assert.equal(paths.root, 'D:\\Local Data\\framivra')
+  assert.equal(paths.manifest, `${paths.root}\\installation.json`)
+  assert.equal(paths.vtxExecutable, `${paths.root}\\venv\\Scripts\\vtx.exe`)
+  assert.equal(paths.pythonExecutable, `${paths.root}\\venv\\Scripts\\python.exe`)
+  assert.equal(paths.configFile, `${paths.root}\\config.json`)
+  assert.equal(managedInstallationPaths({ platform: 'win32', home: 'C:\\Users\\Owner', localAppData: '' }).root, 'C:\\Users\\Owner\\AppData\\Local\\framivra')
+})
+
+test('managed manifest is bounded, first, metadata-only and never executes, migrates or saves', async t => {
+  const env = setup(); t.after(() => env.service.dispose())
+  const { paths, manifest } = managedInstall(env, { tools: { chrome: { command: ['/evil/browser', '--execute'] } }, command: ['/evil/command'] })
+  const result = await env.request({ op: 'scan' })
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.candidates[0], { path: paths.vtxExecutable, kind: 'executable', source: 'managed-git', installation: { commit: manifest.commit, version: manifest.version, renderer: 'cdp', profile: 'non-ai', configFile: paths.configFile } })
+  assert.deepEqual(env.fs.reads, [{ path: paths.manifest, max: INSTALLATION_LIMIT }])
+  assert.equal(result.warnings.length, 0)
+  assert.equal(env.calls.length, 0)
+  assert.equal(env.fs.writes.length, 0)
+  assert.equal(env.config.vtxExecutable, '/opt/trusted/bin/vtx')
+  assert.equal(env.config.vtxConfigFile, '/settings/config.json')
+  assert(!JSON.stringify(result).includes('/evil/'))
+})
+
+test('invalid or oversized manifests cannot redirect discovery or hide fixed/legacy candidates', async t => {
+  for (const overrides of [
+    { schema: 'other' }, { status: 'installing' }, { renderer: 'cef' }, { profile: 'ai' },
+    { commit: 'abcd' }, { commit: 'a'.repeat(40) + '\n' }, { commit: ['a'.repeat(40)] }, { version: null },
+    { vtxExecutable: '/evil/vtx' }, { sourceRoot: '/workspace/source' },
+    { pythonExecutable: '/evil/python' }, { configFile: '/workspace/config.json' },
+    { configFile: '$(touch injected).json' },
+  ]) {
+    const env = setup(); t.after(() => env.service.dispose())
+    const { paths } = managedInstall(env, overrides)
+    const result = await env.request({ op: 'scan' })
+    assert.equal(result.ok, true)
+    assert.equal(result.candidates[0].path, paths.vtxExecutable)
+    assert.equal(result.candidates[0].source, 'managed-default')
+    assert(!result.candidates.some(item => item.installation || item.path.includes('/evil/')))
+    assert(result.candidates.some(item => item.path === '/opt/trusted/bin/vtx'))
+    assert(result.warnings.length)
+    assert.equal(env.calls.length + env.fs.writes.length, 0)
+    assert.deepEqual(env.fs.reads.map(item => item.path), [paths.manifest])
+  }
+  for (const content of [Buffer.alloc(INSTALLATION_LIMIT + 1, 32), Buffer.from('{"schema":'), Buffer.from([0xff])]) {
+    const env = setup(); t.after(() => env.service.dispose())
+    const { paths } = managedInstall(env)
+    env.fs.add(paths.manifest, content)
+    const result = await env.request({ op: 'scan' })
+    assert.equal(result.ok, true)
+    assert(!result.candidates.some(item => item.installation))
+    assert(result.warnings.length)
+    assert(env.fs.reads.every(item => item.max === INSTALLATION_LIMIT))
+    assert.equal(env.calls.length + env.fs.writes.length, 0)
+  }
+})
+
+test('managed receipt, ancestors, launcher, source, python and config reject symlinks and workspace trust', async t => {
+  for (const field of ['root', 'manifest', 'vtxExecutable', 'sourceRoot', 'pythonExecutable', 'configFile']) {
+    const env = setup(); t.after(() => env.service.dispose())
+    const { paths } = managedInstall(env)
+    env.fs.links.set(paths[field], '/untrusted/redirect')
+    const result = await env.request({ op: 'scan' })
+    assert.equal(result.ok, true)
+    assert(!result.candidates.some(item => item.installation), field)
+    if (['root', 'vtxExecutable'].includes(field)) assert(!result.candidates.some(item => item.path === paths.vtxExecutable), field)
+    if (['root', 'manifest'].includes(field)) assert.equal(env.fs.reads.length, 0)
+    assert(result.warnings.length)
+    assert.equal(env.calls.length + env.fs.writes.length, 0)
+  }
+  const env = setup(); t.after(() => env.service.dispose())
+  const { paths } = managedInstall(env)
+  env.ctx.workingDirectory.get = () => paths.root
+  env.config.vtxExecutable = paths.vtxExecutable
+  const result = await env.request({ op: 'scan' })
+  assert.equal(result.ok, true)
+  assert(!result.candidates.some(item => item.path.startsWith(paths.root)))
+  assert.equal(env.fs.reads.length, 0)
+  assert.equal(env.calls.length + env.fs.writes.length, 0)
+})
+
+test('manifest change during read discards receipt and config selection stays source-external', async t => {
+  const env = setup(); t.after(() => env.service.dispose())
+  const { paths } = managedInstall(env)
+  const original = env.fs.readBytes.bind(env.fs)
+  env.fs.readBytes = async (...args) => { const data = await original(...args); if (args[0].targetKey === paths.manifest) env.fs.add(paths.manifest, data); return data }
+  const result = await env.request({ op: 'scan' })
+  assert(!result.candidates.some(item => item.installation))
+  assert(result.warnings.some(item => item.includes('INSTALLATION_CHANGED')))
+  env.config.vtxExecutable = paths.vtxExecutable
+  env.config.vtxConfigFile = paths.configFile
+  assert.equal((await env.request({ op: 'config-read' })).ok, true)
+  for (const path of [join(paths.sourceRoot, 'config.json'), join(paths.venv, 'config.json')]) {
+    env.config.vtxConfigFile = path
+    assert.equal((await env.request({ op: 'config-read' })).error, 'INSTALL_CONFIG_PATH')
+  }
+  assert.equal(env.calls.length + env.fs.writes.length, 0)
+})
+
 test('unset config never guesses legacy kernel files; absent explicit path is a create draft', async () => {
   const unset = setup({ config: { vtxConfigFile: '' } })
   const result = await unset.request({ op: 'config-read' })
   assert.equal(result.error, 'CONFIG_FILE_UNSET')
-  assert(result.suggestedConfigFile.endsWith('/.config/framivra/config.json'))
+  assert.equal(result.suggestedConfigFile, managedInstallationPaths().configFile)
   assert.equal(unset.fs.reads.length, 0)
   const env = setup()
   const absent = await env.request({ op: 'config-read' })

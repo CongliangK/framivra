@@ -63,6 +63,42 @@ test('scan never executes or saves a candidate; select only drafts a path', asyn
   assert.equal(form.calls[0].revision, 7)
 })
 
+test('managed selection drafts executable/config together, preserves callbacks and requires save then actual capabilities', async t => {
+  const path = 'C:\\Users\\Owner\\AppData\\Local\\framivra\\venv\\Scripts\\vtx.exe'
+  const configFile = 'C:\\Users\\Owner\\AppData\\Local\\framivra\\config.json'
+  const installation = { commit: 'a'.repeat(40), version: '<img src=x onerror=alert(1)>', renderer: 'cdp', profile: 'non-ai', configFile }
+  const { root, calls } = await setup(t, payload => payload.op === 'scan'
+    ? { ok: true, candidates: [{ path, source: 'managed-git', installation }], suggestedConfigFile: configFile, warnings: [] }
+    : { ok: true, executable: { path }, storeCapabilities: { ok: false, error: 'CLI_UNSUPPORTED' } })
+  const form = store()
+  await act(async () => root.render(h(BundleConfigForm, { form })))
+  assert.equal(calls.length, 0)
+  assert.match(text(), /README.*跨平台一键安装命令/)
+  assert.match(text(), /高级：本地 wheel 安装（仅 POSIX）/)
+  await click(button('扫描已安装内核'))
+  assert.match(text(), /受管 Git 源码安装 · 未执行验证/)
+  assert.match(text(), /登记版本 <img src=x onerror=alert\(1\)>/)
+  assert.equal(document.querySelectorAll('img').length, 0)
+  assert.match(text(), /登记版本不证明兼容/)
+  await click(button('填入路径'))
+  assert.equal(document.querySelector('#framivra-config-executable').value, path)
+  assert.equal(document.querySelector('#framivra-config-file').value, configFile)
+  assert.equal(form.calls.length, 0)
+  assert.deepEqual(calls.map(item => item.payload), [{ op: 'scan' }])
+  await click(button('填入推荐配置路径'))
+  assert.equal(document.querySelector('#fv-settings-config').hidden, false)
+  await click(button('保存配置'))
+  assert.equal(form.calls.length, 1)
+  assert.equal(form.calls[0].revision, 7)
+  assert(form.calls[0].ops.some(op => op.path[0] === 'vtxExecutable' && op.value === path))
+  assert(form.calls[0].ops.some(op => op.path[0] === 'vtxConfigFile' && op.value === configFile))
+  await click(button('检查保存的配置'))
+  assert.equal(calls.length, 2)
+  assert.equal(calls[1].url, '/api/framivra/diagnostics')
+  assert.deepEqual(calls[1].payload, {})
+  assert.match(text(), /语义编辑不可用/)
+})
+
 test('source discovery is labeled unverified and empty scans explain their scope', async t => {
   let candidates = [{ path: '/home/owner/.agents/skills/video/vtx/vtx.py', source: 'video-skill-source' }]
   const { root, calls } = await setup(t, () => ({ ok: true, candidates, warnings: [] }))

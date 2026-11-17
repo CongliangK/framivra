@@ -1242,6 +1242,8 @@ def cmd_fix_links(dry: bool) -> int:
 
 # ================================================================ main
 def main():
+    from vtx.runtime.managed import configure_environment
+    configure_environment()
     ap = argparse.ArgumentParser(description="vt —— Framivra v2 统一入口（doctor/list/check/version/init/--fix-links）")
     ap.add_argument("command", nargs="?", default=None,
                     help="doctor | apps|plugins|templates list|check| version | init")
