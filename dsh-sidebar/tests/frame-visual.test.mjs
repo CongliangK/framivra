@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import React, { useState } from 'react'
 import { JSDOM } from 'jsdom'
 import { FrameEpoch, FrameTools } from '../src/client/frame.mjs'
@@ -8,7 +9,9 @@ import { FrameEpoch, FrameTools } from '../src/client/frame.mjs'
 // objectURL lifecycle, folded prose/certificate, preserved test-facing labels.
 // Generate/stage/copy semantics also stay covered by frame-ghost.test.mjs;
 // follow opt-in and serialized cleanup are exercised below with held HTTP replies.
-const snapshot = { content_version: 'sha256:' + 'a'.repeat(64), document: { project: { duration_frames: 100 } } }
+const raw = '{"project":{"duration_frames":100}}'
+const hash = bytes => createHash('sha256').update(bytes).digest('hex')
+const snapshot = { content_version: `sha256:${hash(raw)}`, document: { project: { duration_frames: 100 } } }
 const cleanResult = () => ({
   file: new File(['png-bytes'], 'framivra-frame-10-0000.png', { type: 'image/png' }),
   certificate: { kind: 'current-composite', frame: 10, content_version: snapshot.content_version, width: 1920, height: 1080 },
@@ -154,6 +157,37 @@ test('frame visual: verified objectURL only from owner.generated.file, revoked o
   await f.rerender(10)
   await f.act(async () => { f.root.unmount(); await Promise.resolve() })
   assert.deepEqual(f.calls.at(-1), { op: 'revoke', url: 'blob:frame-3' })
+})
+
+test('verified availability status expires with a dirty preview, without hiding later errors', async t => {
+  const f = await fixture(t, { withObjectURL: true })
+  const previousFetch = globalThis.fetch, previousImage = globalThis.Image
+  t.after(() => { globalThis.fetch = previousFetch; if (previousImage) globalThis.Image = previousImage; else delete globalThis.Image })
+  let decoded
+  const decoding = new Promise(resolve => { decoded = resolve })
+  // Explicit image-decoder adapter; this test checks UI state, not native PNG decoding.
+  globalThis.Image = class { naturalWidth = 1; naturalHeight = 1; async decode() { decoded() } }
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aCioAAAAASUVORK5CYII=', 'base64')
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    schema: 'framivra.timeline.frame/v1', operation: 'frame', ok: true, content_version: snapshot.content_version, diagnostics: [],
+    image: { state: 'generated', kind: 'current-composite', approximate: false, mime_type: 'image/png', width: 1, height: 1, frame: 10, fps: { num: 30, den: 1 }, content_version: snapshot.content_version, input_fingerprint: 'a'.repeat(64), identity_semantics: 'Fast media stat identity', render_key: 'b'.repeat(64), cache_hit: false, bytes: png.length, sha256: hash(png), inline: { encoding: 'base64', data: png.toString('base64') } },
+    reference: { schema: 'framivra.timeline.reference/v1', operation: 'reference', ok: true, content_version: snapshot.content_version, diagnostics: [], document: { raw, content_version: snapshot.content_version }, selection: { global_frame: 10, fps: 30, tracks: [], blocks: [] }, coverage: { complete: true } },
+  }))
+  const generate = () => f.section().querySelector('[aria-label="显式生成并验证固定帧 PNG"]')
+  await f.act(async () => f.section().querySelector('input').click())
+  await f.act(async () => { generate().click(); await decoding })
+  assert(f.section().querySelector('img'))
+  assert.match(f.section().querySelector('[role=status]').textContent, /已验证 PNG/)
+  f.owner.editChanged({ dirty: true }); await f.rerender()
+  assert.equal(f.section().querySelector('img'), null)
+  assert(generate().disabled)
+  assert.match(f.section().querySelector('[role=alert]').textContent, /拒绝生成和加入草稿/)
+  assert.match(f.section().querySelector('[role=status]').textContent, /旧画面已失效/)
+  assert(!f.section().textContent.includes('已验证 PNG，未发送'))
+  f.owner.editChanged({ dirty: false }); await f.rerender()
+  globalThis.fetch = async () => stopReply()
+  await f.act(async () => generate().click())
+  assert.match(f.section().querySelector('[role=status]').textContent, /FIXTURE_STOP/)
 })
 
 function followControls(f) {

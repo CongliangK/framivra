@@ -211,7 +211,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       // Validate association before making either stage/copy available.
       if (!automatic) frameDraftText(verified, selection, positionOnly)
       owner.generated = verified
-      setState({ message: '已验证 PNG，未发送。复制与入稿请展开图片工具。' })
+      setState({ previewEpoch: owner.epoch, message: '已验证 PNG，未发送。复制与入稿请展开图片工具。' })
     } catch (error) {
       if (sequence === generation.current) {
         if (!operation?.signal.aborted) { setState({ message: `错误：${error.message}` }); if (automatic) { scheduling.current.intent++; setFollow(false) } }
@@ -297,6 +297,10 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
     return () => { URL.revokeObjectURL(url); setPreview(undefined) }
   }, [verifiedFile])
   const shownPreview = generated && preview && preview.file === generated.file ? preview.url : null
+  // Only availability text expires; observed draft/copy and cleanup outcomes remain visible.
+  const message = state.previewEpoch !== undefined && (state.previewEpoch !== viewEpoch || !generated)
+    ? '旧画面已失效；请解决当前拒绝原因后显式重新生成。'
+    : state.message
   const cancel = () => { owner.invalidate(); setFollow(false); setState({ busy: true, message: '取消并等待实际进程退出…' }); void frameRequest(sessionId, { op: 'cancel', grant: opened.grant }, tabSignal).then(() => { cleanupFailed.current = false; setState({ message: '已回收；未自动重试。' }) }, error => setState({ message: error.message })) }
   const cancelButton = () => h(ToolButton, { icon: 'cancel', variant: 'danger', label: '显式取消帧并等待回收', tooltip: '取消当前帧操作并等待实际进程回收', onClick: cancel })
   const imageTools = h('details', { className: 'fv-frame-tools-details' },
@@ -347,5 +351,5 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       state.busy ? cancelButton() : null,
       imageTools),
     blocked ? h('p', { role: 'alert' }, '当前未固定帧，或编辑/队列/计划/写结果未解决；拒绝生成和加入草稿。') : null,
-    state.message ? h('p', { role: 'status' }, state.message) : null)
+    message ? h('p', { role: 'status' }, message) : null)
 }
