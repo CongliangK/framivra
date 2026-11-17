@@ -185,15 +185,16 @@ def platform_packages(found, system=None, manager=None, needs_venv=False):
     """Pure plan: native packages only; no models or optional experimental backends."""
     system = system or sys.platform
     missing = set((*native_names(system), 'chrome')) - set(found)
-    if not missing and not needs_venv:
+    if not missing and not needs_venv and system != 'win32':
         return []
     if system == 'win32':
-        ids = {'git': 'Git.Git', 'ffmpeg': 'Gyan.FFmpeg', 'ffprobe': 'Gyan.FFmpeg',
+        ids = {'git': 'Git.MinGit', 'ffmpeg': 'Gyan.FFmpeg', 'ffprobe': 'Gyan.FFmpeg',
                'chrome': 'Google.Chrome', 'sox': 'ChrisBagwell.SoX'}
         return [(['winget', 'install', '--id', package, '-e', '--accept-source-agreements',
                   '--accept-package-agreements', '--disable-interactivity'] if package == 'Google.Chrome'
                  else ['managed-original-download', '--id', package])
-                for package in dict.fromkeys(ids[key] for key in sorted(missing))]
+                for package in dict.fromkeys(ids[key] for key in sorted(missing))] + [
+                    ['conditional-python-runtime', '--id', 'Microsoft.VCRedist.2015+.x64']]
     if system == 'darwin':
         result = [['brew', 'install', '--force-bottle', 'ffmpeg-full' if package == 'ffmpeg' else package]
                   for package in ('git', 'ffmpeg', 'sox')
@@ -520,6 +521,13 @@ def env_tool(env, name):
     return value
 
 
+def windows_elevated():
+    if sys.platform != 'win32':
+        return False
+    import ctypes
+    return bool(ctypes.windll.shell32.IsUserAnAdmin())
+
+
 def install(args):
     if sys.platform not in ('linux', 'darwin', 'win32'):
         raise InstallError('Supported systems: Linux, macOS, Windows')
@@ -540,12 +548,21 @@ def install(args):
                           'pythonPackages': PYTHON_PACKAGES, 'nativeCommandsConditional': True,
                           'nativeCommands': platform_packages(tools(root), needs_venv=sys.platform == 'linux' and importlib.util.find_spec('ensurepip') is None)}, indent=2))
         return 0
+    if windows_elevated():
+        raise InstallError('Per-user Windows installation requires a non-administrator PowerShell; '
+                           'rerun from an ordinary PowerShell. Existing files and ACLs were not changed.')
     if not args.yes:
         if not sys.stdin.isatty():
             raise InstallError('Non-interactive installation requires explicit --yes (review --plan first)')
         if input('Proceed? [y/N] ').strip().lower() not in ('y', 'yes'):
             raise InstallError('Installation cancelled before writes')
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # A persistent Windows user directory inherits its trusted parent's ACL.
+    # Python's Windows 0700 uses OWNER RIGHTS, not a fixed user SID. Temporary
+    # directories retain their protected ACLs; never publish them across tokens.
+    if sys.platform == 'win32':
+        root.mkdir(parents=True, exist_ok=True)
+    else:
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with installation_lock(root):
         previous = json_record(root / 'installation.json')
         validate_ownership(previous, root, args.repo)
@@ -577,6 +594,12 @@ def install(args):
                     nativePreparation=native_metadata))
         python, env = prepare_python(root, source, found, network=args.network,
                                      update=args.update and not preparing.get('pythonDependenciesPrepared', False))
+        if sys.platform == 'win32':
+            runtime = windows.ensure_python_runtime(root, python, env, network=args.network,
+                                                     no_system=args.no_system, yes=args.yes, run=command)
+            native_metadata = dict(native_metadata, pythonRuntime=runtime)
+            current = json_record(root / 'installation.json')
+            atomic_json(root / 'installation.json', dict(current, nativePreparation=native_metadata))
         prepare_configuration(root, source, python)
         # Use the new, commit-bound installer bundle even when resuming an older
         # owned source. Network fixes do not force an implicit source update.
