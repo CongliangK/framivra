@@ -169,6 +169,66 @@ class CheckedEnvironmentDigest(unittest.TestCase):
         with self.assertRaises(OSError): os.fstat(descriptors[0])
         self.assertNotIn(str(self.path), env._hashes)
 
+    @unittest.skipUnless(os.name == 'posix', 'POSIX directory-prefix optimization')
+    def test_batch_matches_individual_hashes_and_reenumerates_inputs(self):
+        directory = self.root / 'members'; directory.mkdir()
+        member = directory / 'member.bin'; member.write_bytes(b'member')
+        parent_alias = self.root / 'parent-alias'; parent_alias.symlink_to(directory)
+        file_alias = directory / 'file-alias'; file_alias.symlink_to(self.path)
+        paths = [member, parent_alias / member.name, file_alias, self.path, member]
+        expected = dict(sorted(env._file(p) for p in sorted(set(map(str, paths)))))
+        self.assertEqual(env._files(p for p in paths), expected)
+        saved = self.path.stat()
+        self.path.write_bytes(b'library B')
+        os.utime(self.path, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+        changed = env._files(paths)
+        self.assertNotEqual(expected, changed)
+        file_alias.unlink(); file_alias.symlink_to(member)
+        self.assertEqual(env._files([file_alias]), dict([env._file(member)]))
+        extra = directory / 'new.bin'; extra.write_bytes(b'new member')
+        self.assertNotEqual(changed, env._files([*paths, extra]))
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX directory-prefix optimization')
+    def test_batch_refuses_parent_alias_and_directory_replacement_during_scan(self):
+        original = env._file_resolved
+        for mode in ('alias', 'directory'):
+            with self.subTest(mode=mode):
+                base = self.root / mode; base.mkdir()
+                first = base / 'first'; first.mkdir()
+                second = base / 'second'; second.mkdir()
+                # Identical leaf inode: the refusal must depend on the prefix,
+                # not on differing file bytes or metadata.
+                os.link(self.path, first / 'member')
+                os.link(self.path, second / 'member')
+                alias = base / 'link'; alias.symlink_to(first)
+                entry = alias / 'member' if mode == 'alias' else first / 'member'
+                def changed(*args, **kwargs):
+                    value = original(*args, **kwargs)
+                    if mode == 'alias':
+                        alias.unlink(); alias.symlink_to(second)
+                    else:
+                        first.rename(base / 'old'); second.rename(first)
+                    return value
+                with patch.object(env, '_file_resolved', side_effect=changed):
+                    with self.assertRaisesRegex(env.EnvironmentError, 'directory changed'):
+                        env._files([entry])
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX directory-prefix optimization')
+    def test_batch_refuses_regular_entry_replaced_by_same_inode_symlink(self):
+        original = env._file_resolved
+        for warm in (False, True):
+            with self.subTest(warm=warm):
+                entry = self.root / ('warm' if warm else 'cold')
+                os.link(self.path, entry)
+                if warm:
+                    env._files([entry])
+                def replaced(*args, **kwargs):
+                    entry.unlink(); entry.symlink_to(self.path)
+                    return original(*args, **kwargs)
+                with patch.object(env, '_file_resolved', side_effect=replaced):
+                    with self.assertRaises(env.EnvironmentError):
+                        env._files([entry])
+
     def test_windows_policy_simulation_still_reads_every_call(self):
         # Only the no-memo branch is simulated; this is not native Windows QA.
         token = lambda path, st: (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
@@ -501,7 +561,7 @@ class EnvironmentContracts(unittest.TestCase):
         self.config = self.root / 'fonts.conf'; self.config.write_text('<fontconfig/>')
         self.lib = self.root / 'libfont.so'; self.lib.write_bytes(b'library A')
         self.tool = self.root / 'fc-list'; self.tool.write_bytes(b'fontconfig tool')
-        original_files = env._files
+        self.hash_files = env._files
         self.patches = [
             patch.dict(os.environ, {'VTX_GFX': 'cdp', 'FONTCONFIG_FILE': str(self.config),
                 'LD_LIBRARY_PATH': '', 'LD_PRELOAD': '', 'LIBGL_DRIVERS_PATH': '',
@@ -511,7 +571,7 @@ class EnvironmentContracts(unittest.TestCase):
             patch.object(env.platform, 'system', return_value='Linux'),
             patch.object(env, '_command', side_effect=self.command),
             patch.object(env, '_python_runtime', return_value={'fixture': True}),
-            patch.object(env, '_files', side_effect=lambda paths: original_files(
+            patch.object(env, '_files', side_effect=lambda paths: self.hash_files(
                 [{'/fixture/font.ttf': self.font, '/fixture/libfont.so': self.lib,
                   '/fixture/fonts.conf': self.config, '/etc/machine-id': self.lib,
                   '/proc/sys/kernel/random/boot_id': self.lib, '/etc/ld.so.cache': self.lib}.get(str(p), p)
@@ -551,13 +611,16 @@ class EnvironmentContracts(unittest.TestCase):
         # no drive mapping or system configuration is created by this fixture.
         physical_font = self.font
         self.font = Path('D:/renderer-fixture/font.ttf')
-        original_file, observed = env._file, []
-        def hash_input(path):
-            if str(path) == str(self.font):
-                observed.append(str(path))
-                return original_file(physical_font)
-            return original_file(path)
-        with patch.object(env, '_file', side_effect=hash_input):
+        original_files, observed = self.hash_files, []
+        def hash_inputs(paths):
+            mapped = []
+            for path in paths:
+                if str(path) == str(self.font):
+                    observed.append(str(path))
+                    path = physical_font
+                mapped.append(path)
+            return original_files(mapped)
+        with patch.object(self, 'hash_files', side_effect=hash_inputs):
             before = self.collect()
             st = physical_font.stat()
             physical_font.write_bytes(b'font B')

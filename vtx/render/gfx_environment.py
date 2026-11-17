@@ -738,7 +738,31 @@ def _file_resolved(p, st, *, verify_entry=None):
 
 
 def _files(paths):
-    return dict(sorted(_file(p) for p in sorted(set(map(str, paths)))))
+    paths = sorted(set(map(str, paths)))
+    if os.name != 'posix':
+        return dict(sorted(_file(p) for p in paths))
+    # Font inventories contain thousands of siblings. Resolve their shared
+    # prefix once per collection, never cache membership or directory authority
+    # across calls. File links still take the original full-resolution path.
+    groups = {}
+    for path in paths:
+        entry = Path(path)
+        groups.setdefault(entry.parent, []).append(entry)
+    files = []
+    for directory, entries in groups.items():
+        canonical = directory.resolve(strict=True)
+        before = _file_token(canonical, canonical.stat())
+        for entry in entries:
+            info = entry.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                files.append(_file(entry))
+            else:
+                files.append(_file_resolved(canonical / entry.name, info,
+                                            verify_entry=(entry, None, info)))
+        if (directory.resolve(strict=True) != canonical
+                or _file_token(canonical, canonical.stat()) != before):
+            raise EnvironmentError(f'environment input directory changed while hashing: {directory}')
+    return dict(sorted(files))
 
 
 def _tree(root):
