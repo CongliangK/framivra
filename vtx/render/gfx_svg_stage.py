@@ -10,6 +10,7 @@ import os
 import stat
 import subprocess
 import time
+import threading
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -27,7 +28,7 @@ def _start_shell(executable, directory, *, root):
                             stderr=subprocess.PIPE, text=True)
 
 
-def _export(proc, indices, width, height, *, count=None):
+def _export(proc, indices, width, height, *, count=None, stop=None):
     # Every action operand is generated locally; user paths never enter this language.
     actions = '\n'.join(
         f'file-open:f{i:04d}.svg;export-type:png;export-area-page;'
@@ -36,7 +37,25 @@ def _export(proc, indices, width, height, *, count=None):
         f'export-filename:f{i:04d}.png;export-do;file-close'
         for i in indices) + '\nquit\n'
     budget = len(indices) if count is None else count
-    stdout, stderr = proc.communicate(actions, timeout=max(30, min(3600, budget * 5)))
+    timeout = max(30, min(3600, budget * 5))
+    if stop is None:
+        stdout, stderr = proc.communicate(actions, timeout=timeout)
+    else:
+        deadline = time.monotonic() + timeout
+        while True:
+            if stop.is_set():
+                raise RuntimeError('SVG shell export cancelled')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(proc.args, timeout)
+            try:
+                stdout, stderr = proc.communicate(actions, timeout=min(0.5, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                # communicate retains its input offset and captured output.
+                # This event bounds thread shutdown, not child termination;
+                # the parent still has to terminate/reap every owned shell.
+                actions = None
     if proc.returncode:
         raise RuntimeError(f'Inkscape failed ({proc.returncode}): {stderr[-1500:]}')
 
@@ -103,6 +122,7 @@ def run_shell_batches(executable, directory, count, width, height, *, root, indi
             fstxn.replace(directory / f'f{i:04d}.svg', shard / f'f{i:04d}.svg', root=root)
         jobs.append((shard, batch))
     processes, futures = [], []
+    stop = threading.Event()
     executor = ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix='svg-shell')
     try:
         # Admission is parent-owned. A launch/submit failure cannot leave an
@@ -110,10 +130,11 @@ def run_shell_batches(executable, directory, count, width, height, *, root, indi
         for shard, batch in jobs:
             proc = _start_shell(executable, shard, root=root)
             processes.append(proc)
-            futures.append(executor.submit(_export, proc, batch, width, height))
+            futures.append(executor.submit(_export, proc, batch, width, height, stop=stop))
         for future in as_completed(futures):
             future.result()
     finally:
+        stop.set()
         cleanup_error = None
         try:
             for proc in processes:
@@ -243,16 +264,27 @@ def render_stage(c):
                         for i in group[1:]:
                             copy_png(source, staging / f'f{i:04d}.png', copied_fingerprint, sizes[0], root=c.root)
                     raster_seconds = time.monotonic() - started
-                    hashes = []
-                    for i in range(clip['dur']):
-                        path = staging / f'f{i:04d}.png'
-                        observed = []
-                        reason = png_invalid_reason(path, width=c.w, height=c.h, _fingerprint=observed)
-                        if reason:
-                            raise ValueError(f'Inkscape output frame {i} invalid: {reason}')
-                        if i in reused and observed[0] != copied_fingerprint:
-                            raise ValueError('SVG reused PNG changed after materialization')
-                        hashes.append(observed[0])
+                    def check_batch(indices):
+                        checked = []
+                        for i in indices:
+                            observed = []
+                            reason = png_invalid_reason(staging / f'f{i:04d}.png',
+                                                        width=c.w, height=c.h, _fingerprint=observed)
+                            if reason:
+                                raise ValueError(f'Inkscape output frame {i} invalid: {reason}')
+                            if i in reused and observed[0] != copied_fingerprint:
+                                raise ValueError('SVG reused PNG changed after materialization')
+                            checked.append((i, observed[0]))
+                        return checked
+                    # Decode/CRC/SHA every PNG as before. Independent streams
+                    # share only immutable inputs; at most one batch per shell
+                    # runs, and all validation finishes before any publication.
+                    hashes = [None] * clip['dur']
+                    with ThreadPoolExecutor(max_workers=batch_count) as executor:
+                        batches = [range(n, clip['dur'], batch_count) for n in range(batch_count)]
+                        for checked in executor.map(check_batch, batches):
+                            for i, fingerprint in checked:
+                                hashes[i] = fingerprint
                     c.verify_inputs('gfx')
                     if gfx_svg.resolve(c, clip) != record:
                         raise ValueError('SVG identity changed during rendering')

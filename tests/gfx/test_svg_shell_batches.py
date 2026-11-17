@@ -126,6 +126,7 @@ class ShellBatches(unittest.TestCase):
                     def communicate(*args, **kwargs):
                         if number == 0 and failure in ['export', 'timeout']:
                             if failure == 'timeout':
+                                clock.return_value = 10000
                                 raise subprocess.TimeoutExpired('inkscape', 30)
                             proc.returncode = 1
                             return '', 'export failed'
@@ -142,7 +143,8 @@ class ShellBatches(unittest.TestCase):
                         if len(processes) == 2:
                             raise RuntimeError('submit failed')
                         return super().submit(*args, **kwargs)
-                with mock.patch.dict(os.environ, {'VTX_SVG_WORKERS': '2'}), \
+                with mock.patch.object(stage.time, 'monotonic', return_value=0) as clock, \
+                     mock.patch.dict(os.environ, {'VTX_SVG_WORKERS': '2'}), \
                      mock.patch.object(stage.subprocess, 'Popen', side_effect=launch), \
                      mock.patch.object(stage, 'ThreadPoolExecutor', SubmitFailure if failure == 'submit' else real_executor), \
                      mock.patch.object(stage, 'as_completed', side_effect=KeyboardInterrupt) if failure == 'cancel' else contextlib.nullcontext():
@@ -157,6 +159,43 @@ class ShellBatches(unittest.TestCase):
                         stream.close.assert_called_once()
                 self.assertFalse(list(directory.glob('f*.png')))
                 self.assertFalse(any(t.name.startswith('svg-shell') for t in threading.enumerate()))
+
+    def test_cleanup_failure_still_stops_export_threads_and_is_fatal(self):
+        directory = self.inputs(240)
+        processes = []
+        second_entered = threading.Event()
+        def launch(*args, **kwargs):
+            number = len(processes)
+            proc = mock.Mock(returncode=1 if number == 0 else None)
+            proc.poll.return_value = None
+            proc.terminate.side_effect = PermissionError('cannot terminate shell')
+            def communicate(actions, timeout):
+                if number == 0:
+                    self.assertTrue(second_entered.wait(5))
+                    return '', 'export failed'
+                second_entered.set()
+                # Respect the supplied slice; without cooperative cancellation
+                # this would wait the entire export deadline after failed cleanup.
+                threading.Event().wait(min(timeout, 2))
+                raise subprocess.TimeoutExpired('inkscape', timeout)
+            proc.communicate.side_effect = communicate
+            processes.append(proc)
+            return proc
+        with mock.patch.dict(os.environ, {'VTX_SVG_WORKERS': '2'}), \
+             mock.patch.object(stage.subprocess, 'Popen', side_effect=launch):
+            with self.assertRaisesRegex(PermissionError, 'cannot terminate'):
+                stage.run_shell_batches('/inkscape', directory, 240, 64, 64,
+                                        root=self.root, indices=list(range(240)))
+        for proc in processes:
+            self.assertTrue(proc.communicate.call_args_list)
+            self.assertTrue(all(call.kwargs['timeout'] <= 0.5
+                                for call in proc.communicate.call_args_list))
+            proc.terminate.assert_called_once()
+            proc.wait.assert_not_called()  # A denied signal is not successful cleanup.
+            for stream in [proc.stdin, proc.stdout, proc.stderr]:
+                stream.close.assert_called_once()
+        self.assertFalse(list(directory.glob('f*.png')))
+        self.assertFalse(any(t.name.startswith('svg-shell') for t in threading.enumerate()))
 
     def test_stop_escalation_and_exit_races_still_reap(self):
         for race in [False, True]:
@@ -187,12 +226,13 @@ class ShellBatches(unittest.TestCase):
             c = SimpleNamespace(root=root, cache=root / 'cache', fps=30, w=64, h=64,
                                 dry=False, tl={'video_tracks': [{'kind': 'gfx', 'clips': [clip]}]},
                                 receipt=mock.Mock(), verify_inputs=mock.Mock())
+            broken = True
             def launch(*args, cwd, **kwargs):
                 process = mock.Mock(returncode=0)
                 process.poll.return_value = 0
                 def communicate(actions, timeout):
                     for i in map(int, re.findall(r'file-open:f(\d+)\.svg', actions)):
-                        if i == 239:
+                        if broken and i == 239:
                             if mode == 'corrupt':
                                 (cwd / f'f{i:04d}.png').write_bytes(b'not a PNG')
                         else:
@@ -208,6 +248,15 @@ class ShellBatches(unittest.TestCase):
             self.assertFalse(list(c.cache.rglob(stage.gfx_svg.COMPLETE_FILE)))
             c.receipt.assert_not_called()
             self.assertFalse(any(t.name.startswith('svg-shell') for t in threading.enumerate()))
+            broken = False
+            with mock.patch.dict(os.environ, {'VTX_SVG_WORKERS': '2'}), \
+                 mock.patch.object(stage.gfx_svg, 'resolve', return_value=record), \
+                 mock.patch.object(stage.subprocess, 'Popen', side_effect=launch) as shells:
+                stage.render_stage(c)
+                self.assertEqual(shells.call_count, 2)
+                c.receipt.assert_called_once()
+                stage.render_stage(c)
+                self.assertEqual(shells.call_count, 2)  # Repaired cache is warm and reusable.
 
 
 if __name__ == '__main__':
