@@ -97,7 +97,9 @@ class DiffCtx:
     def __init__(self, tl, root: Path):
         self.tl = tl
         self.root = root
-        self.fps = tl["project"]["fps"]
+        from ..pipeline.constraints import parse_fps
+        rate = parse_fps(tl["project"]["fps"])
+        self.fps = int(rate) if rate.denominator == 1 else float(rate)
         self.w = tl["project"]["width"]
         self.h = tl["project"]["height"]
         self.probes = {}
@@ -468,7 +470,7 @@ def diff_timelines(tla, roota, tlb, rootb, nseg=None):
         lb = _seg_layers(tlb, lay_b, a, b)
         da = _seg_dialogue(tla.get("subtitles", []), ca.fps, a, b)
         db = _seg_dialogue(tlb.get("subtitles", []), cb.fps, a, b)
-        if la != lb or da != db:
+        if ca.fps != cb.fps or la != lb or da != db:
             inv_segs.append([a, b])
     impact["vseg_invalid"] = {"count": len(inv_segs), "total": total_b,
                               "segments": inv_segs, "nseg": nseg,

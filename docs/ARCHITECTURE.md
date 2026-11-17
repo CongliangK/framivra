@@ -54,6 +54,8 @@ HTML strict 依赖闭包**仅适用 CDP**；环境身份/资源闭包不承诺�
 
 **耗时估算。** timeline diff 的 `estimated_seconds` / `estimate_basis` 是迭代规划启发式：[当前实现与常量](../vtx/inspection/timeline_diff.py)为权威。video 按失效 vseg 帧数 / max(1, 新 timeline 总帧数) × draft 全片常数 + 失效 clip 重编码估计；当前计算不切换 formal 常数。其余需重跑阶段按固定值或源计数估算，gfx 为单页经验下限，页多可能低估；分项求和不是并行调度实测墙钟。[历史 voice-ime 校准](https://github.com/CongliangK/framivra/blob/3d9e6622d5d06eecf55ffbe2075da1fa994f93f5/docs/reports/development-history.md)不保证新机器、素材或冷建耗时；输出的 ±30% 是校准口径，不是精度承诺。
 
+项目时基允许值由 `pipeline/constraints.py` 定义，schema/只读预览镜像同判；NTSC 标签归一为精确 N/1001，整数帧窗口不自动换基。视频编码、拼接与帧元数据使用有理数时钟；48kHz 音频以 `S(f)=round(f×48000/fps)` 映射项目绝对帧端点（半采样向上），事件/区间长度取端点差，禁止逐帧舍入后累乘。事件源采样窗为 `[S(in)-S(in-src_in), S(out)-S(in-src_in))`，共享一次量化的源→项目平移，拆分不产生内部采样断点；与孤立源端点舍入最多差一采样，真实源尾不足时补静音。
+
 ### 1.2 响度终链
 
 `audio` / `all` 的 `out/audio.wav` 是归一化与限幅终态，无需项目侧可选步骤补安全链。`mix_audio_wav` 采用测量后静态增益，输出链为 `volume=…dB,aformat=sample_fmts=s16,alimiter=limit=0.599:level=false:latency=true`；整片与区间预览同增益、同限幅，s16 中间量化不能视为可删细节。
@@ -202,6 +204,8 @@ wheel 包含 `vtx` 内核及其职责子包、仓级 vt 模块、schema/preview 
 组件命令直达 `apps/` / `plugins/`，仓级维护命令直达 scripts 职责目录；不提供根部组件别名或旧命令转发壳。技能 live 挂载与链接修复独立于组件别名；安装器保留仓内相对链接解包及 Windows 文件/目录物化。外部工作区和挂载必须逐件实查，仓内测试不能证明外部源件存在或链接有效，缺失/待办不得核销为完成。外部三载体的未结项与本机复验状态以 [已知问题④](reference/known-issues.md#external-installation-evidence) 为准。
 
 `dsh-sidebar/` 是 DSH 外宿主适配器的源码 home，不新增运行时层；该适配器由 DSH 管理，不注册为 vtx app/hook，也不进入 Python wheel。
+
+受管源码安装由 `scripts/bootstrap.sh` / `bootstrap.ps1` 引导 `scripts/install_source.py`，完整仓与独立 editable venv 分离；布局和登记字段归[安装指南](<guides/installation.md#受管非-ai-制作环境>)。只在真实安装测试通过后发布 `framivra.installation/v1` 的 ready 回执，DSH 只发现、验证和显式连接。`vtx.runtime.managed` 仅在 CLI 入口、当前 venv 邻接登记绑定本源码时补充已登记工具 PATH、字体环境及默认 CDP/VTX_CONFIG；普通 clone/wheel 不扫描 HOME/工作区，也不自动采用另一份安装配置。显式 VTX_CONFIG 优先语义不变。
 
 ### 5.3 配置
 

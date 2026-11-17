@@ -52,6 +52,7 @@ from pathlib import Path
 # （经 scripts/ 兼容 symlink 调用时 resolve() 先归位到本文件，两路径同锚定）。
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from vtx.cache.cache_state import media_stat_digest
+from vtx.pipeline.constraints import parse_fps
 
 SCALE_4K = "scale=3840:2160:flags=lanczos"
 DEFAULT_MAXRATE = "20M"  # 给 192k 音轨与 MP4 封装留出 20.5M 文件门余量
@@ -94,9 +95,10 @@ def timescale_args(fps: int = 30):
     """轨道与电影时基都能整除 fps；只设轨道时基不能修正 MP4 edit-list 舍入。
 
     默认电影时基 1000 会把 112f/30 的段时长截成 3.733008s，concat 累积漂移。
-    两个时基统一为 fps*512（30fps=15360），每帧精确 512 tick。
+    两个时基统一为帧率分子*512（30fps=15360）；每帧精确 分母*512 tick。
     """
-    return ["-video_track_timescale", str(fps * 512), "-movie_timescale", str(fps * 512)]
+    timescale = parse_fps(fps).numerator * 512
+    return ["-video_track_timescale", str(timescale), "-movie_timescale", str(timescale)]
 
 
 def _sh(cmd, need=True):
@@ -242,7 +244,7 @@ def export(tl_path: Path, media: Path, out: Path, segments: int = 8,
     t_total = time.monotonic()
     tl = json.loads(Path(tl_path).read_text(encoding="utf-8"))
     proj = tl["project"]
-    fps, total = int(proj["fps"]), int(proj["duration_frames"])
+    fps, total = float(parse_fps(proj["fps"])), int(proj["duration_frames"])
     proj_root = project_root(tl_path)
     if not Path(media).exists():
         print(f"✗ 母带不存在：{media}", file=sys.stderr); sys.exit(2)
@@ -328,7 +330,9 @@ def export(tl_path: Path, media: Path, out: Path, segments: int = 8,
 
     # ---- concat -c copy + 音频直通 + 自检 ----
     lst = segdir / "list.txt"
-    lst.write_text("".join(concat_entry(s) for s in seg_paths), encoding="utf-8")
+    from vtx.pipeline.composite import _concat_manifest
+    lst.write_text(_concat_manifest(((s, a, b) for s, (a, b) in zip(seg_paths, spans)), fps),
+                   encoding="utf-8")
     t0 = time.monotonic()
     _sh(concat_copy_cmd(lst, media, out, fps=fps))
     concat_dt = time.monotonic() - t0

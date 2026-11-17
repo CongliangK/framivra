@@ -5,8 +5,6 @@ figures are sampled observations, not an all-descendant lifetime accounting API.
 Only the process group created for a command may be signalled. Nested sessions
 (e.g. CEF workers) still depend on the product's own supervision.
 """
-import ctypes
-from functools import lru_cache
 import hashlib
 import json
 import math
@@ -16,7 +14,6 @@ import re
 import signal
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from datetime import datetime, timezone
@@ -104,115 +101,6 @@ def _ps_snapshot():
     return rows
 
 
-class _RusageInfoV2(ctypes.Structure):
-    # macOS SDK sys/resource.h RUSAGE_INFO_V2 (not CURRENT, whose ABI can grow).
-    # libproc.h: int proc_pid_rusage(int, int, rusage_info_t *); 0 succeeds.
-    _fields_ = [('ri_uuid', ctypes.c_uint8 * 16)] + [
-        (name, ctypes.c_uint64) for name in (
-            'ri_user_time', 'ri_system_time', 'ri_pkg_idle_wkups',
-            'ri_interrupt_wkups', 'ri_pageins', 'ri_wired_size',
-            'ri_resident_size', 'ri_phys_footprint', 'ri_proc_start_abstime',
-            'ri_proc_exit_abstime', 'ri_child_user_time', 'ri_child_system_time',
-            'ri_child_pkg_idle_wkups', 'ri_child_interrupt_wkups',
-            'ri_child_pageins', 'ri_child_elapsed_abstime',
-            'ri_diskio_bytesread', 'ri_diskio_byteswritten')]
-
-
-@lru_cache(maxsize=1)
-def _libproc_rusage():
-    library = ctypes.CDLL('/usr/lib/libproc.dylib', use_errno=True)
-    function = library.proc_pid_rusage
-    function.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
-    function.restype = ctypes.c_int
-    return function
-
-
-def _process_disk_io(pid):
-    """Only called for PIDs selected from the command's live descendant tree."""
-    if sys.platform != 'darwin':
-        raise NotImplementedError('process disk IO unsupported on this platform')
-    info = _RusageInfoV2()
-    if _libproc_rusage()(pid, 2, ctypes.byref(info)) != 0:
-        raise OSError(ctypes.get_errno(), 'proc_pid_rusage unavailable')
-    return info.ri_diskio_bytesread, info.ri_diskio_byteswritten
-
-
-def _host_query(argv):
-    # Fixed read-only commands only; bounded wait and bounded retained output.
-    # A file sink avoids unbounded communicate() buffers even on tool failure.
-    with tempfile.TemporaryFile() as output:
-        result = subprocess.run(argv, stdout=output, stderr=subprocess.DEVNULL,
-                                timeout=_PS_TIMEOUT_SECONDS, check=False,
-                                env={'PATH': '/usr/bin:/bin:/usr/sbin:/sbin',
-                                     'LC_ALL': 'C', 'LANG': 'C'})
-        if result.returncode:
-            raise RuntimeError('snapshot command exited with status ' + str(result.returncode))
-        output.seek(0)
-        text = output.read(16385)
-    if len(text) > 16384:
-        raise ValueError('snapshot output exceeds bounded read')
-    return text.decode('ascii')
-
-
-def _parse_pressure(text):
-    """memory_pressure -Q free-percentage proxy, not the kernel pressure level."""
-    match = re.search(r'^System-wide memory free percentage:\s*(\d+)%\s*$', text, re.M)
-    if match is None or not 0 <= int(match[1]) <= 100:
-        raise ValueError('invalid memory_pressure -Q snapshot')
-    return {'system_free_percent': int(match[1])}
-
-
-def _parse_swap(text):
-    values = {}
-    for key in ('total', 'used', 'free'):
-        match = re.search(r'\b' + key + r'\s*=\s*([0-9]+(?:\.[0-9]+)?)([KMGT])\b', text)
-        if match is None:
-            raise ValueError('invalid vm.swapusage snapshot')
-        values[key + '_bytes'] = int(float(match[1]) * 1024 ** ('KMGT'.index(match[2]) + 1))
-    return values
-
-
-def _parse_pressure_level(text):
-    # kern.memorystatus_vm_pressure_level is systemwide, not command-attributed.
-    states = {'1': 'normal', '2': 'warning', '4': 'critical'}
-    value = text.strip()
-    if value not in states:
-        raise ValueError('unknown or unavailable kernel memory pressure level')
-    return {'value': int(value), 'state': states[value]}
-
-
-def _host_memory_snapshot():
-    snapshot = {'captured_utc': datetime.now(timezone.utc).isoformat(),
-                'memory_pressure': None, 'pressure_level': None, 'swapusage': None,
-                'available_metrics': 0, 'expected_metrics': 3, 'errors': []}
-    if sys.platform != 'darwin':
-        snapshot['status'] = 'unsupported'
-        snapshot['errors'] = ['host memory_pressure/swapusage unsupported on this platform']
-        return snapshot
-    for key, argv, parser in (
-            ('memory_pressure', ['/usr/bin/memory_pressure', '-Q'], _parse_pressure),
-            ('swapusage', ['/usr/sbin/sysctl', '-n', 'vm.swapusage'], _parse_swap),
-            ('pressure_level', ['/usr/sbin/sysctl', '-n', 'kern.memorystatus_vm_pressure_level'],
-             _parse_pressure_level)):
-        try:
-            snapshot[key] = parser(_host_query(argv))
-        except Exception as error:
-            snapshot['errors'].append(key + ': ' + type(error).__name__)
-    available = sum(snapshot[key] is not None for key in ('memory_pressure', 'swapusage', 'pressure_level'))
-    snapshot['available_metrics'] = available
-    snapshot['status'] = ('sampled' if available == 3 else 'partial') if available else 'unavailable'
-    return snapshot
-
-
-def _safe_host_memory_snapshot():
-    try:
-        return _host_memory_snapshot()
-    except Exception as error:
-        return {'status': 'unavailable', 'memory_pressure': None, 'swapusage': None,
-                'pressure_level': None, 'available_metrics': 0, 'expected_metrics': 3,
-                'errors': ['snapshot failed: ' + type(error).__name__]}
-
-
 class _ResourceSampler:
     def __init__(self, pid, interval):
         self.pid, self.interval = pid, interval
@@ -222,9 +110,6 @@ class _ResourceSampler:
         self.peak_rss = None
         self.peak_processes = None
         self.cpu = {}
-        self.disk_io = {}
-        self.io_attempts = self.io_successes = self.io_selected = 0
-        self.io_errors = []
         self.errors = []
         self.thread = threading.Thread(target=self._run, name='benchmark-ps', daemon=True)
 
@@ -248,32 +133,7 @@ class _ResourceSampler:
             selected.add(pid)
             pending.extend(children.get(pid, ()))
         rss_values = [rows[pid][1] for pid in selected]
-        # No extra CLI per sample. Bound syscall count and sampling work; a
-        # disappearing/denied process is unknown, never a fabricated zero.
-        io_values, io_errors, attempts = {}, [], 0
-        deadline = time.monotonic() + 0.1
-        if sys.platform == 'darwin':
-            for pid in sorted(selected):
-                if attempts >= 256 or time.monotonic() >= deadline or self.stop.is_set():
-                    io_errors.append('disk IO sample budget exhausted')
-                    break
-                attempts += 1
-                try:
-                    io_values[pid] = _process_disk_io(pid)
-                except Exception as error:
-                    reason = 'disk IO unavailable: ' + type(error).__name__
-                    if reason not in io_errors:
-                        io_errors.append(reason)
         with self.lock:
-            self.io_selected += len(selected)
-            self.io_attempts += attempts
-            self.io_successes += len(io_values)
-            for reason in io_errors:
-                if reason not in self.io_errors:
-                    self.io_errors.append(reason)
-            for pid, values in io_values.items():
-                previous = self.disk_io.get(pid, (0, 0))
-                self.disk_io[pid] = tuple(max(a, b) for a, b in zip(previous, values))
             self.samples += 1
             self.peak_processes = max(self.peak_processes or 0, len(selected))
             if all(value is not None for value in rss_values):
@@ -306,27 +166,6 @@ class _ResourceSampler:
                 'peak_tree_rss_bytes': self.peak_rss,
                 'cpu_seconds_lower_bound': sum(self.cpu.values()) if self.cpu else None,
                 'peak_sampled_processes': self.peak_processes,
-                'disk_io': {
-                    'status': ('partial' if self.io_errors or self.errors else 'sampled') if self.disk_io else
-                              ('unavailable' if sys.platform == 'darwin' else 'unsupported'),
-                    'method': 'macOS libproc proc_pid_rusage RUSAGE_INFO_V2' if sys.platform == 'darwin' else None,
-                    'read_bytes_lower_bound': sum(v[0] for v in self.disk_io.values()) if self.disk_io else None,
-                    'written_bytes_lower_bound': sum(v[1] for v in self.disk_io.values()) if self.disk_io else None,
-                    'selected_process_observations': self.io_selected,
-                    'attempted_process_observations': self.io_attempts,
-                    'successful_process_observations': self.io_successes,
-                    'observed_processes': len(self.disk_io),
-                    'reason': None if self.disk_io else (
-                        'no successful disk IO snapshot of the live command tree' if sys.platform == 'darwin'
-                        else 'process disk IO unsupported on this platform'),
-                    'errors': list(self.io_errors),
-                    'limitations': [
-                        'Sum of maximum sampled per-PID disk-byte counters, not IO latency or logical file bytes.',
-                        'Only live sampled command descendants; short-lived/exited/reparented children and final IO may be missed.',
-                        'PID reuse can undercount; per-process lifetime counters are not exact command-window deltas.',
-                        'A sample is bounded to 256 processes and a 0.1 second cooperative budget; individual kernel calls cannot be interrupted.',
-                        'Unknown/unsupported counters remain null, not zero; Linux /proc IO is not implemented.'],
-                },
                 'reasons': {
                     'rss': None if self.peak_rss is not None else 'no complete RSS snapshot of the live command tree',
                     'cpu': None if self.cpu else 'no CPU snapshot of the live command tree',
@@ -391,12 +230,6 @@ def run_command(argv, cwd, env, log_path, timeout, sample_interval=1.0):
         'exit_code': None, 'elapsed_seconds': None, 'timed_out': False,
         'started_utc': None, 'error': None, 'log_path': str(log_path),
         'resources': empty_sampler.result(), 'cleanup': cleanup,
-        'host_memory': {
-            'scope': 'whole-host systemwide endpoint snapshots; not causal attribution to this command and not peaks',
-            'interpretation': 'memory_pressure -Q reports a free-percentage proxy; pressure_level reports the separate kernel systemwide level',
-            'timing': 'before spawn and after wait/sampler join, outside command elapsed_seconds',
-            'before': None, 'after': None,
-        },
         'overhead_seconds': {'setup': None, 'sampler_join': 0.0, 'after_wait': 0.0},
     }
     process = sampler = None
@@ -405,7 +238,6 @@ def run_command(argv, cwd, env, log_path, timeout, sample_interval=1.0):
         with _private_file(log_path) as log:
             log.write(('[benchmark command] ' + json.dumps(argv, ensure_ascii=False) + '\n').encode('utf-8'))
             log.flush()
-            result['host_memory']['before'] = _safe_host_memory_snapshot()
             result['started_utc'] = datetime.now(timezone.utc).isoformat()
             started = time.perf_counter()
             result['overhead_seconds']['setup'] = started - entered
@@ -448,8 +280,6 @@ def run_command(argv, cwd, env, log_path, timeout, sample_interval=1.0):
                     sampler._error('sampler did not finish before the bounded join')
             result['overhead_seconds']['sampler_join'] = time.perf_counter() - joined_at
             result['resources'] = sampler.result()
-        if result['host_memory']['before'] is not None:
-            result['host_memory']['after'] = _safe_host_memory_snapshot()
         if waited_at is not None:
             result['overhead_seconds']['after_wait'] = time.perf_counter() - waited_at
     return result

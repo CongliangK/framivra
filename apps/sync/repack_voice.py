@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 EXIT_MISSING_DEP = 3  # 依赖缺失专用退出码（与 argparse 参数错=2、运行期报错=1 区分；A4）
 
@@ -37,7 +38,6 @@ try:
 except ImportError:   # 不让 --help 失败；main() 入口统一给中文指引后退出（A4）
     np = None
 
-FPS = 30
 TAIL_MS = 20  # 句尾保护余量（TTS 惯例同款）
 
 
@@ -105,6 +105,9 @@ def main():
     only = set(args.windows)
 
     tl = json.load(open(TL))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from vtx.pipeline.constraints import parse_fps, frame_sample
+    fps = float(parse_fps(tl['project']['fps']))
     vtrack = next(tr for tr in tl["audio_tracks"] if tr["name"] == "voice")
     by_src = {}
     for e in vtrack["events"]:
@@ -126,15 +129,15 @@ def main():
             continue
         evs.sort(key=lambda e: e.get("src_in", 0))
         chain_f = max(e.get("src_in", 0) + (e["out"] - e["in"]) for e in evs)
-        target = int(round((chain_f / FPS + TAIL_MS / 1000) * 48000))
+        target = frame_sample(chain_f, fps) + TAIL_MS * 48
 
         x = load_wav(take)
         if len(evs) > 1:  # 复用源：第一片窗长处谷切
             cut_f = evs[0].get("src_in", 0) + (evs[0]["out"] - evs[0]["in"])
-            cut_s, ok = find_valley(x, cut_f / FPS)
+            cut_s, ok = find_valley(x, cut_f / fps)
             cut = int(cut_s * 48000)
             x = np.concatenate([x[:cut], x[cut:]])  # 谷切仅定界，两段顺序拼接
-            note = f"谷切@{cut_s:.2f}s（{'谷底-45dB 以下，安全' if ok else '⚠ 无明显静音谷，回退硬切 @%.2fs，请人工复核第一片结尾' % (cut_f / FPS)}）"
+            note = f"谷切@{cut_s:.2f}s（{'谷底-45dB 以下，安全' if ok else '⚠ 无明显静音谷，回退硬切 @%.2fs，请人工复核第一片结尾' % (cut_f / fps)}）"
         else:
             note = ""
         if len(x) > target:  # 超链长：保链长截断（对窗体检应已拦）

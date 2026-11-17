@@ -1,29 +1,7 @@
-"""B02 / issue #26 / F-04 / #4：fps/分辨率约束三面一致性（2026-10-13）。
+"""Common frame-rate contract across runtime, schema and preview.
 
-三面与单一来源：
-  - 单一取值点 vtx/pipeline/constraints.py：ALLOWED_FPS=(30,)（D24 换基，全管线固定
-    30fps 精确，≠29.97；NTSC 23.976/29.97/59.94、PAL 25/50、电影 24、高帧率
-    60 一律拒绝）、ALLOWED_SIZES=((1920,1080),)、AUDIO_SAMPLE_RATE=48000
-    （30fps → 每帧整 1600 采样，atrim 采样网格不漂移）；
-  - 结构权威 timeline.schema.json：project.fps enum [30] / width,height const
-    ——代码允许集的静态镜像，本测试解析比对防漂移；
-  - 机制权威 vtx/pipeline/infra.py Ctx 前置门：经 fps_error() 判定（数值等值 30.0
-    归一 int 30）；分辨率门有意不设在 infra（降采样渲染测试夹具依赖，见
-    constraints.py 模块头），由 schema/preview 两面把门；
-  - 预览权威 vtx/preview.html：内嵌 CONSTRAINTS 镜像（唯一同步抄写点）+
-    validate() 据此判 fps 与分辨率 + SAMPLE 示例用允许值（24fps 时代示例
-    与 ||24 缺省回退均为本单清除标的）。
-
-边界矩阵是契约快照：将来扩 fps 白名单须同步改 constraints/schema/preview
-三面与本文件 EXPECTED_ALLOWED——这正是 drift-guard 的用意。
-
-文件合并（2026-10-13 工单 B02 对抗+测试合并）：原 tests/test_constraints.py
-（17 例，同单重叠文件）已并入本文件为语义超集后删除——生产代码注释
-（constraints.py / infra.py / timeline.schema.json $comment）均指向本文件名，
-故本文件为存续侧。并入的独有覆盖：schema/preview 锚点互指、validate() 真在
-消费镜像、infra.fps_error 接线同一性、Ctx 级类型错值拒绝与 NTSC 文案、
-分辨率三面矩阵、可选 jsonschema 真校验器交叉验证、极值/类型边界扩面
-（0/-30/1/120/48000/29.972 等「整除 48000 陷阱」与 "30"/bool/None 类型错值）。
+Extends the B02 drift guard to integer/NTSC rates and absolute sample endpoints.
+Resolution remains 1080p in schema/preview; Ctx permits small render fixtures.
 """
 import json, re, sys, tempfile, unittest
 from pathlib import Path
@@ -43,14 +21,15 @@ except ImportError:     # 跑整条时间线；环境无则跳过，不作为门
     jsonschema = None
 
 # B02 边界矩阵：允许集=仅 30（数值等值 30.0 另测）。覆盖 NTSC/PAL/电影/高帧率。
-BOUNDARY_FPS = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]
-EXPECTED_ALLOWED = {30}
+BOUNDARY_FPS = [24, 25, 30, 48, 50, 60, 100, 120, 23.976, 29.97, 47.952, 59.94, 119.88,
+                "24000/1001", "30000/1001", "48000/1001", "60000/1001", "120000/1001"]
+EXPECTED_ALLOWED = set(BOUNDARY_FPS)
 
 # 极值/类型边界（并入自 test_constraints.py）：整除陷阱（1/120/48000 恰整除
 # 48000——旧 infra 门会放行的值）、近 30 值（29.972/29.97003）、零/负、非整数
 # float、类型错值（"30"/bool/None/list）。三面同判一律拒绝；30.0 为唯一放行
 # 的数值等值边界（在列表内明示）。
-EXTRA_FPS = [30.0, 0, -30, 1, 120, 48000, 29.972, 29.97003, 30.5,
+EXTRA_FPS = [30.0, 0, -30, 1, 240, 48000, 29.972, 29.97003, 30.5,
              "30", True, False, None, [30], float("nan"), float("inf")]
 
 # 分辨率三面矩阵（并入自 test_constraints.py，并并入本文件原 code 面独有值）。
@@ -128,8 +107,9 @@ def _write_tl(root, fps, width=1920, height=1080):
 class AllowedSetContract(unittest.TestCase):
     """明示允许集（单一来源现值快照）。"""
 
+    # Keep historical method IDs consumed by the unchanged regression inventory.
     def test_allowed_fps_is_30_only(self):
-        self.assertEqual(tuple(ALLOWED_FPS), (30,))
+        self.assertEqual(set(ALLOWED_FPS), EXPECTED_ALLOWED)
 
     def test_allowed_sizes_is_1080p_only(self):
         self.assertEqual(tuple(ALLOWED_SIZES), ((1920, 1080),))
@@ -139,9 +119,21 @@ class AllowedSetContract(unittest.TestCase):
         self.assertEqual(AUDIO_SAMPLE_RATE, 48000)
 
     def test_allowed_fps_divides_sample_rate(self):
+        """Historical inventory ID; now checks exact sample-endpoint mapping."""
+        from fractions import Fraction
+        from vtx.pipeline.constraints import parse_fps, frame_sample, fps_expression
         for f in ALLOWED_FPS:
-            self.assertEqual(AUDIO_SAMPLE_RATE % f, 0,
-                             f"fps={f} 须整除 {AUDIO_SAMPLE_RATE}（atrim 网格不漂移）")
+            rate = parse_fps(f)
+            self.assertEqual(parse_fps(fps_expression(f)), rate)
+            self.assertEqual(parse_fps(float(rate)), rate)
+            for frame in (0, 1, 2, 3, 1001, 10800000):
+                exact = frame * AUDIO_SAMPLE_RATE / rate
+                self.assertLessEqual(abs(frame_sample(frame, f) - exact), Fraction(1, 2))
+            self.assertEqual(sum(frame_sample(i + 1, f) - frame_sample(i, f)
+                                 for i in range(1001)), frame_sample(1001, f))
+        self.assertEqual(parse_fps(29.97), Fraction(30000, 1001))
+        self.assertEqual(frame_sample(1, 59.94), 801)
+        self.assertEqual(frame_sample(2, 59.94), 1602)
 
     def test_size_error_matrix(self):
         self.assertIsNone(size_error(1920, 1080))
@@ -221,7 +213,7 @@ class PreviewFace(unittest.TestCase):
     def test_no_stale_24fps_fallback(self):
         self.assertIsNone(re.search(r"\|\|\s*24\b", PREVIEW_HTML),
                           "B02 症状回归：不得残留 ||24 缺省回退（统一 CONSTRAINTS.fps[0]）")
-        self.assertIn("||CONSTRAINTS.fps[0]", PREVIEW_HTML)
+        self.assertIn("projectFps(TL.project?.fps)", PREVIEW_HTML)
 
     def test_boundary_matrix(self):
         vals = _preview_constraints()["fps"]
@@ -274,14 +266,16 @@ class InfraFace(unittest.TestCase):
             with tempfile.TemporaryDirectory() as d:
                 if fps_error(f) is None:
                     c = Ctx(_write_tl(d, f))    # 放行面不得抛
-                    self.assertEqual(c.fps, int(f))
+                    from vtx.pipeline.constraints import parse_fps
+                    self.assertEqual(c.fps, float(parse_fps(f)))
+                    self.assertEqual(c.frame_rate, parse_fps(f))
                 else:
                     with self.assertRaises(ValueError, msg=f"fps={f} 应被 Ctx 拒绝"):
                         Ctx(_write_tl(d, f))
 
     def test_reject_message_names_fixed_timebase(self):
         from vtx.pipeline.infra import Ctx
-        for f in (24, 29.97, 23.976, 60):
+        for f in (0, 240, "24", "30000/1000"):
             with tempfile.TemporaryDirectory() as d:
                 with self.assertRaises(ValueError) as cm:
                     Ctx(_write_tl(d, f))
@@ -294,8 +288,8 @@ class InfraFace(unittest.TestCase):
         from vtx.pipeline.infra import Ctx
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(ValueError) as cm:
-                Ctx(_write_tl(d, 29.97))
-            self.assertIn("非整数", str(cm.exception))
+                Ctx(_write_tl(d, 29.972))
+            self.assertIn("N/1001", str(cm.exception))
 
     def test_no_resolution_gate_by_design(self):
         """infra 面有意不设分辨率门（降采样渲染测试夹具依赖，constraints.py

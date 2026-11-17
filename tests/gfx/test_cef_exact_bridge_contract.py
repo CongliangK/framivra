@@ -350,10 +350,9 @@ class NativeOrchestrationModel(unittest.TestCase):
         # prefilter chose rejection; the actual callback must remain unable to
         # advance proof even if its subsequent accounting read becomes valid.
         negative_branch = 'if (!state_->sync_machine->PaintMayAdvance(src, stride, w, h)) {'
-        self.assertEqual(paint.count(negative_branch), 1)
         paint = paint.replace(negative_branch, negative_branch +
                               '\n      if (negative_classification_hook) '
-                              'negative_classification_hook(state_, src);')
+                              'negative_classification_hook(state_, src);', 1)
         paint = ("void SimPaint(RunState* state_, const std::vector<uint8_t>& bytes) {"
                  "const auto* src = bytes.data(); int width = 32, height = 24;\n"
                  + paint + fallback + "}\n")

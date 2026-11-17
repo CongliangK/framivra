@@ -31,7 +31,6 @@ __vtx_render 加速特性（方案 v2 阶段 2，详见「渲染主体」前注�
 import base64
 from ..runtime import fstxn, file_clone
 from itertools import groupby
-from collections import deque
 import hashlib
 from pathlib import Path
 import json
@@ -189,6 +188,11 @@ class WSConn:
         return remaining
 
     def _io(self, operation, *args):
+        # close may run on another worker during a shared-browser heal.
+        with self._io_guard:
+            return self._guarded_io(operation, *args)
+
+    def _guarded_io(self, operation, *args):
         remaining = self._remaining()
         if remaining is None:
             return operation(*args)
@@ -202,6 +206,7 @@ class WSConn:
             self.sock.settimeout(previous)
 
     def __init__(self, port, path, timeout=20):
+        self._io_guard = threading.Lock()
         self._rbuf = bytearray()   # 握手响应同包尾随的帧字节（罕见），交 recv 消费
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
         self.sock.settimeout(timeout)
@@ -307,11 +312,23 @@ class WSConn:
             if fin:
                 return op, bytes(frag)
 
-    def close(self):
+    def interrupt(self):
+        # Keep the fd open until its receiving worker settles. On macOS a close
+        # racing the socket's readiness wait can otherwise strand that wait.
         try:
-            self.sock.close()
+            self.sock.shutdown(socket.SHUT_RDWR)
         except OSError:
-            pass
+            pass  # Already disconnected/closed is harmless.
+
+    def close(self):
+        self.interrupt()
+        # A healed pool can be retired while another worker still receives.
+        # Wait only for its awakened I/O, never for a callback or browser lock.
+        with self._io_guard:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
 
 
 class Tab:
@@ -329,6 +346,10 @@ class Tab:
         except BaseException:
             self.ws.close()   # 半初始化 Tab 显式关 fd（RECP-20260916-002）
             raise
+
+    def interrupt(self):
+        """Wake the owned worker without closing its readiness-wait fd."""
+        self.ws.interrupt()
 
     def close(self):
         """释放本 tab 的 CDP socket（对端已死时为无害 no-op，close 内吞 OSError）。"""
@@ -561,14 +582,15 @@ class Browser:
         # issue #103：监管态收尾统一走组停机（SIGTERM 主进程 → 宽限 → 组残员
         # killpg → 删账本 → 关管道收守卫 → tmp_run rmtree 运行目录含 Profile）。
         if self.group is not None:
-            group, self.group = self.group, None
-            group.stop()
+            # Keep ownership if stop is interrupted or fails; cleanup may retry.
+            self.group.stop()
+            self.group = None
             self.proc = None
             self.user_data_dir = None
             return
         if self.windows_job is not None:
-            job, self.windows_job = self.windows_job, None
-            job.close()
+            self.windows_job.close()
+            self.windows_job = None
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:
@@ -864,6 +886,10 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         browser.stop()
         raise
     pool = []
+    owned_tabs = []             # Only sessions not yet closed; protected by browser.lock.
+    stopping = threading.Event()
+    threads = []
+    settled = [threading.Event() for _ in range(tabs_n)]
     t0 = time.monotonic()
     failed = []
     transparent = None
@@ -874,17 +900,6 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     static_spans_n = 0          # 特性 2：生效跨度数（stats 打 span×K）
     static_copied_n = 0         # 特性 2：字节复制成员帧数（write 成功才计数，B5 口径）
     deferred_spans = []         # [(head, [members])]：头帧本次渲染落盘后复制
-    claim_lock = threading.Lock()
-    stopped = threading.Event()
-    fatal = []                  # first escaping exception and its original traceback
-    worker_done = [threading.Event() for _ in range(tabs_n)]
-    threads = []
-
-    def stop_claims(error=None):
-        with claim_lock:
-            if error is not None and not fatal:
-                fatal.append((error, error.__traceback__))
-            stopped.set()
 
     def note(msg):
         """加速特性告警：progress 缺席（vtx 现行接法）也必须可见——落 stderr。"""
@@ -969,7 +984,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         except Exception:
             return False
 
-    def render_worker(idx):
+    def worker(idx):
         nonlocal pool, use_override
         # 观测累积全部线程本地（每 worker 独立 dict/list，收尾写 per_tab 自己的槽位，
         # 运行期无共享写免锁），join 后 render_page 单线程合并。
@@ -984,22 +999,28 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             try:
                 new_pool = None
                 with browser.lock:
-                    if stopped.is_set():
+                    if stopping.is_set():
                         return
                     if browser.generation == gen[0]:
                         browser.hard_restart()
+                        # The old browser has stopped: release its sockets now,
+                        # rather than retain every superseded pool for a long page.
+                        for tab in owned_tabs[:]:
+                            tab.close()
+                            owned_tabs.remove(tab)
+                        if stopping.is_set():
+                            return
                         new_pool = browser.open_tabs()
+                        owned_tabs.extend(new_pool)
                         # override 重应用须在锁内、池发布前完成（2026-09-11 修复）：
                         # 重启后的新池若不带 override，透明页会静默渲成白底不透明帧。
                         # 锁内 CDP 调用有 Tab.call 硬超时兜底。
                         if new_pool is not None and use_override and not apply_override(new_pool):
                             use_override = False  # 重应用失败 → 本页回落双截
-                if new_pool is not None:
-                    pool = new_pool
+                        pool = new_pool
                     gen[0] = browser.generation
             except Exception:
-                if not stopped.is_set():
-                    time.sleep(0.5)
+                stopping.wait(0.5)
 
         def shot_with_heal(i, navfree=False):
             """渲一帧并落盘（含自愈重试 ≤2）。B5 语义：路径计数移到 write 成功
@@ -1007,13 +1028,13 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             抛错时本帧自动转回导航路径（不耗重试预算，页级一次性告警）。"""
             nf = navfree
             retries = 0
-            while True:
-                if stopped.is_set():
-                    return False
+            while not stopping.is_set():
                 try:
                     if idx >= len(pool):
                         raise ConnectionError("tab lost after browser restart")
                     png, path, timing = do_frame(pool[idx], i, navfree=nf)
+                    if stopping.is_set():
+                        return False
                     t0 = time.monotonic()
                     _atomic_write_bytes(os.path.join(outdir, f"f{i:04d}.png"), png, root=ctx.root if ctx is not None else None)
                     my_times["write"].append(time.monotonic() - t0)
@@ -1025,7 +1046,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                     gen[0] = browser.generation
                     return True
                 except Exception:
-                    if stopped.is_set():
+                    if stopping.is_set():
                         return False
                     if nf:
                         # navfree 失败 → 本帧转导航路径；绝不静默（页级告警一次）
@@ -1043,38 +1064,39 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                         return False
                     heal()
 
-        # Claim only after the previous frame (including retries/write) finishes.
-        # Each tab remains sequential; idle tabs can consume another frame rather
-        # than stop at a fixed stride while other tabs still have queued work.
-        i = claim_frame()
         # —— navfree 每 tab 一次性导航（特性 1）：之后帧态全由页内 __vtx_render 置位 ——
         nf_tab = navfree_on
-        if nf_tab and i is not None:
+        if nf_tab and queues[idx]:
             try:
                 if idx >= len(pool):
                     raise ConnectionError("tab lost after browser restart")
                 t0 = time.monotonic()
-                pool[idx].navigate(f"{base_uri}?f={i}")
+                pool[idx].navigate(f"{base_uri}?f={queues[idx][0]}")
                 my_times["nav"].append(time.monotonic() - t0)
             except Exception:
                 nf_tab = False    # 首导航失败 → 本 tab 逐帧导航（各帧自会重试/自愈）
-        while i is not None:
+        for i in queues[idx]:
+            if stopping.is_set():
+                break
             shot_with_heal(i, navfree=nf_tab)
-            i = claim_frame()
         # 收尾：写本 worker 的观测槽位（每槽只被所属线程写一次，无竞争）
         per_tab[idx] = (my_paths, my_times)
 
-    def worker(idx):
+    def run_worker(idx):
         try:
-            if not stopped.is_set():
-                render_worker(idx)
-        except BaseException as error:
-            stop_claims(error)
+            # A native thread may bootstrap after an interrupted start returns.
+            # Such a late target must not touch browser state or scratch output.
+            if stopping.is_set():
+                return
+            worker(idx)
         finally:
-            worker_done[idx].set()
+            # An interrupted Thread.join can mark a still-running thread stopped
+            # on some Python versions. This event records actual target exit.
+            settled[idx].set()
 
     try:
         pool = browser.open_tabs()
+        owned_tabs.extend(pool)
         pool[0].navigate(f"{base_uri}?f={work[0]}")
         time.sleep(0.15)
         # Canvas 导出通道（PR#1）先于透明检测：opt-in 页直出画布 PNG（自带精确 alpha），
@@ -1118,13 +1140,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 note(f"跨度头帧 {head_path} 不可读（{e}），改渲染成员帧")
                 work.extend(members)
         work.sort()
-        # Build claims only after static pruning/copy-failure reinsertion.
-        # The lock protects ownership, never navigation, retries or disk I/O.
-        pending = deque(work)
-
-        def claim_frame():
-            with claim_lock:
-                return pending.popleft() if pending and not stopped.is_set() else None
+        queues = [work[k::tabs_n] for k in range(tabs_n)]
         # —— 特性 1 nav-free 资格判定：VTX_GFX_NAVFREE=1 且页面有 __vtx_render。
         # 默认 0：env 关闭时零额外 eval，页面行为与旧路径逐字节一致。——
         if os.environ.get("VTX_GFX_NAVFREE", "0") == "1":
@@ -1166,46 +1182,49 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             transparent = True
         if work:
             # 缩减后 work 可能清空（缺失帧全是已缓存头帧的跨度成员）→ 零线程收尾
-            threads = [threading.Thread(target=worker, args=(k,)) for k in range(tabs_n)]
+            threads = [threading.Thread(target=run_worker, args=(k,)) for k in range(tabs_n)]
             for t in threads:
-                if stopped.is_set():
-                    break
                 t.start()
-            for idx, t in enumerate(threads):
-                if t.ident is not None:
-                    worker_done[idx].wait()
-    except BaseException as error:
-        stop_claims(error)
+            for t in threads:
+                t.join()
     finally:
-        stop_claims()
-        # Target-owned events, not Thread.is_alive alone: an interrupted join
-        # can mark a still-running thread stopped on supported CPython versions.
-        # Never close the browser while an admitted worker can still heal it.
-        for idx, t in enumerate(threads):
-            if t.ident is None:
-                continue
-            while not worker_done[idx].is_set():
+        # Cancel before taking the restart lock: an in-flight heal may finish,
+        # but no waiting worker may start another browser after teardown.
+        stopping.set()
+        interrupted = None
+
+        def finish_cleanup(operation):
+            nonlocal interrupted
+            while True:
                 try:
-                    worker_done[idx].wait()
-                except BaseException as error:
-                    stop_claims(error)
-            while t.is_alive():
-                try:
-                    t.join()
-                except BaseException as error:
-                    stop_claims(error)
-        for t in pool:
-            try:
-                t.close()
-            except BaseException as error:
-                stop_claims(error)
+                    return operation()
+                except KeyboardInterrupt as exc:
+                    if interrupted is None:
+                        interrupted = exc
+
+        finish_cleanup(browser.lock.acquire)
         try:
-            browser.stop()
-        except BaseException as error:
-            stop_claims(error)
-    if fatal:
-        error, traceback = fatal[0]
-        raise error.with_traceback(traceback)
+            try:
+                for t in owned_tabs:
+                    finish_cleanup(t.interrupt)
+            finally:
+                finish_cleanup(browser.stop)
+        finally:
+            browser.lock.release()
+            try:
+                # Shutdown wakes CDP I/O while preserving its fd until the worker
+                # exits. Drain CPU/write/callback work before removing scratch.
+                for idx, thread in enumerate(threads):
+                    if thread.ident is None:
+                        # A late target sees stopping and remains inert.
+                        continue
+                    finish_cleanup(settled[idx].wait)
+                    finish_cleanup(thread.join)
+            finally:
+                for t in owned_tabs:
+                    finish_cleanup(t.close)
+        if interrupted is not None and sys.exc_info()[0] is None:
+            raise interrupted
     dt = (time.monotonic() - t0) * 1000
     # —— 特性 2 延后复制：头帧已由本次渲染落盘，缺失成员字节复制头帧文件 ——
     for head, members in deferred_spans:

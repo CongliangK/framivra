@@ -2,46 +2,52 @@
 
 ## 项目与入口
 
-- B 站视频制作工具箱：素材与 timeline.json → 帧精确视频、混音、QC 与缓存；[内核](<vtx/>)永不可关。
-- [apps](<apps/>)产出素材或辅助结果；[plugins](<plugins/>)扩展时间线管线；启用后不得忽略依赖或失败。
-- [DSH 侧栏](<dsh-sidebar/README.md>)独立于 Python 内核发行，提供预览、引用、显式剪辑与工程配置；配置仍走内核事务，不解除帧率/预览限制。
-- 制作从[技能](<docs/skill/SKILL.md>)进入；科技口播与开发范本见[工作流](<templates/README.md>)；组件查[catalog](<docs/catalog.md>)。
-- 开发先读[架构契约](<docs/ARCHITECTURE.md>)与[DEV](<docs/DEV.md>)；时间线 API/写事务见[接口边界](<docs/reference/timeline-api.md>)。
-- 环境按[README](<README.md#依赖矩阵>)准备：Python ≥3.9，媒体工具按路径配置；模型默认关闭，依赖声明为空不等于仅需标准库。
+- timeline.json/素材→帧精确视频/混音/QC/缓存；[内核](<vtx/>)永不可关
+- [应用](<apps/>)产素材/辅助结果；[插件](<plugins/>)扩时间线，启用不忽略依赖/失败。
+- [侧栏](<dsh-sidebar/README.md>)独立发行：完整合成非单页，预览共用整数播放头、成片联动非合成证书；生效插件在身份/钩子前拒绝；HTML信任≠沙箱；写态走内核事务，帧率/预览限制不变。
+- [空间管理](<docs/reference/storage-api.md>)删除权归内核；清理须独立确认停写，不向模型开放。
+- macOS授权见接口；目录fd≠proc-fd Path；单帧须全输入前后复核；环境文件批查仅复用本次目录前缀并前后核验，仍重枚举/哈希/查链接；Linux缺RECORD只认元数据所属RPM清单。
+- 制作读[技能](<docs/skill/SKILL.md>)；范本[工作流](<templates/README.md>)、组件[目录](<docs/catalog.md>)。
+- 开发读[架构](<docs/ARCHITECTURE.md>)/[开发](<docs/DEV.md>)；API/事务见[接口](<docs/reference/timeline-api.md>)。
+- 环境见[依赖](<README.md#依赖矩阵>)：Python≥3.9，工具按路径配置；模型默认关；空依赖≠仅需标准库。
+- [安装](<docs/guides/installation.md>)：独立venv/固定身份缓存/内核锁，验收后ready；Win主进程不提权，厂商包UAC；DSH显式连接；登记≠验收。
+- 安装验收：BGM发现不可依赖POSIX，目录发布对部分Windows绝对路径兼容混合斜杠、不改运行数据；GPU用原生锁；Windows并发内存门须实测且探测失败时拒派；hue素材先规范RGB色域，不松QC。
+- BGM v2 轨 `$ref` 装载/merge 仅接受工程内相对路径：Windows 根相对、带盘符及设备路径先拒绝，仍须 realpath 越界检查；POSIX 反斜杠为普通文件名字符。插件签名与 asset_dependencies 共用标准库筛选及静态路径检查，仅展开 v2 直接纯非空字符串引用；以工程词法父目录为基准拒绝越界及非普通文件，按 loader 先 normpath 后 realpath 取文件，缺失记 MISSING；沿用 loader 根目录 base 的严格前缀限制；不证明原始文本逐组件不越界，检查与打开非原子，不能防 TOCTOU 或工程内硬链接指向外部内容。
+- 侧栏沿用[宿主主题](<dsh-sidebar/DESIGN.md>)，切换不重建输入或触发写态；保留黑舞台/轨道语义色，失效不留可用成功提示。
 
 ## 常用命令
 
-- 仓根离线体检：`env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor`；联网形态会 fetch 写入。
-- 链接修复预演：`python3 vt.py --fix-links --dry`；去掉 `--dry` 前核对目标与权限。
-- 源码渲染：`python3 vtx/vtx.py -t <timeline.json> all`（写缓存与产物）；前置条件见[交付链](<docs/skill/references/edit.md#正式交付链r1-r4-共用>)。
-- 全仓测试：`bash scripts/run_all_tests.sh`；依赖与局部入口见[贡献指南](<CONTRIBUTING.md#测试入口>)。
-- 文档改动必跑：`bash scripts/doc_gates.sh`；如实报告 PASS/FAIL/SKIP/UNRUN，冒烟与语法检查不等于业务或全量验证。
+- 离线体检：`env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor`；联网会fetch 写入。
+- 链接预演：`python3 vt.py --fix-links --dry`；实改前核对目标/权限。
+- 渲染：`python3 vtx/vtx.py -t <timeline.json> all`（写缓存/产物）；前置见[交付链](<docs/skill/references/edit.md>)。
+- 测试：`bash scripts/run_all_tests.sh`；局部见[贡献指南](<CONTRIBUTING.md#测试入口>)。
+- 文档必跑：`bash scripts/doc_gates.sh`；报告 PASS/FAIL/SKIP/UNRUN；冒烟、语法检查不等于业务或全量验证。
 
 ## 写态红线
 
-- CI 包括工作流、门禁、测试选择/分片、通过判据与检查设置；修改前须充分确认必要性、影响、验证/回滚方案，说明并取得用户明确批准，仅在批准范围内调整。
-- 未获批准不动 CI；不得删减/跳过测试、放宽门禁或绕过必需检查来修失败、提速或刷绿，先修业务根因。
-- 视频项目与素材库放仓外；项目 cache/out 是运行产物，不作源件维护；示例默认零写态，写操作须警示。
-- 不手改 catalog 生成区；manifest/registry 改动须[重注目录并过文档门](<docs/DOC-CHARTER.md#单一事实来源>)。
-- [VERSION](<VERSION>)、[pyproject](<pyproject.toml>)、[内核版本](<vtx/__init__.py>)改一必三；发布遵循[冻结规则](<docs/releases.md>)。
-- 技能与工作流文档修改前须公告影响并经[消费面评审](<docs/DOC-CHARTER.md#消费面>)，修改后核对真实消费入口。
-- 历史退役先审计引用与恢复路径；不得篡改冻结证据或删除仍在使用的契约、证据、许可证及未解决问题。
+- CI（工作流、门禁、选测/分片、判据、检查设置）改前说明必要性/影响及验证/回滚，获用户明确批准后限范围修改。
+- 未授权不动CI；禁删减/跳测、松门禁或绕必需检查刷绿，先修根因。
+- 视频项目/素材放仓外；cache/out为产物非源件；示例默认零写态，写操作警示。
+- 不手改 catalog 生成区；manifest/registry 改动须[重注并过门](<docs/DOC-CHARTER.md#单一事实来源>)。
+- [VERSION](<VERSION>)、[pyproject](<pyproject.toml>)、[内核版本](<vtx/__init__.py>)改一必三；遵循[冻结规则](<docs/releases.md>)。
+- 技能/工作流改前公告并经[消费面评审](<docs/DOC-CHARTER.md#消费面>)，改后核对入口。
+- 退役先审计引用/恢复路径；不篡改冻结证据，不删活契约、证据、许可或问题。
 
 ## 编辑纪律
 
-- 每次代码变更必须在同一 PR 同步更新本指南，反映当前结构、入口或约束。
-- 本指南只留跨目录常驻要点，每点独占一行；不写流水账，不建平行指南或本地叠加层。
-- 一事实一家，细节链接已有权威文档；目录调整须修复活引用，不留旧入口壳。
-- 实现后独立复审并提交维护者评审；契约/API 变更须维护方同意与独立对抗审查。
-- [文档规则](<docs/DOC-CHARTER.md>)管职责与写入权；预算只见[快照](<scripts/doc_budget.snapshot.json>)，现文字数另测，不改门禁/快照掩盖超限。
+- 代码 PR 须同步本指南，记录结构、入口或跨目录约束；QC 采样须统一矩阵与范围，变更后重新验证证书。
+- 仅留跨目录常驻要点，一点一行；无流水账/平行指南。
+- PR 只提交必要业务改动及少量高价值回归，优先扩展已有测试；避免重复 mock、机械源码字符串断言或为数量/覆盖率堆测试。
+- 一次性复现/诊断脚本、截图、原始日志及大体积验收产物默认放仓外，PR 用简短结果与引用说明；仅有明确长期消费者、且经维护者同意的最小夹具或证据可入仓，不借精简删除有效回归、冻结证据或许可证。
+- 一事实一家；迁移修活引用、链权威文档，不留旧壳。
+- 实现后独立复审并交维护者；契约/API 变更须维护方同意及独立对抗审查。
+- 遵守[文档规则](<docs/DOC-CHARTER.md>)；预算数字仅由[预算快照](<scripts/doc_budget.snapshot.json>)维护，调整须维护者明确授权并保留真实度量；现文另测，不改门禁或伪造快照掩盖超限。
 
 ## 基线与性能
 
-- 唯一主基线为 30秒/900帧/1080p30 SVG；禁用退役12秒基线，机制探针不能代替主片。
-- 准备/核验仅用 `scripts/demo.py prepare/verify`；portable-v2 用公开锁定字体和标准库音频，旧输入不混用，获取与恢复见[Demo](<templates/demo-timeline-svg/README.md#主性能基线>)。
-- 固定输入、同质量/环境/后端/配置分冷暖测全链；留身份、哈希与证据，未跑写 UNRUN，小探针不冒充整体提速。
-- 正式/区间视频拼接共用内核帧端点生成的 concat 时长；不得以容器推断时长或仅总帧数通过替代帧时钟正确性。
-- [PNG 批量校验](<vtx/render/gfx_cli.py>)每调用最多两线程，外层页并发另计；并行不得省略完整字节校验或沿用旧摘要。
-- [CEF 帧证明](<experiments/gfx_cef_worker/README.md>)仅由 owned 快照与绘制后 JS 围栏推进；未围栏的回调拒收路径只能计账，不得因重读字节变成有效而推进 signed 阶段或写输出；固定启动策略变更须重编并绑定 worker 二进制身份。
-- [CDP 帧队列](<vtx/render/gfx_render.py>)保留既有工作项排序和重复语义；单标签完成当前项的校验、重试和原子写后才领下一项，不改变标签数、就绪门或失败传播。
-- [性能资源观察](<scripts/gfx/_bench_runtime.py>)的进程 IO 是采样下界，主机压力/swap端点非进程归因或峰值；不可用记未知，不能以零冒充测量。
+- 唯一主基线：30秒/900帧/1080p30 SVG；禁用退役12秒基线，探针不替主片。
+- 准备/核验仅用 `scripts/demo.py prepare/verify`；portable-v2锁字体/标准库音频，禁混旧输入，见[Demo](<templates/demo-timeline-svg/README.md>)。
+- 同输入/质量/环境/后端/配置分冷暖测全链；留身份/哈希/证据；未测UNRUN，探针非整体提速；SVG有界调度/串行回退见[缓存](<docs/cache-provenance.md#产物身份>)。
+- [事件](<docs/reference/execution-events.md>)跨阶段回执绑定实际嵌套任务，区间不相加冒充墙钟。
+- 帧率由[constraints](<vtx/pipeline/constraints.py>)统一；FFmpeg用精确时基，音频按绝对帧端点取采样；正式/区间concat共用端点，不以容器或总帧数替代时钟判据。
+- [CEF 帧证明](<experiments/gfx_cef_worker/README.md>)的拒收/非推进回调只能计账，不得推进 signed 阶段、冻结候选或写输出；推进须 owned 快照及对应绘制后 JS 围栏，保留完整见证/字节 veto；修复须重编并绑定 worker 二进制身份。

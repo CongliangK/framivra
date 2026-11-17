@@ -223,7 +223,9 @@ def cmd_timeline(args, cfg):
     tl = snapshot["document"]
     op_id = "asr-" + uuid.uuid4().hex
     project = tl.get("project", {}) if isinstance(tl, dict) else {}
-    fps = int(project.get("fps", 30) or 30)
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from vtx.pipeline.constraints import parse_fps, fps_expression
+    fps = float(parse_fps(project.get("fps", 30)))
     duration = project.get("duration_frames")
     duration = int(duration) if duration is not None else None
     resp, words = _transcribe_words(args.input, args, cfg)
@@ -239,8 +241,8 @@ def cmd_timeline(args, cfg):
     if args.append and isinstance(tl.get("subtitles"), list):
         subs = sorted(tl["subtitles"] + subs, key=lambda s: s["in"])
         summary["n_lines"] = len(subs)
-    print("摘要：fps=%d duration=%s → 新字幕 %d 行 / %d 字 / 最快速率 %.1f 字/s / 最宽行 %d 字"
-          % (fps, duration, summary["n_lines"], summary["n_chars"],
+    print("摘要：fps=%s duration=%s → 新字幕 %d 行 / %d 字 / 最快速率 %.1f 字/s / 最宽行 %d 字"
+          % (fps_expression(fps), duration, summary["n_lines"], summary["n_chars"],
              summary["max_rate"], summary["max_width"]))
     for w in summary["warnings"]:
         print("⚠ %s" % w)

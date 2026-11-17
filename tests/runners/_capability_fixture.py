@@ -25,9 +25,13 @@ def create(project, ffmpeg, run):
     project = Path(project)
     project.mkdir(parents=False, exist_ok=False)
     (project / 'gfx').mkdir()
+    # hue rotates YUV chroma outside the RGB gamut. Normalize through the
+    # compositor's RGBA domain before encoding: otherwise its clipped RGB->Y
+    # differs from the original source Y and QC mistakes that for an overlay.
+    # Keep both hues and all temporal events; do not relax the QC thresholds.
     for name, hue, frequency in (('left', 25, 392), ('right', 155, 659)):
         run([ffmpeg, '-v', 'error', '-f', 'lavfi', '-i',
-             f'testsrc2=s=1920x1080:r=30:d=3,hue=h={hue}',
+             f'testsrc2=s=1920x1080:r=30:d=3,hue=h={hue},format=rgba,format=yuv420p',
              '-f', 'lavfi', '-i', f'sine=frequency={frequency}:sample_rate=48000:duration=3',
              '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
              '-c:a', 'aac', '-ac', '2', '-ar', '48000', '-shortest',

@@ -16,12 +16,9 @@ from .gfx_pack import PagePack, inspect_pack
 from ..runtime import fstxn
 
 
-def _bare_frame(c, clip, index, directory):
-    from .frame_source import png_source
+def _bare_bytes(c, source, index):
+    """Authenticate immutable PNG bytes; caller owns the full input boundaries."""
     from .png_artifact import read_png
-    source = png_source(c, clip)
-    if source.directory != directory:
-        raise GfxCacheError('PNG source does not match canonical page')
     source.require_ready(index, index + 1)
     facts, data = read_png(source.frame_path(index), root=c.root, width=c.w, height=c.h,
                          limit=c.w * c.h * 8 + 65536)
@@ -30,6 +27,15 @@ def _bare_frame(c, clip, index, directory):
                 else source.environment_check())
     if facts['sha256'] != expected[index]:
         raise GfxCacheError('PNG bytes changed after source authentication')
+    return data
+
+
+def _bare_frame(c, clip, index, directory):
+    from .frame_source import png_source
+    source = png_source(c, clip)
+    if source.directory != directory:
+        raise GfxCacheError('PNG source does not match canonical page')
+    data = _bare_bytes(c, source, index)
     verify_input_identity(c)
     if gfx_dir(c, clip) != directory:
         raise GfxCacheError('PNG inputs/backend changed during read')
@@ -43,8 +49,9 @@ def read_frame(c, clip, index):
     no dry shortcut, formal receipt write or SystemExit adapter is used. Only
     the current canonical pack is considered. If it is entirely absent, existing
     authenticated bare PNGs may supply bytes; corrupt/present packs never fall
-    back. Like the existing preview artifact reader, this API requires Linux
-    fd-anchored reads. Off mode is a hard refusal.
+    back. Like the existing preview artifact reader, this API requires Linux/macOS
+    directory-anchored reads. Native toolchain restrictions still apply; off mode
+    is a hard refusal.
     """
     if not policy_for(c).reuse_graphics:
         raise GfxCacheError('packed gfx reuse is disabled by cache.mode=off')

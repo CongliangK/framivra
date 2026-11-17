@@ -1,7 +1,8 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Icon } from './icons.mjs'
 import { ToolButton } from './icon-controls.mjs'
 import { safeFrame } from './viewport.mjs'
+import { projectClock, formatTimecode, parseTimecode } from './timecode.mjs'
 
 const h = React.createElement
 export const clipName = (data, fallback = '片段') => typeof data?.name === 'string' ? data.name : typeof data?.text === 'string' ? data.text : typeof data?.src === 'string' ? data.src : fallback
@@ -18,18 +19,57 @@ export function editingTarget(target) {
   return !!target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="combobox"]')
 }
 
-export function Transport({ frame, frameText, frameError, duration, onFrame, onText, onQuery }) {
+// Inspect exact core tokens; never coerce a rawJSON object through Number().
+const integerProjectFps = value => { const clock = projectClock(value); return clock?.den === 1 ? clock.num : undefined }
+
+/** Integer clocks only: a fractional second has no fixed integer frame offset. */
+export function secondsFrame(seconds, offset, fps = 30) {
+  fps = integerProjectFps(fps)
+  if (!Number.isSafeInteger(fps) || fps < 1) throw new Error('非整数帧率请直接使用全局整数帧定位。')
+  const canonical = value => typeof value === 'string' && /^(0|[1-9][0-9]*)$/.test(value) && value.length <= 16
+  if (!canonical(seconds) || !canonical(offset)) throw new Error(`请输入规范非负整数秒与秒内帧偏移（0–${fps - 1}）。`)
+  const value = BigInt(seconds) * BigInt(fps) + BigInt(offset)
+  if (BigInt(offset) >= BigInt(fps) || value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(`秒内偏移须为 0–${fps - 1}，换算结果须在安全整数范围内。`)
+  return Number(value)
+}
+
+export function Transport({ frame, frameText, frameError, duration, fps, onFrame, onText, onQuery }) {
+  const clock = projectClock(fps), integerFps = integerProjectFps(fps)
+  // Invalid timecode lives in canonical text as an explicitly noncanonical token.
+  // The parent's existing lexical gate synchronously suspends all frame references;
+  // deriving the display from that same text preserves corrections across renders.
+  const invalidTimecode = typeof frameText === 'string' && frameText.startsWith('timecode:')
+  const canonicalFrame = typeof frameText === 'string' && /^(0|[1-9][0-9]*)$/.test(frameText) && frameText.length <= 16 && safeFrame(Number(frameText)) ? Number(frameText) : undefined
+  const timecode = invalidTimecode ? frameText.slice(9) : frameText === '' ? '' : formatTimecode(canonicalFrame, fps) ?? ''
+  const changeTimecode = text => {
+    const value = parseTimecode(text, fps)
+    onText(text === '' ? '' : value === null ? `timecode:${text}` : String(value))
+  }
+  const [seconds, setSeconds] = useState('0'), [offset, setOffset] = useState('0'), [timeError, setTimeError] = useState('')
+  let converted
+  try { if (integerFps !== undefined) converted = secondsFrame(seconds, offset, integerFps) } catch { /* render a correction hint after explicit conversion */ }
   const validDuration = safeFrame(duration) && duration > 0
   const move = (direction, distance = 1) => { const next = stepFrame(frame, duration, direction, distance); if (next !== undefined) onFrame(String(next)) }
   return h('form', { className: 'fv-frame-query fv-transport', 'aria-label': '帧定位控制', onSubmit: event => { event.preventDefault(); onQuery() } },
     h('div', { className: 'fv-transport-buttons', role: 'group', 'aria-label': '播放头定位（不自动渲染）' },
       h(ToolButton, { icon: 'first', label: '定位首帧', tooltip: '定位首帧 · Home', disabled: !validDuration, onClick: () => onFrame('0') }),
       h(ToolButton, { icon: 'previous', label: '监视器前一帧', tooltip: '前一帧 · ←', disabled: !validDuration || frame === 0, onClick: () => move(-1) }),
-      h('label', { className: 'fv-frame-input' }, h('span', null, '帧（留空为全部） '), h('input', { type: 'text', name: 'framivra-frame', autoComplete: 'off', spellCheck: false, inputMode: 'numeric', value: frameText, 'aria-invalid': Boolean(frameError), onChange: event => onText(event.target.value) })),
+      h('label', { className: 'fv-frame-input' }, h('span', null, '时间码（留空为全部） '), h('input', { type: 'text', name: 'framivra-timecode', autoComplete: 'off', spellCheck: false, value: timecode, placeholder: clock ? 'mm:ss:frame' : '帧率未知，时间码不可显示', disabled: !clock, 'aria-invalid': Boolean(frameError) || invalidTimecode, onChange: event => changeTimecode(event.target.value) })),
       h(ToolButton, { icon: 'next', label: '监视器后一帧', tooltip: '后一帧 · →', disabled: !validDuration || frame === duration - 1, onClick: () => move(1) }),
       h(ToolButton, { icon: 'last', label: '定位末帧', tooltip: '定位末帧 · End', disabled: !validDuration, onClick: () => onFrame(String(duration - 1)) })),
-    h('span', { className: 'fv-duration', title: '工程整数帧范围，不表示已渲染时长' }, validDuration ? `/ ${duration} 帧` : '时长不可显示'),
-    h(ToolButton, { type: 'submit', icon: 'query', label: '查询命中', className: 'fv-query-button', tooltip: '查询该帧的内核命中集合，不生成画面' }))
+    h('span', { className: 'fv-duration', title: '工程存储帧范围的时间码，不表示已渲染时长' }, validDuration && formatTimecode(duration, fps) !== null ? `/ ${formatTimecode(duration, fps)}` : '时长不可显示'),
+    h(ToolButton, { type: 'submit', icon: 'query', label: '查询命中', className: 'fv-query-button', tooltip: '查询该帧的内核命中集合，不生成画面' }),
+    clock?.den === 1001 ? h('span', null, `NTSC non-drop · 名义 ${clock.nominal} fps（不是墙钟）`) : null,
+    invalidTimecode ? h('p', { role: 'alert' }, '时间码无效：请输入规范 mm:ss:frame；保留原文供纠错，引用已暂停。') : null,
+    h('details', null, h('summary', null, '高级：全局整数帧'),
+      h('label', null, '帧（留空为全部） ', h('input', { type: 'text', name: 'framivra-frame', autoComplete: 'off', spellCheck: false, inputMode: 'numeric', value: frameText, 'aria-invalid': Boolean(frameError) || invalidTimecode, onChange: event => onText(event.target.value) }))),
+    Number.isSafeInteger(integerFps) ? h('details', null, h('summary', null, `按秒 + 帧定位（${integerFps} fps）`),
+      h('label', null, '整数秒 ', h('input', { type: 'text', name: 'framivra-seconds', inputMode: 'numeric', value: seconds, onChange: event => { setSeconds(event.target.value); setTimeError('') } })),
+      h('label', null, `秒内帧偏移（0–${integerFps - 1}，零基） `, h('input', { type: 'text', name: 'framivra-offset', inputMode: 'numeric', value: offset, onChange: event => { setOffset(event.target.value); setTimeError('') } })),
+      h('span', null, converted === undefined ? '待修正输入' : ` → 全局帧 ${converted}`),
+      h('button', { type: 'button', onClick: () => { try { const next = secondsFrame(seconds, offset, integerFps); onFrame(String(next)); setTimeError('') } catch (error) { setTimeError(error.message) } } }, '换算定位（不渲染）'),
+      h('p', null, `偏移 0 为该秒首帧；10 秒 + 偏移 5 = 全局帧 ${10 * integerFps + 5}。范围由内核检查。`),
+      timeError ? h('p', { role: 'alert' }, timeError) : null) : h('p', null, '非整数或未知帧率：秒内帧偏移换算不可用；可使用全局整数帧定位。'))
 }
 
 /** Local layout only. One captured pointer owns resizing; blur/cancel always retire it. */
@@ -71,16 +111,17 @@ export function LayoutDivider({ value, onChange }) {
 }
 
 /** Selected values come exclusively from the saved kernel projection. */
-export function SelectionSummary({ selection, selected = [], result, frame, onFrame, onClear, onProperties, quick }) {
+export function SelectionSummary({ selection, selected = [], result, frame, fps, onFrame, onClear, onProperties, quick }) {
   const item = selection?.kind === 'block' ? result.blocks.find(block => block.address === selection.address) : selection?.kind === 'track' ? result.tracks.find(track => track.address === selection.address) : undefined
   const blocks = result.blocks.filter(block => selected.some(value => value.kind === 'block' && value.address === block.address))
   const family = item?.family === 'video' && (item.data?.kind === 'gfx' || result.tracks.find(track => track.family === item.family && track.track_index === item.track_index)?.data?.kind === 'gfx') ? 'gfx' : item?.family
   const range = selection?.kind === 'block' && item?.range?.length === 2 && item.range.every(safeFrame) && item.range[1] > item.range[0] ? item.range : undefined
+  const time = value => formatTimecode(value, fps) ?? '时间码不可显示'
   return h('div', { className: 'fv-selection-bar', 'aria-label': '选区剪辑工具' },
     h('div', { className: 'fv-selection-description' },
       h('span', { className: 'fv-selection-kind', 'data-family': family }, h(Icon, { name: family === 'audio' ? 'audio' : family === 'subtitles' ? 'text' : 'clip', size: 16 })),
       h('div', null, h('strong', { title: item ? clipName(item.data, item.address) : undefined }, item ? clipName(item.data, item.address) : '选择时间线中的片段'),
-        h('span', null, item ? `${familyName(family)}${selected.length > 1 ? ` · 已选 ${selected.length} 项` : ''}${range ? ` · ${range[0]}–${range[1]} · ${range[1] - range[0]} 帧` : ' · 轨道'}` : '点击选择 · Ctrl/⌘ 多选 · 拖动标尺定位'))),
+        h('span', null, item ? `${familyName(family)}${selected.length > 1 ? ` · 已选 ${selected.length} 项` : ''}${range ? ` · ${time(range[0])}–${time(range[1])} · 长度 ${time(range[1] - range[0])}` : ' · 轨道'}` : '点击选择 · Ctrl/⌘ 多选 · 拖动标尺定位'))),
     h('div', { className: 'fv-selection-actions', role: 'group', 'aria-label': '片段操作（仅加入待预检批次）' },
       h(ToolButton, { icon: 'pin', label: '定位选中片段起点', tooltip: '定位片段起点，不生成画面', disabled: !range, onClick: () => onFrame(String(range[0])) }),
       h(ToolButton, { icon: 'split', label: '在播放头分割选中片段', tooltip: quick ? '分割选中块，加入未保存批次 · S' : '请先在属性面板明确授予工程写许可；不自动接管 legacy', disabled: !quick || blocks.length !== 1 || !range || family === 'gfx' || !safeFrame(frame) || frame <= range[0] || frame >= range[1], onClick: () => quick('block.split') }),

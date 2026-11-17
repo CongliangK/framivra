@@ -1116,6 +1116,71 @@
       "installed_version": "UNVERIFIED: host/runtime/build artifact not inspected",
       "notes": "Bounded host prerequisite scope: Git, curl, shell/PowerShell and standard OS utilities, CMake, Ninja or selected generator, compiler/linker, pip/npm/conda or selected package manager, archive tools and OS package manager. These are invoked or referenced as host/build tools, not bundled by this project. A release including any of their binaries requires an exact component build manifest and notices; this record is not blanket approval of arbitrary external commands. BLOCKER for redistribution of these external components: pin exact versions/hashes and preserve authoritative full license/notice and restrictions before clearance."
     },
+    "html-preview-baseline-screenshot": {
+      "kind": "data",
+      "source": "docs/reports/assets/html-preview/before.png",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT",
+      "default_payload": true,
+      "distribution": [
+        "git-source"
+      ],
+      "evidence": "html-preview-baseline-capture",
+      "additional_evidence": [
+        "framivra"
+      ],
+      "files_sha256": {
+        "docs/reports/assets/html-preview/before.png": "e9f5683c2b82eb35ef33848631bbaf5fc6cdbdcb4ed0a0028ffb1fe3ed76a585"
+      },
+      "notes": "Real isolated official DSH baseline screenshot, not an After or full-composite acceptance. Project capture contribution and inspected host MIT declaration only; no transitive font/icon/software rights clearance, private media, credentials or runtime redistribution."
+    },
+    "cold-composite-ui-evidence": {
+      "kind": "data",
+      "source": "docs/reports/assets/html-preview/composite-capture.json",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT",
+      "default_payload": true,
+      "distribution": [
+        "git-source"
+      ],
+      "evidence": "cold-composite-ui-capture",
+      "additional_evidence": [
+        "framivra",
+        "html-preview-baseline-capture"
+      ],
+      "files_sha256": {
+        "docs/reports/assets/html-preview/composite-before.png": "bd1c15592bf0ceb80866d93cd5733c7529ce7b748ad556c1e9f79d48e2b78857",
+        "docs/reports/assets/html-preview/composite-after.png": "e7579dab39081341b63a742d02374231175ed52b12bb978364158f4c5585d04c",
+        "docs/reports/assets/html-preview/composite-after-edited.png": "78ea5849e7b301d6c4a80a3d61b38f2b469044a48ec4edd22a44bed42ae08809",
+        "docs/reports/assets/html-preview/composite-capture.json": "8a932a867a99b43b5b8d3c47815743adcc71c445df8da931a3b320859e6be297",
+        "docs/reports/assets/html-preview/closeout-capture.json": "3a80b5118d7764c0a85a1c24c619e4c9fdd4ff65f64e5b16b3e9ebb6b0831dd5",
+        "docs/reports/assets/html-preview/closeout-after-edited.png": "8eeda88a3a01fb0c8217fada3505e450c90424c91086897033b2c1ab1bd95dc5",
+        "docs/reports/assets/html-preview/qc-correction-capture.json": "15991c6d1c9cc66df624030bfbf05d05719a52499e3cea7a6bef8f3c03d3c144"
+      },
+      "notes": "Matched real Before/After cold complete-composite captures, plus separately labelled saved-edit supplement and measured metadata. Only project-authored capture/fixture data and the inspected host declaration are recorded; no private inputs, font/runtime binaries or transitive rights clearance. Functional/quality checks and explicit UNRUN/measurement limitations in the metadata are not a release or speedup certification. closeout-capture.json and the separately labelled closeout saved-edit screenshot add real integrated macOS evidence while retaining all earlier bytes and identities; the recorded inherited 180-frame strict-QC failure makes that historical handoff incomplete, not a passing full-film certificate. qc-correction-capture.json separately records the maintainer-authorized correction and actual new installed-artifact checks, without rewriting the historical failed evidence or claiming transitive legal clearance."
+    },
+    "macos-plugin-screenshot-evidence": {
+      "kind": "data",
+      "source": "docs/reports/assets/macos-plugin/",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT",
+      "default_payload": true,
+      "distribution": [
+        "git-source"
+      ],
+      "evidence": "macos-plugin-capture-provenance",
+      "additional_evidence": [
+        "framivra",
+        "macos-plugin-canonical-capture-provenance"
+      ],
+      "files_sha256": {
+        "docs/reports/assets/macos-plugin/before.png": "6253bf7ba56d2f25936fa6699f0ae614751a76cf6002d860f664c5938ad7ee66",
+        "docs/reports/assets/macos-plugin/after.png": "5ec1649154e4bdd69e5faf4b994e4ef5dc88d8c01574ecbb8652f9028b72b697",
+        "docs/reports/assets/macos-plugin/canonical-before.png": "6b527fbd23a4b60c4873ce928aa56f310b730deb701baa6603a48ea3995dace1",
+        "docs/reports/assets/macos-plugin/canonical-after.png": "08c5937a6fc2f8e7be1263f8c0e5d3f475517f11ec7acbb60aaef380234ce34e"
+      },
+      "notes": "Real official DSH 0.2.2-rc.1 UI captures: before.png/after.png show the earlier public synthetic 90-frame mechanism fixture; canonical-before.png/canonical-after.png show frame 228 of the actual portable-v2 900-SVG-frame 1920x1080 30fps project in matched 1280x720 dark views. Separate provenance records preserve both identities. MIT records project-authored capture/fixture contributions and the inspected host package declaration only; external fonts, icons, dependencies and runtime rights are not relicensed or independently cleared. No private assets, chat content, font files or runtime binaries are distributed by this entry. This is provenance/integrity evidence, not legal certification, endorsement or whole-film QC/performance clearance."
+    },
     "gfx-environment-evidence": {
       "kind": "data",
       "source": "tests/runners/run_gfx_environment_acceptance.py",
@@ -1157,9 +1222,262 @@
         "tests/fixtures/gfx-environment/cli-font-b/f0003.png": "2e12c46452e53198d6f312eef19476a25149b5a22f7dcf82c0f114f2551a7d42"
       },
       "notes": "Generated full-HTML/JS/text test screenshots. No font files, browser/runtime binaries or third-party page media are included. Runtime/font inputs remain separately governed external assets; this registration is not a legal certificate."
+    },
+    "runtime-font-noto-cjk": {
+      "kind": "font",
+      "source": "https://deb.debian.org/debian/pool/main/f/fonts-noto-cjk/fonts-noto-cjk_20220127+repack1-1_all.deb",
+      "license_status": "DECLARED",
+      "license_identifier": "OFL-1.1",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ],
+      "managed_non_ai_install_default": true,
+      "installed_version": "UNVERIFIED_RUNTIME_VERSION: acquisition pins are not an assertion about arbitrary host-selected font files.",
+      "source_references": [
+        "scripts/install_runtime_fonts.py",
+        "scripts/install_source.py"
+      ],
+      "evidence": "runtime-font-noto-cjk",
+      "acquisition_artifacts": [
+        {
+          "filename": "NotoSansCJK-Regular.ttc",
+          "url": "https://deb.debian.org/debian/pool/main/f/fonts-noto-cjk/fonts-noto-cjk_20220127+repack1-1_all.deb",
+          "member": "./usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+          "sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a",
+          "package_sha256": "4a2515eb6db3978b897fef9709ed0d2b1f4c6c4df4d83d6c4ef65f71f1b1f502",
+          "package_size": 56547048,
+          "version": "2.004"
+        },
+        {
+          "filename": "NotoSansCJK-Bold.ttc",
+          "url": "https://deb.debian.org/debian/pool/main/f/fonts-noto-cjk/fonts-noto-cjk_20220127+repack1-1_all.deb",
+          "member": "./usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+          "sha256": "faa5f3656a78b2e2d450d27fe8382c778bc2b6bb5ea29c986664a6a435056ceb",
+          "package_sha256": "4a2515eb6db3978b897fef9709ed0d2b1f4c6c4df4d83d6c4ef65f71f1b1f502",
+          "package_size": 56547048,
+          "version": "2.004"
+        },
+        {
+          "filename": "Noto-COPYRIGHT.txt",
+          "url": "https://deb.debian.org/debian/pool/main/f/fonts-noto-cjk/fonts-noto-cjk_20220127+repack1-1_all.deb",
+          "member": "./usr/share/doc/fonts-noto-cjk/copyright",
+          "sha256": "5bb218343ded506b258d86186d460fc47d9b6b28f0e642cf32676c396b7df763",
+          "size": 14716,
+          "package_sha256": "4a2515eb6db3978b897fef9709ed0d2b1f4c6c4df4d83d6c4ef65f71f1b1f502",
+          "package_size": 56547048,
+          "version": "2.004"
+        }
+      ],
+      "preserved_notice_filename": "Noto-COPYRIGHT.txt",
+      "notes": "Debian fonts-noto-cjk 1:20220127+repack1-1; Git tag debian/1%20220127+repack1-1 peels to this packaging commit. Font files use SIL OFL 1.1. The complete original copyright also lists GPL-3+ for debian/* packaging; those packaging scripts are not installed or relicensed as fonts. Git/source archives and the kernel wheel contain no font binary payload. Explicit invocation of the full managed non-AI source installer acquires this group by default; on-demand-download describes this install-time boundary, not an extra per-font opt-in. Exact matching local bytes may be reused. The installer retains the unmodified notice and source/SHA provenance under root/fonts and with native user-font copies. Existing host fonts, system font preference, external packages and transitive/bundled code rights remain separate and are not cleared by this declaration."
+    },
+    "runtime-font-dejavu": {
+      "kind": "font",
+      "source": "https://deb.debian.org/debian/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb",
+      "license_status": "DECLARED",
+      "license_identifier": "Bitstream-Vera; DejaVu changes public domain",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ],
+      "managed_non_ai_install_default": true,
+      "installed_version": "UNVERIFIED_RUNTIME_VERSION: acquisition pins are not an assertion about arbitrary host-selected font files.",
+      "source_references": [
+        "scripts/install_runtime_fonts.py",
+        "scripts/install_source.py"
+      ],
+      "evidence": "runtime-font-dejavu",
+      "acquisition_artifacts": [
+        {
+          "filename": "DejaVuSans.ttf",
+          "url": "https://deb.debian.org/debian/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb",
+          "member": "./usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+          "sha256": "57f73e11f51999432bf7ab22ce55b6f945d5eca1bf824404cfa9ec2e3718c84e",
+          "package_sha256": "86635b3d25b3655fc11cb3ecc3af59f0bf19643b02b94f2de48bd10253cdba12",
+          "package_size": 840460,
+          "version": "2.37 (Debian 2.37-8)"
+        },
+        {
+          "filename": "DejaVuSans-Bold.ttf",
+          "url": "https://deb.debian.org/debian/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb",
+          "member": "./usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+          "sha256": "a4c5bc453ca281d90ea079e596da7ae0dfeb5777497c29ec254e76d97ff6f890",
+          "package_sha256": "86635b3d25b3655fc11cb3ecc3af59f0bf19643b02b94f2de48bd10253cdba12",
+          "package_size": 840460,
+          "version": "2.37 (Debian 2.37-8)"
+        },
+        {
+          "filename": "DejaVu-COPYRIGHT.txt",
+          "url": "https://deb.debian.org/debian/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb",
+          "member": "./usr/share/doc/fonts-dejavu-core/copyright",
+          "sha256": "63d3ba759d12804c5b31a9d5940d855c1820d1f5999e6b0872eb1c7ff045fbc9",
+          "size": 3859,
+          "package_sha256": "86635b3d25b3655fc11cb3ecc3af59f0bf19643b02b94f2de48bd10253cdba12",
+          "package_size": 840460,
+          "version": "2.37 (Debian 2.37-8)"
+        }
+      ],
+      "preserved_notice_filename": "DejaVu-COPYRIGHT.txt",
+      "notes": "Debian fonts-dejavu-core 2.37-8; Git tag debian/2.37-8 peels to this packaging commit. Font files carry the Bitstream Vera permission and public-domain DejaVu changes. The complete original copyright also lists GPL-2+ for debian/* packaging; those packaging scripts are not installed or relicensed as fonts. Git/source archives and the kernel wheel contain no font binary payload. Explicit invocation of the full managed non-AI source installer acquires this group by default; on-demand-download describes this install-time boundary, not an extra per-font opt-in. Exact matching local bytes may be reused. The installer retains the unmodified notice and source/SHA provenance under root/fonts and with native user-font copies. Existing host fonts, system font preference, external packages and transitive/bundled code rights remain separate and are not cleared by this declaration."
+    },
+    "runtime-font-inter": {
+      "kind": "font",
+      "source": "https://raw.githubusercontent.com/google/fonts/0b58fb370093f9a9f4ff785d94405710b79de67c/ofl/inter/Inter%5Bopsz,wght%5D.ttf",
+      "license_status": "DECLARED",
+      "license_identifier": "OFL-1.1",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ],
+      "managed_non_ai_install_default": true,
+      "installed_version": "UNVERIFIED_RUNTIME_VERSION: acquisition pins are not an assertion about arbitrary host-selected font files.",
+      "source_references": [
+        "scripts/install_runtime_fonts.py",
+        "scripts/install_source.py"
+      ],
+      "evidence": "runtime-font-inter",
+      "acquisition_artifacts": [
+        {
+          "filename": "InterVariable.ttf",
+          "url": "https://raw.githubusercontent.com/google/fonts/0b58fb370093f9a9f4ff785d94405710b79de67c/ofl/inter/Inter%5Bopsz,wght%5D.ttf",
+          "sha256": "29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031",
+          "size": 876576,
+          "version": "Google Fonts 0b58fb370093f9a9f4ff785d94405710b79de67c"
+        },
+        {
+          "filename": "Inter-OFL.txt",
+          "url": "https://raw.githubusercontent.com/google/fonts/0b58fb370093f9a9f4ff785d94405710b79de67c/ofl/inter/OFL.txt",
+          "sha256": "5b9321a4298cfeb6b34354164a1c3afc3db114569984c502b9b35d988fd58c57",
+          "size": 4377,
+          "version": "0b58fb370093f9a9f4ff785d94405710b79de67c"
+        }
+      ],
+      "preserved_notice_filename": "Inter-OFL.txt",
+      "notes": "Official Google Fonts distribution of Inter variable opsz/wght, not a local build of rsms/inter. File is saved as InterVariable.ttf without modifying its bytes or internal names. Copyright 2020 The Inter Project Authors; full original OFL notice is preserved. Git/source archives and the kernel wheel contain no font binary payload. Explicit invocation of the full managed non-AI source installer acquires this group by default; on-demand-download describes this install-time boundary, not an extra per-font opt-in. Exact matching local bytes may be reused. The installer retains the unmodified notice and source/SHA provenance under root/fonts and with native user-font copies. Existing host fonts, system font preference, external packages and transitive/bundled code rights remain separate and are not cleared by this declaration."
+    },
+    "runtime-font-jetbrains-mono": {
+      "kind": "font",
+      "source": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/02bb50b082dad9ef8a0f33ac393839202b760223/fonts/ttf/JetBrainsMono-Regular.ttf",
+      "license_status": "DECLARED",
+      "license_identifier": "OFL-1.1",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ],
+      "managed_non_ai_install_default": true,
+      "installed_version": "UNVERIFIED_RUNTIME_VERSION: acquisition pins are not an assertion about arbitrary host-selected font files.",
+      "source_references": [
+        "scripts/install_runtime_fonts.py",
+        "scripts/install_source.py"
+      ],
+      "evidence": "runtime-font-jetbrains-mono",
+      "acquisition_artifacts": [
+        {
+          "filename": "JetBrainsMono-Regular.ttf",
+          "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/02bb50b082dad9ef8a0f33ac393839202b760223/fonts/ttf/JetBrainsMono-Regular.ttf",
+          "sha256": "e6fd0d7e91550b3ed2b735d4312474362c4716edc4fc0577a0f61ed782d5aed1",
+          "size": 270224,
+          "version": "02bb50b082dad9ef8a0f33ac393839202b760223"
+        },
+        {
+          "filename": "JetBrainsMono-Bold.ttf",
+          "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/02bb50b082dad9ef8a0f33ac393839202b760223/fonts/ttf/JetBrainsMono-Bold.ttf",
+          "sha256": "d22c4f3821d725eb01210d278d95dfcfcaadc34699a06658d47c8a5cc5830ada",
+          "size": 274096,
+          "version": "02bb50b082dad9ef8a0f33ac393839202b760223"
+        },
+        {
+          "filename": "JetBrainsMono-OFL.txt",
+          "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/02bb50b082dad9ef8a0f33ac393839202b760223/OFL.txt",
+          "sha256": "30f0c136e3c88e422d0791acd97238870f9054a9729bc34cf2ff0d4ed8cac4ad",
+          "size": 4399,
+          "version": "02bb50b082dad9ef8a0f33ac393839202b760223"
+        }
+      ],
+      "preserved_notice_filename": "JetBrainsMono-OFL.txt",
+      "notes": "Official JetBrains/JetBrainsMono distribution, Regular and Bold TTF files at the same fixed commit as the full OFL notice. Copyright 2020 The JetBrains Mono Project Authors; no font-byte modifications. Git/source archives and the kernel wheel contain no font binary payload. Explicit invocation of the full managed non-AI source installer acquires this group by default; on-demand-download describes this install-time boundary, not an extra per-font opt-in. Exact matching local bytes may be reused. The installer retains the unmodified notice and source/SHA provenance under root/fonts and with native user-font copies. Existing host fonts, system font preference, external packages and transitive/bundled code rights remain separate and are not cleared by this declaration."
+    },
+    "timeline-config-ui-captures": {
+      "kind": "data",
+      "source": "https://github.com/CongliangK/framivra/pull/373",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT (project-authored capture/fixture data; depicted DSH software notice separately preserved)",
+      "default_payload": true,
+      "distribution": [
+        "git-source"
+      ],
+      "evidence": "timeline-config-capture-provenance",
+      "additional_evidence": [
+        "dsh-rc1-observed-software-notice"
+      ],
+      "files_sha256": {
+        "docs/reports/assets/timeline-config/after-controls.png": "157702495d9e4657d73886a0ac994de2c33946b27bcc4f99ee3b8ee60ac58b63",
+        "docs/reports/assets/timeline-config/after.png": "e7f12eaf1fc8900ce0af2b4a58a7758bb8b9f35919af99da2101106ceb42ffd2",
+        "docs/reports/assets/timeline-config/before.png": "1b5eed3fe4a0fa545200bbe5e0f83b8feb1a0ccf954b729a9bb28a1975f1043a"
+      },
+      "notes": "Existing PR373 official-host captures of a separate synthetic 120-frame timeline, not the resource-management fixture. Blank monitor means no generated image. Project-authored capture/content declaration and recorded DSH software notice do not grant trademark rights or relicense other dependencies/fonts. No vendor binaries, font files or private media included; historical validation limits remain unchanged."
+    },
+    "single-frame-chart-evidence": {
+      "kind": "data",
+      "source": "docs/reports/single-frame-preview-evidence.json",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT (project-authored chart fixture and generated evidence data)",
+      "default_payload": true,
+      "distribution": [
+        "git-source"
+      ],
+      "evidence": "single-frame-chart-generation",
+      "files_sha256": {
+        "docs/reports/assets/single-frame-preview/chart-f305.png": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b"
+      },
+      "notes": "Internal CDP output of the existing public project-authored chart fixture with illustrative data, not a DSH screenshot or a complete current-composite result. Browser/runtime and font inputs remain separately governed external dependencies; no font files or browser binaries included. Registration does not upgrade the historical sample to full-frame, full-project or UI acceptance."
+    },
+    "html-workflow-chart-evidence": {
+      "kind": "data",
+      "source": "docs/reports/html-workflow-evidence/index.json",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT (project-authored chart fixture and generated evidence data)",
+      "default_payload": true,
+      "distribution": [
+        "git-source"
+      ],
+      "evidence": "html-workflow-chart-generation",
+      "files_sha256": {
+        "docs/reports/html-workflow-evidence/frame-0060.png": "b86915c2593866cc9a5506b5cd430184e72e9f80c7eefff41fdac9d286050c50",
+        "docs/reports/html-workflow-evidence/frame-0300.png": "f30977464f448bc46ce95d13c5e4944857f1409fdb08d5920eb3e6e545c39b10",
+        "docs/reports/html-workflow-evidence/frame-0540.png": "ebfdb40168a1e1c1406bd99a2a08a65f215a533dad5e80ceaa6b4cca1a7cdf7f",
+        "docs/reports/html-workflow-evidence/overview.jpg": "3acde609451f3df91eb1164aef657d228bd49bab67ac92c4c748365b3644497c"
+      },
+      "notes": "Existing Linux HTML/CDP study samples of the public project-authored chart; overview is assembled from actual cache samples, not redrawn media. Distinct from macOS single-frame and DSH UI captures. Runtime/font inputs are external and not relicensed or bundled here. Existing study scope and uncertainty are unchanged; no new rendering or performance qualification is claimed."
     }
   },
   "evidence": {
+    "dsh-ui-source-license": {
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/39163dd30f703a79079e2d2446545cff3c453738/LICENSE",
+      "revision": "39163dd30f703a79079e2d2446545cff3c453738",
+      "sha256": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be",
+      "text": "MIT License\n\nCopyright (c) 2026 DeepSeek\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
+      "scope": "Preserved DSH source MIT notice, byte-identical to the installed official npm DSH 0.2.2-rc.1 LICENSE; the pinned source revision identifies this notice, not the npm build. Does not grant trademark rights or certify all screenshot/runtime/font content."
+    },
+    "cold-composite-ui-capture": {
+      "revision": "9afc723df1e62307ff0d118ff7a687337d0dff58",
+      "url": "https://github.com/CongliangK/framivra/pull/377",
+      "text": "Project-captured real official DSH 0.2.2-rc.1 macOS cold-composite evidence: matched 1440x1000 DPR1 light shell/dark expanded workbench, global frame 44/local HTML frame 29 in the public synthetic 180-frame ordinary-media/scale-opacity PiP/transparent canvas/ASS fixture. Baseline source 03ff6fa records actual platform refusal and no PNG; candidate production source 9afc723 records full current-composite, not an HTML-layer replacement. The third capture is a saved-subtitle-edit supplement, not the matched pair. Capture metadata also records separate canonical portable-v2 900-frame functional/quality checks, with explicit limitations rather than a cross-engine speedup claim. No private media, Feishu or chat content, credentials, font files or runtime binaries are distributed. Root MIT applies to project-authored capture/fixture contributions. Previously inspected official host package declares MIT, Copyright (c) 2026 DeepSeek; LICENSE SHA256 ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be and package.json SHA256 3e14837ceb3bbc0ba419ed08e9b5ba164338369b1268b93c3c25d89f7b1c9953. This is provenance/integrity evidence, not transitive UI/icon/font rights clearance or legal certification. The revision identifies candidate production code, not a claim that the later capture files already existed in that commit.\n",
+      "sha256": "79236ab1e392c0852dc18b7d147e8c49034f51f0b1fb15707e8d51cfc609cef8",
+      "scope": "Matched real captures and bounded measured metadata; code revision, not later screenshot publication; no transitive rights or final release certification"
+    },
+    "html-preview-baseline-capture": {
+      "revision": "e11e5e8451492d680a76de07412c58fabb075b89",
+      "url": "https://github.com/CongliangK/framivra/blob/e11e5e8451492d680a76de07412c58fabb075b89/docs/reports/assets/html-preview/before.png",
+      "text": "Project-captured real official DSH 0.2.2-rc.1 baseline at global frame 335, selected public chart HTML block dst_in 30 and duration 600, core/sidebar source 03ff6fa. The 1440x1000 DPR1 default light shell/dark workbench capture records platform.unsupported and no generated PNG; it is not After evidence or multi-layer cold-composite acceptance. No private media, conversation content, credentials, font files or runtime binaries are included. Project-authored capture contribution follows root MIT. Inspected official host package declares MIT, Copyright (c) 2026 DeepSeek; shipped LICENSE SHA256 ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be, package.json SHA256 3e14837ceb3bbc0ba419ed08e9b5ba164338369b1268b93c3c25d89f7b1c9953. Provenance and declarations only, not transitive UI/icon/font rights clearance or legal certification.\n",
+      "sha256": "2361063b2c3e9582050af81f8a3287110f048e82198b60344a9a77bbf3845b82",
+      "scope": "Baseline screenshot provenance only; immutable revision identifies screenshot publication, not candidate acceptance"
+    },
     "matanyone2-code": {
       "url": "https://raw.githubusercontent.com/pq-yang/MatAnyone2/0079197acd6d16a741f71558809c06c586c579e0/LICENSE.txt",
       "revision": "0079197acd6d16a741f71558809c06c586c579e0",
@@ -1391,10 +1709,93 @@
       "local_path": "experiments/gfx_electron_worker/SOURCE-LICENSE-NOTICE.txt",
       "scope": "Maintainer authorization for project-authored source only; no third-party license grant"
     },
+    "macos-plugin-capture-provenance": {
+      "revision": "e784a5accb6f8425973c0fb74ca6b7186591c539",
+      "url": "https://github.com/CongliangK/framivra/tree/e784a5accb6f8425973c0fb74ca6b7186591c539/docs/reports/assets/macos-plugin",
+      "text": "Project-captured macOS Framivra sidebar evidence committed at e784a5accb6f8425973c0fb74ca6b7186591c539. before.png and after.png are real 1280x720 captures of official DSH 0.2.2-rc.1 with the project sidebar and a public synthetic 90-frame test fixture; the after image shows generated color bars and the label Public test fixture. They contain no private media or embedded font/runtime binaries. Project-authored fixture/capture contributions follow the root MIT declaration. The inspected official @deepseek-ai/dsh 0.2.2-rc.1 package declares MIT; its shipped LICENSE is Copyright (c) 2026 DeepSeek, SHA256 ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be (package.json SHA256 3e14837ceb3bbc0ba419ed08e9b5ba164338369b1268b93c3c25d89f7b1c9953). This records capture provenance and the host package declaration only, not a transitive dependency/font audit, independent legal clearance, endorsement, or a grant of third-party rights. No model output or private asset rights are claimed.\n",
+      "sha256": "f55654b38f9c4edbfed0438123f359a0909a1dd2618a5bafe4cd657c8f764229",
+      "scope": "These two project-captured screenshots only; no independent clearance of external UI, font, icon or runtime rights"
+    },
+    "macos-plugin-canonical-capture-provenance": {
+      "revision": "d786d5e5d586a4242939b9182d78549a66053e8e",
+      "url": "https://github.com/CongliangK/framivra/pull/367",
+      "text": "Project-captured canonical macOS Framivra sidebar evidence for PR #367. canonical-before.png and canonical-after.png show matched 1280x720 dark official DSH 0.2.2-rc.1 views at frame 228 of the public portable-v2 canonical 30-second / 900-SVG-frame / 1920x1080 / 30fps project, not the earlier 90-frame mechanism fixture. Baseline core source: e784a5accb6f8425973c0fb74ca6b7186591c539; candidate core source: d786d5e5d586a4242939b9182d78549a66053e8e. Both used the unchanged freshly built sidebar tgz SHA256 14eeecfe5165a1def010170d72ee67dca662a31b09c0e9d5843346677ed4738c and timeline.json SHA256 a7008c2e5b2833da13021c3a1ccb46a09068ca1775b6724328563d2d37f7d105. The capture run recorded one explicit first-frame request per side: before HTTP 499 after 30037 ms; after HTTP 200 in 22351 ms under the unchanged 30-second request budget. Candidate producer identity changes required genuine regeneration of all 900 gfx cache frames using the exact installed candidate core; old producer caches were not relabeled or forged. Only prepared canonical inputs were reused; this is not a claim of an empty-cache render or whole-film performance/QC acceptance. The images contain no chat content or private assets. Project-authored capture/fixture contributions follow the root MIT declaration; the separately recorded official host MIT declaration does not clear transitive UI/icon/font/runtime rights. No font files or runtime binaries are distributed by these screenshot entries. The revision below identifies candidate code, not a claim that these later captures already existed in that commit.\n",
+      "sha256": "2f528a3b340d308f47026f239c2adb0fa4f6617f01ac2c0185860b837bfb8da7",
+      "scope": "Canonical frame-228 screenshot provenance; revision identifies tested code, not screenshot publication or independent legal clearance"
+    },
     "gfx-environment-generation": {
       "revision": "d7ed2cc90ab19d1bd7208cdfb0af54deb42440c9",
       "text": "Project-generated gfx environment test evidence (#48). HTML/CSS/JavaScript fixture is authored in tests/run_gfx_environment_acceptance.py; generated output and observed font/runtime hashes are recorded in tests/fixtures/gfx-environment/acceptance-2026-10-18.json at source revision d7ed2cc90ab19d1bd7208cdfb0af54deb42440c9. The PNGs show only the authored fixture, not external web content. Root MIT applies to project-authored fixture/data declarations. Font files, browsers, CEF and other runtime binaries are external and are not shipped or relicensed by this entry. This is provenance/inventory evidence, not independent legal clearance of external software or fonts.\n",
       "sha256": "b637b86212140aba0a28eecc7e7f3c7c9596898eb280e3b8c5c0bc29ee26a71a"
+    },
+    "runtime-font-noto-cjk": {
+      "url": "https://salsa.debian.org/fonts-team/fonts-noto-cjk/-/raw/56bf6990fec39d5c12b9d5b345e39432cfbcf68b/debian/copyright",
+      "revision": "56bf6990fec39d5c12b9d5b345e39432cfbcf68b",
+      "sha256": "5bb218343ded506b258d86186d460fc47d9b6b28f0e642cf32676c396b7df763",
+      "text": "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\nUpstream-Name: noto-cjk\nUpstream-Contact: https://github.com/googlefonts/noto-cjk/issues\nSource: https://github.com/googlefonts/noto-cjk\nFiles-Excluded:\n .gitattributes\n .gitignore\n Sans/Mono/NotoSansMonoCJKhk-Bold.otf\n Sans/Mono/NotoSansMonoCJKhk-Regular.otf\n Sans/Mono/NotoSansMonoCJKjp-Bold.otf\n Sans/Mono/NotoSansMonoCJKjp-Regular.otf\n Sans/Mono/NotoSansMonoCJKkr-Bold.otf\n Sans/Mono/NotoSansMonoCJKkr-Regular.otf\n Sans/Mono/NotoSansMonoCJKsc-Bold.otf\n Sans/Mono/NotoSansMonoCJKsc-Regular.otf\n Sans/Mono/NotoSansMonoCJKtc-Bold.otf\n Sans/Mono/NotoSansMonoCJKtc-Regular.otf\n Sans/OTF/Japanese/NotoSansCJKjp-Black.otf\n Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf\n Sans/OTF/Japanese/NotoSansCJKjp-DemiLight.otf\n Sans/OTF/Japanese/NotoSansCJKjp-Light.otf\n Sans/OTF/Japanese/NotoSansCJKjp-Medium.otf\n Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf\n Sans/OTF/Japanese/NotoSansCJKjp-Thin.otf\n Sans/OTF/Korean/NotoSansCJKkr-Black.otf\n Sans/OTF/Korean/NotoSansCJKkr-Bold.otf\n Sans/OTF/Korean/NotoSansCJKkr-DemiLight.otf\n Sans/OTF/Korean/NotoSansCJKkr-Light.otf\n Sans/OTF/Korean/NotoSansCJKkr-Medium.otf\n Sans/OTF/Korean/NotoSansCJKkr-Regular.otf\n Sans/OTF/Korean/NotoSansCJKkr-Thin.otf\n Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Black.otf\n Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf\n Sans/OTF/SimplifiedChinese/NotoSansCJKsc-DemiLight.otf\n Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Light.otf\n Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Medium.otf\n Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf\n Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Thin.otf\n Sans/OTF/TraditionalChinese/NotoSansCJKtc-Black.otf\n Sans/OTF/TraditionalChinese/NotoSansCJKtc-Bold.otf\n Sans/OTF/TraditionalChinese/NotoSansCJKtc-DemiLight.otf\n Sans/OTF/TraditionalChinese/NotoSansCJKtc-Light.otf\n Sans/OTF/TraditionalChinese/NotoSansCJKtc-Medium.otf\n Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf\n Sans/OTF/TraditionalChinese/NotoSansCJKtc-Thin.otf\n Sans/OTF/TraditionalChineseHK/NotoSansCJKhk-Black.otf\n Sans/OTF/TraditionalChineseHK/NotoSansCJKhk-Bold.otf\n Sans/OTF/TraditionalChineseHK/NotoSansCJKhk-DemiLight.otf\n Sans/OTF/TraditionalChineseHK/NotoSansCJKhk-Light.otf\n Sans/OTF/TraditionalChineseHK/NotoSansCJKhk-Medium.otf\n Sans/OTF/TraditionalChineseHK/NotoSansCJKhk-Regular.otf\n Sans/OTF/TraditionalChineseHK/NotoSansCJKhk-Thin.otf\n Sans/SubsetOTF/HK/NotoSansHK-Black.otf\n Sans/SubsetOTF/HK/NotoSansHK-Bold.otf\n Sans/SubsetOTF/HK/NotoSansHK-DemiLight.otf\n Sans/SubsetOTF/HK/NotoSansHK-Light.otf\n Sans/SubsetOTF/HK/NotoSansHK-Medium.otf\n Sans/SubsetOTF/HK/NotoSansHK-Regular.otf\n Sans/SubsetOTF/HK/NotoSansHK-Thin.otf\n Sans/SubsetOTF/JP/NotoSansJP-Black.otf\n Sans/SubsetOTF/JP/NotoSansJP-Bold.otf\n Sans/SubsetOTF/JP/NotoSansJP-DemiLight.otf\n Sans/SubsetOTF/JP/NotoSansJP-Light.otf\n Sans/SubsetOTF/JP/NotoSansJP-Medium.otf\n Sans/SubsetOTF/JP/NotoSansJP-Regular.otf\n Sans/SubsetOTF/JP/NotoSansJP-Thin.otf\n Sans/SubsetOTF/KR/NotoSansKR-Black.otf\n Sans/SubsetOTF/KR/NotoSansKR-Bold.otf\n Sans/SubsetOTF/KR/NotoSansKR-DemiLight.otf\n Sans/SubsetOTF/KR/NotoSansKR-Light.otf\n Sans/SubsetOTF/KR/NotoSansKR-Medium.otf\n Sans/SubsetOTF/KR/NotoSansKR-Regular.otf\n Sans/SubsetOTF/KR/NotoSansKR-Thin.otf\n Sans/SubsetOTF/SC/NotoSansSC-Black.otf\n Sans/SubsetOTF/SC/NotoSansSC-Bold.otf\n Sans/SubsetOTF/SC/NotoSansSC-DemiLight.otf\n Sans/SubsetOTF/SC/NotoSansSC-Light.otf\n Sans/SubsetOTF/SC/NotoSansSC-Medium.otf\n Sans/SubsetOTF/SC/NotoSansSC-Regular.otf\n Sans/SubsetOTF/SC/NotoSansSC-Thin.otf\n Sans/SubsetOTF/TC/NotoSansTC-Black.otf\n Sans/SubsetOTF/TC/NotoSansTC-Bold.otf\n Sans/SubsetOTF/TC/NotoSansTC-DemiLight.otf\n Sans/SubsetOTF/TC/NotoSansTC-Light.otf\n Sans/SubsetOTF/TC/NotoSansTC-Medium.otf\n Sans/SubsetOTF/TC/NotoSansTC-Regular.otf\n Sans/SubsetOTF/TC/NotoSansTC-Thin.otf\n Sans/SuperOTC/NotoSansCJK.ttc.zip\n Sans/Variable/OTC/NotoSansCJK-VF.ttf.ttc\n Sans/Variable/OTC/NotoSansMonoCJK-VF.ttf.ttc\n Sans/Variable/OTF/Mono/NotoSansMonoCJKhk-VF.otf\n Sans/Variable/OTF/Mono/NotoSansMonoCJKjp-VF.otf\n Sans/Variable/OTF/Mono/NotoSansMonoCJKkr-VF.otf\n Sans/Variable/OTF/Mono/NotoSansMonoCJKsc-VF.otf\n Sans/Variable/OTF/Mono/NotoSansMonoCJKtc-VF.otf\n Sans/Variable/OTF/NotoSansCJKhk-VF.otf\n Sans/Variable/OTF/NotoSansCJKjp-VF.otf\n Sans/Variable/OTF/NotoSansCJKkr-VF.otf\n Sans/Variable/OTF/NotoSansCJKsc-VF.otf\n Sans/Variable/OTF/NotoSansCJKtc-VF.otf\n Sans/Variable/OTF/Subset/NotoSansHK-VF.otf\n Sans/Variable/OTF/Subset/NotoSansJP-VF.otf\n Sans/Variable/OTF/Subset/NotoSansKR-VF.otf\n Sans/Variable/OTF/Subset/NotoSansSC-VF.otf\n Sans/Variable/OTF/Subset/NotoSansTC-VF.otf\n Sans/Variable/TTF/Mono/NotoSansMonoCJKhk-VF.ttf\n Sans/Variable/TTF/Mono/NotoSansMonoCJKjp-VF.ttf\n Sans/Variable/TTF/Mono/NotoSansMonoCJKkr-VF.ttf\n Sans/Variable/TTF/Mono/NotoSansMonoCJKsc-VF.ttf\n Sans/Variable/TTF/Mono/NotoSansMonoCJKtc-VF.ttf\n Sans/Variable/TTF/NotoSansCJKhk-VF.ttf\n Sans/Variable/TTF/NotoSansCJKjp-VF.ttf\n Sans/Variable/TTF/NotoSansCJKkr-VF.ttf\n Sans/Variable/TTF/NotoSansCJKsc-VF.ttf\n Sans/Variable/TTF/NotoSansCJKtc-VF.ttf\n Sans/Variable/TTF/Subset/NotoSansHK-VF.ttf\n Sans/Variable/TTF/Subset/NotoSansJP-VF.ttf\n Sans/Variable/TTF/Subset/NotoSansKR-VF.ttf\n Sans/Variable/TTF/Subset/NotoSansSC-VF.ttf\n Sans/Variable/TTF/Subset/NotoSansTC-VF.ttf\n Serif/OTF/Japanese/NotoSerifCJKjp-Black.otf\n Serif/OTF/Japanese/NotoSerifCJKjp-Bold.otf\n Serif/OTF/Japanese/NotoSerifCJKjp-ExtraLight.otf\n Serif/OTF/Japanese/NotoSerifCJKjp-Light.otf\n Serif/OTF/Japanese/NotoSerifCJKjp-Medium.otf\n Serif/OTF/Japanese/NotoSerifCJKjp-Regular.otf\n Serif/OTF/Japanese/NotoSerifCJKjp-SemiBold.otf\n Serif/OTF/Korean/NotoSerifCJKkr-Black.otf\n Serif/OTF/Korean/NotoSerifCJKkr-Bold.otf\n Serif/OTF/Korean/NotoSerifCJKkr-ExtraLight.otf\n Serif/OTF/Korean/NotoSerifCJKkr-Light.otf\n Serif/OTF/Korean/NotoSerifCJKkr-Medium.otf\n Serif/OTF/Korean/NotoSerifCJKkr-Regular.otf\n Serif/OTF/Korean/NotoSerifCJKkr-SemiBold.otf\n Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Black.otf\n Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Bold.otf\n Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-ExtraLight.otf\n Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Light.otf\n Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Medium.otf\n Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Regular.otf\n Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-SemiBold.otf\n Serif/OTF/TraditionalChinese/NotoSerifCJKtc-Black.otf\n Serif/OTF/TraditionalChinese/NotoSerifCJKtc-Bold.otf\n Serif/OTF/TraditionalChinese/NotoSerifCJKtc-ExtraLight.otf\n Serif/OTF/TraditionalChinese/NotoSerifCJKtc-Light.otf\n Serif/OTF/TraditionalChinese/NotoSerifCJKtc-Medium.otf\n Serif/OTF/TraditionalChinese/NotoSerifCJKtc-Regular.otf\n Serif/OTF/TraditionalChinese/NotoSerifCJKtc-SemiBold.otf\n Serif/OTF/TraditionalChineseHK/NotoSerifCJKhk-Black.otf\n Serif/OTF/TraditionalChineseHK/NotoSerifCJKhk-Bold.otf\n Serif/OTF/TraditionalChineseHK/NotoSerifCJKhk-ExtraLight.otf\n Serif/OTF/TraditionalChineseHK/NotoSerifCJKhk-Light.otf\n Serif/OTF/TraditionalChineseHK/NotoSerifCJKhk-Medium.otf\n Serif/OTF/TraditionalChineseHK/NotoSerifCJKhk-Regular.otf\n Serif/OTF/TraditionalChineseHK/NotoSerifCJKhk-SemiBold.otf\n Serif/SubsetOTF/HK/NotoSerifHK-Black.otf\n Serif/SubsetOTF/HK/NotoSerifHK-Bold.otf\n Serif/SubsetOTF/HK/NotoSerifHK-ExtraLight.otf\n Serif/SubsetOTF/HK/NotoSerifHK-Light.otf\n Serif/SubsetOTF/HK/NotoSerifHK-Medium.otf\n Serif/SubsetOTF/HK/NotoSerifHK-Regular.otf\n Serif/SubsetOTF/HK/NotoSerifHK-SemiBold.otf\n Serif/SubsetOTF/JP/NotoSerifJP-Black.otf\n Serif/SubsetOTF/JP/NotoSerifJP-Bold.otf\n Serif/SubsetOTF/JP/NotoSerifJP-ExtraLight.otf\n Serif/SubsetOTF/JP/NotoSerifJP-Light.otf\n Serif/SubsetOTF/JP/NotoSerifJP-Medium.otf\n Serif/SubsetOTF/JP/NotoSerifJP-Regular.otf\n Serif/SubsetOTF/JP/NotoSerifJP-SemiBold.otf\n Serif/SubsetOTF/KR/NotoSerifKR-Black.otf\n Serif/SubsetOTF/KR/NotoSerifKR-Bold.otf\n Serif/SubsetOTF/KR/NotoSerifKR-ExtraLight.otf\n Serif/SubsetOTF/KR/NotoSerifKR-Light.otf\n Serif/SubsetOTF/KR/NotoSerifKR-Medium.otf\n Serif/SubsetOTF/KR/NotoSerifKR-Regular.otf\n Serif/SubsetOTF/KR/NotoSerifKR-SemiBold.otf\n Serif/SubsetOTF/SC/NotoSerifSC-Black.otf\n Serif/SubsetOTF/SC/NotoSerifSC-Bold.otf\n Serif/SubsetOTF/SC/NotoSerifSC-ExtraLight.otf\n Serif/SubsetOTF/SC/NotoSerifSC-Light.otf\n Serif/SubsetOTF/SC/NotoSerifSC-Medium.otf\n Serif/SubsetOTF/SC/NotoSerifSC-Regular.otf\n Serif/SubsetOTF/SC/NotoSerifSC-SemiBold.otf\n Serif/SubsetOTF/TC/NotoSerifTC-Black.otf\n Serif/SubsetOTF/TC/NotoSerifTC-Bold.otf\n Serif/SubsetOTF/TC/NotoSerifTC-ExtraLight.otf\n Serif/SubsetOTF/TC/NotoSerifTC-Light.otf\n Serif/SubsetOTF/TC/NotoSerifTC-Medium.otf\n Serif/SubsetOTF/TC/NotoSerifTC-Regular.otf\n Serif/SubsetOTF/TC/NotoSerifTC-SemiBold.otf\n Serif/Variable/OTC/NotoSerifCJK-VF.ttf.ttc\n Serif/Variable/OTF/NotoSerifCJKhk-VF.otf\n Serif/Variable/OTF/NotoSerifCJKjp-VF.otf\n Serif/Variable/OTF/NotoSerifCJKkr-VF.otf\n Serif/Variable/OTF/NotoSerifCJKsc-VF.otf\n Serif/Variable/OTF/NotoSerifCJKtc-VF.otf\n Serif/Variable/OTF/Subset/NotoSerifHK-VF.otf\n Serif/Variable/OTF/Subset/NotoSerifJP-VF.otf\n Serif/Variable/OTF/Subset/NotoSerifKR-VF.otf\n Serif/Variable/OTF/Subset/NotoSerifSC-VF.otf\n Serif/Variable/OTF/Subset/NotoSerifTC-VF.otf\n Serif/Variable/TTF/NotoSerifCJKhk-VF.ttf\n Serif/Variable/TTF/NotoSerifCJKjp-VF.ttf\n Serif/Variable/TTF/NotoSerifCJKkr-VF.ttf\n Serif/Variable/TTF/NotoSerifCJKsc-VF.ttf\n Serif/Variable/TTF/NotoSerifCJKtc-VF.ttf\n Serif/Variable/TTF/Subset/NotoSerifHK-VF.ttf\n Serif/Variable/TTF/Subset/NotoSerifJP-VF.ttf\n Serif/Variable/TTF/Subset/NotoSerifKR-VF.ttf\n Serif/Variable/TTF/Subset/NotoSerifSC-VF.ttf\n Serif/Variable/TTF/Subset/NotoSerifTC-VF.ttf\n\nFiles: *\nCopyright: 2010-2012, Google Corporation\nLicense: SIL-1.1\n\nFiles: debian/*\nCopyright: 2013, Vasudev Kamath <kamathvasudev@gmail.com>\n           2013-2015, Jonas Smedegaard <dr@jones.dk>\n           2015-2022, ChangZhuo Chen (陳昌倬) <czchen@debian.org>\nLicense: GPL-3+\n\nLicense: SIL-1.1\n -----------------------------------------------------------\n SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007\n -----------------------------------------------------------\n .\n PREAMBLE\n .\n The goals of the Open Font License (OFL) are to stimulate worldwide\n development of collaborative font projects, to support the font\n creation efforts of academic and linguistic communities, and to provide\n a free and open framework in which fonts may be shared and improved in\n partnership with others.\n .\n The OFL allows the licensed fonts to be used, studied, modified and\n redistributed freely as long as they are not sold by themselves. The\n fonts, including any derivative works, can be bundled, embedded,\n redistributed and/or sold with any software provided that any reserved\n names are not used by derivative works. The fonts and derivatives,\n however, cannot be released under any other type of license. The\n requirement for fonts to remain under this license does not apply to\n any document created using the fonts or their derivatives.\n .\n DEFINITIONS\n .\n \"Font Software\" refers to the set of files released by the Copyright\n Holder(s) under this license and clearly marked as such. This may\n include source files, build scripts and documentation.\n .\n \"Reserved Font Name\" refers to any names specified as such after the\n copyright statement(s).\n .\n \"Original Version\" refers to the collection of Font Software components\n as distributed by the Copyright Holder(s).\n .\n \"Modified Version\" refers to any derivative made by adding to,\n deleting, or substituting -- in part or in whole -- any of the\n components of the Original Version, by changing formats or by porting\n the Font Software to a new environment.\n .\n \"Author\" refers to any designer, engineer, programmer, technical writer\n or other person who contributed to the Font Software.\n .\n PERMISSION & CONDITIONS\n .\n Permission is hereby granted, free of charge, to any person obtaining a\n copy of the Font Software, to use, study, copy, merge, embed, modify,\n redistribute, and sell modified and unmodified copies of the Font\n Software, subject to the following conditions:\n .\n 1) Neither the Font Software nor any of its individual components, in\n Original or Modified Versions, may be sold by itself.\n .\n 2) Original or Modified Versions of the Font Software may be bundled,\n redistributed and/or sold with any software, provided that each copy\n contains the above copyright notice and this license. These can be\n included either as stand-alone text files, human-readable headers or\n in the appropriate machine-readable metadata fields within text or\n binary files as long as those fields can be easily viewed by the user.\n .\n 3) No Modified Version of the Font Software may use the Reserved Font\n Name(s) unless explicit written permission is granted by the\n corresponding Copyright Holder. This restriction only applies to the\n primary font name as presented to the users.\n .\n 4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font\n Software shall not be used to promote, endorse or advertise any\n Modified Version, except to acknowledge the contribution(s) of the\n Copyright Holder(s) and the Author(s) or with their explicit written\n permission.\n .\n 5) The Font Software, modified or unmodified, in part or in whole, must\n be distributed entirely under this license, and must not be distributed\n under any other license. The requirement for fonts to remain under this\n license does not apply to any document created using the Font Software.\n .\n TERMINATION\n .\n This license becomes null and void if any of the above conditions are\n not met.\n .\n DISCLAIMER\n .\n THE FONT SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\n EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF\n MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT\n OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE\n COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,\n INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL\n DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\n FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM\n OTHER DEALINGS IN THE FONT SOFTWARE.\n\nLicense: GPL-3+\n This program is free software: you can redistribute it and/or modify\n it under the terms of the GNU General Public License as published by\n the Free Software Foundation, either version 3 of the License, or\n (at your option) any later version.\n .\n This program is distributed in the hope that it will be useful,\n but WITHOUT ANY WARRANTY; without even the implied warranty of\n MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n GNU General Public License for more details.\n .\n On Debian systems, the complete text of the GNU General\n Public License version 3 can be found in \"/usr/share/common-licenses/GPL-3\".\n",
+      "scope": "Complete original font copyright/license notice, byte-identical to the pinned installer notice; not a legal opinion, host-installation attestation or clearance of all contents of the source package/runtime dependency chain.",
+      "package_url": "https://deb.debian.org/debian/pool/main/f/fonts-noto-cjk/fonts-noto-cjk_20220127+repack1-1_all.deb",
+      "package_sha256": "4a2515eb6db3978b897fef9709ed0d2b1f4c6c4df4d83d6c4ef65f71f1b1f502",
+      "package_size": 56547048,
+      "package_member": "./usr/share/doc/fonts-noto-cjk/copyright"
+    },
+    "runtime-font-dejavu": {
+      "url": "https://salsa.debian.org/fonts-team/fonts-dejavu/-/raw/96b86ac99e7cf3be4b2ff8c7e03637d29ca4e800/debian/copyright",
+      "revision": "96b86ac99e7cf3be4b2ff8c7e03637d29ca4e800",
+      "sha256": "63d3ba759d12804c5b31a9d5940d855c1820d1f5999e6b0872eb1c7ff045fbc9",
+      "text": "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\nUpstream-Name: DejaVu fonts\nUpstream-Author: Stepan Roh <src@users.sourceforge.net> (original author),\n                  see /usr/share/doc/fonts-dejavu-core/AUTHORS for full list\nSource: https://dejavu-fonts.github.io/\n\nFiles: *\nCopyright: Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved. \n Bitstream Vera is a trademark of Bitstream, Inc.\n DejaVu changes are in public domain.\nLicense: bitstream-vera\n Permission is hereby granted, free of charge, to any person obtaining a copy\n of the fonts accompanying this license (\"Fonts\") and associated\n documentation files (the \"Font Software\"), to reproduce and distribute the\n Font Software, including without limitation the rights to use, copy, merge,\n publish, distribute, and/or sell copies of the Font Software, and to permit\n persons to whom the Font Software is furnished to do so, subject to the\n following conditions:\n .\n The above copyright and trademark notices and this permission notice shall\n be included in all copies of one or more of the Font Software typefaces.\n .\n The Font Software may be modified, altered, or added to, and in particular\n the designs of glyphs or characters in the Fonts may be modified and\n additional glyphs or characters may be added to the Fonts, only if the fonts\n are renamed to names not containing either the words \"Bitstream\" or the word\n \"Vera\".\n .\n This License becomes null and void to the extent applicable to Fonts or Font\n Software that has been modified and is distributed under the \"Bitstream\n Vera\" names.\n .\n The Font Software may be sold as part of a larger software package but no\n copy of one or more of the Font Software typefaces may be sold by itself.\n .\n THE FONT SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS\n OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF MERCHANTABILITY,\n FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF COPYRIGHT, PATENT,\n TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL BITSTREAM OR THE GNOME\n FOUNDATION BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, INCLUDING\n ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES,\n WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF\n THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER DEALINGS IN THE\n FONT SOFTWARE.\n .\n Except as contained in this notice, the names of Gnome, the Gnome\n Foundation, and Bitstream Inc., shall not be used in advertising or\n otherwise to promote the sale, use or other dealings in this Font Software\n without prior written authorization from the Gnome Foundation or Bitstream\n Inc., respectively. For further information, contact: fonts at gnome dot\n org.\n\nFiles: debian/*\nCopyright: (C) 2005-2006 Peter Cernak <pce@users.sourceforge.net> \n           (C) 2006-2011 Davide Viti <zinosat@tiscali.it>\n           (C) 2011-2013 Christian Perrier <bubulle@debian.org>\n           (C) 2013 Fabian Greffrath <fabian+debian@greffrath.com>\nLicense: GPL-2+\n This program is free software; you can redistribute it\n and/or modify it under the terms of the GNU General Public\n License as published by the Free Software Foundation; either\n version 2 of the License, or (at your option) any later\n version.\n .\n This program is distributed in the hope that it will be\n useful, but WITHOUT ANY WARRANTY; without even the implied\n warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR\n PURPOSE.  See the GNU General Public License for more\n details.\n .\n You should have received a copy of the GNU General Public\n License along with this package; if not, write to the Free\n Software Foundation, Inc., 51 Franklin St, Fifth Floor,\n Boston, MA  02110-1301 USA\n .\n On Debian systems, the full text of the GNU General Public\n License version 2 can be found in the file\n /usr/share/common-licenses/GPL-2'.\n",
+      "scope": "Complete original font copyright/license notice, byte-identical to the pinned installer notice; not a legal opinion, host-installation attestation or clearance of all contents of the source package/runtime dependency chain.",
+      "package_url": "https://deb.debian.org/debian/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb",
+      "package_sha256": "86635b3d25b3655fc11cb3ecc3af59f0bf19643b02b94f2de48bd10253cdba12",
+      "package_size": 840460,
+      "package_member": "./usr/share/doc/fonts-dejavu-core/copyright"
+    },
+    "runtime-font-inter": {
+      "url": "https://raw.githubusercontent.com/google/fonts/0b58fb370093f9a9f4ff785d94405710b79de67c/ofl/inter/OFL.txt",
+      "revision": "0b58fb370093f9a9f4ff785d94405710b79de67c",
+      "sha256": "5b9321a4298cfeb6b34354164a1c3afc3db114569984c502b9b35d988fd58c57",
+      "text": "Copyright 2020 The Inter Project Authors (https://github.com/rsms/inter)\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license is copied below, and is also available with a FAQ at:\nhttps://scripts.sil.org/OFL\n\n\n-----------------------------------------------------------\nSIL OPEN FONT LICENSE Version 1.1 - 26 February 2007\n-----------------------------------------------------------\n\nPREAMBLE\nThe goals of the Open Font License (OFL) are to stimulate worldwide\ndevelopment of collaborative font projects, to support the font creation\nefforts of academic and linguistic communities, and to provide a free and\nopen framework in which fonts may be shared and improved in partnership\nwith others.\n\nThe OFL allows the licensed fonts to be used, studied, modified and\nredistributed freely as long as they are not sold by themselves. The\nfonts, including any derivative works, can be bundled, embedded, \nredistributed and/or sold with any software provided that any reserved\nnames are not used by derivative works. The fonts and derivatives,\nhowever, cannot be released under any other type of license. The\nrequirement for fonts to remain under this license does not apply\nto any document created using the fonts or their derivatives.\n\nDEFINITIONS\n\"Font Software\" refers to the set of files released by the Copyright\nHolder(s) under this license and clearly marked as such. This may\ninclude source files, build scripts and documentation.\n\n\"Reserved Font Name\" refers to any names specified as such after the\ncopyright statement(s).\n\n\"Original Version\" refers to the collection of Font Software components as\ndistributed by the Copyright Holder(s).\n\n\"Modified Version\" refers to any derivative made by adding to, deleting,\nor substituting -- in part or in whole -- any of the components of the\nOriginal Version, by changing formats or by porting the Font Software to a\nnew environment.\n\n\"Author\" refers to any designer, engineer, programmer, technical\nwriter or other person who contributed to the Font Software.\n\nPERMISSION & CONDITIONS\nPermission is hereby granted, free of charge, to any person obtaining\na copy of the Font Software, to use, study, copy, merge, embed, modify,\nredistribute, and sell modified and unmodified copies of the Font\nSoftware, subject to the following conditions:\n\n1) Neither the Font Software nor any of its individual components,\nin Original or Modified Versions, may be sold by itself.\n\n2) Original or Modified Versions of the Font Software may be bundled,\nredistributed and/or sold with any software, provided that each copy\ncontains the above copyright notice and this license. These can be\nincluded either as stand-alone text files, human-readable headers or\nin the appropriate machine-readable metadata fields within text or\nbinary files as long as those fields can be easily viewed by the user.\n\n3) No Modified Version of the Font Software may use the Reserved Font\nName(s) unless explicit written permission is granted by the corresponding\nCopyright Holder. This restriction only applies to the primary font name as\npresented to the users.\n\n4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font\nSoftware shall not be used to promote, endorse or advertise any\nModified Version, except to acknowledge the contribution(s) of the\nCopyright Holder(s) and the Author(s) or with their explicit written\npermission.\n\n5) The Font Software, modified or unmodified, in part or in whole,\nmust be distributed entirely under this license, and must not be\ndistributed under any other license. The requirement for fonts to\nremain under this license does not apply to any document created\nusing the Font Software.\n\nTERMINATION\nThis license becomes null and void if any of the above conditions are\nnot met.\n\nDISCLAIMER\nTHE FONT SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT\nOF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE\nCOPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,\nINCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL\nDAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM\nOTHER DEALINGS IN THE FONT SOFTWARE.\n",
+      "scope": "Complete original font copyright/license notice, byte-identical to the pinned installer notice; not a legal opinion, host-installation attestation or clearance of all contents of the source package/runtime dependency chain."
+    },
+    "runtime-font-jetbrains-mono": {
+      "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/02bb50b082dad9ef8a0f33ac393839202b760223/OFL.txt",
+      "revision": "02bb50b082dad9ef8a0f33ac393839202b760223",
+      "sha256": "30f0c136e3c88e422d0791acd97238870f9054a9729bc34cf2ff0d4ed8cac4ad",
+      "text": "Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license is copied below, and is also available with a FAQ at:\nhttps://scripts.sil.org/OFL\n\n\n-----------------------------------------------------------\nSIL OPEN FONT LICENSE Version 1.1 - 26 February 2007\n-----------------------------------------------------------\n\nPREAMBLE\nThe goals of the Open Font License (OFL) are to stimulate worldwide\ndevelopment of collaborative font projects, to support the font creation\nefforts of academic and linguistic communities, and to provide a free and\nopen framework in which fonts may be shared and improved in partnership\nwith others.\n\nThe OFL allows the licensed fonts to be used, studied, modified and\nredistributed freely as long as they are not sold by themselves. The\nfonts, including any derivative works, can be bundled, embedded, \nredistributed and/or sold with any software provided that any reserved\nnames are not used by derivative works. The fonts and derivatives,\nhowever, cannot be released under any other type of license. The\nrequirement for fonts to remain under this license does not apply\nto any document created using the fonts or their derivatives.\n\nDEFINITIONS\n\"Font Software\" refers to the set of files released by the Copyright\nHolder(s) under this license and clearly marked as such. This may\ninclude source files, build scripts and documentation.\n\n\"Reserved Font Name\" refers to any names specified as such after the\ncopyright statement(s).\n\n\"Original Version\" refers to the collection of Font Software components as\ndistributed by the Copyright Holder(s).\n\n\"Modified Version\" refers to any derivative made by adding to, deleting,\nor substituting -- in part or in whole -- any of the components of the\nOriginal Version, by changing formats or by porting the Font Software to a\nnew environment.\n\n\"Author\" refers to any designer, engineer, programmer, technical\nwriter or other person who contributed to the Font Software.\n\nPERMISSION & CONDITIONS\nPermission is hereby granted, free of charge, to any person obtaining\na copy of the Font Software, to use, study, copy, merge, embed, modify,\nredistribute, and sell modified and unmodified copies of the Font\nSoftware, subject to the following conditions:\n\n1) Neither the Font Software nor any of its individual components,\nin Original or Modified Versions, may be sold by itself.\n\n2) Original or Modified Versions of the Font Software may be bundled,\nredistributed and/or sold with any software, provided that each copy\ncontains the above copyright notice and this license. These can be\nincluded either as stand-alone text files, human-readable headers or\nin the appropriate machine-readable metadata fields within text or\nbinary files as long as those fields can be easily viewed by the user.\n\n3) No Modified Version of the Font Software may use the Reserved Font\nName(s) unless explicit written permission is granted by the corresponding\nCopyright Holder. This restriction only applies to the primary font name as\npresented to the users.\n\n4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font\nSoftware shall not be used to promote, endorse or advertise any\nModified Version, except to acknowledge the contribution(s) of the\nCopyright Holder(s) and the Author(s) or with their explicit written\npermission.\n\n5) The Font Software, modified or unmodified, in part or in whole,\nmust be distributed entirely under this license, and must not be\ndistributed under any other license. The requirement for fonts to\nremain under this license does not apply to any document created\nusing the Font Software.\n\nTERMINATION\nThis license becomes null and void if any of the above conditions are\nnot met.\n\nDISCLAIMER\nTHE FONT SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT\nOF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE\nCOPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,\nINCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL\nDAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM\nOTHER DEALINGS IN THE FONT SOFTWARE.\n",
+      "scope": "Complete original font copyright/license notice, byte-identical to the pinned installer notice; not a legal opinion, host-installation attestation or clearance of all contents of the source package/runtime dependency chain."
+    },
+    "timeline-config-capture-provenance": {
+      "revision": "25092559744966d72ed3e2c0f08b9736c1ac4489",
+      "url": "https://github.com/CongliangK/framivra/pull/373",
+      "text": "Project-authored timeline-configuration feature captures from PR373, official DSH 0.2.2-rc.1, synthetic 120-frame 1080p30 project, 1440x1000 dark UI. Before sidebar 741f74b466605df310334461b9c74e4ec735d0ed; after implementation 1eea8494a7e3d7ba24566b5a1786497d63d4ba83; capture evidence commit 25092559744966d72ed3e2c0f08b9736c1ac4489. The black monitor is explicitly unrendered, not a generated video frame. Project-authored capture/fixture data is declared under root MIT; depicted DSH software notice is preserved separately, without a trademark or third-party dependency/font grant. Capture identities and original validation limitations are recorded in the PR373 description. This evidence revision identifies Framivra capture provenance, not a DSH upstream source revision.\n",
+      "sha256": "db011b268c98966b9f69a943aebb7f7f3a7aeaf364eb1e930294a1ee04c1aba0",
+      "scope": "Capture-provenance summary of the existing PR373 evidence; not a claim of new rendering, macOS write authorization or trademark rights."
+    },
+    "single-frame-chart-generation": {
+      "local_path": "docs/reports/single-frame-preview-evidence.json",
+      "sha256": "3469065faa10a2bed4835f4342afe9ed2974b27c19d6417201ab20d3479f9f64",
+      "revision": "c590630f1751ab23baf7fd011ff4161600924642",
+      "url": "https://github.com/CongliangK/framivra/blob/c590630f1751ab23baf7fd011ff4161600924642/docs/reports/single-frame-preview-evidence.json",
+      "scope": "Existing macOS internal CDP frame305 of project-authored chart_curve.html and illustrative data. Records input/hash/probe details and historical uncertainty; not a DSH UI capture or full-project acceptance. Root MIT declaration covers project-authored fixture/data, not external browser or font rights."
+    },
+    "html-workflow-chart-generation": {
+      "local_path": "docs/reports/html-workflow-evidence/index.json",
+      "sha256": "dc141f3c19cd9f23db910e9f24a3077bbe38d400d90d73f8582d242271d717ea",
+      "revision": "424e25643cbb2e28f817158ebd745320832d335e",
+      "url": "https://github.com/CongliangK/framivra/blob/424e25643cbb2e28f817158ebd745320832d335e/docs/reports/html-workflow-evidence/index.json",
+      "scope": "Existing Linux HTML/CDP chart study input and sample hashes; overview assembled from real cache frames. Project-authored fixture/data declaration only, not a browser/font license or a new 900-frame SVG qualification."
+    },
+    "dsh-rc1-observed-software-notice": {
+      "revision": "ed85bf7b35b132c1c76271594aef48b3e243e0bd",
+      "revision_scope": "Framivra historical resource-capture provenance anchor ONLY; no DSH upstream Git revision or exact capture-time vendor-byte attestation is asserted.",
+      "url": "https://www.npmjs.com/package/@deepseek-ai/dsh/v/0.2.2-rc.1",
+      "observed_package": "@deepseek-ai/dsh",
+      "observed_version": "0.2.2-rc.1",
+      "observed_package_json_sha256": "3e14837ceb3bbc0ba419ed08e9b5ba164338369b1268b93c3c25d89f7b1c9953",
+      "observation_scope": "Read-only inspection of the existing official isolated debug runtime package metadata and full LICENSE during resource-ticket follow-up. Package metadata declares MIT. This is an observed package/notice identity, not a DSH upstream source pin, complete runtime/dependency audit, trademark grant or newly issued permission.",
+      "text": "MIT License\n\nCopyright (c) 2026 DeepSeek\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
+      "sha256": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be",
+      "scope": "Preserved actual DeepSeek vendor MIT software notice for the depicted official host. Separate from root project copyright and capture/data declaration; does not relicense trademarks, stock assets, external fonts or transitive UI dependencies. No vendor runtime binaries are added to the repository."
     }
   },
   "legacy_downloads": {

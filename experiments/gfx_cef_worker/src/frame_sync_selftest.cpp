@@ -1356,6 +1356,11 @@ void TestNonAdvancingPaintMutation() {
   Check(t.m.FeedOwnedPaint(owned_second, 32, 24, dst.data(), 800).disposition != PaintDisposition::kAccepted &&
         t.m.needs_baseline_veto() && dst == sentinel,
         "nonadvancing: fresh owned second phase still freezes signed bytes");
+  Check(!t.m.PaintMayAdvance(original.px.data(), 32 * 4, 32, 24) &&
+        t.m.FeedNonAdvancingPaint(original.px.data(), 32 * 4, 32, 24, 850).disposition ==
+            PaintDisposition::kEarlyDropped && t.m.needs_baseline_veto() &&
+        !t.m.accepted() && dst == sentinel,
+        "nonadvancing: unsigned-looking signed callback cannot replace independent veto");
   t.m.FeedExactBaselinePaint(id, original.px.data(), 32 * 4, 32, 24, dst.data(), 900, 13);
   Check(!t.m.accepted() && dst == sentinel,
         "nonadvancing: recovered proof still needs two fresh unsigned samples");
@@ -1392,16 +1397,21 @@ void TestNonAdvancingRejectionAttribution() {
     d.document_gen = 1; d.request_id = 42; d.target_frame_index = 7;
     d.expected_w = 32; d.expected_h = 24; d.canary = mode;
     FrameBuf stale(32, 24);
-    Check(original.AdvanceToS3(d, nullptr, 0) && nonadvancing.AdvanceToS3(d, nullptr, 0) &&
-          original.m.EnterPumping(400) && nonadvancing.m.EnterPumping(400),
-          "nonadvancing: rejection attribution setup");
-    const auto compare = [&](const uint8_t* pixels, size_t stride, uint32_t w, uint32_t h) {
-      const auto old = original.m.FeedPaint(pixels, stride, w, h, nullptr, 500);
-      const auto safe = nonadvancing.m.FeedNonAdvancingPaint(pixels, stride, w, h, 500);
+    const auto compare = [&](const uint8_t* pixels, size_t stride, uint32_t w,
+                             uint32_t h, uint64_t now_us = 500) {
+      const auto old = original.m.FeedPaint(pixels, stride, w, h, nullptr, now_us);
+      const auto safe = nonadvancing.m.FeedNonAdvancingPaint(pixels, stride, w, h, now_us);
       return old.disposition == safe.disposition && original.lines.back() == nonadvancing.lines.back() &&
           original.m.request_stats().paints_fed == nonadvancing.m.request_stats().paints_fed &&
           original.m.request_stats().rejected_stale_paint == nonadvancing.m.request_stats().rejected_stale_paint;
     };
+    Check(compare(stale.px.data(), 32 * 4, 32, 24, 0),
+          "nonadvancing: idle late-paint attribution unchanged");
+    Check(original.AdvanceToS3(d, nullptr, 0) && nonadvancing.AdvanceToS3(d, nullptr, 0) &&
+          compare(stale.px.data(), 32 * 4, 32, 24, 350),
+          "nonadvancing: pre-pumping early-paint attribution unchanged");
+    Check(original.m.EnterPumping(400) && nonadvancing.m.EnterPumping(400),
+          "nonadvancing: rejection attribution pumping");
     Check(compare(nullptr, 32 * 4, 32, 24) && compare(stale.px.data(), 7, 32, 24) &&
           compare(stale.px.data(), 32 * 4, 31, 24) && compare(stale.px.data(), 32 * 4, 32, 24),
           "nonadvancing: invalid buffer, stride, size and stale attribution unchanged");

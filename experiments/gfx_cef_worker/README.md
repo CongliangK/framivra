@@ -128,17 +128,6 @@ env VTX_TEST_CEF_WORKER="${CEF_WORKER:?}" \
 CEF 缓存身份；改变配置后的第一次运行不是同身份暖态。双浏览器有额外常驻开销，峰值
 RAM 变化未实测，不能假定翻倍或本机可承受；Mac 先以 `PAGES=1` 验正确性，再单独评估
 2/3/4，不默认推满 32；默认 7 不代表经过本机资源测定，线程上限亦非容量保证。
-对单个 900 帧页面，应用默认 `7/450/3` 实际只有 **2 个帧块 worker**，不是 7 个。
-修复拒收路径后，本机完整三对试验中，显式设 `VTX_GFX_PAGES=3 VTX_GFX_SPLIT_FRAMES=300
-VTX_GFX_SPLIT_MAX=3` 后，冷态 `all` 中位 91.749→86.244s，配对减时中位 **6.0%**；
-暖态配对中位反而慢0.6%，无实用收益。冷态采样 summed-RSS 中位约 6.83→8.26GiB，
-这是**更多内存换小幅速度的既有配置调优**，不是新算法、不改默认，相对应用默认未达30%/50%。
-相对此前 `1/0/1` 单worker**基准档**另做3对，冷态128.817→85.885s、配对减时33.1%，
-但RSS约4.46→8.48GiB且暖态无稳定收益；不能把该档的33%冒充默认应用的提升。
-仅覆盖该 10逻辑CPU/16GiB Mac 的锁定旧版 HTML 派生工程，不外推 portable-v2 SVG 或其它项目；
-参数变更使缓存身份失效，首次必须按冷态计。完整逐对数据、负结果与恢复默认方法见
-[调优结论](../../docs/reports/development-history.md#cef-并发调优与被否决的深预取368)及
-[脱敏证据](../../docs/reports/cef-concurrency-evidence.json)。
 
 **PairSwap 双对交替预取（mode n + exact，默认开启，`VTX_CEF_PAIR_SWAP=0` 关闭）**：
 每 worker 额外持有 B 对浏览器（signed+unsigned × A/B 共 4 个 OSR 渲染器，B 对惰性
@@ -158,13 +147,6 @@ VTX_GFX_SPLIT_MAX=3` 后，冷态 `all` 中位 91.749→86.244s，配对减时�
 timeline 帧率、尺寸、codec 与像素证明不变；日志记录请求值，配置变化仍使缓存身份变化。
 无见证浏览器仅在 readiness 后收集两次真实 paint 时复制快照，闲置签名浏览器不复制；
 丢弃的回调仍递增 native paint 序号，重新启用时清旧缓冲并建立新 floor，不减少证明样本。
-强制重绘合并与CDP快速PNG原型已撤回：[受扰样本](<../../docs/reports/browser-cold-chain-screens.json>)
-保留，补测后CEF完整cold为96.611→96.815s、CDP为135.481→133.755s，后者PNG体积增加67.1%。
-单组补测不足以估计稳定增益/回归，未提供值得保留原型的收益；[补测证据](<../../docs/reports/browser-cold-chain-repeats.json>)
-逐项保留质量、时戳与资源代价。绘制后围栏、独立样本、非推进拒收修复及全部就绪/超时边界不变。
-当前Mac A0试验仅对自有renderer关闭后台CPU降优先级（`disable-renderer-backgrounding`）；
-不改变页面可见性、timer策略、浏览器数量或证明门，Linux/A1不变。策略绑定新worker二进制身份，
-须用重编产物单独验证完整冷暖链与资源代价，尚无30%结论。
 原生 capture 与 encode 已由深度 2 ticket 流水重叠；后续优化须测量未被隐藏的关键路径，
 不能再次把已重叠的编码时间计为新增收益，也不能把编码线程数当作加速倍数。
 
@@ -213,29 +195,13 @@ BENCH_OUTPUT="${BENCH_PARENT:?}/cef-bench-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 先验证该档，再分别评估并发/配置。
 上表配置可用 `--common-set KEY=VALUE` 同改两端；候选单独变更
 须同时声明 `--candidate-set KEY=VALUE --ablation <说明>`，不得当作纯代码提速。
-复验上述两块/三块对照时，两仓须为同一修复版本的独立干净检出；将 `TUNING_WORKER`
-设为**同一份新构建 worker**的绝对路径，覆盖 `ARGS` 内两端 worker。沿用其余 `ARGS`
-（含3轮），**另建输出并实际写入**：
-
-```bash
-"$PYTHON" -B "$BENCH" run "${ARGS[@]}" \
-  --baseline-worker "${TUNING_WORKER:?}" --candidate-worker "$TUNING_WORKER" \
-  --common-set VTX_GFX_PAGES=7 --common-set VTX_GFX_SPLIT_FRAMES=450 \
-  --common-set VTX_GFX_SPLIT_MAX=3 --candidate-set VTX_GFX_PAGES=3 \
-  --candidate-set VTX_GFX_SPLIT_FRAMES=300 \
-  --ablation fixed-rejection-path-bounded-three-block-tuning \
-  --output "${BENCH_PARENT:?}/cef-three-block-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-```
 
 完整 `all` 的外层墙钟是主计时；之后另跑 `qc --strict` 和媒体核验，复制、strict QC、
 媒体哈希计算均不计入该墙钟。保存 `run.json`、`summary.json`、`report.md`，并保留
 逐轮 events、日志、回执、native/pipeline 证据。报告分别展示 strict QC、900 帧/PTS/音频
 检查及配对 decoded-video/PCM 一致性；它们互不替代，也不等于人工视觉验收。
 RSS 采样会重复计算共享页且漏掉瞬时峰值，不是精确物理内存/完整树峰值；CPU 采样
-只是已观测用量下界。Mac 另采样当前命令进程树的 `proc_pid_rusage` 磁盘读写字节下界，
-漏短进程/退出尾部，不是逻辑文件字节、IO延迟或完整归因。命令墙钟外的前后快照记录主机
-压力等级、空闲百分比代理及swap；这是整个主机的两个端点，不是本命令造成的变化或峰值。
-未知/不支持/失败分别保留覆盖率和null，不能补0；当前Linux新增IO与压力观察不支持。
+只是已观测用量下界。
 旧 worker 缺失的分项或未知资源写 unavailable/null，不补 0。
 失败与不完整轮次保留，不挑选最好成绩；原始证据可能含本地路径，分享前须审查。
 

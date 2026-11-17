@@ -501,6 +501,31 @@ def portable_catalog(cat, runtime=None):
                             ("samples_root", "$MUSIC_SAMPLES_ROOT"))
          if rt.get(key)], key=lambda pair: len(pair[0]), reverse=True)
 
+    def ordinary_windows_path(value):
+        # This conservative lexical check is not complete Windows name resolution.
+        if value.startswith("//"):  # Also a protocol-relative URL, not unambiguously UNC.
+            return None
+        path = value.replace("/", "\\")
+        if (len(path) >= 3 and path[0] in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+                and path[1:3] == ":\\"):
+            parts = path[3:].split("\\")
+        elif path.startswith("\\\\"):
+            parts = path[2:].split("\\")
+            if len(parts) < 2 or not parts[0] or not parts[1] or parts[1].lower() == "pipe":
+                return None
+        else:
+            return None
+        devices = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$"}
+        devices.update(prefix + digit for prefix in ("COM", "LPT") for digit in "123456789¹²³")
+        for i, part in enumerate(parts):
+            if not part and i == len(parts) - 1:
+                continue  # A single trailing separator.
+            if (not part or part.endswith((".", " ")) or
+                    any(ord(c) < 32 or ord(c) == 127 or c in '<>:"|?*' for c in part) or
+                    part.split(".", 1)[0].rstrip(" ").upper() in devices):
+                return None
+        return path
+
     def visit(value):
         if isinstance(value, dict):
             return {key: visit(val) for key, val in value.items()}
@@ -510,6 +535,14 @@ def portable_catalog(cat, runtime=None):
             for prefix, token in prefixes:
                 if value == prefix or value.startswith(prefix + os.sep):
                     return token + value[len(prefix):]
+            if os.sep == "\\":
+                path_cmp = ordinary_windows_path(value)
+                if path_cmp is not None:
+                    for prefix, token in prefixes:
+                        prefix_cmp = ordinary_windows_path(prefix)
+                        if prefix_cmp is not None and (path_cmp == prefix_cmp or
+                                path_cmp.startswith(prefix_cmp + os.sep)):
+                            return token + value[len(prefix):]
         return value
 
     return visit(cat)

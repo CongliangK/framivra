@@ -76,16 +76,38 @@ test('visual timeline: keyboard/button accessible names, compact status bar, hel
   assert.equal(document.querySelector('.fv-ruler').getAttribute('aria-label'), '固定播放头帧标尺')
   assert(document.querySelector('[aria-label="显示范围"]'))
   assert(document.querySelector('[aria-label="活动引用"]').textContent.includes('活动引用：无'))
-  assert(document.body.textContent.includes('悬停帧：—'))
+  assert(document.body.textContent.includes('悬停时间码：—'))
   assert(document.body.textContent.includes('已选 0'))
-  assert(document.body.textContent.includes('播放头 10'))
+  assert(document.body.textContent.includes('播放头 00:00:10'))
   const help = document.querySelector('details.fv-help')
   assert(help && help.textContent.includes('kernel range'))
   // Heading stays a single compact line; explanatory paragraphs live only inside the details.
   const h3 = document.querySelector('.fv-timeline h3')
   assert.equal(h3.textContent, '可视化回归')
   await act(async () => button('放大').click())
-  assert(document.querySelector('[aria-label="可见帧范围"]').textContent.includes('帧窗口 [25, 75)'))
+  assert(document.querySelector('[aria-label="可见帧范围"]').textContent.includes('时间码窗口 [00:00:25, 00:02:15)'))
+})
+
+test('timeline timecode covers ruler, pin, hover, clip and window with explicit NTSC non-drop and unknown-clock refusal', async t => {
+  const { root } = await mount(t)
+  const { Simulate } = await import('react-dom/test-utils')
+  const render = fps => act(async () => root.render(h(VisualTimeline, { snapshot: { ...snapshot, document: { project: { duration_frames: 100, fps } } }, result, frame: 31 })))
+  await render('30000/1001')
+  assert(document.body.textContent.includes('NTSC non-drop · 名义 30 fps（不是墙钟）'))
+  assert(document.body.textContent.includes('播放头 00:01:01'))
+  assert.equal(document.querySelector('.fv-ruler').getAttribute('aria-valuenow'), '31', 'canonical pin remains integer')
+  assert.equal(document.querySelector('.fv-ruler').getAttribute('aria-valuetext'), '00:01:01')
+  assert.deepEqual([...document.querySelectorAll('.fv-tick')].map(node => node.textContent), ['00:00:00', '00:00:25', '00:01:20', '00:02:15', '00:03:10'])
+  assert.equal(document.querySelector('.fv-clip-len').textContent, '00:00:20')
+  assert(document.querySelector('.fv-clip').title.includes('[00:00:00, 00:00:20) · 长度 00:00:20'))
+  const ruler = document.querySelector('.fv-ruler')
+  ruler.getBoundingClientRect = () => ({ left: 0, width: 100 })
+  await act(async () => Simulate.pointerMove(ruler, { clientX: 50, pointerId: 1 }))
+  assert(document.body.textContent.includes('悬停时间码：00:01:20'))
+  await render(undefined)
+  assert.equal(document.querySelector('.fv-clip-len').textContent, '时间码不可显示')
+  assert([...document.querySelectorAll('.fv-tick')].every(node => node.textContent === '时间码不可显示'))
+  assert(document.body.textContent.includes('播放头 时间码不可显示'))
 })
 
 test('visual timeline: multi-selection count reflects ctrl-clicked clips via uncontrolled intent', async t => {
@@ -131,7 +153,7 @@ test('overview strip: display-only navigation pans/zooms the window; never pins,
   const windowText = () => document.querySelector('[aria-label="可见帧范围"]').textContent
   const button = text => [...document.querySelectorAll('button')].find(node => node.textContent === text)
   await act(async () => button('放大').click())
-  assert(windowText().includes('帧窗口 [25, 75)'))
+  assert(windowText().includes('时间码窗口 [00:00:25, 00:02:15)'))
   const overview = document.querySelector('.fv-overview')
   overview.getBoundingClientRect = () => ({ left: 0, width: 200 })
   // Stored clip ranges (8 blocks) plus view window and pinned playhead markers.
@@ -142,28 +164,28 @@ test('overview strip: display-only navigation pans/zooms the window; never pins,
   assert.equal(overview.getAttribute('aria-valuenow'), '25')
   // Click at frame 25 centers the 50-frame window at [0, 50).
   await act(async () => Simulate.pointerDown(overview, { button: 0, clientX: 50, pointerId: 3 }))
-  assert(windowText().includes('帧窗口 [0, 50)'))
+  assert(windowText().includes('时间码窗口 [00:00:00, 00:01:20)'))
   // A second simultaneous touch cannot hijack the navigation drag.
   await act(async () => Simulate.pointerDown(overview, { button: 0, clientX: 199, pointerId: 4 }))
   await act(async () => Simulate.pointerMove(overview, { clientX: 199, pointerId: 4 }))
-  assert(windowText().includes('帧窗口 [0, 50)'))
+  assert(windowText().includes('时间码窗口 [00:00:00, 00:01:20)'))
   // Owner drag continues to steer the window.
   await act(async () => Simulate.pointerMove(overview, { clientX: 100, pointerId: 3 }))
-  assert(windowText().includes('帧窗口 [25, 75)'))
+  assert(windowText().includes('时间码窗口 [00:00:25, 00:02:15)'))
   await act(async () => Simulate.lostPointerCapture(overview, { pointerId: 4 }))
   await act(async () => Simulate.pointerUp(overview, { clientX: 100, pointerId: 3 }))
   // Keyboard: quarter-span arrows, Home, End.
   await act(async () => Simulate.keyDown(overview, { key: 'ArrowRight', preventDefault() {} }))
-  assert(windowText().includes('帧窗口 [38, 88)'))
+  assert(windowText().includes('时间码窗口 [00:01:08, 00:02:28)'))
   await act(async () => Simulate.keyDown(overview, { key: 'Home', preventDefault() {} }))
-  assert(windowText().includes('帧窗口 [0, 50)'))
+  assert(windowText().includes('时间码窗口 [00:00:00, 00:01:20)'))
   await act(async () => Simulate.keyDown(overview, { key: 'End', preventDefault() {} }))
-  assert(windowText().includes('帧窗口 [50, 100)'))
+  assert(windowText().includes('时间码窗口 [00:01:20, 00:03:10)'))
   // Pure display: playhead pinned value, selection and gesture callbacks untouched.
   assert.deepEqual(frames, [])
   assert.deepEqual(selections, [])
   assert.deepEqual(gestures, [])
-  assert(document.body.textContent.includes('播放头 10'))
+  assert(document.body.textContent.includes('播放头 00:00:10'))
 })
 
 test('缩放到选区 zooms to stored ranges of selected blocks only; clip labels carry safe frame durations', async t => {
@@ -173,22 +195,22 @@ test('缩放到选区 zooms to stored ranges of selected blocks only; clip label
   const zoom = button('缩放到选区')
   assert.equal(zoom.disabled, true, 'no selection yet')
   const clips = [...document.querySelectorAll('.fv-clip')]
-  assert(clips[0].textContent.includes('20 帧'), 'clip shows stored range duration')
+  assert.equal(clips[0].querySelector('.fv-clip-len').textContent, '00:00:20', 'clip shows stored range duration as timecode')
   await act(async () => clips[0].click())
   assert.equal(button('缩放到选区').disabled, false)
   await act(async () => button('缩放到选区').click())
-  assert(document.querySelector('[aria-label="可见帧范围"]').textContent.includes('帧窗口 [0, 20)'), 'single block [0,20) zooms window to itself')
+  assert(document.querySelector('[aria-label="可见帧范围"]').textContent.includes('时间码窗口 [00:00:00, 00:00:20)'), 'single block [0,20) zooms window to itself')
   // Two blocks [0,20)+[40,100) ctrl-selected: union window [0, 100). Re-fit first:
   // after the single-block zoom the other clip is outside the window and unmounted.
   await act(async () => button('适配全片').click())
   const fresh = [...document.querySelectorAll('.fv-clip')]
   await act(async () => fresh[1].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true })))
   await act(async () => button('缩放到选区').click())
-  assert(document.querySelector('[aria-label="可见帧范围"]').textContent.includes('帧窗口 [0, 100)'))
+  assert(document.querySelector('[aria-label="可见帧范围"]').textContent.includes('时间码窗口 [00:00:00, 00:03:10)'))
   // Disjoint union across tracks zooms to the bounding range of stored ranges.
   await act(async () => button('放大').click())
   await act(async () => button('缩放到选区').click())
-  assert(document.querySelector('[aria-label="可见帧范围"]').textContent.includes('帧窗口 [0, 100)'))
+  assert(document.querySelector('[aria-label="可见帧范围"]').textContent.includes('时间码窗口 [00:00:00, 00:03:10)'))
 })
 
 test('window blur / hidden tab with NO delivered cancel clears stranded owners: ruler and overview recover, block ghost is canceled', async t => {
@@ -219,12 +241,12 @@ test('window blur / hidden tab with NO delivered cancel clears stranded owners: 
   const button = text => [...document.querySelectorAll('button')].find(node => node.textContent === text)
   await act(async () => button('放大').click()) // span 50: a seek can actually move the window
   await act(async () => Simulate.pointerDown(overview, { button: 0, clientX: 50, pointerId: 3 }))
-  assert(windowText().includes('帧窗口 [0, 50)'))
+  assert(windowText().includes('时间码窗口 [00:00:00, 00:01:20)'))
   await blur()
   await act(async () => Simulate.pointerMove(overview, { clientX: 100, pointerId: 3 }))
-  assert(windowText().includes('帧窗口 [0, 50)'), 'stranded overview owner cannot steer after blur')
+  assert(windowText().includes('时间码窗口 [00:00:00, 00:01:20)'), 'stranded overview owner cannot steer after blur')
   await act(async () => Simulate.pointerDown(overview, { button: 0, clientX: 100, pointerId: 5 }))
-  assert(windowText().includes('帧窗口 [25, 75)'), 'new pointer acquires overview after blur cleanup')
+  assert(windowText().includes('时间码窗口 [00:00:25, 00:02:15)'), 'new pointer acquires overview after blur cleanup')
   await act(async () => Simulate.pointerUp(overview, { clientX: 100, pointerId: 5 }))
   // --- Block gesture: blur mid-drag cancels the ghost and releases the token.
   for (const track of document.querySelectorAll('.fv-track')) track.getBoundingClientRect = () => ({ top: 0, bottom: 100, left: 0, width: 100 })

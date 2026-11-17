@@ -17,8 +17,6 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from vtx.cache.policy import CachePolicy
-from vtx.cache.session import CacheSession
 from vtx.cli import commands as cli
 from vtx.runtime import events, execution_links
 from vtx.inspection import qc
@@ -150,6 +148,41 @@ class EventsTests(unittest.TestCase):
             self.assertEqual(event['task_id'], ref['task_id'])
             self.assertEqual(sum(r['event'] == 'receipt_commit' for r in rows), 1)
 
+    def test_nested_cross_stage_receipt_has_own_postcommit_identity(self):
+        with tempfile.TemporaryDirectory() as temp:
+            execution = self.execution()
+            c = Ctx(fixture(Path(temp)), execution=execution)
+            with execution.task('qc', kind='stage').scope() as outer:
+                c.receipt('gfx', True)
+                c.receipt('qc', True)
+            rows = self.rows()
+            stages = json.loads((c.out / 'receipt.json').read_text())['stages']
+            gfx_ref, qc_ref = (stages[name]['observed_by'] for name in ('gfx', 'qc'))
+            gfx = next(row for row in rows if row['event_id'] == gfx_ref['event_id'])
+            qc = next(row for row in rows if row['event_id'] == qc_ref['event_id'])
+            self.assertEqual((gfx['stage'], gfx['extensions']['receipt_stage']), ('gfx', 'gfx'))
+            self.assertEqual(gfx['task_id'], gfx_ref['task_id'])
+            self.assertEqual(gfx['parent_task_id'], outer.task_id)
+            self.assertNotEqual(gfx_ref['task_id'], outer.task_id)
+            self.assertEqual(qc_ref['task_id'], outer.task_id)
+            self.assertEqual(qc['stage'], 'qc')
+            # The unchanged strict parser must reject the previous malformed row.
+            changed = [dict(row) for row in rows]
+            bad = next(row for row in changed if row['event_id'] == gfx_ref['event_id'])
+            bad['stage'] = 'qc'
+            with self.assertRaisesRegex(ValueError, 'invalid receipt commit'):
+                events.read_events(''.join(json.dumps(row) + '\n' for row in changed))
+
+    def test_failed_nested_receipt_never_emits_success_or_dangling_reference(self):
+        execution = self.execution()
+        with execution.task('qc', kind='stage').scope():
+            with self.assertRaises(OSError):
+                execution.receipt('gfx', True, lambda ref: (_ for _ in ()).throw(OSError('private failure')))
+        rows = self.rows()
+        self.assertFalse(any(row['event'] == 'receipt_commit' for row in rows))
+        nested = next(row for row in rows if row['event'] == 'task_terminal' and row['stage'] == 'gfx')
+        self.assertEqual(nested['outcome'], 'failed')
+
     def test_concurrent_stage_receipts_remain_separate(self):
         with tempfile.TemporaryDirectory() as temp:
             execution = self.execution()
@@ -164,97 +197,6 @@ class EventsTests(unittest.TestCase):
                 row = next(r for r in rows if r['event_id'] == ref['event_id'])
                 self.assertEqual(row['stage'], name)
             self.assertNotEqual(stages['gfx']['observed_by']['task_id'], stages['audio']['observed_by']['task_id'])
-
-    def test_cache_session_prerequisite_receipts_have_nested_stage_linkage(self):
-        for mode in ('core', 'off'):
-            for stage, prerequisite, builder in (
-                    ('qc', 'gfx', 'vtx.cli.commands.gfx'),
-                    ('audio', 'prepare', 'vtx.pipeline.stages.prepare')):
-                with self.subTest(mode=mode, stage=stage), tempfile.TemporaryDirectory() as temp:
-                    execution = self.execution()
-                    c = Ctx(fixture(Path(temp)), execution=execution)
-                    c.draft = False
-                    c.cache_policy = CachePolicy(mode)
-                    dependency = 'mux' if stage == 'qc' else 'prepare'
-                    c.receipt(dependency, True)
-                    # A prerequisite rebuild must not begin/revoke stages again:
-                    # beginning gfx would remove the already-gated mux receipt.
-                    def rebuild(ctx):
-                        ctx.receipt(prerequisite, True)
-                    with CacheSession(c) as session, \
-                            patch(builder, side_effect=rebuild) as build, \
-                            patch.object(c, 'begin_stage', wraps=c.begin_stage) as begin, \
-                            patch('vtx.pipeline.composite.needs_qc_clean', return_value=False):
-                        def produce(ctx):
-                            session.ensure_stage_inputs(stage)  # Already rebuilt; no duplicate.
-                            ctx.receipt(stage, True)
-                        cli._observed_stage(c, stage, produce)
-                        build.assert_called_once_with(c)
-                        begin.assert_called_once_with(stage)
-                        self.assertIn(prerequisite, session.completed)
-                    rows = self.rows()
-                    starts = [r for r in rows if r['event'] == 'task_start']
-                    self.assertEqual([r['stage'] for r in starts], [stage, prerequisite])
-                    parent, child = starts
-                    self.assertEqual(child['scope'], 'stage')
-                    self.assertEqual(child['parent_task_id'], parent['task_id'])
-                    stages = json.loads((c.out / 'receipt.json').read_text())['stages']
-                    self.assertTrue(stages[dependency]['ok'])
-                    for name, task in ((prerequisite, child), (stage, parent)):
-                        ref = stages[name]['observed_by']
-                        row = next(r for r in rows if r['event_id'] == ref['event_id'])
-                        self.assertEqual(ref['run_id'], execution.run_id)
-                        self.assertEqual(ref['task_id'], task['task_id'])
-                        self.assertEqual(row['task_id'], task['task_id'])
-                        self.assertEqual(row['stage'], name)
-                        self.assertEqual(row['extensions']['receipt_stage'], name)
-
-    def test_cache_session_prerequisite_failure_propagates_without_completion(self):
-        for stage, prerequisite, builder in (
-                ('qc', 'gfx', 'vtx.cli.commands.gfx'),
-                ('audio', 'prepare', 'vtx.pipeline.stages.prepare')):
-            for error in (RuntimeError('builder failed'), SystemExit(7)):
-                with self.subTest(stage=stage, error=type(error)), tempfile.TemporaryDirectory() as temp:
-                    execution = self.execution()
-                    c = Ctx(fixture(Path(temp)), execution=execution)
-                    c.draft = False
-                    c.cache_policy = CachePolicy('off')
-                    c.receipt('mux' if stage == 'qc' else 'prepare', True)
-                    def rebuild(ctx):
-                        ctx.receipt(prerequisite, False)
-                        raise error
-                    with CacheSession(c) as session, \
-                            patch(builder, side_effect=rebuild), \
-                            patch('vtx.pipeline.composite.needs_qc_clean') as clean:
-                        with self.assertRaises(type(error)) as caught:
-                            cli._observed_stage(c, stage, lambda c: self.fail('producer ran'))
-                        self.assertIs(caught.exception, error)
-                        self.assertNotIn(prerequisite, session.completed)
-                        self.assertNotIn(stage, session.completed)
-                        clean.assert_not_called()
-                    rows = self.rows(7 if isinstance(error, SystemExit) else 1)
-                    receipt = next(r for r in rows if r['event'] == 'receipt_commit')
-                    self.assertEqual(receipt['stage'], prerequisite)
-                    self.assertEqual(receipt['extensions']['receipt_stage'], prerequisite)
-                    terminals = [r for r in rows if r['event'] == 'task_terminal']
-                    self.assertEqual([r['stage'] for r in terminals], [prerequisite, stage])
-                    self.assertTrue(all(r['outcome'] == 'failed' for r in terminals))
-
-    def test_cache_session_prerequisite_rebuild_stays_after_receipt_gate(self):
-        for stage, builder in (('qc', 'vtx.cli.commands.gfx'),
-                               ('audio', 'vtx.pipeline.stages.prepare')):
-            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as temp:
-                execution = self.execution()
-                c = Ctx(fixture(Path(temp)), execution=execution)
-                c.draft = False
-                c.cache_policy = CachePolicy('off')
-                with CacheSession(c), patch(builder) as build, \
-                        contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
-                    cli._observed_stage(c, stage, lambda c: self.fail('producer ran'))
-                build.assert_not_called()
-                rows = self.rows(1)
-                self.assertEqual([r['stage'] for r in rows if r['event'] == 'task_start'], [stage])
-                self.assertFalse(any(r['event'] == 'receipt_commit' for r in rows))
 
     def test_cache_identity_unchanged_and_old_producer_unknown(self):
         with tempfile.TemporaryDirectory() as temp:

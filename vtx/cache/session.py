@@ -12,7 +12,7 @@ import sys
 
 from .policy import graphics_root, policy_for, storage_root
 from .cache_state import verify_input_identity
-from ..runtime import events, fstxn
+from ..runtime import fstxn
 
 
 def pack_path(c, clip):
@@ -268,11 +268,11 @@ class CacheSession:
             return
         if name == 'audio' and 'prepare' not in self.completed:
             from ..pipeline.stages import prepare
-            events.task(c, 'prepare', kind='stage').call(prepare, c)
+            prepare(c)
             self.completed.add('prepare')
         if name in ('video', 'qc') and 'gfx' not in self.completed:
             from ..cli.commands import gfx
-            events.task(c, 'gfx', kind='stage').call(gfx, c)
+            gfx(c)
             self.completed.add('gfx')
         if name == 'qc' and not self.completed.intersection(('video', 'qc_clean')):
             from ..pipeline.composite import (prepare_layers, RenderPlan, render_qc_clean,
