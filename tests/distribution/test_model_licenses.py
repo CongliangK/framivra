@@ -27,7 +27,9 @@ class LicenseInventory(unittest.TestCase):
                          {"framivra", "vendored-fpng", "vendored-libspng", "placeholder-media",
                           "electron-worker-source", "gfx-environment-evidence",
                           "resource-management-ui-captures", "timeline-config-ui-captures",
-                          "single-frame-chart-evidence", "html-workflow-chart-evidence"})
+                          "single-frame-chart-evidence", "html-workflow-chart-evidence",
+                          "html-preview-baseline-screenshot", "cold-composite-ui-evidence",
+                          "macos-plugin-screenshot-evidence"})
         # Current Demo fonts are external pinned inputs; their full notices stay in source.
         template = ROOT / "templates/demo-timeline-svg"
         fonts = json.loads((template / "fonts.lock.json").read_text())["fonts"]

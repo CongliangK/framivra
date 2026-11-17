@@ -93,7 +93,19 @@ After generation, a **second explicit click** either copies the verified PNG or 
 
 Clipboard support/permission refusal is visible and never silently falls back to text. OS clipboard writes cannot be recalled after a later invalidation, and the OS may re-encode PNGs. Temporary decode URLs are revoked; applied draft previews belong to DSH. Certificates identify the render-time inputs with **Fast media stat identity**, not live-atomic media at draft-intake time, a final render, QC or an immutable clipboard byte promise.
 
+### 冷准备、排队与精确定位
+
+另行勾选冷准备后，Host 仅在内核实际广告 `frame.prepare_gfx` 时传 `--prepare-gfx`；可见 HTML 需额外按保存版本确认执行信任。不发送 HTML 正文/任意路径，不新增图层交付 kind；完整当前帧仍经相同原文/版本/FPS/PNG/SHA/浏览器完整解码及草稿二次点击校验。新模式只交付 inline PNG，`path:null`，请求临时件在成功响应前清理；失败账本的恢复限制见[内核合同](../docs/reference/timeline-api.md#显式冷态图形准备完整当前帧)。HTML 仍非沙箱，不能把声明依赖或执行许可描述为零网络/任意代码隔离。
+
+Host 全局 FIFO 最多 1 个执行 + 4 个等待的不同 grant；同 grant 仍须先取消当前请求，面板忙时不暗中积累点击。等待计入原 30 秒 lease，不续租或自动重试。队列条目在获准时取得 nonce/owner/expiry/config 监控；轮到时仍需实际子进程清空。取消只移除自己的条目并等待回收，失败清理不释放残留的拥有权；grant/cwd/配置/卸载使等待与运行请求同样失效。界面只显示诚实的等待/准备/合成状态，不把有限 JSON 伪装成逐阶段图片流。
+
+时间定位提供折叠的整数秒与零基秒内偏移，30fps 下 `10 + 5` 明确换算为全局帧 305；换算定位本身不查询或渲染。完整合成始终使用该规范整数帧，不能把单页图层帧替代 current-composite。
+
+[首次组合记录](../docs/reports/assets/html-preview/closeout-capture.json) 保留当时 QC 阻塞的未完成身份；[授权修正后的验收](../docs/reports/assets/html-preview/qc-correction-capture.json) 另绑定最终包、真实异常、官方宿主及正式链，不覆盖旧证据或把 skip/UNRUN 写成通过。CDP 取消先 shutdown 唤醒 I/O，再等待实际 worker 结束并关闭 fd；自愈跨 worker 关闭同样保留在途 I/O 的 fd，不能仅凭浏览器退出推断线程已回收。
+
 ### Manual editing (writes require explicit authorization)
+
+Local Linux and macOS hosts use the same explicit write-token flow. macOS additionally requires the installed core to advertise `platform_support.darwin:true`; an older POSIX core without the macOS path-identity/locking implementation remains read-only. Native arm64 frame preview has a narrower verified FFmpeg/CoreText toolchain boundary, not arbitrary macOS binary support; the authoritative platform restrictions are in [timeline API](../docs/reference/timeline-api.md#显式当前帧图像第一切片). No production profile is upgraded implicitly.
 
 **Warning: confirmed commits, adopt, undo, status and recover can write the selected project and its persistent core history.** Opening/reading is not write permission. Click the explicit Session/project write button; a separate in-memory server token is required and is revoked on close, cwd/session change, expiry or unload. An old core without advertised bounded `--request-stdin` transport stays read-only; read/copy/no-draft fallback does not depend on write support. Legacy timelines are never silently adopted: the adopt acknowledgement names stable-ID and history changes, and incompatible legacy input is refused without rewriting it.
 
@@ -142,13 +154,13 @@ CLI/profile patching of the user layer remains a debug substitute only and is no
 
 仅 owner Connection Fetch 的 `/api/framivra/kernel-management` 提供管理操作，不注册模型工具。界面分为内核、配置文件、检查；页面挂载不自动扫描、读配置、安装或探测程序。
 
-- **发现**：只读扫描当前连接、受信 PATH、用户 bin、pipx/uv/常用 venv 与插件独立安装根；不执行候选、不递归全盘。最多检查 180 个候选、每个根处理前 24 个子目录；公共 `listDir` 仍一次返回该根完整目录列表。结果仅填入草稿，用户保存后才选用。不支持源码目录自动改造为可执行入口。
-- **安装（写操作）**：POSIX 本地可信 `framivra` wheel，最大 64 MiB；计划展示 SHA-256、固定系统 Python 与唯一新目录。一次性短时 nonce 绑定哈希，确认重新核对字节，并将匹配快照交给固定 Python helper。在用户 `~/.local/share/framivra-dsh/kernels/` 下创建独立 venv，离线 pip `--no-index --no-deps`；不 sudo、不升级或覆盖原内核、不自动切换连接。Host 权威默认沙箱必须明确为 `danger-full-access`，受限/未知策略拒绝安装，不申请提权。日志与任务数有上限，任务最多五分钟；取消/卸载回收受管进程，失败目录保留供检查，不承诺自动回滚。没有官方 wheel 下载入口；同版本文件名不能代替哈希或来源信任。Windows、本机系统依赖/模型安装不在实现范围。
+- **发现**：先验证[统一受管源码安装登记](<../docs/guides/installation.md#受管非-ai-制作环境>)：固定默认根中的 `installation.json`（64 KiB、ready/non-ai/cdp、固定源码/venv/配置布局及完整提交）；不跟随 symlink、不接受工作区路径，不执行登记内容。随后只读扫描当前连接、受信 PATH、用户 bin、pipx/uv/常用 venv 与插件独立安装根；不执行候选、不递归全盘。最多检查 180 个候选、每个根处理前 24 个子目录；公共 `listDir` 仍一次返回该根完整目录列表。结果仅填入草稿，用户保存后才选用。不支持源码目录自动改造为可执行入口。
+- **安装（写操作）**：POSIX 本地可信 `framivra` wheel，最大 64 MiB；计划展示 SHA-256、固定系统 Python 与唯一新目录。一次性短时 nonce 绑定哈希，确认重新核对字节，并将匹配快照交给固定 Python helper。在用户 `~/.local/share/framivra-dsh/kernels/` 下创建独立 venv，离线 pip `--no-index --no-deps`；不 sudo、不升级或覆盖原内核、不自动切换连接。Host 权威默认沙箱必须明确为 `danger-full-access`，受限/未知策略拒绝安装，不申请提权。日志与任务数有上限，任务最多五分钟；取消/卸载回收受管进程，失败目录保留供检查，不承诺自动回滚。没有官方 wheel 下载入口；同版本文件名不能代替哈希或来源信任。该高级 wheel 安装不支持 Windows，也不安装系统依赖/模型；Windows 可使用外部一键安装后扫描、保存、诊断的路径。
 - **完整配置**：从已保存 `vtxConfigFile` 读取 UTF-8 原文；缺失文件以空对象草稿开始，只有显式保存才创建。常用字段表单与完整 JSON 并存，未知字段和数字 token 保留；表单修改会重新排版。未设置、null、false、空字符串不混淆，不自动复制模板默认值。已知字段说明区分运行时、组件清单标记和模板声明；某些 `enabled` 并非执行链统一开关。
 - **检查边界**：1 MiB / 64 层 / 20,000 节点 / 200 条诊断硬限界；超限失败，不把截断结果当通过。JSON 与已知消费键结构检查不执行外部组件、不读凭证、不连服务，不证明依赖、GPU、模型许可或渲染可用。密钥库、环境变量、timeline 和组件 registry 不作为普通配置文件改写；未知字段虽保留，仍不应在配置中存秘密。
 - **保存（写操作）**：预览前后文本并确认；读取回执绑定规范路径、配置身份、内容 hash 和短时 opaque selection token。保存先检查目标未变，再创建不覆盖的同目录备份，并用公共 fs 原子版本 CAS 发布。冲突保留草稿；未知结果禁止直接重试，需读取最新文件比较。GUI 保存同一路径也推进内存 epoch，使旧预览/写授权失效；宿主卸载等待正在进行的文件操作 settle。外部编辑同一文件没有 watcher，必须重新打开工程与授权；不宣称跨进程/并发恶意文件替换的原子执行保证。
 
-推荐独立配置位置为 `~/.config/framivra/config.json`；文件路径由宿主管理员保存，不由 API 请求传入。VTX 的实际配置选择是 `VTX_CONFIG` 或内核默认文件二选一，不是叠加合并，也不存在可由插件权威推导的完整“有效默认配置”。
+受管安装推荐独立配置位置为统一根的 `config.json`（位于 source/venv 外）；文件路径由宿主管理员保存，不由 API 请求传入。VTX 的实际配置选择是 `VTX_CONFIG` 或内核默认文件二选一，不是叠加合并，也不存在可由插件权威推导的完整“有效默认配置”。
 
 ### Host/client handshake and sanitized diagnostics
 

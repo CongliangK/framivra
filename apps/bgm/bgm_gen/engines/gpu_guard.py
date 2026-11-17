@@ -22,14 +22,21 @@
 进程挤占，由调用方自身容错——demucs CUDA OOM 时可 payload.device="cpu" 重试）。
 """
 
-import fcntl
+import errno
 import os
 import subprocess
+import tempfile
 import time
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 from .base import EngineError
 
-LOCK_PATH = "/tmp/bgm_gpu.lock"
+LOCK_PATH = (os.path.join(tempfile.gettempdir(), "bgm_gpu.lock")
+             if os.name == "nt" else "/tmp/bgm_gpu.lock")
 
 VALID_ON_TIMEOUT = ("cpu", "raise", "proceed")
 
@@ -63,21 +70,36 @@ class VramGuard:
 
     # ---- 锁 ----
     def _acquire_lock(self, deadline):
-        import time as _t
-        while _t.time() < deadline:
-            if self._fd is None:
-                self._fd = open(self.lock_path, "a+")
-            try:
-                fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return True
-            except OSError:
-                time.sleep(0.5)
+        self._fd = open(self.lock_path, "a+b")
+        try:
+            while time.time() < deadline:
+                try:
+                    if os.name == "nt":
+                        self._fd.seek(0)
+                        msvcrt.locking(self._fd.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return True
+                except OSError as error:
+                    if error.errno not in (errno.EACCES, errno.EAGAIN):
+                        raise
+                    time.sleep(0.5)
+        except BaseException:
+            self._fd.close()
+            self._fd = None
+            raise
+        self._fd.close()
+        self._fd = None
         return False
 
     def _release_lock(self):
         if self._fd is not None:
             try:
-                fcntl.flock(self._fd, fcntl.LOCK_UN)
+                if os.name == "nt":
+                    self._fd.seek(0)
+                    msvcrt.locking(self._fd.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(self._fd, fcntl.LOCK_UN)
             finally:
                 self._fd.close()
                 self._fd = None

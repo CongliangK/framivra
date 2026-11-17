@@ -47,6 +47,12 @@ class WarmInline16(unittest.TestCase):
             cls.addClassCleanup(cls.temp.cleanup)
             cls.root = Path(cls.temp.name)
         cls.path = cls.root / 'timeline.json'
+        # This fixture asserts media/preview reuse, which core deliberately disables.
+        cls.config = cls.root / 'config.json'
+        cls.config.write_text(json.dumps({'cache': {'mode': 'aggressive'}}))
+        cls.cache_environment = patch.dict(os.environ, {'VTX_CONFIG': str(cls.config)})
+        cls.cache_environment.start()
+        cls.addClassCleanup(cls.cache_environment.stop)
         command = ['ffmpeg', '-v', 'error', '-y', '-filter_threads', '1', '-f', 'lavfi', '-i',
                    'color=c=blue:s=1920x1080:r=30:d=0.5333333333333333', '-f', 'lavfi', '-i',
                    'sine=frequency=440:sample_rate=48000:duration=0.5333333333333333',
@@ -144,10 +150,13 @@ class WarmInline16(unittest.TestCase):
         # GC during anchored read cannot publish data under a no-longer-present name.
         from vtx.render import png_artifact
         original = png_artifact.os.read
+        saved_png_stat = path.stat()
         removed = False
         def gc(fd, size):
             nonlocal removed
-            if not removed and os.readlink('/proc/self/fd/' + str(fd)) == str(path):
+            opened_stat = os.fstat(fd)
+            if not removed and (opened_stat.st_dev, opened_stat.st_ino) == (
+                    saved_png_stat.st_dev, saved_png_stat.st_ino):
                 removed = True
                 path.unlink()
             return original(fd, size)
@@ -199,7 +208,9 @@ real = subprocess.Popen
 pidpath = pathlib.Path(sys.argv[2])
 def tracked(*args, **kwargs):
     p = real(*args, **kwargs)
-    if '-re' in args[0]: pidpath.write_text(str(p.pid))
+    command = args[0] if args else kwargs.get('args')
+    if isinstance(command, (list, tuple)) and '-re' in command:
+        pidpath.write_text(str(p.pid))
     return p
 subprocess.Popen = tracked
 def slow(plan, layers, path, **kwargs):
@@ -215,8 +226,13 @@ print(json.dumps(frame_timeline(sys.argv[1],frame=11,render=True,include_png=Tru
             # Control proof files outside the project frame write fence.
             with tempfile.TemporaryDirectory(prefix='inline-cancel-') as control:
                 pidpath = Path(control) / 'child.pid'
-                process = subprocess.Popen([sys.executable, '-B', '-c', script, str(self.path), str(pidpath), mode],
-                    cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                # The graph digest inspects composite's source; -c functions have none.
+                script_path = Path(control) / 'cancel_fixture.py'
+                script_path.write_text(script)
+                process = subprocess.Popen([sys.executable, '-B', str(script_path), str(self.path), str(pidpath), mode],
+                    cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    env={**os.environ, 'PYTHONPATH': os.pathsep.join(filter(None,
+                        (str(REPO), os.environ.get('PYTHONPATH'))))}, start_new_session=True)
                 try:
                     deadline = time.monotonic()+30
                     while not pidpath.exists() and process.poll() is None and time.monotonic()<deadline:

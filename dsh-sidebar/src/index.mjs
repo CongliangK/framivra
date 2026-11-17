@@ -20,11 +20,11 @@ export const inject = ['connection', 'sessions', 'workingDirectory', 'fs', 'subp
  * snapshot on every operation and binds grants to the exact fingerprint.
  */
 export const Config = z.object({
-  vtxConfigFile: z.string().pattern(VTX_CONFIG_FILE_PATTERN).default(DEFAULT_VTX_CONFIG_FILE).volatile().description('Explicit independent absolute .json VTX_CONFIG file. Empty uses the kernel default; the GUI never guesses its location.'),
+  vtxConfigFile: z.string().pattern(VTX_CONFIG_FILE_PATTERN).default(DEFAULT_VTX_CONFIG_FILE).volatile().description('Explicit independent absolute .json VTX_CONFIG file (POSIX or native Windows drive path). Managed Git installs keep root/config.json outside source/. Empty uses the kernel default; scanning only drafts a selection.'),
   vtxExecutable: z.union([
     z.const('vtx'),
     z.string().pattern(VTX_EXECUTABLE_PATTERN),
-  ]).default(DEFAULT_VTX_EXECUTABLE).volatile().description('Host-trusted vtx executable: the literal "vtx" (searched on trustedPath) or an absolute path on the host. Must not point inside a session workspace.'),
+  ]).default(DEFAULT_VTX_EXECUTABLE).volatile().description('Host-trusted vtx executable: the literal "vtx" (searched on trustedPath) or an absolute path on the host; native Windows should select venv\\Scripts\\vtx.exe directly. Must not point inside a session workspace.'),
   trustedPath: z.string().pattern(TRUSTED_PATH_PATTERN).default(DEFAULT_TRUSTED_PATH).volatile().description('Host-trusted colon-separated search PATH for the vtx executable. Every segment must be an absolute host path; empty or relative segments are rejected. The separator stays ":" per the Host contract.'),
   // Sanitized-diagnostics rate cap. Bounds and the reader live in
   // ./configuration.mjs (single home); the Host re-validates on every use so

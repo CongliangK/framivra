@@ -62,6 +62,17 @@ export function composeBuildStamp(prefix, combinedDigestHex) {
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value) && !JSON.isRawJSON(value)
 const integer = value => Number.isSafeInteger(value) && value >= 0
 
+export const prepareGfxCapable = value => {
+  const prepare = value?.capabilities?.frame?.prepare_gfx
+  return prepare?.flag === '--prepare-gfx' && prepare.trust_flag === '--trust-html' && prepare.kind === 'current-composite' && prepare.preview_only === true
+}
+export function prepareGfxArgs(options) {
+  if (options === undefined) return []
+  if (!object(options) || Object.keys(options).some(key => !['prepareGfx', 'htmlTrust'].includes(key)) || (Object.hasOwn(options, 'prepareGfx') && typeof options.prepareGfx !== 'boolean')) fail('BAD_FRAME', 'prepareGfx must be an optional boolean; unknown frame options are forbidden')
+  if (Object.hasOwn(options, 'htmlTrust') && (options.htmlTrust !== 'trusted-local-html' || options.prepareGfx !== true)) fail('HTML_TRUST_REQUIRED', 'Exact trusted-local-html consent requires prepareGfx=true', 403)
+  return options.prepareGfx === true ? ['--prepare-gfx', ...(options.htmlTrust === 'trusted-local-html' ? ['--trust-html'] : [])] : []
+}
+
 export function queryArgs(query = {}) {
   if (!object(query)) fail('BAD_QUERY', 'Query must be an object')
   const allowed = ['family', 'track_index', 'block_index', 'frame', 'interval']
@@ -216,9 +227,10 @@ export class TimelineReader {
     const args = operation === 'query' ? queryArgs(query) : operation === 'reference' ? referenceArgs(query) : []
     return this.command(executable, timeline, [operation, ...args], signal, text => decodeEnvelope(text, operation), undefined, false, false, snapshot, owner)
   }
-  async frame(executable, timeline, frame, version, signal, snapshot, owner) {
+  async frame(executable, timeline, frame, version, signal, snapshot, owner, options) {
     if (!integer(frame) || !/^sha256:[a-f0-9]{64}$/.test(version)) fail('BAD_FRAME', 'Exact saved version and integer pin required')
-    return this.command(executable, timeline, ['timeline', 'frame', '--frame', String(frame), `--expected-content-version=${version}`, '--render', '--include-png', '--max-png-bytes=8388608'], signal, text => {
+    const prepareArgs = prepareGfxArgs(options)
+    return this.command(executable, timeline, ['timeline', 'frame', '--frame', String(frame), `--expected-content-version=${version}`, '--render', '--include-png', '--max-png-bytes=8388608', ...prepareArgs], signal, text => {
       const value = parseJSON(text)
       if (!object(value) || value.schema !== 'framivra.timeline.frame/v1' || value.operation !== 'frame' || typeof value.ok !== 'boolean' || !Array.isArray(value.diagnostics)) fail('PROTOCOL_MISMATCH', 'Official frame/v1 envelope required', 502)
       return value

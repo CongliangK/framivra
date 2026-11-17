@@ -1,13 +1,28 @@
 /** Owner-only installation/configuration service. All host I/O uses public capabilities. */
 import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
-import { basename, dirname, isAbsolute, join, normalize, parse } from 'node:path'
+import { basename, dirname, isAbsolute, join, posix, win32 } from 'node:path'
 import { boundedText } from './bounded.mjs'
 import { readConfiguration, invalidateConfiguration } from './configuration.mjs'
 import { checkKernelConfig } from './kernel-config.mjs'
 
 export const KERNEL_CONFIG_LIMIT = 1024 * 1024
 export const KERNEL_WHEEL_LIMIT = 64 * 1024 * 1024
+export const INSTALLATION_LIMIT = 64 * 1024
+/** Fixed installer layout, not a browser/manifest-selected execution root. */
+export function managedInstallationPaths({ platform = process.platform, home = homedir(), localAppData = process.env.LOCALAPPDATA } = {}) {
+  const paths = platform === 'win32' ? win32 : posix
+  const root = platform === 'win32'
+    ? paths.join(localAppData || paths.join(home, 'AppData', 'Local'), 'framivra')
+    : paths.join(home, '.local', 'share', 'framivra')
+  return {
+    root, manifest: paths.join(root, 'installation.json'), sourceRoot: paths.join(root, 'source'),
+    venv: paths.join(root, 'venv'), configFile: paths.join(root, 'config.json'),
+    vtxExecutable: platform === 'win32' ? paths.join(root, 'venv', 'Scripts', 'vtx.exe') : paths.join(root, 'bin', 'vtx'),
+    pythonExecutable: platform === 'win32' ? paths.join(root, 'venv', 'Scripts', 'python.exe') : paths.join(root, 'venv', 'bin', 'python'),
+  }
+}
+const pathAPI = path => /^[a-zA-Z]:[\\/]|^\\\\/.test(path) ? win32 : posix
 const LOG_LIMIT = 16 * 1024
 const FIXED_PYTHONS = ['/usr/bin/python3', '/usr/local/bin/python3']
 const hash = bytes => `sha256:${createHash('sha256').update(bytes).digest('hex')}`
@@ -82,15 +97,16 @@ async function localTarget(ctx, path, signal) {
   return target
 }
 function absolutePath(path) {
-  if (typeof path !== 'string' || path.length > 4096 || !path.startsWith('/') || normalize(path) !== path || /[\x00-\x1f\x7f]/.test(path)) reject('BAD_PATH', '请选择无遍历段的本机绝对路径')
+  if (typeof path !== 'string' || path.length > 4096 || !pathAPI(path).isAbsolute(path) || pathAPI(path).normalize(path) !== path || path.split(/[\\/]/).some(part => part === '.' || part === '..') || /[\x00-\x1f\x7f]/.test(path)) reject('BAD_PATH', '请选择无遍历段的本机绝对路径')
   return path
 }
 async function rejectLinks(ctx, path, signal, allowMissing = false) {
   if (typeof ctx.fs.lstat !== 'function') reject('FS_UNSUPPORTED', '文件系统必须支持 lstat 才能安全管理配置/安装', 502)
-  let current = parse(path).root
-  const parts = path.slice(current.length).split('/').filter(Boolean)
+  const paths = pathAPI(path)
+  let current = paths.parse(path).root
+  const parts = path.slice(current.length).split(paths === win32 ? /[\\/]/ : /\//).filter(Boolean)
   for (let i = 0; i < parts.length; i++) {
-    current = join(current, parts[i])
+    current = paths.join(current, parts[i])
     const info = await ctx.fs.lstat(current, {}, signal)
     if (!info) { if (allowMissing) return; reject('NOT_FOUND', '路径不存在', 404) }
     if (info.type === 'symlink' || (i < parts.length - 1 && info.type !== 'directory')) reject('UNSAFE_PATH', '管理路径不能包含符号链接或非目录父路径', 403)
@@ -111,13 +127,25 @@ export async function validateKernelConfigSelection(ctx, snapshot, signal, { all
   if (!path) return undefined // Explicitly clear ambient VTX_CONFIG at spawn.
   absolutePath(path)
   await rejectLinks(ctx, path, signal, allowMissing)
-  const target = await localTarget(ctx, path, signal), parent = await localTarget(ctx, dirname(path), signal)
+  const paths = pathAPI(path)
+  const target = await localTarget(ctx, path, signal), parent = await localTarget(ctx, paths.dirname(path), signal)
   if (!ctx.fs.contains(parent, target) || ctx.fs.processPath(target) !== path) reject('UNSAFE_PATH', '配置路径不在独立规范父目录内', 403)
   await rejectWorkspaces(ctx, target, signal)
   if (snapshot.vtxExecutable !== 'vtx') {
-    const bin = dirname(snapshot.vtxExecutable)
-    const install = basename(bin) === 'bin' ? dirname(bin) : bin
-    if (install !== '/' && ctx.fs.contains(await localTarget(ctx, install, signal), target)) reject('INSTALL_CONFIG_PATH', '请使用安装目录外的独立 VTX_CONFIG 文件', 403)
+    const executablePaths = pathAPI(snapshot.vtxExecutable)
+    const bin = executablePaths.dirname(snapshot.vtxExecutable)
+    const install = ['bin', 'Scripts'].includes(executablePaths.basename(bin)) ? executablePaths.dirname(bin) : bin
+    // The managed Git installer deliberately keeps config.json beside source/,
+    // not inside it. Only this exact fixed pair is exempt from the legacy rule.
+    const managed = managedInstallationPaths()
+    const managedExecutable = snapshot.vtxExecutable === managed.vtxExecutable
+    const independentManagedConfig = managedExecutable && path === managed.configFile
+    // On Windows the launcher lives under venv/Scripts, so the legacy venv
+    // boundary alone would not exclude a JSON file inside sibling source/.
+    const boundaries = managedExecutable ? [install, managed.sourceRoot] : [install]
+    if (!independentManagedConfig) for (const boundary of boundaries) {
+      if (boundary !== executablePaths.parse(boundary).root && ctx.fs.contains(await localTarget(ctx, boundary, signal), target)) reject('INSTALL_CONFIG_PATH', '请使用源码和安装环境目录外的独立 VTX_CONFIG 文件', 403)
+    }
   }
   const info = await ctx.fs.stat(target, signal)
   if (info && info.type !== 'file') reject('NOT_REGULAR', '配置路径必须是普通 JSON 文件')
@@ -126,11 +154,13 @@ export async function validateKernelConfigSelection(ctx, snapshot, signal, { all
   return { path, target, snapshot, info }
 }
 
-/** No tools, sessions or browser-supplied roots are needed to use this service. */
+/** Owner service: no model tool, selected Session or browser-supplied root.
+ * Public SessionStore enumeration is still required for workspace trust checks. */
 export function createKernelManagement(ctx, config = {}) {
   const home = homedir()
   const managedRoot = join(home, '.local', 'share', 'framivra-dsh', 'kernels')
-  const suggestedConfigFile = join(home, '.config', 'framivra', 'config.json')
+  const installation = managedInstallationPaths()
+  const suggestedConfigFile = installation.configFile
   const lifecycle = new AbortController()
   const previews = new Map(), jobs = new Map(), active = new Map(), tasks = new Set(), operations = new Set(), selections = new Map()
   let saving = false, disposed = false, resolvePolicy
@@ -242,20 +272,61 @@ export function createKernelManagement(ctx, config = {}) {
     const snapshot = readConfiguration(config)
     const candidates = [], warnings = [], seen = new Set()
     let probes = 0
-    async function candidate(path, source) {
+    async function candidate(path, source, metadata, strict = false) {
       if (++probes > 180 || seen.has(path)) return
       seen.add(path)
       try {
+        if (strict) await noLinks(path, signal)
         const target = await local(path, signal)
-        if ((await ctx.fs.stat(target, signal))?.type === 'file') candidates.push({ path, kind: 'executable', source })
+        if ((await ctx.fs.stat(target, signal))?.type !== 'file') return
+        await outsideWorkspaces(target, signal)
+        candidates.push({ path, kind: 'executable', source, ...(metadata ? { installation: metadata } : {}) })
       } catch (error) {
         signal.throwIfAborted()
-        if (error?.code === 'FS_SANDBOX_DENIED' || error?.code === 'FS_PERMISSION_DENIED') warnings.push(`无法读取候选路径：${path}`)
-        else if (error?.code !== 'FS_NOT_FOUND') throw error
+        if (['FS_SANDBOX_DENIED', 'FS_PERMISSION_DENIED'].includes(error?.code)) warnings.push(`无法读取候选路径：${path}`)
+        else if (['UNSAFE_PATH', 'WORKSPACE_PATH'].includes(error?.code)) warnings.push(`跳过不安全候选路径：${path}`)
+        else if (!['FS_NOT_FOUND', 'NOT_FOUND'].includes(error?.code)) throw error
       }
     }
-    if (snapshot.vtxExecutable !== 'vtx') await candidate(snapshot.vtxExecutable, 'current-setting')
-    for (const dir of [...snapshot.trustedPath.split(':').slice(0, 32), join(home, '.local/bin'), join(home, '.cargo/bin'), '/opt/homebrew/bin']) await candidate(join(dir, 'vtx'), 'trusted-or-common-bin')
+    // Never follow manifest-selected commands, roots or tool entries. Only the
+    // fixed installer layout is eligible; even a valid receipt is not capability
+    // evidence or permission to execute, save a setting, or change an old install.
+    let metadata
+    try {
+      await noLinks(installation.manifest, signal)
+      const manifest = await local(installation.manifest, signal)
+      const info = await ctx.fs.stat(manifest, signal)
+      if (info) {
+        await outsideWorkspaces(manifest, signal)
+        if (info.type !== 'file') reject('NOT_REGULAR', '受管登记必须是普通 JSON 文件')
+        if (info.size > INSTALLATION_LIMIT) reject('FILE_TOO_LARGE', '受管登记超过 64 KiB')
+        const content = await bytes(manifest, signal, INSTALLATION_LIMIT)
+        const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(content))
+        const text = item => typeof item === 'string' && item.length > 0 && item.length <= 512 && !/[\x00-\x1f\x7f]/.test(item)
+        if (!object(value) || value.schema !== 'framivra.installation/v1' || typeof value.commit !== 'string' || value.commit.length !== 40 || !/^[a-fA-F0-9]{40}$/.test(value.commit) || !text(value.version) || !text(value.installedAt) || value.profile !== 'non-ai' || value.renderer !== 'cdp' || value.status !== 'ready') reject('BAD_INSTALLATION', '受管登记格式或就绪状态无效')
+        for (const field of ['sourceRoot', 'vtxExecutable', 'pythonExecutable', 'configFile']) {
+          if (absolute(value[field]) !== installation[field]) reject('BAD_INSTALLATION', '受管登记路径不符合固定安装布局')
+          await noLinks(value[field], signal)
+          const target = await local(value[field], signal)
+          await outsideWorkspaces(target, signal)
+          if (ctx.fs.processPath(target) !== value[field] || (await ctx.fs.stat(target, signal))?.type !== (field === 'sourceRoot' ? 'directory' : 'file')) reject('BAD_INSTALLATION', '受管登记目标不存在或不是预期的真实文件/目录')
+        }
+        await noLinks(installation.manifest, signal)
+        const after = await ctx.fs.stat(manifest, signal)
+        if (after?.version !== info.version) reject('INSTALLATION_CHANGED', '扫描期间受管登记发生变化')
+        metadata = { commit: value.commit, version: value.version, renderer: value.renderer, profile: value.profile, configFile: value.configFile }
+      }
+    } catch (error) {
+      signal.throwIfAborted()
+      if (!['FS_NOT_FOUND', 'NOT_FOUND'].includes(error?.code)) warnings.push(`受管安装登记未通过验证（${error.code ?? 'BAD_INSTALLATION'}）；未执行登记内容。`)
+    }
+    await candidate(installation.vtxExecutable, metadata ? 'managed-git' : 'managed-default', metadata, true)
+    if (snapshot.vtxExecutable !== 'vtx') await candidate(snapshot.vtxExecutable, 'current-setting', undefined, snapshot.vtxExecutable === installation.vtxExecutable)
+    const windows = process.platform === 'win32'
+    // trustedPath remains colon-separated POSIX paths per the Host contract;
+    // do not reinterpret drive-letter colons or silently inherit ambient PATH.
+    const bins = windows ? [join(home, '.local', 'bin')] : [...snapshot.trustedPath.split(':').slice(0, 32), join(home, '.local/bin'), join(home, '.cargo/bin'), '/opt/homebrew/bin']
+    for (const dir of bins) await candidate(join(dir, windows ? 'vtx.exe' : 'vtx'), 'trusted-or-common-bin')
     // The standard live video skill mounts the source kernel, not a bin/vtx
     // console script. Probe only its known launcher; discovery never grants trust.
     await candidate(join(home, '.agents/skills/video/vtx/vtx.py'), 'video-skill-source')
@@ -267,7 +338,7 @@ export function createKernelManagement(ctx, config = {}) {
       if (listing.length > 24) warnings.push(`目录候选超出上限，仅查看前 24 项：${rootPath}`)
       for (const entry of listing.slice(0, 24)) {
         if (entry.type !== 'directory' || !/^[^/\\\x00-\x1f]+$/.test(entry.name) || entry.name === '.' || entry.name === '..' || !ctx.fs.contains(root, entry.target)) continue
-        await candidate(join(rootPath, entry.name, 'bin/vtx'), 'common-venv')
+        await candidate(join(rootPath, entry.name, windows ? 'Scripts/vtx.exe' : 'bin/vtx'), 'common-venv')
       }
     }
     return { ok: true, candidates, warnings, suggestedConfigFile, managedRoot, truncated: probes > 180 }
@@ -378,7 +449,7 @@ export function createKernelManagement(ctx, config = {}) {
       'config-read': [], 'config-check': ['text'], 'config-save': ['text', 'expectedHash', 'selectionToken', 'confirmed'],
     }
     if (!fields[data.op] || Object.keys(data).some(key => key !== 'op' && !fields[data.op].includes(key))) reject('BAD_REQUEST', '未知操作或请求字段（不接受路径覆盖）')
-    if (process.platform === 'win32') reject('PLATFORM_UNSUPPORTED', '内核管理目前仅支持 POSIX；Windows 请手动安装/配置', 422)
+    if (process.platform === 'win32' && data.op.startsWith('install-')) reject('PLATFORM_UNSUPPORTED', '高级本地 wheel 安装仅支持 POSIX；请使用 README 中的跨平台一键安装命令，再扫描连接', 422)
     switch (data.op) {
       case 'scan': return scan(signal)
       case 'config-read': {
