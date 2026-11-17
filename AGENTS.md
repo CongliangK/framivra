@@ -5,12 +5,12 @@
 - timeline.json/素材→帧精确视频/混音/QC/缓存；[内核](<vtx/>)永不可关
 - [应用](<apps/>)产素材/辅助结果；[插件](<plugins/>)扩时间线，启用不忽略依赖/失败。
 - [侧栏](<dsh-sidebar/README.md>)独立发行：完整合成非单页，预览共用整数播放头、成片联动非合成证书；生效插件在身份/钩子前拒绝；HTML信任≠沙箱；写态走内核事务，帧率/预览限制不变。
-- macOS授权见接口；目录fd≠proc-fd Path；单帧复用须全输入前后复核；运行库须复查全成员/链接，Linux缺RECORD仅凭元数据所属RPM清单识别，仍哈希文件。
+- macOS授权见接口；目录fd≠proc-fd Path；单帧须全输入前后复核；环境文件批查仅复用本次目录前缀并前后核验，仍重枚举/哈希/查链接；Linux缺RECORD只认元数据所属RPM清单。
 - 制作读[技能](<docs/skill/SKILL.md>)；范本[工作流](<templates/README.md>)、组件[目录](<docs/catalog.md>)。
 - 开发读[架构](<docs/ARCHITECTURE.md>)/[开发](<docs/DEV.md>)；API/事务见[接口](<docs/reference/timeline-api.md>)。
 - 环境见[依赖](<README.md#依赖矩阵>)：Python≥3.9，工具按路径配置；模型默认关；空依赖≠仅需标准库。
 - [安装](<docs/guides/installation.md>)：独立venv/固定身份缓存/内核锁，验收后ready；Win主进程不提权，厂商包UAC；DSH显式连接；登记≠验收。
-- 安装验收：BGM发现不可依赖POSIX，GPU用原生锁；hue测试素材先规范RGB色域，不松QC。
+- 安装验收：BGM发现不可依赖POSIX，目录发布对部分Windows绝对路径兼容混合斜杠、不改运行数据；GPU用原生锁；Windows并发内存门须实测且探测失败时拒派；hue素材先规范RGB色域，不松QC。
 
 ## 常用命令
 
