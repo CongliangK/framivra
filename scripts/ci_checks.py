@@ -26,6 +26,7 @@ MEDIA_TESTS = {
         'tests.qc.test_qc_sampling.SamplingMediaContract',
         'tests.diagnostics.test_agent_diagnostics_loading.Loading.test_invalid_media_probe_is_structured',
         'tests.diagnostics.test_agent_diagnostics_repair.FixtureRepair.test_seven_rule_repair_reaches_actual_validate_green',
+        'tests.media.test_capability_fixture.CapabilityFixtureMedia',
         'tests.media.test_filter_threads',
         'tests.media.test_composite_determinism',
         'tests.gfx.test_frame_source',
