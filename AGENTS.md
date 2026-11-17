@@ -2,13 +2,14 @@
 
 ## 项目与入口
 
-- B站工具箱：timeline.json/素材 → 帧精确视频、混音、QC、缓存；[内核](<vtx/>)永不可关。
-- [apps](<apps/>)产出素材或辅助结果；[plugins](<plugins/>)扩展时间线；启用后不忽略依赖或失败。
-- [DSH 侧栏](<dsh-sidebar/README.md>)独立于内核发行，提供预览、引用、显式剪辑与配置；写态走内核事务，不解除帧率/预览限制。
-- 制作先读[技能](<docs/skill/SKILL.md>)；范本见[工作流](<templates/README.md>)，组件查[catalog](<docs/catalog.md>)。
-- 开发先读[架构契约](<docs/ARCHITECTURE.md>)与[DEV](<docs/DEV.md>)；API/事务见[接口边界](<docs/reference/timeline-api.md>)。
-- 环境见[README](<README.md#依赖矩阵>)：Python ≥3.9，媒体工具按路径配置；模型默认关闭，空依赖声明不等于仅需标准库。
-- [受管安装](<docs/guides/installation.md#受管非-ai-制作环境>)用独立 venv、固定身份续传缓存与内核锁；制作验收后才 ready。DSH 仅扫描/验证/显式连接，登记/mock/探针不算平台验收。
+- timeline.json/素材→帧精确视频/混音/QC/缓存；[内核](<vtx/>)永不可关
+- [应用](<apps/>)产素材/辅助结果；[插件](<plugins/>)扩时间线，启用不忽略依赖/失败。
+- [侧栏](<dsh-sidebar/README.md>)独立发行：预览/引用/显式剪辑/配置；写态走内核事务，帧率/预览限制不变。
+- macOS授权见接口；目录fd≠proc-fd Path；单帧复用须操作级全输入前后复核，运行库优化须复查全成员/链接。
+- 制作读[技能](<docs/skill/SKILL.md>)；范本[工作流](<templates/README.md>)、组件[目录](<docs/catalog.md>)。
+- 开发读[架构](<docs/ARCHITECTURE.md>)/[开发](<docs/DEV.md>)；API/事务见[接口](<docs/reference/timeline-api.md>)。
+- 环境见[依赖](<README.md#依赖矩阵>)：Python≥3.9，工具按路径配置；模型默认关；空依赖≠仅需标准库。
+- [安装](<docs/guides/installation.md#受管非-ai-制作环境>)：独立venv/固定身份续传缓存/内核锁，制作验收才ready。DSH仅扫描/验证/显式连接；登记/mock/探针≠平台验收。
 
 ## 常用命令
 

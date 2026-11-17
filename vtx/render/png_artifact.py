@@ -1,4 +1,4 @@
-"""Linux frame-output snapshots; not a replacement for general gfx/media I/O.
+"""Directory-anchored frame snapshots; not general gfx/media I/O.
 
 No pathname is opened for payload reads. Pin all ancestors, bind the original
 project/parent identity, reject special leaves before reading, and validate the
@@ -43,8 +43,8 @@ def read_artifact(path, *, root, limit, root_identity=None):
     for write compatibility. An alias must not silently become read authority.
     No /proc-fd reopen, fallback, implicit mkdir, or descriptor outlives this call.
     """
-    if sys.platform != "linux" or fstxn.write_capability() != "fd-anchored":
-        raise ArtifactError("platform.unsupported", "artifact read requires Linux fd anchoring")
+    if sys.platform not in ("linux", "darwin") or not fstxn.directory_write_capability():
+        raise ArtifactError("platform.unsupported", "artifact read requires no-follow directory anchoring")
     path, root = Path(os.path.abspath(path)), Path(os.path.abspath(root))
     if root not in path.parents:
         raise ArtifactError("image.invalid", "artifact escaped project root")
