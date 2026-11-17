@@ -1,0 +1,71 @@
+{
+  "schema": "framivra.cold-composite-closeout/v1",
+  "main_revision": "dceba10bf73480a6f0b16b29683336d8630bb28b",
+  "base_branch": "main",
+  "handoff_status": "INCOMPLETE draft: same-input 180-frame all/strict QC remains FAIL on both candidate and main; no Ready for review or merge claim",
+  "production_revision": "ae40455",
+  "tested_pre_identity_rewrite_revision": "7ff6cbb5627d132686082834f119d6b5ea8fa0af",
+  "revision_note": "These revisions have identical trees; only agent author/committer identity was corrected. Later evidence-only commits do not replace the tested runtime artifact.",
+  "runtime": {
+    "platform": "macOS arm64",
+    "host": "unmodified official npm DSH 0.2.2-rc.1, isolated loopback run",
+    "wheel_sha256": "b09112bfe88e7883909c9eddcc7dcee04eed9b18c9884755516de456ef8e0d42",
+    "sidebar_sha256": "b92a850d1f4cf38115a5ab8cc7b78aa24c477506f7a151cc4093fbc3b18879d9",
+    "sidebar_build": "pkg:3890eabd0c67a165",
+    "dependencies": "Retained pinned runtime dependencies copied into an independent venv: numpy 2.0.2, pillow 11.3.0, jsonschema 4.25.1 and its existing dependencies. No model/assets downloaded; no production profile changed."
+  },
+  "native_faults": {
+    "instrumentation": "Observe native Browser.start, worker CDP export send and actual document.fonts status around the installed API; no substitute renderer or fake pixels. Parent holds the existing stable flock for all media/GUI work.",
+    "bad_dependency": {"seconds": 4.271, "exit": 1, "code": "render.failed", "message": "cache dependency is not a file: missing-preview-dependency.css", "stage_proof": "Real producer dependency identity resolution rejects missing declared input before browser launch", "browser_started": false, "preview_children": [], "out_exists": false, "completion_markers": [], "worker_ledgers": []},
+    "active_browser_cancel": {"seconds": 7.559, "exit": 1, "code": "render.cancelled", "stage_proof": ["native browser started with owned process group 23747", "non-main browser worker sent Runtime.evaluate window.__vtx_export_png()", "runner then sent SIGTERM to its own CLI child"], "cancel_to_exit_seconds": 0.078, "remaining_owned_browser_group_members": [], "preview_children": [], "out_exists": false, "completion_markers": [], "worker_ledgers": []},
+    "slow_font": {"seconds": 17.753, "exit": 0, "frame": 134, "kind": "current-composite", "font_http_requests": 1, "font_response_delay_seconds": 2, "font": "ProbeSlow", "stage_proof": "Actual HTTP request for locked local DejaVu font; all three observed native navigation returns report document.fonts.status=loaded and ProbeSlow.status=loaded", "png_sha256": "2e4083fe9f557c81c1a2da72a95b2529a9712a4208fd8489a24efa8f06fb8921", "remaining_owned_browser_group_members": [], "preview_children": [], "out_exists": false, "completion_markers": [], "worker_ledgers": []},
+    "defect_and_recheck": "Integrated db1b3b8 reproduced a 20.031-second worker-drain delay after browser stop: a native worker remained in socket readiness wait while main waited its actual settled event. Shutdown without closing the readiness fd, drain-before-close and endpoint I/O ownership repair it; final native cancel returns in 0.078 seconds without extending the 30-second request lease. Socketpair, deterministic guard/close ordering and existing worker interruption regressions cover the repair.",
+    "prior_attempts": "First probe lacked numpy and was explicitly failed, then dependencies supplied. An early diagnostic runner's 8-second cleanup watchdog exposed the real 20-second defect; its unknown/unledgered scratch remains preserved, not claimed automatically cleaned. Later complete probe runs have no remaining owned groups or request scratch."
+  },
+  "official_ui_integrated_before_socket_repair": {
+    "production_revision": "2724c0f (tree identical to original db1b3b8)",
+    "wheel_sha256": "eb02a3dd9567a39a1c65ad1c3a0e1d33ff05d2022c680dce64606cb4e5f622d0",
+    "viewport": [1440, 1000], "dpr": 1, "theme": "light shell / dark expanded workbench", "visible_interval": [0, 180],
+    "initial_cache_and_out": "absent in fresh public synthetic fixture",
+    "initial_content_version": "sha256:340ce4c86fe1d5289dcf3f45b68d8a4a192580bcaffb07468d64a17f9baf402d",
+    "global_frame": 44, "html_local_frame": 29, "selected_address": "/video_tracks/2/clips/0",
+    "layers": ["ordinary media", "scaled opacity PiP", "transparent HTML canvas", "ASS subtitle"],
+    "initial_png": {"kind": "current-composite", "approximate": false, "size": [1920, 1080], "bytes": 391529, "sha256": "5d74531ab0a7b5da3f32d099702877b28ce37e3199f40e922baab4c0d7864914", "cache_hit": false, "input_fingerprint": "c31c56dc10d9c46b1a7cfd648a807264a3afe2d7fec91b814f29b9c9e62b33af", "render_key": "a43c1fa543d9f27b8fc1873be0d37536ea1e62deee76556e60d10f98d8f82ca5", "independently_decoded_and_blob_sha_verified": true},
+    "matched_before_after": {"before": "composite-before.png", "before_revision": "03ff6fa", "after": "composite-after.png", "after_recapture_revision": "2724c0f / original db1b3b8", "after_sha256": "e7579dab39081341b63a742d02374231175ed52b12bb978364158f4c5585d04c", "note": "The real new capture is byte-identical to the preserved old After image. No UI code changes follow it; baseline and capture are not synthetic mockups."},
+    "draft": {"second_explicit_click": true, "image_attachments_added": 1, "exact_core_frame_reference_in_actual_draft": true, "reference_frame": 44, "reference_fps": 30, "reference_content_version_matches": true, "sent": false, "uploaded": false},
+    "edit": {"explicit_legacy_adoption": true, "zero_write_plan_and_explicit_commit": true, "subtitle_new_text": "Edited synthetic subtitle", "dirty_queue_invalidates_png": true, "post_save_png_absent_and_three_consents_reset": true, "saved_content_version": "sha256:54ba4be09f50748f81ab38cf03a46a521ad254cc94c43a976932ac13a20c1b08"},
+    "post_edit_png": {"size": [1920, 1080], "bytes": 387514, "sha256": "0786d160b4e2a6cb9caae7fef5505d37e368ed413f92346b723b8382c542546e", "independently_decoded": true},
+    "timing_limit": "Intermediate GUI requests were not precisely timed; only coarse tool timestamps were retained. No exact latency is invented."
+  },
+  "official_ui_final_wheel": {
+    "production_revision": "ae40455", "global_frame": 44, "html_local_frame_visible": 29,
+    "content_version": "sha256:54ba4be09f50748f81ab38cf03a46a521ad254cc94c43a976932ac13a20c1b08",
+    "kind": "current-composite", "approximate": false, "size": [1920, 1080], "fps": {"num": 30, "den": 1},
+    "bytes": 387514, "sha256": "0786d160b4e2a6cb9caae7fef5505d37e368ed413f92346b723b8382c542546e",
+    "input_fingerprint": "2cf319a6aa0250dbab99a84d8c6e902065e57901a92776f7dc45582a01e0059e",
+    "render_key": "5b9cfa040bfde5ddd4ffc99eebeaff809ad314ac3b76091938eb0ee13a1141fe", "cache_hit": false,
+    "independent_browser_full_decode_and_blob_sha_match": true,
+    "click_to_decode_blob_and_hash_seconds": 14.614,
+    "timing_scope": "Actual Playwright UI click through visible image/full decode/blob fetch/SHA; includes tool overhead, not a network-only or p95 claim. Control endpoint observations include polls and are not individually classified as render responses.",
+    "screenshot": "closeout-after-edited.png", "screenshot_sha256": "8eeda88a3a01fb0c8217fada3505e450c90424c91086897033b2c1ab1bd95dc5",
+    "screenshot_scope": "Real saved-edit supplement, not the matched initial Before/After pair; same viewport/theme/interval/selected gfx clip. No send/upload; browser closed after requests ended."
+  },
+  "formal_checks": {
+    "current_same_input_180_frame_fixture": {
+      "content_version": "sha256:54ba4be09f50748f81ab38cf03a46a521ad254cc94c43a976932ac13a20c1b08",
+      "cold_preview_seconds": 14.098, "cold_preview_budget_seconds": 30,
+      "cold_png_sha256": "0786d160b4e2a6cb9caae7fef5505d37e368ed413f92346b723b8382c542546e",
+      "preview_inline_only_and_cleaned_before_response": true,
+      "all_exit": 1, "all_seconds": 24.405, "independent_strict_qc_exit": 1,
+      "qc_result": "11/12 checks passed; empty-window sample at frame179 failed (difference20.23, coverage32.2%). Independent qc --strict stdout explicitly reports180frames (decoded count), 6seconds and1920x1080; media cuts, PiP/HTML windows, loudness and decoded true peak pass. Ordinary all used container count; the decoded count is from the separate strict invocation.",
+      "same_main_baseline": {"revision": "dceba10", "wheel_sha256": "a25d19f52ac960bb70acb3cb9c02f94381f89d070b24743cb656bb6889005771", "all_exit": 1, "failure": "Same saved input and runtime configuration reproduce identical empty-window frame179 difference20.23/coverage32.2% on main. Existing single-segment mode also fails; no workaround or strict-QC pass claimed."},
+      "independent_complete_decode": {"formal_frame44_vs_cold_png_mae": 0.8294962062757202, "graphic_roi_mae": 0.7849967606090055, "ASS_roi_mae": 1.1801568700396825, "PiP_roi_mae": 1.229259545038866, "final_frame179_vs_original_source_right89_mae": 0.87373922968107, "existing_mae_limit": 2, "delivered_audio_pcm_samples": 288000, "delivered_audio_non_silent": true, "evidence": "Independent full-decode extraction was run after the parity script stopped at all exit1; these are separate observations, not unexecuted assertions from that script, and do not override strict-QC FAIL."},
+      "disposition": "Pre-existing main QC failure, accurately retained as FAIL, not weakened, skipped or treated as new-preview success. No QC gate/selection/deadline/criterion changed."
+    },
+    "existing_real_same_input_regression": {"test": "tests.gfx.test_html_preview_integration.HtmlPreviewIntegration.test_same_input_formal_all_audio_qc_and_selected_frame", "result": "PASS", "scope": "Unchanged 16-frame real ordinary-media/transparent HTML/ASS fixture: cold PNG, same-input formal all, independent strict QC, delivered non-silent audio and whole/graphics/ASS MAE<2 all pass. Not a replacement performance baseline or a claim the 180-frame strict QC passed."},
+    "canonical_900_svg": "Prior real cold GUI/all/strict QC/900-frame decode/MAE evidence remains unchanged in composite-capture.json at its recorded 9afc723/348cf20 revisions. This closeout changes CDP cancellation only, not SVG raster/composition/concat; no new 900-frame run or performance claim is made."
+  },
+  "verification": {"focused_python": {"tests": 140, "passed": 127, "skipped": 13, "failed": 0, "skip_scope": "Seven optional real Chrome/FFmpeg cases (real targeted checks are separately recorded), six Linux /proc-specific cases on macOS"}, "sidebar_frame_tests": {"passed": 51, "failed": 0, "skipped": 0}, "documentation_gates": {"passed": 7, "failed": 0}, "agents_unicode_characters": 1999, "license_tests": {"passed": 18, "errors": 1, "scope": "Payload audit reports the same eight pre-existing unregistered media files as exact main inventory/tracked list. New closeout files are explicitly inventoried and independently hash-verified; whole payload audit remains FAIL, not skipped or bypassed."}, "ordinary_ci_at_tested_tree": "3/3 passed on ae40455; final evidence head must be checked separately", "independent_review": "Independent read-only review of integration, trust/identity/ownership and refined I/O-close ordering found no remaining production blocker; worker guard test made deterministic after review feedback."},
+  "shutdown": {"owned_browser_pages_closed": true, "owned_isolated_host_running": false, "owned_media_gui_processes": [], "existing_serial_lock_released_and_nonblocking_reacquire_verified": true, "statement": "自有媒体/GUI进程已结束，串行窗口已释放"},
+  "limitations": ["No Linux or Windows official-GUI result claimed; Linux-host-only acceptance waived by maintainer.", "Full repository suite and current 900-SVG rerun are UNRUN; old results retain old identities.", "HTML trust is not sandboxing or proof of a dynamic dependency closure; original 1080p30, core-only and 30-second lease boundaries remain.", "Branch-protection endpoint returned HTTP404; required protection configuration is unknown, not bypassed.", "No private Feishu content, user media, credentials, font files or runtime binaries are distributed. Root MIT records project-authored evidence only, not transitive UI/font/icon rights clearance."]
+}

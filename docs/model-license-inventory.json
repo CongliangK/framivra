@@ -1116,6 +1116,40 @@
       "installed_version": "UNVERIFIED: host/runtime/build artifact not inspected",
       "notes": "Bounded host prerequisite scope: Git, curl, shell/PowerShell and standard OS utilities, CMake, Ninja or selected generator, compiler/linker, pip/npm/conda or selected package manager, archive tools and OS package manager. These are invoked or referenced as host/build tools, not bundled by this project. A release including any of their binaries requires an exact component build manifest and notices; this record is not blanket approval of arbitrary external commands. BLOCKER for redistribution of these external components: pin exact versions/hashes and preserve authoritative full license/notice and restrictions before clearance."
     },
+    "html-preview-baseline-screenshot": {
+      "kind": "data",
+      "source": "docs/reports/assets/html-preview/before.png",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT",
+      "default_payload": true,
+      "distribution": ["git-source"],
+      "evidence": "html-preview-baseline-capture",
+      "additional_evidence": ["framivra"],
+      "files_sha256": {
+        "docs/reports/assets/html-preview/before.png": "e9f5683c2b82eb35ef33848631bbaf5fc6cdbdcb4ed0a0028ffb1fe3ed76a585"
+      },
+      "notes": "Real isolated official DSH baseline screenshot, not an After or full-composite acceptance. Project capture contribution and inspected host MIT declaration only; no transitive font/icon/software rights clearance, private media, credentials or runtime redistribution."
+    },
+    "cold-composite-ui-evidence": {
+      "kind": "data",
+      "source": "docs/reports/assets/html-preview/composite-capture.json",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT",
+      "default_payload": true,
+      "distribution": ["git-source"],
+      "evidence": "cold-composite-ui-capture",
+      "additional_evidence": ["framivra", "html-preview-baseline-capture"],
+      "files_sha256": {
+        "docs/reports/assets/html-preview/composite-before.png": "bd1c15592bf0ceb80866d93cd5733c7529ce7b748ad556c1e9f79d48e2b78857",
+        "docs/reports/assets/html-preview/composite-after.png": "e7579dab39081341b63a742d02374231175ed52b12bb978364158f4c5585d04c",
+        "docs/reports/assets/html-preview/composite-after-edited.png": "78ea5849e7b301d6c4a80a3d61b38f2b469044a48ec4edd22a44bed42ae08809",
+        "docs/reports/assets/html-preview/composite-capture.json": "8a932a867a99b43b5b8d3c47815743adcc71c445df8da931a3b320859e6be297",
+        "docs/reports/assets/html-preview/closeout-capture.json": "3a80b5118d7764c0a85a1c24c619e4c9fdd4ff65f64e5b16b3e9ebb6b0831dd5",
+        "docs/reports/assets/html-preview/closeout-after-edited.png": "8eeda88a3a01fb0c8217fada3505e450c90424c91086897033b2c1ab1bd95dc5",
+        "docs/reports/assets/html-preview/qc-correction-capture.json": "15991c6d1c9cc66df624030bfbf05d05719a52499e3cea7a6bef8f3c03d3c144"
+      },
+      "notes": "Matched real Before/After cold complete-composite captures, plus separately labelled saved-edit supplement and measured metadata. Only project-authored capture/fixture data and the inspected host declaration are recorded; no private inputs, font/runtime binaries or transitive rights clearance. Functional/quality checks and explicit UNRUN/measurement limitations in the metadata are not a release or speedup certification. closeout-capture.json and the separately labelled closeout saved-edit screenshot add real integrated macOS evidence while retaining all earlier bytes and identities; the recorded inherited 180-frame strict-QC failure makes that historical handoff incomplete, not a passing full-film certificate. qc-correction-capture.json separately records the maintainer-authorized correction and actual new installed-artifact checks, without rewriting the historical failed evidence or claiming transitive legal clearance."
+    },
     "macos-plugin-screenshot-evidence": {
       "kind": "data",
       "source": "docs/reports/assets/macos-plugin/",
@@ -1361,6 +1395,20 @@
     }
   },
   "evidence": {
+    "cold-composite-ui-capture": {
+      "revision": "9afc723df1e62307ff0d118ff7a687337d0dff58",
+      "url": "https://github.com/CongliangK/framivra/pull/377",
+      "text": "Project-captured real official DSH 0.2.2-rc.1 macOS cold-composite evidence: matched 1440x1000 DPR1 light shell/dark expanded workbench, global frame 44/local HTML frame 29 in the public synthetic 180-frame ordinary-media/scale-opacity PiP/transparent canvas/ASS fixture. Baseline source 03ff6fa records actual platform refusal and no PNG; candidate production source 9afc723 records full current-composite, not an HTML-layer replacement. The third capture is a saved-subtitle-edit supplement, not the matched pair. Capture metadata also records separate canonical portable-v2 900-frame functional/quality checks, with explicit limitations rather than a cross-engine speedup claim. No private media, Feishu or chat content, credentials, font files or runtime binaries are distributed. Root MIT applies to project-authored capture/fixture contributions. Previously inspected official host package declares MIT, Copyright (c) 2026 DeepSeek; LICENSE SHA256 ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be and package.json SHA256 3e14837ceb3bbc0ba419ed08e9b5ba164338369b1268b93c3c25d89f7b1c9953. This is provenance/integrity evidence, not transitive UI/icon/font rights clearance or legal certification. The revision identifies candidate production code, not a claim that the later capture files already existed in that commit.\n",
+      "sha256": "79236ab1e392c0852dc18b7d147e8c49034f51f0b1fb15707e8d51cfc609cef8",
+      "scope": "Matched real captures and bounded measured metadata; code revision, not later screenshot publication; no transitive rights or final release certification"
+    },
+    "html-preview-baseline-capture": {
+      "revision": "e11e5e8451492d680a76de07412c58fabb075b89",
+      "url": "https://github.com/CongliangK/framivra/blob/e11e5e8451492d680a76de07412c58fabb075b89/docs/reports/assets/html-preview/before.png",
+      "text": "Project-captured real official DSH 0.2.2-rc.1 baseline at global frame 335, selected public chart HTML block dst_in 30 and duration 600, core/sidebar source 03ff6fa. The 1440x1000 DPR1 default light shell/dark workbench capture records platform.unsupported and no generated PNG; it is not After evidence or multi-layer cold-composite acceptance. No private media, conversation content, credentials, font files or runtime binaries are included. Project-authored capture contribution follows root MIT. Inspected official host package declares MIT, Copyright (c) 2026 DeepSeek; shipped LICENSE SHA256 ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be, package.json SHA256 3e14837ceb3bbc0ba419ed08e9b5ba164338369b1268b93c3c25d89f7b1c9953. Provenance and declarations only, not transitive UI/icon/font rights clearance or legal certification.\n",
+      "sha256": "2361063b2c3e9582050af81f8a3287110f048e82198b60344a9a77bbf3845b82",
+      "scope": "Baseline screenshot provenance only; immutable revision identifies screenshot publication, not candidate acceptance"
+    },
     "matanyone2-code": {
       "url": "https://raw.githubusercontent.com/pq-yang/MatAnyone2/0079197acd6d16a741f71558809c06c586c579e0/LICENSE.txt",
       "revision": "0079197acd6d16a741f71558809c06c586c579e0",

@@ -61,7 +61,21 @@ def _environment():
 
 
 
-def _render(path, reference, frame, limit):
+def _render(path, reference, frame, limit, *, prepare_gfx=False, trust_html=False):
+    request = []
+    try:
+        return _render_inner(path, reference, frame, limit, prepare_gfx=prepare_gfx,
+                             trust_html=trust_html, request=request)
+    finally:
+        from .runtime import fstxn
+        from .runtime.proc_supervisor import WORKER_LEDGER
+        for directory, identity in request:
+            if any(directory.rglob(WORKER_LEDGER)):
+                raise _FrameError('render.unsettled', 'browser recovery ledger remains; no success')
+            fstxn.remove_pinned(directory, identity, preserve=lambda _path: False)
+
+
+def _render_inner(path, reference, frame, limit, *, prepare_gfx, trust_html, request):
     from .runtime import fstxn
     if sys.platform not in ("linux", "darwin") or not fstxn.directory_write_capability():
         raise _FrameError("platform.unsupported", "render requires no-follow directory-anchored writes")
@@ -73,6 +87,12 @@ def _render(path, reference, frame, limit):
     if active:
         raise _FrameError("plugins.unsupported", "first slice supports core-only projects; active plugins: " +
                           ", ".join(p["name"] for p in active))
+    if prepare_gfx and not trust_html:
+        visible_html = any(track.get('kind') == 'gfx' and clip.get('format', 'html') == 'html'
+                           and clip['dst_in'] <= frame < clip['dst_in'] + clip['dur']
+                           for track in stored.get('video_tracks', []) for clip in track.get('clips', []))
+        if visible_html:
+            raise _FrameError('html.not_trusted', 'visible HTML requires explicit trust_html=True; not a sandbox')
     from .timeline_structure import structure_errors
     # Same legacy identity semantics as the write path: unmanaged source IDs
     # are references, not protocol identities. Managed documents still take
@@ -99,6 +119,7 @@ def _render(path, reference, frame, limit):
     from .render.gfx_environment import _files
 
     class PreviewCtx(Ctx):
+        _core_only_preview = True
         write_root = None
 
         def receipt(self, *args, **kwargs):
@@ -161,7 +182,7 @@ def _render(path, reference, frame, limit):
     from .render import gfx_svg
     with gfx_svg.consumer_scope(c):
         try:
-            sources = PreviewInputs(c, frame)
+            sources = PreviewInputs(c, frame, prepare_gfx=True) if prepare_gfx else PreviewInputs(c, frame)
             verify_input_identity(c)
             identities = sources.identity()
             verify_input_identity(c)
@@ -179,6 +200,9 @@ def _render(path, reference, frame, limit):
         code_files = [__file__, inspect.getfile(composite), inspect.getfile(Ctx),
                       inspect.getfile(preview_inputs), inspect.getfile(read_artifact),
                       inspect.getfile(_png_stream_invalid_reason)]
+        if prepare_gfx:
+            from .render import preview_gfx
+            code_files.append(inspect.getfile(preview_gfx))
         code = _files(code_files)
         inputs = {"schema": _SCHEMA, "content_version": version,
                   "input_fingerprint": c.input_fingerprint, "frame": frame, "fps": c.fps,
@@ -186,21 +210,41 @@ def _render(path, reference, frame, limit):
                   "ass_sha256": _hash(ass), "graph": _graph_code_digest(),
                   "profile": "kernel-composite/png-rgb24/ffv1/v1", "code": code,
                   "environment": environment, "cache_mode": policy.mode}
-        key = _digest(inputs)
         import secrets
+        request_root = None
+        if prepare_gfx:
+            # Descriptors are write-free. Pin the full document around production,
+            # including invisible graphics and native inputs in this scope.
+            verify_input_identity(c)
+            document_current()
+            from .render.preview_gfx import recover_requests, REQUEST_SCHEMA
+            recover_requests(c)
+            request_root = c.cache / 'preview' / ('request_' + secrets.token_hex(16))
+            fstxn.mkdir(request_root, root=c.root)
+            request.append((request_root, fstxn.cleanup_identity(request_root)))
+            fstxn.atomic_write(request_root / 'request.json',
+                               json.dumps({'schema': REQUEST_SCHEMA, 'project': str(c.root)}), root=c.root)
+            sources.produce(request_root / 'producers')
+            verify_input_identity(c)
+            identities = sources.identity()
+            verify_input_identity(c)
+            inputs['layers'] = identities
+            inputs['prepare_gfx'] = True
+        key = _digest(inputs)
         # core/off images are explicit requested deliveries, never reusable entries.
         suffix = "" if policy.reuse_media else "_" + secrets.token_hex(8)
-        directory = c.cache / "preview" / ("frame_" + key + suffix)
+        directory = (request_root / ('frame_' + key) if prepare_gfx else
+                     c.cache / "preview" / ("frame_" + key + suffix))
         image = directory / "image.png"
         marker = directory / "complete.json"
 
         def current():
             if project_identity(c.root) != root_identity:
                 raise _FrameError("snapshot.changed", "project root identity changed")
-            verify_input_identity(c)
-            document_current()
             if active_plugins(SimpleNamespace(tl=stored)):
                 raise _FrameError("plugins.changed", "active plugin selection changed")
+            verify_input_identity(c)
+            document_current()
             try:
                 same_inputs = sources.identity() == identities
                 verify_input_identity(c)
@@ -218,7 +262,7 @@ def _render(path, reference, frame, limit):
         with fstxn.file_lock(directory / "frame.lock", root=c.root):
             current()
             hit = False
-            if policy.reuse_media:
+            if policy.reuse_media and not prepare_gfx:
                 try:
                     record = json.loads(read_artifact(marker, root=c.root, limit=4096, root_identity=root_identity))
                     facts, data = _png(image, c.w, c.h, limit, root=c.root, root_identity=root_identity)
@@ -263,16 +307,26 @@ def _render(path, reference, frame, limit):
                 raise _FrameError("image.invalid", "published PNG differs from completion certificate")
             current()
         return ({"state": "generated", "kind": "current-composite", "approximate": False,
-                "path": str(image.relative_to(c.root)), "mime_type": "image/png",
+                "path": None if prepare_gfx else str(image.relative_to(c.root)),
+                **({'delivery': 'inline-only'} if prepare_gfx else {}), "mime_type": "image/png",
                 "width": c.w, "height": c.h, "frame": frame, "fps": {"num": int(c.fps), "den": 1},
                 "content_version": version, "input_fingerprint": c.input_fingerprint,
-                "identity_semantics": "Fast media stat identity; non-adversarial inputs",
+                "identity_semantics": ('Fast media stat identity; native producer input/environment certificates; '
+                                       'legacy HTML dynamic closure unproven; trusted HTML is not sandboxed'
+                                       if prepare_gfx else 'Fast media stat identity; non-adversarial inputs'),
                 "render_key": key, "cache_hit": hit, **facts}, data)
 
 
 def frame_timeline(path, *, frame, expected_content_version=None, render=False,
-                   max_png_bytes=_LIMIT, include_png=False):
-    """Reference + exact current-composite PNG, only with explicit render=True.
+                   max_png_bytes=_LIMIT, include_png=False,
+                   prepare_gfx=False, trust_html=False):
+    """Reference + explicitly authorized PNG; default kind is current-composite.
+
+    prepare_gfx authorizes fresh sparse native graphics for the complete kernel
+    composite. It requires include_png=True and explicit trust for visible HTML.
+    Its output is inline-only: request files are removed before success. Legacy
+    HTML declarations do not prove closure and HTML trust is not a sandbox.
+    The remaining notes describe the unchanged default warm-input path.
 
     Defaults do not construct Ctx, probe assets, lock or create directories.
     Authorized rendering requires Linux/macOS directory-anchored writes and
@@ -298,6 +352,15 @@ def frame_timeline(path, *, frame, expected_content_version=None, render=False,
         _error(result, "frame.integer", "/frame", "required integer global frame")
     if type(render) is not bool:
         _error(result, "authorization.type", "/render", "render must be boolean")
+    if type(prepare_gfx) is not bool or type(trust_html) is not bool:
+        _error(result, 'authorization.type', '', 'prepare_gfx and trust_html must be boolean')
+    if trust_html and not prepare_gfx:
+        _error(result, 'html.target', '/trust_html', 'trust_html requires prepare_gfx')
+    if prepare_gfx and expected_content_version is None:
+        _error(result, 'snapshot.version_required', '/expected_content_version',
+               'prepare_gfx requires the reviewed saved content version')
+    if prepare_gfx and not include_png:
+        _error(result, 'image.inline_required', '/include_png', 'prepare_gfx requires include_png=True; delivery is inline-only')
     if type(include_png) is not bool:
         _error(result, "image.inline_type", "/include_png", "include_png must be boolean")
     if type(max_png_bytes) is not int or not 1 <= max_png_bytes <= _LIMIT:
@@ -308,7 +371,9 @@ def frame_timeline(path, *, frame, expected_content_version=None, render=False,
         _error(result, "render.not_authorized", "/render", "explicit render=True/--render required; no renderer started")
         return _finish(result)
     try:
-        image, data = _render(path, reference, frame, max_png_bytes)
+        image, data = (_render(path, reference, frame, max_png_bytes,
+                               prepare_gfx=True, trust_html=trust_html) if prepare_gfx else
+                       _render(path, reference, frame, max_png_bytes))
         result["image"] = image
         if include_png:
             image["inline"] = {"encoding": "base64", "data": ""}
@@ -326,5 +391,6 @@ def frame_timeline(path, *, frame, expected_content_version=None, render=False,
     except (OSError, ValueError, RuntimeError, KeyError, TypeError, SystemExit) as error:
         result["image"] = None
         from .render.png_artifact import ArtifactError
-        _error(result, error.code if isinstance(error, (_FrameError, ArtifactError)) else "render.failed", "", str(error)[:2000])
+        from .pluginlib.hooks import _CoreOnlyPreviewError
+        _error(result, error.code if isinstance(error, (_FrameError, ArtifactError, _CoreOnlyPreviewError)) else "render.failed", "", str(error)[:2000])
     return _finish(result)
