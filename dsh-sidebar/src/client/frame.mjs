@@ -169,8 +169,9 @@ export function frameDraftText(generated, selection, positionOnly = false) {
 }
 
 export function FrameTools({ owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call, active = true, suspended = false }) {
-  const suspension = useRef(suspended)
-  suspension.current = suspended
+  const scheduling = useRef({ suspended, revision: 0, intent: 0 })
+  if (scheduling.current.suspended !== suspended) scheduling.current.revision++
+  scheduling.current.suspended = suspended
   const [state, setState] = useState({}), [consent, setConsent] = useState(false), [positionOnly, setPositionOnly] = useState(false)
   const [prepareGfx, setPrepareGfx] = useState(false), [htmlTrust, setHTMLTrust] = useState(false)
   const [follow, setFollow] = useState(false)
@@ -213,7 +214,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       setState({ message: '已验证 PNG，未发送。复制与入稿请展开图片工具。' })
     } catch (error) {
       if (sequence === generation.current) {
-        if (!operation?.signal.aborted) { setState({ message: `错误：${error.message}` }); if (automatic) setFollow(false) }
+        if (!operation?.signal.aborted) { setState({ message: `错误：${error.message}` }); if (automatic) { scheduling.current.intent++; setFollow(false) } }
         else setState({ message: '操作已失效/取消；未加入草稿。' })
       }
     } finally {
@@ -264,10 +265,12 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
   }
   const blocked = suspended || !whole(frame) || !!owner.ghost || owner.edit.dirty || owner.edit.busy || owner.edit.unknown
   function enqueue(automatic = false) {
+    const revision = scheduling.current.revision, intent = ++scheduling.current.intent
     const start = () => {
-      // Recheck live storage ownership as well as the captured view: cleanup
-      // may have held this debounced intent across a suspension change.
-      if (owner.epoch !== viewEpoch || !active || suspension.current || tabSignal.aborted) return
+      // Suspension invalidates old intents even if it ends before cleanup;
+      // a newer queued intent or automatic failure also supersedes this one.
+      const current = scheduling.current
+      if (owner.epoch !== viewEpoch || !active || current.suspended || current.revision !== revision || current.intent !== intent || tabSignal.aborted) return
       return generate(automatic)
     }
     const task = serial.current ? serial.current.then(start) : start()
