@@ -148,7 +148,7 @@ test('legacy requires explicit adopt; incompatible existing IDs remain byte-iden
  }
 })
 
-test('old installed core lacking official stdin capability keeps read/copy usable and refuses write authorization',{skip:skip||(!process.env.SIDEBAR_OLD_VTX&&'Set SIDEBAR_OLD_VTX for real old-core negative'),timeout:30000},async t=>{
+test('old installed core lacking required write capabilities keeps read/copy usable and refuses write authorization',{skip:skip||(!process.env.SIDEBAR_OLD_VTX&&'Set SIDEBAR_OLD_VTX for real old-core negative'),timeout:30000},async t=>{
  const current=process.env.SIDEBAR_REAL_VTX;let env
  try{process.env.SIDEBAR_REAL_VTX=process.env.SIDEBAR_OLD_VTX;env=await environment(t,'old-core-readonly',fixture(),{legacy:true})}finally{process.env.SIDEBAR_REAL_VTX=current}
  const grant=env.opened.grant,before=await env.read();assert(env.result.blocks.length)

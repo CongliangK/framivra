@@ -145,12 +145,15 @@ class _Base(unittest.TestCase):
             self.addCleanup(command.stop)
         # 音乐工程（含 $ref 拆分件）+ 时长标记
         self.ref_file = self.root / "music" / "strings_part.json"
-        self.ref_file.write_text('{"notes": [1, 2, 3]}', encoding="utf-8")
+        self.ref_file.write_text(json.dumps({"name": "strings", "engine": "synth",
+                                             "instrument": "lead", "notes": [[60, 0, 1, 90]]}),
+                                 encoding="utf-8")
         self.proj = self.root / "music" / "ep.json"
         self.proj.write_text(json.dumps({
             "name": "ep", "meta": {"spec_version": "2", "bpm": 120},
-            "tracks": [{"name": "strings", "$ref": "strings_part.json"},
-                       {"name": "kick", "engine": "synth"}],
+            "tracks": [{"$ref": "strings_part.json"},
+                       {"name": "kick", "engine": "synth", "instrument": "kick",
+                        "notes": [[36, 0, 1, 90]]}],
         }, ensure_ascii=False), encoding="utf-8")
         (self.root / "music" / "duration.txt").write_text("4.0", encoding="utf-8")
         # 桩 render 的分轨清单（对齐伪工程 tracks：strings/kick）
@@ -396,7 +399,9 @@ class DigestIdentity(_Base):
 
     def test_digest_flips_on_ref_content(self):
         d1 = _bgm.param_digest(self._ctx(True), "bgm_main")
-        self.ref_file.write_text('{"notes": [1, 2, 3, 4]}', encoding="utf-8")
+        track = json.loads(self.ref_file.read_text(encoding="utf-8"))
+        track["notes"].append([64, 1, 1, 90])
+        self.ref_file.write_text(json.dumps(track), encoding="utf-8")
         d2 = _bgm.param_digest(self._ctx(True), "bgm_main")
         self.assertNotEqual(d1, d2, "$ref 件内容必须翻转产物键")
 
@@ -432,6 +437,88 @@ class DigestIdentity(_Base):
                              encoding="utf-8")
         d2 = _bgm.render_digest(self._ctx(True), "bgm_main")
         self.assertNotEqual(d1, d2, "工程字节变化须翻转 render_digest（重渲）")
+
+
+class RefDependencySlots(_Base):
+    def test_v1_and_unrelated_slots_never_open_sentinel(self):
+        from apps.bgm.bgm_gen.core.project import load_project
+
+        sentinel = self.root / "sentinel"
+        sentinel.write_text("controlled sentinel", encoding="utf-8")
+        v1 = json.loads((REPO / "apps/bgm/examples/synth.json").read_text(encoding="utf-8"))
+        v1["arbitrary"] = {"$ref": "../sentinel"}
+        self.proj.write_text(json.dumps(v1), encoding="utf-8")
+        # The runtime loader accepts this root field (the documentation schema is stricter).
+        self.assertEqual(load_project(str(self.proj))["meta"]["spec_version"], "1")
+        cases = [v1,
+                 {"meta": {"spec_version": "1"}, "tracks": [{"$ref": "../sentinel"}]},
+                 {"meta": [], "tracks": [{"$ref": "../sentinel"}]},
+                 {"meta": {"spec_version": "2"}, "tracks": [
+                     {"name": "bad", "$ref": "../sentinel"},
+                     {"nested": [{"$ref": "../sentinel"}]},
+                     {"$ref": {"$ref": "../sentinel"}}, {"$ref": None},
+                     {"$ref": ["../sentinel"]}, {"$ref": 42},
+                     {"$ref": ""}, {"$ref": "  \t"}],
+                  "other": [{"$ref": "../sentinel"}]}]
+        original_open = Path.open
+        opened = []
+        def record_open(path, *args, **kwargs):
+            opened.append(path.resolve())
+            return original_open(path, *args, **kwargs)
+        for project in cases:
+            with self.subTest(project=project):
+                self.proj.write_text(json.dumps(project), encoding="utf-8")
+                with mock.patch.object(Path, "open", record_open), \
+                     mock.patch.object(_bgm, "_dir_sig", side_effect=AssertionError("unexpected directory scan")):
+                    self.assertEqual(_bgm._dep_sigs(None, {"bgm": True}, self.proj), {})
+                self.assertNotIn(sentinel.resolve(), opened)
+
+    def test_numeric_v2_loader_and_both_digests(self):
+        from apps.bgm.bgm_gen.core.project import load_project
+
+        project = json.loads(self.proj.read_text(encoding="utf-8"))
+        project["meta"]["spec_version"] = 2
+        self.proj.write_text(json.dumps(project), encoding="utf-8")
+        self.assertEqual(load_project(str(self.proj))["meta"]["spec_version"], "2")
+        c = self._ctx(True)
+        before = (_bgm.param_digest(c, "bgm_main"), _bgm.render_digest(c, "bgm_main"))
+        track = json.loads(self.ref_file.read_text(encoding="utf-8"))
+        track["notes"].append([64, 1, 1, 90])
+        self.ref_file.write_text(json.dumps(track), encoding="utf-8")
+        self.assertEqual(len(load_project(str(self.proj))["tracks"]), 2)
+        self.assertNotEqual(before[0], _bgm.param_digest(c, "bgm_main"))
+        self.assertNotEqual(before[1], _bgm.render_digest(c, "bgm_main"))
+
+    def test_v2_references_and_extras_preserve_identity(self):
+        from apps.bgm.bgm_gen.core.project import load_project
+
+        self.assertEqual(len(load_project(str(self.proj))["tracks"]), 2)
+        second = self.root / "music" / " second.json"
+        track = json.loads(self.ref_file.read_text(encoding="utf-8"))
+        track["name"] = "lead2"
+        second.write_text(json.dumps(track), encoding="utf-8")
+        project = json.loads(self.proj.read_text(encoding="utf-8"))
+        project["tracks"].append({"$ref": " second.json"})
+        self.proj.write_text(json.dumps(project), encoding="utf-8")
+        self.assertEqual(len(load_project(str(self.proj))["tracks"]), 3)
+        extra = self.root / "music" / "extra.bin"
+        extra.write_bytes(b"extra")
+        source = {"bgm": {"extra_deps": ["extra.bin"]}}
+        before = _bgm._dep_sigs(None, source, self.proj)
+        self.assertEqual(set(before), {str(p.resolve()) for p in (self.ref_file, second, extra)})
+        c = self._ctx(source["bgm"])
+        digests = (_bgm.param_digest(c, "bgm_main"), _bgm.render_digest(c, "bgm_main"))
+        for path in (self.ref_file, second, extra):
+            old = path.read_bytes()
+            path.write_bytes(old + b" ")
+            after = _bgm._dep_sigs(None, source, self.proj)
+            self.assertNotEqual(before[str(path.resolve())], after[str(path.resolve())])
+            self.assertNotEqual(digests[0], _bgm.param_digest(c, "bgm_main"))
+            self.assertNotEqual(digests[1], _bgm.render_digest(c, "bgm_main"))
+            path.write_bytes(old)
+            self.assertEqual(_bgm._dep_sigs(None, source, self.proj), before)
+            self.assertEqual(digests, (_bgm.param_digest(c, "bgm_main"),
+                                       _bgm.render_digest(c, "bgm_main")))
 
 
 class SharedRenderCache(_Base):

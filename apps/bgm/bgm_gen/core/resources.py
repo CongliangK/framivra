@@ -7,7 +7,7 @@
     probe()            静态探测（进程内缓存）：cpu 硬件线程 / 内存总量 / GPU
                        （nvidia-smi 风格，与 engines.gpu_guard.free_vram_mb 同源
                        探测逻辑；无 GPU 返回 None）。
-    mem_available_gb() 实时读 /proc/meminfo MemAvailable——**每次现读，绝不缓存**
+    mem_available_gb() 实时读物理可用内存——**每次现读，绝不缓存**
                        （缓存会让门控对本机其他进程的内存涨落失明）。
     plan_workers()     并发数规划（纯函数，可单测）：
                        workers = min( ceil(可用内存/per_task_gb),
@@ -38,6 +38,7 @@ RSS × 保守系数 1.5（实测记录见模块尾部"标定记录"）；估算�
 绝不放大冻机风险。
 """
 
+import ctypes
 import math
 import os
 import threading
@@ -94,14 +95,52 @@ def _read_meminfo_kb(key):
     return None
 
 
+class _MemoryStatusEx(ctypes.Structure):
+    # Windows DWORD and DWORDLONG are fixed-width even on 64-bit Windows.
+    _fields_ = [
+        ("dwLength", ctypes.c_uint32),
+        ("dwMemoryLoad", ctypes.c_uint32),
+        ("ullTotalPhys", ctypes.c_uint64),
+        ("ullAvailPhys", ctypes.c_uint64),
+        ("ullTotalPageFile", ctypes.c_uint64),
+        ("ullAvailPageFile", ctypes.c_uint64),
+        ("ullTotalVirtual", ctypes.c_uint64),
+        ("ullAvailVirtual", ctypes.c_uint64),
+        ("ullAvailExtendedVirtual", ctypes.c_uint64),
+    ]
+
+
+def _windows_physical_memory():
+    """Return current (total, available) physical bytes, or None on failure."""
+    try:
+        status = _MemoryStatusEx()
+        status.dwLength = ctypes.sizeof(status)
+        call = ctypes.WinDLL("kernel32", use_last_error=True).GlobalMemoryStatusEx
+        call.argtypes = [ctypes.POINTER(_MemoryStatusEx)]
+        call.restype = ctypes.c_int  # Windows BOOL
+        if not call(ctypes.byref(status)):
+            return None
+        total, available = status.ullTotalPhys, status.ullAvailPhys
+        if total == 0 or available > total:
+            return None
+        return total, available
+    except Exception:  # noqa: BLE001 -- unavailable API must remain conservative
+        return None
+
+
 def mem_available_gb():
-    """实时可用内存（GB）。**每次现读 /proc/meminfo，绝不缓存**（门控语义）。
-    读不到（非 Linux / 异常）返回 None——调用方视为不可探测。"""
+    """实时可用物理内存（GiB）；每次现读，失败返回 None。"""
+    if os.name == "nt":
+        memory = _windows_physical_memory()
+        return None if memory is None else memory[1] / (1024.0 ** 3)
     kb = _read_meminfo_kb("MemAvailable")
     return None if kb is None else kb / (1024.0 * 1024.0)
 
 
 def mem_total_gb():
+    if os.name == "nt":
+        memory = _windows_physical_memory()
+        return None if memory is None else memory[0] / (1024.0 ** 3)
     kb = _read_meminfo_kb("MemTotal")
     if kb is not None:
         return kb / (1024.0 * 1024.0)
@@ -126,10 +165,16 @@ def probe(refresh=False):
         {"cpu_threads": int, "mem_total_gb": float, "gpu": {...} | None}
     """
     global _probe_cache
-    if _probe_cache is not None and not refresh:
+    if (_probe_cache is not None and not refresh and
+            (os.name != "nt" or _probe_cache["mem_total_gb"] > 0)):
         return _probe_cache
     with _probe_lock:
         if _probe_cache is not None and not refresh:
+            if os.name == "nt" and not _probe_cache["mem_total_gb"]:
+                # Retry only the cheap physical-memory call, not nvidia-smi.
+                total = mem_total_gb() or 0.0
+                if total:
+                    _probe_cache = {**_probe_cache, "mem_total_gb": total}
             return _probe_cache
         gpu = None
         try:
@@ -144,12 +189,13 @@ def probe(refresh=False):
                        "free_mb": int(free_mb.strip())}
         except Exception:                                     # noqa: BLE001
             gpu = None
-        _probe_cache = {
+        result = {
             "cpu_threads": os.cpu_count() or 1,
             "mem_total_gb": mem_total_gb() or 0.0,
             "gpu": gpu,
         }
-        return _probe_cache
+        _probe_cache = result
+        return result
 
 
 # ---------------------------------------------------------------- 开关与地板
@@ -174,17 +220,21 @@ def env_max_parallel():
     return n
 
 
+def _parse_floor_override(v):
+    try:
+        f = float(v)
+    except ValueError:
+        raise ResourceError(f"BGM_MEM_FLOOR_GB 非数值：{v!r}")
+    if f < 0:
+        raise ResourceError(f"BGM_MEM_FLOOR_GB 不得为负：{v!r}")
+    return f
+
+
 def mem_floor_gb(total_gb=None):
     """内存地板（GB）：env BGM_MEM_FLOOR_GB 覆盖 > max(6, total×0.2)。"""
     v = os.environ.get("BGM_MEM_FLOOR_GB")
     if v is not None and v != "":
-        try:
-            f = float(v)
-        except ValueError:
-            raise ResourceError(f"BGM_MEM_FLOOR_GB 非数值：{v!r}")
-        if f < 0:
-            raise ResourceError(f"BGM_MEM_FLOOR_GB 不得为负：{v!r}")
-        return f
+        return _parse_floor_override(v)
     if total_gb is None:
         total_gb = probe()["mem_total_gb"]
     return max(MIN_FLOOR_GB, total_gb * FLOOR_FRAC)
@@ -204,8 +254,8 @@ def plan_workers(n_tasks, per_task_gb, *, cpu_cap_factor=DEFAULT_CPU_CAP_FACTOR,
         （经 mem_floor_gb() 读 env 覆盖）。
 
     env BGM_MAX_PARALLEL=N 与 hard_cap 取 min（只能更小）。
-    内存再紧也保底 1（单任务在途由 DispatchGate 实时门控兜底——真的低于
-    floor+per_task 时门控会等待/超时报错，绝不盲目派发）。
+    内存再紧也保底 1；run_pool 的单 worker / 单任务路径按既有契约直接
+    顺序执行，不经过 DispatchGate。仅并发路径由门控实时检查。
     """
     n_tasks = int(n_tasks)
     if n_tasks <= 0:
@@ -214,7 +264,13 @@ def plan_workers(n_tasks, per_task_gb, *, cpu_cap_factor=DEFAULT_CPU_CAP_FACTOR,
         raise ResourceError(f"per_task_gb 必须为正数：{per_task_gb!r}")
     if cpu_threads is None:
         cpu_threads = probe()["cpu_threads"]
+    unknown_windows_total = False
     if mem_floor_gb is None:
+        floor_override = os.environ.get("BGM_MEM_FLOOR_GB")
+        if os.name == "nt" and not floor_override:
+            if total_gb is None:
+                total_gb = probe()["mem_total_gb"]
+            unknown_windows_total = not total_gb or total_gb <= 0
         mem_floor_gb = globals()["mem_floor_gb"](total_gb)
     if avail_gb is None:
         avail_gb = mem_available_gb()
@@ -224,6 +280,8 @@ def plan_workers(n_tasks, per_task_gb, *, cpu_cap_factor=DEFAULT_CPU_CAP_FACTOR,
     if env_cap is not None:
         hard = min(hard, env_cap)
 
+    if unknown_windows_total:
+        return 1  # Windows 物理总量未知，不能按低估的地板启用并发。
     if avail_gb is not None:                       # 可探测才做内存约束
         usable = max(0.0, avail_gb - mem_floor_gb)
         mem_cap = max(1, math.ceil(usable / per_task_gb))
@@ -246,8 +304,8 @@ class DispatchGate:
 
     acquire()：在途数+1 前检查 mem_available_gb() ≥ floor + per_task×(在途+1)；
     不足则 poll_s 轮询直到 timeout_s 抛 ResourceError（报错而非死等）。
-    release()：任务完成（含异常）释放配额。内存不可探测（None）时放行——
-    规划层已按最保守口径限并发，探测缺失不应让渲染完全停摆。
+    release()：任务完成（含异常）释放配额。Windows 并发执行期探测失败时
+    等待恢复或超时；其他平台保持原有不可探测时放行语义。
     """
 
     def __init__(self, per_task_gb, mem_floor_gb=None, timeout_s=GATE_TIMEOUT_S,
@@ -271,22 +329,42 @@ class DispatchGate:
     def acquire(self):
         deadline = time.monotonic() + self.timeout_s
         while True:
+            # Windows 默认地板需要总内存；独立读取，绝不在锁内调用 GPU probe。
+            total = None
+            if (os.name == "nt" and self._floor is None
+                    and not os.environ.get("BGM_MEM_FLOOR_GB")):
+                total = mem_total_gb()
             # 检查与递增同锁段（v3.4 验收 M-1：原 check-then-increment 有
             # TOCTOU 窗口，多线程同时 acquire 可瞬时超发；现役调用仅单
             # 派发线程不受影响，此处收口防未来复用踩坑）
             with self._lock:
                 inflight = self._inflight
-                need = self._floor_gb() + self.per_task_gb * (inflight + 1)
-                avail = mem_available_gb()
-                if avail is None or avail >= need:
-                    self._inflight += 1
-                    return
+                override = (os.environ.get("BGM_MEM_FLOOR_GB")
+                            if os.name == "nt" and self._floor is None else None)
+                unknown_total = (os.name == "nt" and self._floor is None
+                                 and not override and not total)
+                if not unknown_total:
+                    if os.name == "nt" and self._floor is None:
+                        floor = (_parse_floor_override(override) if override else
+                                 max(MIN_FLOOR_GB, total * FLOOR_FRAC))
+                    else:
+                        floor = self._floor_gb()
+                    need = floor + self.per_task_gb * (inflight + 1)
+                    avail = mem_available_gb()
+                    if (avail is None and os.name != "nt") or (
+                            avail is not None and avail >= need):
+                        self._inflight += 1
+                        return
             if time.monotonic() >= deadline:
+                if unknown_total:
+                    raise ResourceError("DispatchGate 派发等待超时：物理内存总量不可探测，拒绝继续派发")
+                measured = "不可探测" if avail is None else f"{avail:.1f}GB"
+                reason = "内存不可探测" if avail is None else "系统内存长期紧张"
                 raise ResourceError(
                     f"DispatchGate 派发等待超时（{self.timeout_s:.0f}s）："
-                    f"需要可用内存 ≥{need:.1f}GB（floor {self._floor_gb():.1f}"
+                    f"需要可用内存 ≥{need:.1f}GB（floor {floor:.1f}"
                     f" + per_task {self.per_task_gb:g}×{inflight + 1}），"
-                    f"实测 {avail:.1f}GB——系统内存长期紧张，拒绝继续派发")
+                    f"实测 {measured}——{reason}，拒绝继续派发")
             time.sleep(self.poll_s)
 
     def release(self):

@@ -159,7 +159,11 @@ class TimelineReferenceTest(unittest.TestCase):
         self.doc["project"]["fps"] = 30.0
         self.store()
         self.assertEqual(self.ref()["selection"]["fps"], 30.0)
-        for fps in (24, 29.97, True):
+        for fps in (24, 29.97, '30000/1001'):
+            self.doc['project']['fps'] = fps
+            self.store()
+            self.assertEqual(self.ref()['selection']['fps'], fps)
+        for fps in (27, 29.5, True):
             self.doc["project"]["fps"] = fps
             self.store()
             self.error("timeline.fps")

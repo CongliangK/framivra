@@ -161,6 +161,15 @@ vm.createContext(box);
 vm.runInContext(%s,box,{timeout:2000});
 vm.runInContext(`
 const clone=()=>JSON.parse(JSON.stringify(SAMPLE));
+for(const [label,expected] of [[24,24],[60,60],[120,120],[29.97,30000/1001],['60000/1001',60000/1001]]){
+  const t=clone();t.project.fps=label;load(t);
+  assert.equal(projectFps(label),expected);
+  assert.equal(validate(t).filter(i=>i.lv==='err').length,0);
+  assert(!$('meta').innerHTML.includes('NaN'));
+  const ticks=created.filter(e=>e.className==='tick major');
+  assert(ticks.every(e=>Number.isFinite(parseFloat(e.style.left))));
+}
+load(clone());
 const current=TL, before=JSON.stringify(TL), priorNodes=[...$('content').childNodes];
 const block=created.find(e=>e.className.startsWith('blk ')), oldClick=block.onclick;
 block.onclick();

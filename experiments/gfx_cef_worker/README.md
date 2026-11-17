@@ -77,6 +77,12 @@ jitter_max_channel_delta、jitter_signature_streak）；超预算或探针角差
 可信错误观察器，并在接受捕获像素前核对 renderer fence：未捕获异常、语法错误、
 未处理 Promise 拒绝及已覆盖的错误事件抑制反例以 `JS_ERR/3` 拒绝；协议、
 文档绑定或 deadline 失败以 `TIMEOUT/1` 拒绝。已处理异常与普通 console 不作错误帧。
+OnPaint 借用缓冲的快速筛选**不授予证明权限**：未围栏的拒收分支只能做非推进计账，
+即使再次读取变成有效签名，也不能推进第一/第二 signed 阶段、S5 或写输出。
+正向候选必须走 owned 快照 → 绘制后 JS fence → 状态机消费；等待下一次可信候选，
+不为负帧复制整张图。并发实测已发现旧拒收分支重解码后越过该边界；累计 fence 数够大
+不能单独证明每个 signed 阶段都经过围栏，重采样会掩盖缺失。修复与双阶段变更回归见
+[实现](src/frame_sync_machine.cpp)和[原生自测](src/frame_sync_selftest.cpp)。
 这些有限反例不构成任意网页正确性或不可信输入安全保证；短片 fixture 也不代替完整项目验收。
 
 缓存身份与路由权威见 [cache-provenance](../../docs/cache-provenance.md)。
@@ -113,12 +119,12 @@ env VTX_TEST_CEF_WORKER="${CEF_WORKER:?}" \
 | `VTX_CEF_PAIR_SWAP` | `1` / `0\|1`；mode n+exact 双对交替预取，`0` 回退单对逐帧导航（进缓存身份） |
 | `VTX_CEF_CAPTURE_FPS` | `120` / `1..240`；OSR 采样率请求，签名/无见证两路同值，不是 timeline FPS |
 | `VTX_CEF_PNG_ENCODER`、`VTX_CEF_PNG_LEVEL`、`VTX_CEF_PNG_FILTER` | `spng` / `spng\|fpng\|zlib`；`1` / `1..3`；`sub_up` / `none\|sub\|up\|sub_up\|all` |
-| `VTX_CEF_ENCODE_THREADS` | `2` / `1..16`；当前每 worker 仅一帧在途，增加线程不等于帧编码并行 |
+| `VTX_CEF_ENCODE_THREADS` | `2` / `1..16`；编码池线程数，受深度 2 ticket 流水与捕获速度限制，不等于线程数倍加速 |
 | `VTX_GFX_PAGES`、`VTX_GFX_SPLIT_FRAMES`、`VTX_GFX_SPLIT_MAX` | `7` / `1..32`；`450` / `0..65536`（0 关闭分片）；`3` / `1..32` |
 
 页与帧块共用**一个**全局 worker 池；不是页数乘块数的嵌套池。末块才做整页完成认证。
-每 worker 最多一个原生请求在途、两个交替输出路径；下一请求与上一帧宿主校验/提交
-重叠，仍保原子文件事务和最终全帧校验。配置、实际 worker 与 Python 适配实现均绑定
+每 worker 最多两个原生请求在途、两个交替输出路径；下一帧捕获与上一帧编码及宿主
+校验/提交重叠，回执仍按请求序且晚于自身编码，保留原子事务和最终全帧校验。配置、实际 worker 与 Python 适配实现均绑定
 CEF 缓存身份；改变配置后的第一次运行不是同身份暖态。双浏览器有额外常驻开销，峰值
 RAM 变化未实测，不能假定翻倍或本机可承受；Mac 先以 `PAGES=1` 验正确性，再单独评估
 2/3/4，不默认推满 32；默认 7 不代表经过本机资源测定，线程上限亦非容量保证。
@@ -141,12 +147,13 @@ RAM 变化未实测，不能假定翻倍或本机可承受；Mac 先以 `PAGES=1
 timeline 帧率、尺寸、codec 与像素证明不变；日志记录请求值，配置变化仍使缓存身份变化。
 无见证浏览器仅在 readiness 后收集两次真实 paint 时复制快照，闲置签名浏览器不复制；
 丢弃的回调仍递增 native paint 序号，重新启用时清旧缓冲并建立新 floor，不减少证明样本。
-原生 capture 与 encode 目前仍串行；只有实测 encode 在 gfx 临界路径占比显著时才值得
-考虑双 ticket 流水，其理想单 worker 节省上界为 `min(C,E)/(C+E)`，不是线程数倍增。
+原生 capture 与 encode 已由深度 2 ticket 流水重叠；后续优化须测量未被隐藏的关键路径，
+不能再次把已重叠的编码时间计为新增收益，也不能把编码线程数当作加速倍数。
 
 构建后在 Mac 用真实 bundle 入口设置 `CEF_WORKER`，运行上面的原生测试；
 Linux 专属测试的 SKIP 不算 Mac 通过。`v2.2.0`（`7c76ab9`）是已冻结的源码发布
-基线，不是 CEF 优化版或 Mac 性能验收。**当前真实 CEF/Mac 全链性能仍为 UNRUN。**
+基线，不是 CEF 优化版或 Mac 性能验收。[#318](<https://github.com/CongliangK/framivra/pull/318>)
+保留已执行的 Mac 冷暖配对历史；当前版本仍须独立重测，不能沿用历史耗时作为新分母。
 
 配对评估入口是 [`scripts/gfx/bench_cef.py`](../../scripts/gfx/bench_cef.py) 的
 `plan/run/report`。只复用**原来已核验的 30 秒/900 帧/1080p30 HTML 派生输入**；
@@ -184,15 +191,18 @@ BENCH_OUTPUT="${BENCH_PARENT:?}/cef-bench-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 "$PYTHON" -B "$BENCH" report "$BENCH_OUTPUT" --json
 ```
 
-默认固定 Mode N/shared、单 worker、关闭分片；先验证该档，再分别评估并发/配置。
+**基准工具**默认固定 Mode N/shared、单 worker、关闭分片，不是上表的应用默认调度；
+先验证该档，再分别评估并发/配置。
 上表配置可用 `--common-set KEY=VALUE` 同改两端；候选单独变更
 须同时声明 `--candidate-set KEY=VALUE --ablation <说明>`，不得当作纯代码提速。
+
 完整 `all` 的外层墙钟是主计时；之后另跑 `qc --strict` 和媒体核验，复制、strict QC、
 媒体哈希计算均不计入该墙钟。保存 `run.json`、`summary.json`、`report.md`，并保留
 逐轮 events、日志、回执、native/pipeline 证据。报告分别展示 strict QC、900 帧/PTS/音频
 检查及配对 decoded-video/PCM 一致性；它们互不替代，也不等于人工视觉验收。
 RSS 采样会重复计算共享页且漏掉瞬时峰值，不是精确物理内存/完整树峰值；CPU 采样
-只是已观测用量下界。旧 worker 缺失的分项或未知资源写 unavailable/null，不补 0。
+只是已观测用量下界。
+旧 worker 缺失的分项或未知资源写 unavailable/null，不补 0。
 失败与不完整轮次保留，不挑选最好成绩；原始证据可能含本地路径，分享前须审查。
 
 一次成功运行的定位顺序：外层 CLI 墙钟定总边界，execution events 划分程序内串行/

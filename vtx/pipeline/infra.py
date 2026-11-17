@@ -15,7 +15,7 @@ from ..runtime import fstxn, events
 from ..cache.cache_state import (DOWNSTREAM, InputIdentityError, load_receipt,
                          receipt_fingerprint, validate_cache_dependencies,
                          verify_input_identity)
-from .constraints import AUDIO_SAMPLE_RATE, fps_error
+from .constraints import AUDIO_SAMPLE_RATE, ALLOWED_FPS, fps_error, parse_fps, frame_sample
 from ..runtime.diagnostics import emit, required_field, mark_handled, producer_exit, operation, indexed
 from ..media.encoders import (NVENC_RETRY_ATTEMPTS, nvenc_budget, nvenc_guard_note,
                        nvenc_retry_run, video_alpha_info)
@@ -143,26 +143,27 @@ class Ctx:
             return required_field(self, obj, key, parent)
         project = field(self.tl, 'project', '$')
         self.fps = field(project, 'fps', '$.project')
-        # fps 契约前置校验（B02/issue #26 / F-04 / #4 三面统一，2026-10-13）：
-        # 允许值单一来源 constraints.ALLOWED_FPS——D24 换基后全管线固定 30fps
-        # （≠29.97；24/25/50/60 及 NTSC 非整数帧率一律拒绝），schema/preview 同源
-        # 判定，tests/media/test_fps_constraints.py 守护三面一致。旧门收「可整除 48000 的
-        # 任意正整数」（24/25/50/60 全放行）与 schema const 30 漂移，即本单标的。
-        # 数值等值的 30.0 归一为 int 30（JSON Schema const 数学等值语义，三面同判）。
+        # Stored-rate gate shares its allowlist with schema/preview. Keep the
+        # exact rational clock separately from legacy numeric arithmetic.
         _fps_err = fps_error(self.fps)
         if _fps_err:
             emit(self, _fps_err, json_path='$.project.fps', rule_id='load.project_fps',
-                 measured={'value': self.fps, 'unit': 'frames/s'}, threshold={'value': 30, 'unit': 'frames/s'},
+                 measured={'value': self.fps, 'unit': 'frames/s'}, threshold={'allowed': list(ALLOWED_FPS), 'unit': 'frames/s'},
                  suggested_actions=[{'op': 'normalize_project_fps', 'params': {'fps': 30}}])
             error = ValueError(_fps_err)
             mark_handled(error)
             raise error
-        self.fps = int(self.fps)
+        self.frame_rate = parse_fps(self.fps)
+        self.fps_expr = str(self.frame_rate)
+        self.fps = (self.frame_rate.numerator if self.frame_rate.denominator == 1
+                    else float(self.frame_rate))
         self.dur = field(project, 'duration_frames', '$.project')
         self.w = field(project, 'width', '$.project')
         self.h = field(project, 'height', '$.project')
-        self.spf = 1.0 / self.fps
-        self.spf_samples = AUDIO_SAMPLE_RATE // self.fps   # 30fps → 1600（24fps 时代为 2000），须整除
+        self.spf = float(1 / self.frame_rate)
+        samples = AUDIO_SAMPLE_RATE / self.frame_rate
+        self.spf_samples = int(samples) if samples.denominator == 1 else float(samples)
+        self.sample_at = lambda frame: frame_sample(frame, self.frame_rate)
         self.cache = self.root / "cache"; self.out = self.root / "out"
         # v2 subtitles_src（§1.1 条目 6）：timeline 加载点解析——load 后 self.tl
         # ["subtitles"] 即为解析结果（各阶段无感）；解析失败/互斥错误记入
@@ -331,6 +332,7 @@ class Ctx:
             info.update(video_alpha_info(v, d.get('pixel_formats', [])))
         else:  # 纯音频源（音效/BGM/环境声文件）：时长换算到项目帧网格，仅供音频事件引用
             dur = None
+            exact_audio_ticks = False
             duration_pointer = ['$.streams[0].duration_ts', '$.streams[0].time_base']
             # ffprobe rounds format.duration to decimal microseconds; a 54400-sample
             # WAV at 48 kHz is exactly 34 project frames, not int(1.133333 * 30)=33.
@@ -339,6 +341,7 @@ class Ctx:
             if a is not None and len(d['streams']) == 1:
                 dur = metadata(lambda: _audio_duration_from_ticks(a), duration_pointer,
                                'parse exact audio stream duration')
+                exact_audio_ticks = dur is not None
             if dur is None:
                 duration_pointer = '$.format.duration'
                 dur_raw = metadata(lambda: d.get('format', {}).get('duration'), duration_pointer, 'read audio duration')
@@ -350,7 +353,14 @@ class Ctx:
                           "无法换算到项目帧网格", file=sys.stderr)
                     producer_exit(1)
                 dur = metadata(lambda: float(dur_raw), duration_pointer, 'audio duration float')
-            info = {"fps": None, "nb_frames": metadata(lambda: int(dur * self.fps), duration_pointer, 'audio duration to frames'),
+            def audio_frames():
+                if exact_audio_ticks:
+                    # Invert S(frame)=round(frame*48000/rate): an endpoint
+                    # rounded down is still complete, but one sample short is not.
+                    limit = (dur + Fraction(1, 2 * AUDIO_SAMPLE_RATE)) * parse_fps(self.fps)
+                    return (limit.numerator - 1) // limit.denominator
+                return int(dur * self.fps)  # Conservative legacy container fallback.
+            info = {"fps": None, "nb_frames": metadata(audio_frames, duration_pointer, 'audio duration to frames'),
                     "w": 0, "h": 0, "has_video": False, "has_audio": a is not None}
         self.probes[path] = info; return info
 

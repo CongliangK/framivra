@@ -168,6 +168,7 @@ class CDPDeadlineMock(unittest.TestCase):
         def gettimeout(self): return self.timeout
         def settimeout(self, value): self.timeout = value
         def close(self): self.closed += 1
+        def shutdown(self, how): pass
 
         def sendall(self, data):
             self.calls.append(('send', self.timeout))
@@ -204,7 +205,7 @@ class CDPDeadlineMock(unittest.TestCase):
         self.clock[0] = 0
         sock = self.Socket(self.clock, self.frame({'id': 1, 'result': {'ok': True}})
                            if data is None else data, **kwargs)
-        ws = gfx.WSConn.__new__(gfx.WSConn); ws.sock = sock; ws._rbuf = bytearray()
+        ws = gfx.WSConn.__new__(gfx.WSConn); ws.sock = sock; ws._rbuf = bytearray(); ws._io_guard = threading.Lock()
         tab = gfx.Tab.__new__(gfx.Tab)
         tab.ws, tab._mid, tab.request_policy, tab._policy_commands = ws, 0, None, set()
         return tab, sock
@@ -371,7 +372,7 @@ class CDPDeadlineMock(unittest.TestCase):
     def test_initialization_failure_keeps_fd_cleanup(self):
         tab, sock = self.tab(delays=[0, 31])
         def init(ws, *args, **kwargs):
-            ws.sock, ws._rbuf = sock, bytearray()
+            ws.sock, ws._rbuf, ws._io_guard = sock, bytearray(), threading.Lock()
         with mock.patch.object(gfx.WSConn, '__init__', init):
             with self.assertRaises(TimeoutError): gfx.Tab(1, '/owned')
         self.assertGreaterEqual(sock.closed, 1)
@@ -411,7 +412,7 @@ class CDPNavigateFontReadinessMock(unittest.TestCase):
             self.clock,
             b''.join(CDPDeadlineMock.frame(m) for m in messages),
             delays=list(delays))
-        ws = gfx.WSConn.__new__(gfx.WSConn); ws.sock = sock; ws._rbuf = bytearray()
+        ws = gfx.WSConn.__new__(gfx.WSConn); ws.sock = sock; ws._rbuf = bytearray(); ws._io_guard = threading.Lock()
         tab = gfx.Tab.__new__(gfx.Tab)
         tab.ws, tab._mid, tab.request_policy, tab._policy_commands = ws, 0, None, set()
         return tab, sock
@@ -565,6 +566,9 @@ class _FakeTab:
 
     def call(self, method, timeout=30, **params):
         return {}
+
+    def interrupt(self):
+        self.interrupted = True
 
     def close(self):
         # 3c415b2 起 render_page finally 段显式 t.close() 释放 tab CDP fd——桩随迁(记录型,供断言扩展)

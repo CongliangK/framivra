@@ -23,6 +23,8 @@ class TestSrtOut(unittest.TestCase):
         self.assertEqual(srt_out.frame_to_srt_time(0), "00:00:00,000")
         self.assertEqual(srt_out.frame_to_srt_time(1965), "00:01:05,500")
         self.assertEqual(srt_out.frame_to_srt_time(108000), "01:00:00,000")
+        for fps in (29.97, '30000/1001', 30000 / 1001):
+            self.assertEqual(srt_out.frame_to_srt_time(30000, fps), '00:16:41,000')
 
     def test_golden(self):
         subs = [

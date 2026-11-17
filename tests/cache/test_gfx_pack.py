@@ -31,8 +31,8 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-@unittest.skipUnless(sys.platform == 'linux' and fstxn.write_capability() == 'fd-anchored',
-                     'requires Linux fd-anchored storage (no unsafe fallback)')
+@unittest.skipUnless(sys.platform in ('linux', 'darwin') and fstxn.directory_write_capability(),
+                     'requires directory-anchored storage (no unsafe fallback)')
 class GfxPackTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -341,8 +341,8 @@ class GfxPackTests(unittest.TestCase):
         self.assertFalse(self.target.exists())
 
     def test_nonanchored_platform_has_explicit_failure_without_writes(self):
-        with mock.patch.object(fstxn, 'write_capability', return_value='legacy'):
-            with self.assertRaisesRegex(gfx_pack.GfxPackError, 'fd-anchored'):
+        with mock.patch.object(fstxn, 'directory_write_capability', return_value=False):
+            with self.assertRaisesRegex(gfx_pack.GfxPackError, 'directory-anchored'):
                 self.pack()
         self.assertFalse(self.target.exists())
 

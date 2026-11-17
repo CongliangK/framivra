@@ -58,6 +58,7 @@ import numpy as np
 # （经 scripts/ 兼容 symlink 调用时 resolve() 先归位到本文件，两路径同锚定）。
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from vtx.media import loudness_cache
+from vtx.pipeline.constraints import parse_fps, fps_expression
 
 ok_all = True
 
@@ -238,7 +239,7 @@ def main():
     have_tl = TL_PATH.exists()
     if have_tl:
         TL = json.loads(TL_PATH.read_text())
-        F = TL["project"]["fps"]
+        F = float(parse_fps(TL["project"]["fps"]))
         DURF = TL["project"]["duration_frames"]
     else:
         TL, F, DURF = None, 30, None
@@ -459,9 +460,9 @@ def main():
                                        f"{a.get('sample_rate')}Hz {a.get('channels')}ch"}
             gate("G10 帧数+封装",
                  nb_read == DURF and abs(float(fmt["duration"]) - dur_expect) < 0.001
-                 and v["r_frame_rate"] == f"{F}/1" and fs_ok,
+                 and v["r_frame_rate"] == fps_expression(F) + ("/1" if parse_fps(F).denominator == 1 else "") and fs_ok,
                  f"{nb_read}f/{fmt['duration']}s/{v['r_frame_rate']}"
-                 f"（门 {DURF}f/{dur_expect:.3f}s/{F}/1；计数口径 {cnt_field}）；"
+                 f"（门 {DURF}f/{dur_expect:.3f}s/{fps_expression(F)}；计数口径 {cnt_field}）；"
                  f"[信息] enc={v.get('tags', {}).get('encoder')} / "
                  f"{a.get('codec_name')}-{a.get('profile')} "
                  f"{int(a.get('bit_rate', 0))//1000}k {a.get('sample_rate')}Hz "

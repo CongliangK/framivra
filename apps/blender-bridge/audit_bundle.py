@@ -280,7 +280,9 @@ def main():
 
     # ② 检测原素材第一音轨，避免 MP3 编码补齐影响源时间。
     t1 = time.perf_counter()
-    fps = tl["project"]["fps"]
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from vtx.pipeline.constraints import parse_fps
+    fps = float(parse_fps(tl["project"]["fps"]))
     sources = [{'id': sid, 'path': media_path(mp3_of[sid], audit_dir)} for sid in selected_ids]
     tracks, report, fallbacks = [], [], []
 
