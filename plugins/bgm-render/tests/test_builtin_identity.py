@@ -1,5 +1,6 @@
 """Built-in producer/receipt identity and source acceptance regressions."""
 import contextlib
+import errno
 import io
 import json
 import os
@@ -10,10 +11,17 @@ from unittest import mock
 
 from tests.test_bgm_render_plugin import _Base, _bgm, _context
 from apps.bgm import identity
+from apps.bgm.bgm_gen.ref_slots import UnsafeTrackRef
 from vtx.cache.cache_state import receipt_fingerprint, verify_input_identity
 
 
 class ProducerIdentity(_Base):
+    def skip_unsupported_symlink(self, exc):
+        if getattr(exc, "winerror", None) in (5, 1314) or exc.errno in (
+                errno.EACCES, errno.EPERM, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP):
+            self.skipTest(f"symlinks unavailable on this platform: {exc}")
+        raise exc
+
     def state(self, c):
         return (_bgm.param_digest(c, "bgm_main"), _bgm.render_digest(c, "bgm_main"),
                 receipt_fingerprint(c))
@@ -59,6 +67,222 @@ class ProducerIdentity(_Base):
                 self.assertEqual(producer["assets"], {})
                 self.assertNotIn(sentinel.resolve(), [p.resolve() for p in opened])
                 self.assertNotIn(self.proj.parent / "  \t", opened)
+
+    def test_ref_static_boundary_and_missing_transition(self):
+        outside = self.root / "sentinel.json"
+        outside.write_text('{"engine":"sample"}', encoding="utf-8")
+        sibling = self.root / "music-other"
+        sibling.mkdir()
+        (sibling / "track.json").write_text('{}', encoding="utf-8")
+        local_dir = self.proj.parent / "folder"
+        local_dir.mkdir()
+        c = mock.Mock()
+        def project(ref):
+            self.proj.write_text(json.dumps({"meta": {"spec_version": 2},
+                                              "tracks": [{"$ref": ref}]}), encoding="utf-8")
+        def check(ref):
+            project(ref)
+            original_open = Path.open
+            def guarded(path, *args, **kwargs):
+                if path != self.proj:
+                    raise AssertionError(f"unexpected content open: {path}")
+                return original_open(path, *args, **kwargs)
+            with mock.patch.object(Path, "open", guarded), \
+                 mock.patch.object(Path, "rglob", side_effect=AssertionError("directory scan")):
+                with self.assertRaises(UnsafeTrackRef):
+                    _bgm._dep_sigs(c, {}, self.proj)
+                with self.assertRaises(UnsafeTrackRef):
+                    identity.asset_dependencies(self.proj, {})
+        bad = ["../sentinel.json", str(outside), "../music-other/track.json", "folder"]
+        if os.name == "nt":
+            bad += [r"\rooted.json", r"C:relative.json", r"C:\absolute.json",
+                    r"\\server\share\track.json", r"\\?\C:\track.json"]
+        for ref in bad:
+            with self.subTest(ref=ref):
+                check(ref)
+        from apps.bgm.bgm_gen.core.project import _read_ref_track
+        project("strings_part.json")
+        context = self._ctx(True)
+        for ref in ("folder/../strings_part.json", "strings_part.json/../strings_part.json"):
+            project(ref)
+            track, error = _read_ref_track(str(self.proj.parent), ref)
+            self.assertIsNone(error)
+            self.assertEqual(track["name"], "strings")
+            self.assertEqual(identity.asset_dependencies(self.proj, {}), [])
+            self.assertNotEqual(next(iter(_bgm._dep_sigs(c, {}, self.proj).values())), "MISSING")
+            original = self.ref_file.read_text(encoding="utf-8")
+            before = (_bgm.param_digest(context, "bgm_main"), _bgm.render_digest(context, "bgm_main"))
+            self.ref_file.write_text('{"name":"changed"}', encoding="utf-8")
+            after = (_bgm.param_digest(context, "bgm_main"), _bgm.render_digest(context, "bgm_main"))
+            self.assertTrue(all(a != b for a, b in zip(before, after)))
+            self.ref_file.write_text(original, encoding="utf-8")
+        context = self._ctx(True)
+        project("missing.json")
+        digest_before = _bgm.render_digest(context, "bgm_main")
+        missing = _bgm._dep_sigs(c, {}, self.proj)
+        self.assertEqual(missing, _bgm._dep_sigs(c, {}, self.proj))
+        self.assertEqual(list(missing.values()), ["MISSING"])
+        self.assertEqual(identity.asset_dependencies(self.proj, {}), [])
+        (self.proj.parent / "missing.json").write_text('{}', encoding="utf-8")
+        self.assertNotEqual(missing, _bgm._dep_sigs(c, {}, self.proj))
+        self.assertNotEqual(digest_before, _bgm.render_digest(context, "bgm_main"))
+        with mock.patch("apps.bgm.bgm_gen.ref_slots.os.stat", side_effect=PermissionError("denied")):
+            with self.assertRaises(PermissionError):
+                _bgm._dep_sigs(c, {}, self.proj)
+            with self.assertRaises(PermissionError):
+                identity.asset_dependencies(self.proj, {})
+
+    def test_ref_nonmissing_io_errors_are_not_missing(self):
+        original_resolve, original_stat, original_open = Path.resolve, os.stat, Path.open
+        target = str(self.ref_file.resolve())
+        for code in (errno.EACCES, errno.EIO):
+            def fail_resolve(path, *args, **kwargs):
+                if str(path) == target:
+                    raise OSError(code, "injected resolve error")
+                return original_resolve(path, *args, **kwargs)
+            def fail_stat(path, *args, **kwargs):
+                if str(path) == target:
+                    raise OSError(code, "injected stat error")
+                return original_stat(path, *args, **kwargs)
+            def fail_open(path, *args, **kwargs):
+                if str(path) == target:
+                    raise OSError(code, "injected open error")
+                return original_open(path, *args, **kwargs)
+            with self.subTest(errno=code, method="resolve"), mock.patch.object(Path, "resolve", fail_resolve):
+                for entry in (lambda: _bgm._dep_sigs(None, {}, self.proj),
+                              lambda: identity.asset_dependencies(self.proj, {})):
+                    with self.assertRaises(OSError) as exc:
+                        entry()
+                    self.assertEqual(exc.exception.errno, code)
+            def resolved_target(path, *args, **kwargs):
+                if str(path) == target:
+                    self.assertTrue(kwargs.get("strict"))
+                    return Path(target)
+                return original_resolve(path, *args, **kwargs)
+            with self.subTest(errno=code, method="stat"), \
+                 mock.patch.object(Path, "resolve", resolved_target), \
+                 mock.patch("apps.bgm.bgm_gen.ref_slots.os.stat", side_effect=fail_stat) as stat_call:
+                for entry in (lambda: _bgm._dep_sigs(None, {}, self.proj),
+                              lambda: identity.asset_dependencies(self.proj, {})):
+                    stat_call.reset_mock()
+                    with self.assertRaises(OSError) as exc:
+                        entry()
+                    self.assertEqual(exc.exception.errno, code)
+                    self.assertEqual([call for call in stat_call.call_args_list
+                                      if call.args and str(call.args[0]) == target], [mock.call(target)])
+            with self.subTest(errno=code, method="open"), mock.patch.object(Path, "open", fail_open):
+                with self.assertRaises(OSError) as exc:
+                    _bgm._dep_sigs(None, {}, self.proj)
+                self.assertEqual(exc.exception.errno, code)
+                # Asset parsing retains its previous optional-read behavior.
+                self.assertEqual(identity.asset_dependencies(self.proj, {}), [])
+
+    def test_fifo_ref_rejected_without_open(self):
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("POSIX FIFO required")
+        fifo = self.proj.parent / "fifo"
+        os.mkfifo(fifo)
+        self.proj.write_text(json.dumps({"meta": {"spec_version": 2},
+                                        "tracks": [{"$ref": "fifo"}]}), encoding="utf-8")
+        original_open = Path.open
+        def guarded(path, *args, **kwargs):
+            if path != self.proj:
+                raise AssertionError(f"unexpected content open: {path}")
+            return original_open(path, *args, **kwargs)
+        with mock.patch.object(Path, "open", guarded):
+            with self.assertRaises(UnsafeTrackRef):
+                _bgm._dep_sigs(None, {}, self.proj)
+            with self.assertRaises(UnsafeTrackRef):
+                identity.asset_dependencies(self.proj, {})
+
+    def test_windows_junction_outside_is_rejected_before_open(self):
+        if os.name != "nt":
+            self.skipTest("Windows junction test")
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "track.json").write_text('{}', encoding="utf-8")
+        result = subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", "link", "..\\outside"],
+                                cwd=self.proj.parent, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.proj.write_text(json.dumps({"meta": {"spec_version": 2},
+                                        "tracks": [{"$ref": "link/track.json"}]}), encoding="utf-8")
+        original_open = Path.open
+        def guarded(path, *args, **kwargs):
+            if path != self.proj:
+                raise AssertionError(f"unexpected content open: {path}")
+            return original_open(path, *args, **kwargs)
+        with mock.patch.object(Path, "open", guarded), \
+             mock.patch.object(Path, "rglob", side_effect=AssertionError("directory scan")):
+            with self.assertRaises(UnsafeTrackRef):
+                _bgm._dep_sigs(None, {}, self.proj)
+            with self.assertRaises(UnsafeTrackRef):
+                identity.asset_dependencies(self.proj, {})
+        from apps.bgm.bgm_gen.core.project import _read_ref_track
+        self.proj.write_text(json.dumps({"meta": {"spec_version": 2},
+                                        "tracks": [{"$ref": "strings_part.json"}]}), encoding="utf-8")
+        context = self._ctx(True)
+        ref = "link/../strings_part.json"
+        self.proj.write_text(json.dumps({"meta": {"spec_version": 2},
+                                        "tracks": [{"$ref": ref}]}), encoding="utf-8")
+        track, error = _read_ref_track(str(self.proj.parent), ref)
+        self.assertIsNone(error)
+        self.assertEqual(track["name"], "strings")
+        self.assertEqual(identity.asset_dependencies(self.proj, {}), [])
+        before = (_bgm.param_digest(context, "bgm_main"), _bgm.render_digest(context, "bgm_main"))
+        self.ref_file.write_text('{"name":"changed"}', encoding="utf-8")
+        after = (_bgm.param_digest(context, "bgm_main"), _bgm.render_digest(context, "bgm_main"))
+        self.assertTrue(all(a != b for a, b in zip(before, after)))
+
+    def test_ref_symlink_boundaries_and_project_lexical_parent(self):
+        local = self.proj.parent
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "track.json").write_text('{"engine":"sample"}', encoding="utf-8")
+        try:
+            (local / "out-link").symlink_to(outside, target_is_directory=True)
+        except OSError as exc:
+            self.skip_unsupported_symlink(exc)
+        (local / "in-link.json").symlink_to(self.ref_file)
+        (local / "project-link.json").symlink_to(outside / "project.json")
+        (outside / "project.json").write_text(json.dumps({"meta": {"spec_version": 2},
+                                                           "tracks": [{"$ref": "in-link.json"}]}), encoding="utf-8")
+        project_link = local / "project-link.json"
+        self.assertEqual(identity.asset_dependencies(project_link, {}), [])
+        self.assertNotEqual(list(_bgm._dep_sigs(None, {}, project_link).values()), ["MISSING"])
+        for ref in ("out-link/track.json",):
+            with self.subTest(ref=ref):
+                self.proj.write_text(json.dumps({"meta": {"spec_version": 2},
+                                                 "tracks": [{"$ref": ref}]}), encoding="utf-8")
+                with mock.patch.object(Path, "rglob", side_effect=AssertionError("directory scan")):
+                    with self.assertRaises(UnsafeTrackRef):
+                        _bgm._dep_sigs(None, {}, self.proj)
+                    with self.assertRaises(UnsafeTrackRef):
+                        identity.asset_dependencies(self.proj, {})
+
+    def test_symlink_dotdot_matches_loader_and_both_digests(self):
+        from apps.bgm.bgm_gen.core.project import _read_ref_track
+        local = self.proj.parent
+        deep = local / "deep" / "nested"
+        deep.mkdir(parents=True)
+        link = local / "link"
+        try:
+            link.symlink_to(deep, target_is_directory=True)
+        except OSError as exc:
+            self.skip_unsupported_symlink(exc)
+        loaded = local / "track.json"
+        other = local / "deep" / "track.json"
+        loaded.write_text('{"name":"loader"}', encoding="utf-8")
+        other.write_text('{"name":"other"}', encoding="utf-8")
+        context = self._ctx(True)
+        self.proj.write_text(json.dumps({"meta": {"spec_version": 2},
+                                        "tracks": [{"$ref": "link/../track.json"}]}), encoding="utf-8")
+        track, error = _read_ref_track(str(local), "link/../track.json")
+        self.assertIsNone(error)
+        self.assertEqual(track["name"], "loader")
+        before = (_bgm.param_digest(context, "bgm_main"), _bgm.render_digest(context, "bgm_main"))
+        loaded.write_text('{"name":"changed"}', encoding="utf-8")
+        after = (_bgm.param_digest(context, "bgm_main"), _bgm.render_digest(context, "bgm_main"))
+        self.assertTrue(all(a != b for a, b in zip(before, after)))
 
     def test_inline_and_referenced_assets_remain_bound(self):
         samples = self.root / "samples"
