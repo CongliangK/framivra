@@ -111,7 +111,7 @@ class TestGraphCodeDigest(unittest.TestCase):
         class _P:
             pass
         p = _P(); p.W, p.H, p.draft = 1920, 1080, False
-        p.c = mock.MagicMock(gpu=False)
+        p.c = mock.MagicMock(gpu=False, fps=30)
         sl = [{"cl": {"dst_in": 5, "dur": 30}, "gfx": False,
                "seg": Path("/cache/seg/abc123.mov"), "source": PngSequence(Path("/cache/gfx/x"), "x", 30, 30, 64, 64),
                "x": 0, "y": 0, "w2": None, "h2": None}]
@@ -125,6 +125,12 @@ class TestGraphCodeDigest(unittest.TestCase):
         self.assertEqual(len({k_real, k_a, k_b}), 3,
                          "合成代码摘要翻转必须使段内容键漂移（否则旧段缓存洗白）")
         self.assertEqual(len(k_real), 12)
+        p.c.fps = 60
+        self.assertNotEqual(k_real, RenderPlan._seg_content_key(p, 5, 35, sl, False, None))
+        p.c.fps = 59.94
+        alias = RenderPlan._seg_content_key(p, 5, 35, sl, False, None)
+        p.c.fps = '60000/1001'
+        self.assertEqual(alias, RenderPlan._seg_content_key(p, 5, 35, sl, False, None))
 
     def test_digest_covers_pass_path(self):
         """摘要函数集覆盖断言：_SYNTH_FUNCS 必须包含全部合成路径函数。

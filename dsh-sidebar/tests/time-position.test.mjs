@@ -3,9 +3,12 @@ import assert from 'node:assert/strict'
 import React, { act } from 'react'
 import { JSDOM } from 'jsdom'
 import { secondsFrame, Transport } from '../src/client/editor-controls.mjs'
+import { parseJSON } from '../src/json.mjs'
 
 test('seconds plus zero-based offset converts exactly and rejects ambiguous/unsafe tokens', () => {
   assert.equal(secondsFrame('10', '5'), 305)
+  assert.equal(secondsFrame('10', '5', parseJSON('{"fps":25.0}').fps), 255)
+  assert.throws(() => secondsFrame('10', '5', parseJSON('{"fps":30.0000000000000000000001}').fps))
   assert.equal(secondsFrame('0', '0'), 0)
   assert.equal(secondsFrame('300239975158033', '1'), Number.MAX_SAFE_INTEGER)
   for (const pair of [['1','30'], ['-0','0'], ['01','0'], ['1.0','0'], ['1e1','0'], [' 1','0'], ['','0'], ['1','05'], ['300239975158033','2'], [10,'5']]) assert.throws(() => secondsFrame(...pair))
@@ -18,7 +21,7 @@ test('time helper changes only canonical pin on explicit conversion and never qu
   const { Simulate } = await import('react-dom/test-utils')
   const root = createRoot(document.getElementById('root')), pins = []
   t.after(async () => { await act(async () => root.unmount()); dom.window.close(); delete globalThis.window; delete globalThis.document })
-  await act(async () => root.render(React.createElement(Transport, { frame: 0, frameText: '0', duration: 600, onFrame: value => pins.push(value), onText: () => assert.fail('helper must not change canonical text until explicit conversion'), onQuery: () => assert.fail('no query') })))
+  await act(async () => root.render(React.createElement(Transport, { frame: 0, frameText: '0', duration: 600, fps: parseJSON('{"fps":3e1}').fps, onFrame: value => pins.push(value), onText: () => assert.fail('helper must not change canonical text until explicit conversion'), onQuery: () => assert.fail('no query') })))
   const change = async (name, value) => act(async () => Simulate.change(document.querySelector(`[name="${name}"]`), { target: { value } }))
   await change('framivra-seconds', '10'); await change('framivra-offset', '5')
   assert.deepEqual(pins, [])

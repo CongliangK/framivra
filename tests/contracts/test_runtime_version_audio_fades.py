@@ -177,7 +177,7 @@ class RuntimeVersionAudioFadesTest(unittest.TestCase):
 
     def test_renderer_still_clamps_transformed_short_events(self):
         # Plugins/windowing can shorten already-validated events before this helper.
-        c = SimpleNamespace(spf=1 / 30, spf_samples=1600)
+        c = SimpleNamespace(fps=30, spf=1 / 30, spf_samples=1600)
         e = {'in': 10, 'out': 13, 'volume': 1,
              'fade_in_frames': 12, 'fade_out_frames': 18}
         before = copy.deepcopy(e)

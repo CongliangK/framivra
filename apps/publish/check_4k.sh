@@ -3,12 +3,12 @@
 #
 # 用途：对 4K 放大投稿版（进 B 站高码率池策略，voice-ime D31）做发布前硬门断言。
 # 用法：
-#   bash check_4k.sh <4k文件> [期望帧数]
+#   bash check_4k.sh <4k文件> [期望帧数] [项目fps；默认从timeline读取或30]
 #     · 期望帧数缺省时：依次尝试 <4k文件所在目录>/timeline.json 与 ../timeline.json，
 #       读 project.duration_frames 自动推导；仍取不到则跳过 6b 帧数门（其余门照跑）。
 #   BITRATE_CAP_MBPS=20.5 bash check_4k.sh ...   # 码率门覆盖（Mbps）
 # 断言项（任一 FAIL 退出码 1）：
-#   1) 3840x2160  2) 帧率 30/1 双验  3) h264 High  4) yuv420p  5) 平均码率 ≤ cap
+#   1) 3840x2160  2) 项目精确帧率双验  3) h264 High  4) yuv420p  5) 平均码率 ≤ cap
 #   6) 时长与帧数推导值一致 ±0.05s / 6b) 帧数=期望（可推导）  7) aac 48k + copy 区间
 #   8) I 帧间隔 <300 帧  9) faststart（moov 前 64 字节）
 # 来源项目：voice-ime（v3.9 基线 14/14：16746f/558.2s/14.77Mbps 文件口径）
@@ -21,22 +21,26 @@ ok()   { PASS=$((PASS+1)); echo "PASS  $1"; }
 bad()  { FAIL=$((FAIL+1)); echo "FAIL  $1"; }
 [ -f "$F" ] || { echo "FATAL: $F 不存在"; exit 2; }
 
-# 期望帧数自动推导（timeline.json project.duration_frames；须在 readlink 解析符号链接前，
-# 保证「symlink 到 live 文件 + /tmp 放 timeline.json」的隔离测试路径可用）
-if [ -z "$EXPECT_FRAMES" ]; then
-  D=$(dirname "$F")
-  for TL in "$D/timeline.json" "$D/../timeline.json"; do
-    if [ -f "$TL" ]; then
-      EXPECT_FRAMES=$(env python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["project"]["duration_frames"])' "$TL" 2>/dev/null) && break || EXPECT_FRAMES=""
+# Read the linked project's clock before resolving the media symlink.
+FPS_INPUT="${3:-}"
+D=$(dirname "$F")
+for TL in "$D/timeline.json" "$D/../timeline.json"; do
+  if [ -f "$TL" ]; then
+    if [ -z "$EXPECT_FRAMES" ]; then
+      EXPECT_FRAMES=$(env python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["project"]["duration_frames"])' "$TL") || exit 2
     fi
-  done
-fi
+    if [ -z "$FPS_INPUT" ]; then
+      FPS_INPUT=$(env python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["project"]["fps"])' "$TL") || exit 2
+    fi
+    break
+  fi
+done
+REPO=$(dirname "$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")")
+FPS=$(env python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from vtx.pipeline.constraints import parse_fps; value=sys.argv[2]; rate=parse_fps(value if "/" in value else float(value)); print(f"{rate.numerator}/{rate.denominator}")' "$REPO" "${FPS_INPUT:-30}") || exit 2
 F=$(readlink -f "$F")
-
-FPS=30
 DUR_S="?"
 if [ -n "$EXPECT_FRAMES" ]; then
-  DUR_S=$(env python3 -c 'import sys; print(float(sys.argv[1])/float(sys.argv[2]))' "$EXPECT_FRAMES" "$FPS")
+  DUR_S=$(env python3 -c 'import sys; from fractions import Fraction; print(float(Fraction(sys.argv[1])/Fraction(sys.argv[2])))' "$EXPECT_FRAMES" "$FPS")
 fi
 
 # ---- 1-4: 流参数 ----
@@ -50,8 +54,8 @@ PIXFMT=$(ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt -of c
 NB=$(ffprobe -v error -select_streams v:0 -count_packets -show_entries stream=nb_read_packets -of csv=p=0 "$F")
 
 [ "$WIDTH" = "3840" ] && [ "$HEIGHT" = "2160" ] && ok "1 分辨率 ${WIDTH}x${HEIGHT} = 3840x2160" || bad "1 分辨率 ${WIDTH}x${HEIGHT} ≠ 3840x2160"
-[ "$RFR" = "30/1" ] && ok "2a r_frame_rate=${RFR} (30/1 精确)" || bad "2a r_frame_rate=${RFR} ≠ 30/1"
-[ "$AFR" = "30/1" ] && ok "2b avg_frame_rate=${AFR} (30/1 精确)" || bad "2b avg_frame_rate=${AFR} ≠ 30/1"
+[ "$RFR" = "$FPS" ] && ok "2a r_frame_rate=${RFR} (${FPS} 精确)" || bad "2a r_frame_rate=${RFR} ≠ ${FPS}"
+[ "$AFR" = "$FPS" ] && ok "2b avg_frame_rate=${AFR} (${FPS} 精确)" || bad "2b avg_frame_rate=${AFR} ≠ ${FPS}"
 [ "$CODEC" = "h264" ] && ok "3a 编码 ${CODEC} = h264" || bad "3a 编码 ${CODEC} ≠ h264"
 echo "$PROFILE" | grep -qi "high" && ok "3b profile=${PROFILE} (High)" || bad "3b profile=${PROFILE} 非 High"
 [ "$PIXFMT" = "yuv420p" ] && ok "4 pix_fmt=${PIXFMT} (8bit yuv420p)" || bad "4 pix_fmt=${PIXFMT} ≠ yuv420p"

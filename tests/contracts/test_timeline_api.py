@@ -69,6 +69,15 @@ class TimelineReadTest(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), before)
         self.assertEqual(list(self.root.iterdir()), [self.path])
 
+    def test_fractional_rate_read_preserves_stored_value(self):
+        for fps in (29.97, '30000/1001', 120):
+            self.doc['project']['fps'] = fps
+            self.store(self.doc)
+            result = inspect_timeline(self.path)
+            self.assertTrue(result['ok'], result['diagnostics'])
+            self.assertEqual(result['document']['project']['fps'], fps)
+            self.assertTrue(query_timeline(self.path, frame=10)['ok'])
+
     def test_order_addresses_and_complete_track_data(self):
         result = query_timeline(self.path)
         self.assertTrue(result["ok"])
@@ -143,7 +152,7 @@ class TimelineReadTest(unittest.TestCase):
                     doc["video_tracks"][0]["clips"][0][field] = value
                     self.store(doc)
                     self.assertFalse(inspect_timeline(self.path)["ok"])
-        for fps in (None, False, 24, 29.97, {}, []):
+        for fps in (None, False, 27, 29.5, {}, []):
             doc = document()
             doc["project"]["fps"] = fps
             self.store(doc)

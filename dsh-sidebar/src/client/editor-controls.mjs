@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Icon } from './icons.mjs'
 import { ToolButton } from './icon-controls.mjs'
 import { safeFrame } from './viewport.mjs'
+import { fpsMatchesReference } from './frame.mjs'
 
 const h = React.createElement
 export const clipName = (data, fallback = '片段') => typeof data?.name === 'string' ? data.name : typeof data?.text === 'string' ? data.text : typeof data?.src === 'string' ? data.src : fallback
@@ -18,19 +19,25 @@ export function editingTarget(target) {
   return !!target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="combobox"]')
 }
 
-/** Fixed project timebase: seconds plus a ZERO-based frame offset, never ordinal frames. */
-export function secondsFrame(seconds, offset) {
+// Inspect exact core tokens; never coerce a rawJSON object through Number().
+const integerProjectFps = value => [24, 25, 30, 48, 50, 60, 100, 120].find(rate => fpsMatchesReference(rate, 1, value))
+
+/** Integer clocks only: a fractional second has no fixed integer frame offset. */
+export function secondsFrame(seconds, offset, fps = 30) {
+  fps = integerProjectFps(fps)
+  if (!Number.isSafeInteger(fps) || fps < 1) throw new Error('非整数帧率请直接使用全局整数帧定位。')
   const canonical = value => typeof value === 'string' && /^(0|[1-9][0-9]*)$/.test(value) && value.length <= 16
-  if (!canonical(seconds) || !canonical(offset)) throw new Error('请输入规范非负整数秒与秒内帧偏移（0–29）。')
-  const value = BigInt(seconds) * 30n + BigInt(offset)
-  if (BigInt(offset) >= 30n || value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('秒内偏移须为 0–29，换算结果须在安全整数范围内。')
+  if (!canonical(seconds) || !canonical(offset)) throw new Error(`请输入规范非负整数秒与秒内帧偏移（0–${fps - 1}）。`)
+  const value = BigInt(seconds) * BigInt(fps) + BigInt(offset)
+  if (BigInt(offset) >= BigInt(fps) || value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(`秒内偏移须为 0–${fps - 1}，换算结果须在安全整数范围内。`)
   return Number(value)
 }
 
-export function Transport({ frame, frameText, frameError, duration, onFrame, onText, onQuery }) {
+export function Transport({ frame, frameText, frameError, duration, fps, onFrame, onText, onQuery }) {
+  fps = integerProjectFps(fps)
   const [seconds, setSeconds] = useState('0'), [offset, setOffset] = useState('0'), [timeError, setTimeError] = useState('')
   let converted
-  try { converted = secondsFrame(seconds, offset) } catch { /* render a correction hint after explicit conversion */ }
+  try { converted = secondsFrame(seconds, offset, fps) } catch { /* render a correction hint after explicit conversion */ }
   const validDuration = safeFrame(duration) && duration > 0
   const move = (direction, distance = 1) => { const next = stepFrame(frame, duration, direction, distance); if (next !== undefined) onFrame(String(next)) }
   return h('form', { className: 'fv-frame-query fv-transport', 'aria-label': '帧定位控制', onSubmit: event => { event.preventDefault(); onQuery() } },
@@ -42,13 +49,13 @@ export function Transport({ frame, frameText, frameError, duration, onFrame, onT
       h(ToolButton, { icon: 'last', label: '定位末帧', tooltip: '定位末帧 · End', disabled: !validDuration, onClick: () => onFrame(String(duration - 1)) })),
     h('span', { className: 'fv-duration', title: '工程整数帧范围，不表示已渲染时长' }, validDuration ? `/ ${duration} 帧` : '时长不可显示'),
     h(ToolButton, { type: 'submit', icon: 'query', label: '查询命中', className: 'fv-query-button', tooltip: '查询该帧的内核命中集合，不生成画面' }),
-    h('details', null, h('summary', null, '按秒 + 帧定位（30 fps）'),
+    Number.isSafeInteger(fps) ? h('details', null, h('summary', null, `按秒 + 帧定位（${fps} fps）`),
       h('label', null, '整数秒 ', h('input', { type: 'text', name: 'framivra-seconds', inputMode: 'numeric', value: seconds, onChange: event => { setSeconds(event.target.value); setTimeError('') } })),
-      h('label', null, '秒内帧偏移（0–29，零基） ', h('input', { type: 'text', name: 'framivra-offset', inputMode: 'numeric', value: offset, onChange: event => { setOffset(event.target.value); setTimeError('') } })),
+      h('label', null, `秒内帧偏移（0–${fps - 1}，零基） `, h('input', { type: 'text', name: 'framivra-offset', inputMode: 'numeric', value: offset, onChange: event => { setOffset(event.target.value); setTimeError('') } })),
       h('span', null, converted === undefined ? '待修正输入' : ` → 全局帧 ${converted}`),
-      h('button', { type: 'button', onClick: () => { try { const next = secondsFrame(seconds, offset); onFrame(String(next)); setTimeError('') } catch (error) { setTimeError(error.message) } } }, '换算定位（不渲染）'),
-      h('p', null, '偏移 0 为该秒首帧；10 秒 + 偏移 5 = 全局帧 305，不是从 1 开始的「第 5 张」。范围由内核检查。'),
-      timeError ? h('p', { role: 'alert' }, timeError) : null))
+      h('button', { type: 'button', onClick: () => { try { const next = secondsFrame(seconds, offset, fps); onFrame(String(next)); setTimeError('') } catch (error) { setTimeError(error.message) } } }, '换算定位（不渲染）'),
+      h('p', null, `偏移 0 为该秒首帧；10 秒 + 偏移 5 = 全局帧 ${10 * fps + 5}。范围由内核检查。`),
+      timeError ? h('p', { role: 'alert' }, timeError) : null) : h('p', null, '非整数帧率请使用全局整数帧定位；秒内帧偏移换算不可用。'))
 }
 
 /** Local layout only. One captured pointer owns resizing; blur/cancel always retire it. */
