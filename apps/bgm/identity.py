@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 
 from .bgm_gen import paths
+from .bgm_gen.ref_slots import track_ref_slots
 
 APP_ROOT = Path(__file__).resolve().parent
 
@@ -129,10 +130,13 @@ def asset_dependencies(project, runtime):
     if not isinstance(data, dict) or not isinstance(data.get("tracks", []), list):
         return []
     tracks = []
-    for track in data.get("tracks", []):
-        if isinstance(track, dict) and isinstance(track.get("$ref"), str):
+    refs = dict(track_ref_slots(data))
+    for i, track in enumerate(data.get("tracks", [])):
+        if isinstance(track, dict) and "$ref" in track:
+            if i not in refs:
+                continue  # Invalid slots are not inline tracks or dependencies.
             try:
-                track = json.loads((project.parent / track["$ref"]).read_text(encoding="utf-8"))
+                track = json.loads((project.parent / refs[i]).read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue  # $ref bytes/missing state are bound by the adapter.
         if isinstance(track, dict):

@@ -11,7 +11,7 @@
 - 环境见[依赖](<README.md#依赖矩阵>)：Python≥3.9，工具按路径配置；模型默认关；空依赖≠仅需标准库。
 - [安装](<docs/guides/installation.md>)：独立venv/固定身份缓存/内核锁，验收后ready；Win主进程不提权，厂商包UAC；DSH显式连接；登记≠验收。
 - 安装验收：BGM发现不可依赖POSIX，目录发布对部分Windows绝对路径兼容混合斜杠、不改运行数据；GPU用原生锁；Windows并发内存门须实测且探测失败时拒派；hue素材先规范RGB色域，不松QC。
-- BGM v2 轨 `$ref` 装载/merge 仅接受工程内相对路径：Windows 根相对、带盘符及设备路径先拒绝，仍须 realpath 越界检查；POSIX 反斜杠为普通文件名字符。插件依赖签名按装载器版本归一只扫描 v2 直接纯字符串引用槽位，此筛选不提供路径安全保证，asset_dependencies 另行处理。
+- BGM v2 轨 `$ref` 装载/merge 仅接受工程内相对路径：Windows 根相对、带盘符及设备路径先拒绝，仍须 realpath 越界检查；POSIX 反斜杠为普通文件名字符。插件依赖签名与 asset_dependencies 共用纯标准库槽位筛选，按装载器版本归一只展开 v2 直接纯非空字符串引用；该筛选不保证路径安全，也不修合格槽位的越界、symlink/TOCTOU。
 
 ## 常用命令
 
