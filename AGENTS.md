@@ -16,7 +16,7 @@
 - 离线体检：`env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor`；联网会 fetch 写入。
 - 链接预演：`python3 vt.py --fix-links --dry`；实改前核对目标/权限。
 - 渲染：`python3 vtx/vtx.py -t <timeline.json> all`（写缓存/产物）；前置见[交付链](<docs/skill/references/edit.md#正式交付链r1-r4-共用>)。
-- 全仓测试：`bash scripts/run_all_tests.sh`；局部入口见[贡献指南](<CONTRIBUTING.md#测试入口>)。
+- 测试：`bash scripts/run_all_tests.sh`；局部入口见[贡献指南](<CONTRIBUTING.md#测试入口>)。
 - 文档必跑：`bash scripts/doc_gates.sh`；如实报告 PASS/FAIL/SKIP/UNRUN；冒烟、语法检查不等于业务或全量验证。
 
 ## 写态红线
@@ -31,7 +31,7 @@
 
 ## 编辑纪律
 
-- 代码 PR 同步本指南。
+- 代码PR同步本指南。
 - 仅留跨目录常驻要点，一点一行；无流水账/平行指南。
 - 一事实一家；链接权威文档；迁移修活引用，不留旧入口壳。
 - 实现后独立复审并交维护者；契约/API 变更须维护方同意及独立对抗审查。
