@@ -296,6 +296,7 @@ test('PreviewBody: expand/shrink drives the native dialog via public showModal/c
   const ruler = document.querySelector('.fv-ruler')
   const editorSummary = [...document.querySelectorAll('.fv-inspector summary')].find(n => n.textContent === '剪辑编辑与提交')
   const monitor = document.querySelector('.fv-monitor')
+  assert.equal(document.querySelector('.fv-frame-tools').closest('fieldset').style.display, 'contents', 'storage exclusion must not insert a flex box that shrinks the expanded monitor')
   assert(editorSummary, 'ManualEditor section rendered')
   await act(async () => label('展开工作台').click())
   assert.deepEqual(dialogCalls, ['showModal'])

@@ -32,14 +32,14 @@ async function fixture(t, { withObjectURL = false } = {}) {
     urlBase.revokeObjectURL = url => { calls.push({ op: 'revoke', url }) }
     t.after(() => { if (savedCreate) urlBase.createObjectURL = savedCreate; else delete urlBase.createObjectURL; if (savedRevoke) urlBase.revokeObjectURL = savedRevoke; else delete urlBase.revokeObjectURL })
   }
-  let frame = 10, refresh
+  let frame = 10, suspended = false, refresh
   function Harness() {
     const [, update] = useState(0); refresh = () => update(n => n + 1)
-    return React.createElement(FrameTools, { owner, opened: { snapshot, grant: 'grant' }, sessionId: 'one', frame, tabSignal: tab.signal, getDraftServices: () => ({}), call: async () => ({}) })
+    return React.createElement(FrameTools, { owner, opened: { snapshot, grant: 'grant' }, sessionId: 'one', frame, suspended, tabSignal: tab.signal, getDraftServices: () => ({}), call: async () => ({}) })
   }
   await act(async () => root.render(React.createElement(Harness)))
   const section = () => document.querySelector('[aria-label="当前合成帧与草稿"]')
-  const rerender = async next => { if (next !== undefined) frame = next; await act(async () => refresh()) }
+  const rerender = async (next, paused) => { if (next !== undefined) frame = next; if (paused !== undefined) suspended = paused; await act(async () => refresh()) }
   t.after(async () => { await act(async () => { tab.abort(); root.unmount(); await Promise.resolve() }); dom.window.close(); for (const [key, descriptor] of Object.entries(saved)) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key] } })
   return { owner, root, section, rerender, calls, act }
 }
@@ -179,7 +179,11 @@ test('live follow requires both opt-ins, supersession waits for confirmed cleanu
   await tick(); assert.deepEqual(requests, [], 'mount never auto-renders')
   await f.act(async () => controls.consent().click())
   await tick(); assert.deepEqual(requests, [], 'cache consent alone is not follow consent')
-  await f.act(async () => controls.follow().click()); await tick()
+  await f.act(async () => controls.follow().click())
+  await f.rerender(undefined, true); await tick()
+  assert.deepEqual(requests, [], 'storage suspension cancels the pending follow timer')
+  assert.equal(controls.follow().checked, true, 'suspension preserves the explicit follow choice')
+  await f.rerender(undefined, false); await tick()
   assert.deepEqual(requests.map(item => [item.op, item.frame]), [['render', 10]])
   f.owner.invalidate(); await f.rerender(11)
   assert(requests[0].signal.aborted)
@@ -187,8 +191,12 @@ test('live follow requires both opt-ins, supersession waits for confirmed cleanu
   await tick()
   f.owner.invalidate(); await f.rerender(12); await tick()
   assert.deepEqual(requests.map(item => item.op), ['render', 'cancel'], 'no render may race a pending managed-child cleanup')
+  await f.rerender(undefined, true)
+  await f.rerender(undefined, false); await tick()
+  assert.deepEqual(requests.map(item => item.op), ['render', 'cancel'], 'resumed follow must still wait for managed cleanup')
+  assert.equal(controls.follow().checked, true)
   await f.act(async () => releaseCleanup())
-  assert.deepEqual(requests.map(item => [item.op, item.frame]), [['render', 10], ['cancel', undefined], ['render', 12]], 'superseded queued frame 11 is dropped, not rendered')
+  assert.deepEqual(requests.map(item => [item.op, item.frame]), [['render', 10], ['cancel', undefined], ['render', 12]], 'suspension and resume before cleanup cannot duplicate the queued frame or retry its failure')
   assert.equal(controls.follow().checked, false, 'automatic render error stops follow')
   f.owner.invalidate(); await f.rerender(13); await tick()
   assert.equal(requests.length, 3, 'pin changes after an error never retry without a new opt-in')

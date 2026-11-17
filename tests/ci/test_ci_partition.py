@@ -202,9 +202,8 @@ class InventoryContract(unittest.TestCase):
             result = ci.inventory(ROOT)
         self.assertEqual(result['baseline']['discovered_count'], 2307)
         self.assertEqual(result['baseline']['unique_test_ids'], 2307)
-        # Approved cold-composite registration adds three real Chrome cases;
-        # all prior strict expectations remain unchanged.
-        self.assertEqual(result['strict_counts'], {'ffmpeg': 150, 'chrome': 17, 'demo-toolchain': 5,
+        # Include the two already-registered upstream capability fixture cases.
+        self.assertEqual(result['strict_counts'], {'ffmpeg': 153, 'chrome': 17, 'demo-toolchain': 5,
                                                 'inline16': 4, 'frame-pixels': 15})
         utf8_subtitle = next(record for record in result['tests'] if record['canonical'] ==
                              'apps.blender-bridge.tests.test_subs_alpha.HappyPath.'
