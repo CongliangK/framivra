@@ -43,6 +43,13 @@
   manifest、每帧 SVG、声明字体/依赖及可选生成器文件的全文摘要，与画布/fps/帧数、
   Inkscape/fontconfig 身份、运行库及实现摘要共同成键；生成器只记录、不执行。
   完成凭据绑定该输入记录与逐帧 PNG SHA256，不沿用 HTML 环境证明。
+  冷片按实际导出帧分成独立 Inkscape shell：默认上限为 `min(5, max(1, CPU数//2))`，
+  每增加一个 shell 至少需要 120 个待导出帧，小片仍单 shell；`VTX_SVG_WORKERS=1..5`
+  可限制上限，设为 `1` 回退串行。每个 shell 独占 HOME、profile、字体副本与字体缓存，
+  完成后以同一上限并行逐张执行完整 PNG 解码/CRC/SHA 校验，全部结束并复核全输入/环境后才发布凭据；失败不发布。
+  取消先通知导出线程停止等待，再逐一终止/等待自有 shell；回收失败仍报错，不把线程退出当作进程已回收。
+  调度不改输入语法、输出参数或缓存语义，凭据 `batch_count` 记录实际生产 shell 数；
+  暖缓存命中不再启动 shell。实现摘要变化仍须重渲，不能给旧缓存补签。
 - **环境边界**：CDP/CLI/CEF 见[渲染环境身份](#gfx-environment)，Electron/SVG 各有独立身份；
   身份匹配不证明跨后端像素等价。段中间物 `vseg_pass` 不进入普通 gc，定向回收见[容量与保留](#容量与保留)。
 - **seg 预编码** `cache/seg/<key>.mov|mp4` 与 **抽音频** `cache/audio/<key>.wav`：

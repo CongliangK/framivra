@@ -180,6 +180,96 @@ class CheckedEnvironmentDigest(unittest.TestCase):
         self.assertEqual(env._hashes, {})
 
 
+class PythonPackageInventory(unittest.TestCase):
+    def setUp(self):
+        self.root = temporary_root(self).resolve()
+        self.metadata_root = self.root / 'pillow-1.0.dist-info'
+        self.metadata_root.mkdir()
+        self.metadata = self.metadata_root / 'METADATA'
+        self.metadata.write_text('Name: Pillow\nVersion: 1.0\n', encoding='utf-8')
+        self.package = env.importlib.metadata.PathDistribution(self.metadata_root)
+        self.code = self.root / 'PIL' / '__init__.py'
+        self.code.parent.mkdir()
+        self.code.write_bytes(b'# Pillow fixture A')
+        self.native = self.code.parent / '_imaging.so'
+        self.native.write_bytes(b'native fixture')
+        def distribution(name):
+            if name == 'Pillow':
+                return self.package
+            raise env.importlib.metadata.PackageNotFoundError(name)
+        lookup = patch.object(env.importlib.metadata, 'distribution', side_effect=distribution)
+        lookup.start(); self.addCleanup(lookup.stop)
+
+    def test_rpm_inventory_hashes_real_code_and_reenumerates(self):
+        self.assertIsNone(self.package.files)
+        members = [self.metadata, self.code, self.native, self.root / 'ignored.pyc']
+        def query(_args):
+            return ''.join(str(p) + '\n' for p in members)
+        with patch.object(env.platform, 'system', return_value='Linux'), \
+                patch.object(env, '_command', side_effect=query) as command:
+            before = env._python_runtime()
+            facts = before['packages']['Pillow']
+            self.assertEqual(facts['version'], '1.0')
+            self.assertEqual(facts['files'], {
+                str(self.code): hashlib.sha256(self.code.read_bytes()).hexdigest(),
+                str(self.native): hashlib.sha256(self.native.read_bytes()).hexdigest()})
+            self.assertEqual(before['packages']['numpy'], {'status': 'absent'})
+            self.code.write_bytes(b'# Pillow fixture B')
+            changed = env._python_runtime()
+            self.assertNotEqual(before, changed)
+            extra = self.code.parent / 'plugin.py'
+            extra.write_bytes(b'# new member')
+            members.append(extra)
+            self.assertNotEqual(changed, env._python_runtime())
+        self.assertEqual(command.call_args_list, [call([
+            'rpm', '-q', '--file', str(self.metadata), '--queryformat',
+            '[%{FILENAMES}\\n]'])] * 3)
+
+    def test_record_inventory_never_queries_rpm(self):
+        record = self.metadata_root / 'RECORD'
+        record.write_text('PIL/__init__.py,,\nPIL/_imaging.so,,\n', encoding='utf-8')
+        with patch.object(env, '_command', side_effect=AssertionError('unexpected RPM query')):
+            result = env._python_runtime()
+        self.assertEqual(result['packages']['Pillow']['files'], env._files([self.code, self.native]))
+        self.package = SimpleNamespace(files=[])
+        with patch.object(env, '_command', side_effect=AssertionError('unexpected RPM query')):
+            with self.assertRaisesRegex(env.EnvironmentError, 'empty installed renderer package inventory'):
+                env._python_runtime()
+
+    def test_unknown_rpm_inventory_still_refuses(self):
+        cases = [
+            ('query failed', env.EnvironmentError('rpm exited 1')),
+            ('empty', ''),
+            ('metadata not owned', str(self.code) + '\n'),
+            ('relative path', str(self.metadata) + '\nPIL/__init__.py\n'),
+            ('no code', str(self.metadata) + '\n'),
+        ]
+        with patch.object(env.platform, 'system', return_value='Linux'):
+            for label, output in cases:
+                with self.subTest(case=label), patch.object(env, '_command') as command:
+                    if isinstance(output, Exception):
+                        command.side_effect = output
+                    else:
+                        command.return_value = output
+                    with self.assertRaises(env.EnvironmentError):
+                        env._python_runtime()
+            missing = self.root / 'missing.py'
+            with patch.object(env, '_command', return_value=f'{self.metadata}\n{missing}\n'):
+                with self.assertRaises(OSError):
+                    env._python_runtime()
+
+    def test_non_linux_and_custom_distributions_do_not_use_rpm(self):
+        with patch.object(env.platform, 'system', return_value='Darwin'), \
+                patch.object(env, '_command', side_effect=AssertionError('unexpected RPM query')):
+            with self.assertRaisesRegex(env.EnvironmentError, 'unknown installed renderer package inventory'):
+                env._python_runtime()
+        self.package = SimpleNamespace(files=None)
+        with patch.object(env.platform, 'system', return_value='Linux'), \
+                patch.object(env, '_command', side_effect=AssertionError('unexpected RPM query')):
+            with self.assertRaisesRegex(env.EnvironmentError, 'unknown installed renderer package inventory'):
+                env._python_runtime()
+
+
 class ChromeInstallerTelemetry(unittest.TestCase):
     def setUp(self):
         self.root = temporary_root(self).resolve() / 'Application'

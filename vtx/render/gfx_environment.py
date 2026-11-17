@@ -839,6 +839,27 @@ def _fonts():
             'libraries': _libraries(shutil.which('fc-list'))}
 
 
+def _rpm_package_files(package, name):
+    """Read the owning RPM's inventory when Python RECORD metadata is absent."""
+    # PathDistribution exposes no public metadata-directory accessor. Restrict
+    # this fallback to its local filesystem implementation, not zip/providers.
+    root = getattr(package, '_path', None)
+    if (platform.system() != 'Linux'
+            or not isinstance(package, importlib.metadata.PathDistribution)
+            or not isinstance(root, Path)):
+        raise EnvironmentError(f'unknown installed renderer package inventory: {name}')
+    metadata = (root / 'METADATA').resolve(strict=True)
+    if not metadata.is_file():
+        raise EnvironmentError(f'unknown installed renderer package inventory: {name}')
+    # One query binds the file list directly to the owner of this distribution,
+    # without guessing an RPM name or selecting another version/architecture.
+    files = _command(['rpm', '-q', '--file', str(metadata),
+                      '--queryformat', '[%{FILENAMES}\\n]']).splitlines()
+    if str(metadata) not in files or any(not Path(p).is_absolute() for p in files):
+        raise EnvironmentError(f'unknown installed renderer package inventory: {name}')
+    return files
+
+
 def _python_runtime():
     packages = {}
     for name in ('numpy', 'Pillow'):
@@ -849,9 +870,11 @@ def _python_runtime():
             continue
         files = package.files
         if files is None:
-            raise EnvironmentError(f'unknown installed renderer package inventory: {name}')
-        paths = [package.locate_file(f) for f in files
-                 if str(f).endswith(('.py', '.so', '.pyd', '.dll', '.dylib'))]
+            paths = _rpm_package_files(package, name)
+        else:
+            paths = [package.locate_file(f) for f in files]
+        paths = [p for p in paths
+                 if str(p).endswith(('.py', '.so', '.pyd', '.dll', '.dylib'))]
         if not paths:
             raise EnvironmentError(f'empty installed renderer package inventory: {name}')
         packages[name] = {'version': package.version, 'files': _files(paths)}
