@@ -6,7 +6,9 @@
 
 | 用途 | 入口与边界 |
 |---|---|
-| 安装 | `install.sh`、`install_windows.ps1` 是克隆引导；`install.py` 是独立资产安装器。参数先看 `--help`；安装会写入目标目录。 |
+| 受管制作环境 | [`bootstrap.sh`](<bootstrap.sh>) / [`bootstrap.ps1`](<bootstrap.ps1>) 获取同提交 bundle，调用 [`install_source.py`](<install_source.py>)；默认国内优先、固定身份缓存与重跑恢复。参数/写态/平台资格以[安装指南](<../docs/guides/installation.md#受管非-ai-制作环境>)为准，ready 仍需制作验收。 |
+| 安装内部模块 | [`install_downloads.py`](<install_downloads.py>) 管理校验/Range 缓存；[`install_native_posix.py`](<install_native_posix.py>) / [`install_native_windows.py`](<install_native_windows.py>) 准备原生工具；[`install_python_packages.py`](<install_python_packages.py>) 固定 wheel 计划；[`install_runtime_fonts.py`](<install_runtime_fonts.py>) 复用冻结 [`demo_fonts.py`](<demo_fonts.py>) 提取器，不改 Demo 锁。不是独立发行认证。 |
+| 旧式/资产安装 | [`install.sh`](<install.sh>) / [`install_windows.ps1`](<install_windows.ps1>) 只做克隆与 init；[`install.py`](<install.py>) 是独立资产安装器，不混同受管环境。先看 `--help`；实际安装会写目标目录。 |
 | 新建项目 | `new_project.sh DIR [SECS]`（默认 30，ASCII 十进制 ≥7 秒）使用 `templates/gfx-starter.html`；新建/完整替换 unmanaged timeline 经公共 plan/CAS/history，拒绝 managed/坏输入；不是无损初始化或目录级原子事务，详见[新项目写态](../docs/skill/references/edit.md)。 |
 | 主宣传 Demo / 性能源 | `demo.py` 准备/核验唯一 30 秒 portable-v2 输入，`fonts` 诊断公开字体来源；内部复用 `build_demo.js`，渲染直接使用产品 `all`；[唯一源基线与用法](../templates/demo-timeline-svg/README.md#主性能基线)。 |
 | 发布 | `release/release_github.py` 执行发布事务；`release/verify_release.py` 核验身份；`release/release_acceptance.py` 在隔离冻结源码上验收。真实发布需要授权。 |

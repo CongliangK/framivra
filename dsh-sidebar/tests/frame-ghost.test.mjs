@@ -12,7 +12,7 @@ const track = { family: 'video', track_index: 0, address: '/video_tracks/0', dat
 const block = { family: 'video', track_index: 0, address: '/video_tracks/0/clips/0', range: [0, 30], data: { id: 'a' } }
 const snapshot = { content_version: 'old', document: { project: { duration_frames: 100 } } }
 const result = { tracks: [track], blocks: [block] }
-const cleanResult = () => ({ file: new File(['png'], 'frame.png', { type: 'image/png' }), certificate: { frame: 0, content_version: 'old' }, reference: { selection: { tracks: [], blocks: [] } } })
+const cleanResult = () => ({ file: new File(['png'], 'frame.png', { type: 'image/png' }), certificate: { kind: 'current-composite', frame: 0, content_version: 'old' }, reference: { selection: { tracks: [], blocks: [] } } })
 const handler = node => node[Object.keys(node).find(key => key.startsWith('__reactProps$'))].onClick
 
 async function fixture(t) {

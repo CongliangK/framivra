@@ -20,15 +20,15 @@ from vtx.pipeline.infra import Ctx
 REPO = Path(__file__).resolve().parents[2]
 
 
-def _sample(c, path, pre_crop=''):
+def _sample(c, path, pre_crop='', frame=0):
     # Exercise the exact nested helper, not an imitation of its filter.
     tree = ast.parse(Path(qc.__file__).read_text())
     helper = next(n for n in ast.walk(tree)
                   if isinstance(n, ast.FunctionDef) and n.name == 'gray_frame')
     module = ast.fix_missing_locations(ast.Module(body=[helper], type_ignores=[]))
-    env = dict(qc.__dict__, c=c)
+    env = dict(qc.__dict__, c=c, native=qc._QCOperations(c).native)
     exec(compile(module, 'production-gray-frame', 'exec'), env)
-    return env['gray_frame'](path, 0, pre_crop=pre_crop)
+    return env['gray_frame'](path, frame, pre_crop=pre_crop)
 
 
 class SamplingCacheContract(unittest.TestCase):
@@ -41,17 +41,18 @@ class SamplingCacheContract(unittest.TestCase):
                 self.assertEqual(code, 0)
                 path = c.cache / qc._QC_SEG_RECORD
                 current = json.loads(path.read_text())
-                self.assertEqual(current['version'], 5)
+                self.assertEqual(current['version'], 6)
                 self.assertEqual(current['probe_filter'], qc._QC_GRAY_FILTER)
                 # Previous readers require their exact version before any reuse.
-                for previous in (1, 2, 3, 4):
+                for previous in (1, 2, 3, 4, 5):
                     self.assertNotEqual(current['version'], previous)
                 for version, value in ((1, None), (1, qc._QC_GRAY_FILTER),
                         (2, None), (2, 'scale=48:27,format=gray'),
                         (2, 'other-filter'), (2, qc._QC_GRAY_FILTER),
                         (3, None), (3, 'other-filter'), (3, qc._QC_GRAY_FILTER),
                         (4, None), (4, 'other-filter'), (4, qc._QC_GRAY_FILTER),
-                        (5, None), (5, 'other-filter'), (6, qc._QC_GRAY_FILTER)):
+                        (5, None), (5, 'other-filter'), (5, qc._QC_GRAY_FILTER),
+                         (6, None), (6, 'other-filter'), (7, qc._QC_GRAY_FILTER)):
                     old = dict(current, version=version)
                     if value is None:
                         old.pop('probe_filter')
@@ -124,6 +125,66 @@ class SamplingMediaContract(unittest.TestCase):
         self.assertEqual(decoded, raw, 'encoded fixture must preserve authored planes')
         return video
 
+    def assert_common_matrix_compares_equivalent_colored_moving_frames(self):
+        # RGB is authored independently of either YUV matrix. Lossless 4:4:4
+        # encodes avoid making chroma subsampling the definition of equivalence.
+        w, h, frames = 320, 180, 30
+        palette = ((230, 24, 24), (24, 230, 24), (24, 24, 230),
+                   (230, 230, 24), (24, 230, 230), (230, 24, 230), (100, 100, 100))
+        raw = bytearray()
+        for frame in range(frames):
+            row = b''.join(bytes(palette[((x + frame * 3) // 40) % len(palette)])
+                           for x in range(w))
+            raw.extend(row * h)
+        source = self.root / 'authored-moving.rgb'
+        source.write_bytes(raw)
+        videos = []
+        for matrix, tag in (('bt601', 'smpte170m'), ('bt709', 'bt709')):
+            video = self.root / f'moving-{matrix}.mp4'
+            self.command(['ffmpeg', '-v', 'error', '-f', 'rawvideo', '-pixel_format', 'rgb24',
+                          '-video_size', f'{w}x{h}', '-framerate', '30', '-i', source,
+                          '-vf', f'scale=out_color_matrix={matrix}:out_range=limited,format=yuv444p',
+                          '-c:v', 'libx264', '-threads', '1', '-preset', 'ultrafast', '-crf', '0',
+                          '-colorspace', tag, '-color_range', 'tv', video])
+            videos.append(video)
+        for frame in (0, 17, 29):
+            with self.subTest(frame=frame):
+                decoded = []
+                for video in videos:
+                    decoded.append(self.command(['ffmpeg', '-v', 'error', '-i', video,
+                        '-vf', f'select=eq(n\\,{frame})', '-frames:v', '1', '-pix_fmt', 'rgb24',
+                        '-threads', '1', '-f', 'rawvideo', '-']).stdout)
+                authored = raw[frame*w*h*3:(frame+1)*w*h*3]
+                for rgb in decoded:
+                    self.assertEqual(len(rgb), len(authored))
+                    self.assertLess(sum(abs(a-b) for a,b in zip(rgb, authored))/len(rgb), 2)
+                samples = []
+                for video in videos:
+                    sample = _sample(self.c, video, frame=frame)
+                    exact = self.command(['ffmpeg', '-v', 'error', '-i', video,
+                        '-vf', f'select=eq(n\\,{frame}),' + qc._QC_GRAY_FILTER,
+                        '-frames:v', '1', '-f', 'rawvideo', '-']).stdout
+                    self.assertEqual(sample, exact, 'input seek must select the authored integer frame')
+                    samples.append(sample)
+                a, b = samples
+                self.assertLess(sum(abs(x-y) for x,y in zip(a,b))/len(a), qc.QC_LEAK_MEAN_MAX)
+                self.assertLess(sum(abs(x-y)>qc.QC_PIXEL_DIFF for x,y in zip(a,b))/len(a),
+                                qc.QC_LEAK_COVER_MAX)
+        # Unknown matrix tags retain FFmpeg's existing auto fallback. For this
+        # SD fixture it is BT.601; this does not certify arbitrary untagged media.
+        untagged = self.root / 'moving-untagged.mp4'
+        self.command(['ffmpeg', '-v', 'error', '-i', videos[0], '-map', '0:v:0',
+                      '-c:v', 'copy', '-bsf:v', 'h264_metadata=matrix_coefficients=2',
+                      '-colorspace', 'unknown', untagged])
+        info = json.loads(self.command(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+            '-show_entries', 'stream=color_space', '-of', 'json', untagged]).stdout)
+        self.assertNotIn(info['streams'][0].get('color_space'), ('bt709', 'smpte170m'))
+        self.assertEqual(_sample(self.c, untagged, frame=29), _sample(self.c, videos[0], frame=29))
+        # A real chromatic change must remain a failure, not get normalized away.
+        a = _sample(self.c, videos[0], frame=0)
+        b = _sample(self.c, videos[1], frame=17)
+        self.assertGreater(sum(abs(x-y) for x,y in zip(a,b))/len(a), qc.QC_LEAK_MEAN_MAX)
+
     def test_constant_black_white_and_near_black_for_both_ranges(self):
         for w, h in ((1920, 1080), (320, 180)):
             for range_, y, expected in (('tv', 16, 0), ('pc', 0, 0),
@@ -147,8 +208,8 @@ class SamplingMediaContract(unittest.TestCase):
     def test_mixed_pattern_truth_and_untagged_range_defaults_to_limited(self):
         # Non-constant truth: left 3/4 limited black, right 1/4 limited white.
         # Interior probes must land exactly on 0/255 and the transition must
-        # stay at the geometric boundary — no sub-pixel drift from the
-        # format=yuv420p front (chroma site / matrix cannot move luma edges).
+        # stay at the geometric boundary after native-format matrix/range
+        # normalization (chroma site / matrix cannot move luma edges).
         w, h = 1920, 1080
         self.serial += 1
         split = w * 3 // 4
@@ -181,6 +242,9 @@ class SamplingMediaContract(unittest.TestCase):
             self.assertEqual(a[32:40], b[32:40])
         # An untagged stream resolves in_range=auto to limited, same samples.
         self.assertEqual(_sample(self.c, self.root/'untagged.mp4'), sample)
+        # Extend this existing pattern-truth case without changing strict-suite
+        # selectors/counts: matrices, moving frame identity and unknown fallback.
+        self.assert_common_matrix_compares_equivalent_colored_moving_frames()
 
     def test_central_edge_and_colored_leaks_remain_visible(self):
         w, h = 1920, 1080

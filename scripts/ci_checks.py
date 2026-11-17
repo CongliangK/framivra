@@ -55,6 +55,7 @@ MEDIA_TESTS = {
         'tests.gfx.test_cef_benchmark.FullStreamMediaContracts',
     ),
     'chrome': (
+        'tests.gfx.test_html_preview_integration.HtmlPreviewIntegration',
         'tests.gfx.test_graphics_portability.BrowserIntegration',
         'tests.gfx.test_graphics_portability.NavfreeSpanIntegration',
         'tests.execution.test_pipeline.TestPipelineIntegration',

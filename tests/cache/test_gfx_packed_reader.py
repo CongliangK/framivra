@@ -22,8 +22,8 @@ from vtx.render import (gfx_backend, gfx_cli, gfx_electron, gfx_electron_stage,
 from vtx.runtime import fstxn
 
 
-@unittest.skipUnless(sys.platform == 'linux' and fstxn.write_capability() == 'fd-anchored',
-                     'requires Linux safe packed storage')
+@unittest.skipUnless(sys.platform in ('linux', 'darwin') and fstxn.directory_write_capability(),
+                     'requires directory-anchored packed storage')
 class PackedReaderTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

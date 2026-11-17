@@ -40,7 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/CongliangK/framivra/main/scripts/bo
 curl -fsSL https://raw.githubusercontent.com/CongliangK/framivra/main/scripts/bootstrap.sh | bash
 ```
 
-**Windows x64（原生 PowerShell）：**
+**Windows x64（普通、非管理员原生 PowerShell）：**
 
 ```powershell
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $p = Join-Path $env:TEMP ('framivra-' + [guid]::NewGuid().ToString('N') + '.ps1'); Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/CongliangK/framivra/main/scripts/bootstrap.ps1 -OutFile $p; powershell -NoProfile -ExecutionPolicy Bypass -File $p
@@ -92,7 +92,7 @@ python3 vtx/vtx.py -t "$PROJECT/timeline.json" all
 |---|---|
 | 基础渲染 | Python ≥3.9、FFmpeg/ffprobe、Chrome/Chromium/Edge；`vt.py init` 自检 |
 | 默认 CDP gfx / 图像制作 | NumPy、Pillow；显式 `VTX_GFX=cli` 不要求 NumPy，但有独立[环境身份与支持边界](docs/cache-provenance.md#gfx-environment) |
-| 音频同步 | NumPy、SciPy、SoundFile、soxr、FFmpeg；一键安装器准备这些实际依赖 |
+| 音频同步 | NumPy、SciPy、SoundFile、soxr、FFmpeg，Windows 另需可用的微软 C++ 运行库；一键安装器准备实际依赖，策略见[安装指南](<docs/guides/installation.md#国内优先与系统副作用>) |
 | 制作字体 | Noto Sans CJK SC、Inter、JetBrains Mono、DejaVu Sans；安装器固定公开字节并保留许可，公开 SVG Demo 仍须使用其输入锁 |
 | 正式 AAC 封装 | 强烈建议 libfdk_aac；缺失回落并告警，交付仍须复测编码后解码真峰 |
 | 额外媒体路线 | Blender、Inkscape/SVG 按各组件安装；SoX 非内核硬依赖但包含在一键套件。`video --gpu` 可用 NVIDIA NVENC，探测失败回落 x264 |

@@ -87,7 +87,19 @@ After generation, a **second explicit click** either copies the verified PNG or 
 
 Clipboard support/permission refusal is visible and never silently falls back to text. OS clipboard writes cannot be recalled after a later invalidation, and the OS may re-encode PNGs. Temporary decode URLs are revoked; applied draft previews belong to DSH. Certificates identify the render-time inputs with **Fast media stat identity**, not live-atomic media at draft-intake time, a final render, QC or an immutable clipboard byte promise.
 
+### 冷准备、排队与精确定位
+
+另行勾选冷准备后，Host 仅在内核实际广告 `frame.prepare_gfx` 时传 `--prepare-gfx`；可见 HTML 需额外按保存版本确认执行信任。不发送 HTML 正文/任意路径，不新增图层交付 kind；完整当前帧仍经相同原文/版本/FPS/PNG/SHA/浏览器完整解码及草稿二次点击校验。新模式只交付 inline PNG，`path:null`，请求临时件在成功响应前清理；失败账本的恢复限制见[内核合同](../docs/reference/timeline-api.md#显式冷态图形准备完整当前帧)。HTML 仍非沙箱，不能把声明依赖或执行许可描述为零网络/任意代码隔离。
+
+Host 全局 FIFO 最多 1 个执行 + 4 个等待的不同 grant；同 grant 仍须先取消当前请求，面板忙时不暗中积累点击。等待计入原 30 秒 lease，不续租或自动重试。队列条目在获准时取得 nonce/owner/expiry/config 监控；轮到时仍需实际子进程清空。取消只移除自己的条目并等待回收，失败清理不释放残留的拥有权；grant/cwd/配置/卸载使等待与运行请求同样失效。界面只显示诚实的等待/准备/合成状态，不把有限 JSON 伪装成逐阶段图片流。
+
+时间定位提供折叠的整数秒与零基秒内偏移，30fps 下 `10 + 5` 明确换算为全局帧 305；换算定位本身不查询或渲染。完整合成始终使用该规范整数帧，不能把单页图层帧替代 current-composite。
+
+[首次组合记录](../docs/reports/assets/html-preview/closeout-capture.json) 保留当时 QC 阻塞的未完成身份；[授权修正后的验收](../docs/reports/assets/html-preview/qc-correction-capture.json) 另绑定最终包、真实异常、官方宿主及正式链，不覆盖旧证据或把 skip/UNRUN 写成通过。CDP 取消先 shutdown 唤醒 I/O，再等待实际 worker 结束并关闭 fd；自愈跨 worker 关闭同样保留在途 I/O 的 fd，不能仅凭浏览器退出推断线程已回收。
+
 ### Manual editing (writes require explicit authorization)
+
+Local Linux and macOS hosts use the same explicit write-token flow. macOS additionally requires the installed core to advertise `platform_support.darwin:true`; an older POSIX core without the macOS path-identity/locking implementation remains read-only. Native arm64 frame preview has a narrower verified FFmpeg/CoreText toolchain boundary, not arbitrary macOS binary support; the authoritative platform restrictions are in [timeline API](../docs/reference/timeline-api.md#显式当前帧图像第一切片). No production profile is upgraded implicitly.
 
 **Warning: confirmed commits, adopt, undo, status and recover can write the selected project and its persistent core history.** Opening/reading is not write permission. Click the explicit Session/project write button; a separate in-memory server token is required and is revoked on close, cwd/session change, expiry or unload. An old core without advertised bounded `--request-stdin` transport stays read-only; read/copy/no-draft fallback does not depend on write support. Legacy timelines are never silently adopted: the adopt acknowledgement names stable-ID and history changes, and incompatible legacy input is refused without rewriting it.
 

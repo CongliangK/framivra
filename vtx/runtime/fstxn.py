@@ -17,10 +17,11 @@ receipt 落地件，B07 的 manifest/VERSIONS 应用将复用本模块）。
 issue #59（快照 TOCTOU 写窗 / 固定名预置链接写穿面）起，能力满足的平台整体
 升级为 fd 锚定写（O_NOFOLLOW 逐组件开目录描述符 + 随机名 O_EXCL tmp + 提交前
 inode 对账 + dir_fd 原子替换）：
-  - 平台能力探测（write_capability）：缺 O_NOFOLLOW / dir_fd / /proc/self/fd
-    的平台（如 Windows、部分 macOS）不抛错瘫痪，而是显式降级回本模块原先的
-    基线安全等级（mkstemp + os.replace + ensure_inside_project 锁守卫），降级
-    一次性记录到 stderr 并可经 write_capability() 观测（'fd-anchored'|'legacy'）。
+  - directory_write_capability 探测 no-follow dir_fd/锁原语；Linux 与 macOS
+    可用字节写、子进程 staging 和目录锁，不依赖 proc-fd 路径。
+  - write_capability 另要求 /proc/self/fd，专用于 locked_write/locked_update
+    的可重开 Path 契约。macOS /dev/fd 不等价，二者仍显式 legacy；缺目录
+    原语的平台保留旧降级路径。降级一次性记录到 stderr。
   - 项目写者显式传入 root=c.root；每次操作独立校验所有目标的父链，不依赖
     Ctx 构造顺序或线程上下文。root=None 保留独立库调用的任意输出路径契约。
   - 子进程写者（ffmpeg/chrome）经 locked_staging 拿同目录随机名真实路径：
@@ -47,8 +48,8 @@ API（上下文管理器 + mutator 两形态）：
                                  持 receipt.json 锁的写者天然独占）。
   mkdir/unlink/replace           写点原语的 fd 锚定形态（降级平台等价 main 行为）。
   pinned_parent/fd_path/flock_at/remove_at/entry_identity/check_regular_at
-                                 fd 锚定公开原语（要求 write_capability() ==
-                                 'fd-anchored'；hygiene 快照/轮转等直接编排
+                                 fd 锚定公开原语（目录操作要求目录能力；
+                                 fd_path 仍仅支持 proc；hygiene 快照/轮转等直接编排
                                  目录描述符的调用面）。
 
 不可重入：mutator/with 体内不得再对同路径调用本模块（threading.Lock 不可
@@ -58,10 +59,10 @@ API（上下文管理器 + mutator 两形态）：
 import contextlib, copy, errno, json, os, secrets, stat, sys, tempfile, threading, time
 from pathlib import Path
 
-__all__ = ["locked_write", "locked_staging", "locked_update", "atomic_write",
+__all__ = ["locked_write", "locked_staging", "locked_stream", "locked_update", "atomic_write",
            "cleanup_identity", "remove_pinned", "mkdir", "unlink", "replace",
            "pinned_parent", "fd_path", "entry_identity", "flock_at", "remove_at",
-           "check_regular_at", "write_capability", "file_lock"]
+           "check_regular_at", "write_capability", "directory_write_capability", "file_lock"]
 
 # Capture the real APIs once: tests may instrument the final unlink syscall.
 _CLEANUP_DIR_FD_APIS = (os.open, os.stat, os.unlink, os.rmdir)
@@ -298,6 +299,27 @@ _FD_WRITE_SUPPORT = None      # None=未探测；True/False=结论（测试可�
 _DEGRADED_NOTICED = False
 
 
+def directory_write_capability():
+    """Whether no-follow directory-relative writes/locks are available.
+
+    Unlike write_capability, this does not promise a reopenable inode Path.
+    Darwin supports these primitives but /dev/fd does NOT preserve the existing
+    locked_write Path truncation/offset contract. Keep that API on its legacy
+    branch there; byte writers and subprocess staging need no proc-fd path.
+    """
+    return bool(os.name == 'posix' and fcntl is not None
+                and getattr(os, 'O_NOFOLLOW', 0) and getattr(os, 'O_DIRECTORY', 0)
+                and all(api in os.supports_dir_fd for api in _WRITE_DIR_FD_APIS)
+                and os.stat in os.supports_follow_symlinks)
+
+
+def _directory_guard():
+    if not directory_write_capability():
+        _note_degraded_once()
+        return True
+    return False
+
+
 def _probe_fd_writes():
     """fd 锚定写所需的全套平台原语是否齐备（探测本身零副作用）。"""
     return bool(getattr(os, 'O_NOFOLLOW', 0) and getattr(os, 'O_DIRECTORY', 0)
@@ -336,13 +358,6 @@ def _legacy_guard():
     return False
 
 
-def _require_fd_writes(path, *, what="写入"):
-    """fd 锚定原语的硬门槛——仅限内部已按能力分支后必须 fd 的路径（清理侧
-    #56 无降级；写侧入口均已先经 _legacy_guard 分流，不会走到这里）。"""
-    if not _fd_write_supported():
-        raise _write_error(path, f'平台不支持安全 dir_fd/O_NOFOLLOW/proc-fd {what}')
-
-
 @contextlib.contextmanager
 def pinned_parent(path, *, create=True, root=None):
     """Open/create every directory component via a no-follow pinned parent fd.
@@ -352,9 +367,10 @@ def pinned_parent(path, *, create=True, root=None):
     仅 with 体内由本函数自身的目录链操作抛出的 OSError 会转 ProjectPathError；
     调用方 with 体内的异常（含 OSError）原样穿透——loudness 回执的 advisory
     吞错与既有测试对原始 OSError 的断言都依赖该语义。要求
-    write_capability() == 'fd-anchored'。"""
+    directory_write_capability()。"""
     p = _write_target(path, root=root)
-    _require_fd_writes(p)
+    if not directory_write_capability():
+        raise _write_error(p, '平台不支持安全 dir_fd/O_NOFOLLOW 写入')
     descriptors = []
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     try:
@@ -391,7 +407,7 @@ def mkdir(path, *, root=None):
     """Create a directory without following a preplanted or exchanged link;
     platforms without fd primitives degrade to Path.mkdir (main 安全等级)."""
     anchor = _write_target(Path(path) / '.directory-anchor', root=root)
-    if _legacy_guard():
+    if _directory_guard():
         anchor.parent.mkdir(parents=True, exist_ok=True)
         return Path(path)
     with pinned_parent(anchor, root=root):
@@ -460,12 +476,19 @@ def flock_at(parent_fd, name, *, what=None):
 
     公开契约（issue #59）：O_NOFOLLOW 创建 + 普通文件校验——预置锁符号链接
     一律拒绝（不写穿、不在链接目标侧创建）；fcntl 缺席的平台仅持描述符锁。
-    要求 fd 锚定能力（降级平台经 _legacy_flock_for 走 main 锁守卫）。"""
+    要求目录锚定能力（降级平台经 _legacy_flock_for 走 main 锁守卫）。"""
     target = Path(what) if what else Path(str(name) + '.lock')
     lockname = name + '.lock'
     try:
-        lockfd = os.open(lockname, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
-                         0o600, dir_fd=parent_fd)
+        flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
+        try:
+            lockfd = os.open(lockname, flags | os.O_CREAT | os.O_EXCL,
+                             0o600, dir_fd=parent_fd)
+        except FileExistsError:
+            # Darwin may return ENOENT for racing O_CREAT|O_NOFOLLOW opens.
+            # Separate exclusive creation from opening the persistent inode;
+            # neither branch follows links or truncates an existing lock.
+            lockfd = os.open(lockname, flags, dir_fd=parent_fd)
     except OSError as error:
         raise _write_error(target, f'事务锁文件不安全（{error}）') from error
     try:
@@ -486,7 +509,7 @@ class _Txn:
     """单次文件事务的内部句柄：commit 置位才 os.replace（默认中止——残件在
     _transaction 的 finally 清理，目标保持旧值）。"""
 
-    def __init__(self, target: Path, tmp: Path):
+    def __init__(self, target: Path, tmp):
         self.target = target
         self.tmp = tmp
         self.commit = False
@@ -499,7 +522,7 @@ def _flock_for(path: Path, *, root=None):
     （ensure_inside_project 判定后常规创建）。持有者与 _transaction 的锁
     互斥（同一 <目标名>.lock inode 的 flock）。"""
     p = _write_target(path, root=root)
-    if _legacy_guard():
+    if _directory_guard():
         with _legacy_flock_for(p):
             yield
         return
@@ -517,7 +540,7 @@ def file_lock(path, *, root=None):
 
 
 @contextlib.contextmanager
-def _transaction(path, *, allow_symlink=False, staging=False, after_commit=None, root=None):
+def _transaction(path, *, allow_symlink=False, staging=False, descriptor=False, after_commit=None, root=None):
     """事务核心：两层锁 + tmp 代管；被包裹方置 txn.commit 后正常退出才替换。
 
     fd 锚定平台：随机名 O_EXCL tmp + 提交前 inode 对账（tmp 目录项中途被置换
@@ -526,7 +549,9 @@ def _transaction(path, *, allow_symlink=False, staging=False, after_commit=None,
     allow_symlink=True：允许末段符号链接目标被原子替换（账本目标侧免疫）。
     降级平台：mkstemp + os.replace + main 锁守卫（原 main 行为）。"""
     p = _write_target(path, root=root)
-    if _legacy_guard():
+    if descriptor and not directory_write_capability():
+        raise _write_error(p, '平台不支持目录锚定文件流')
+    if (_directory_guard() if staging or descriptor else _legacy_guard()):
         with _thread_lock_for(p), _legacy_flock_for(p):
             fd, name = tempfile.mkstemp(prefix="." + p.name + ".", suffix=".tmp",
                                         dir=p.parent)
@@ -547,7 +572,7 @@ def _transaction(path, *, allow_symlink=False, staging=False, after_commit=None,
             tempname = '.' + name + '.' + secrets.token_hex(16) + '.tmp'
             fd = os.open(tempname, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                          0o600, dir_fd=parent)
-            txn = _Txn(target,
+            txn = _Txn(target, fd if descriptor else
                        target.parent / tempname if staging else fd_path(fd))
             try:
                 yield txn
@@ -564,6 +589,20 @@ def _transaction(path, *, allow_symlink=False, staging=False, after_commit=None,
                     os.unlink(tempname, dir_fd=parent)
                 except FileNotFoundError:
                     pass
+
+
+@contextlib.contextmanager
+def locked_stream(path, *, root=None):
+    """Yield a seekable binary stream pinned to the temporary inode.
+
+    Unlike locked_write this needs no proc-fd pathname and never reopens the
+    temporary directory entry. Closing/flushing precedes publication; exceptions
+    leave the target unchanged. Requires directory_write_capability().
+    """
+    with _transaction(path, descriptor=True, root=root) as txn:
+        with os.fdopen(txn.tmp, 'w+b', closefd=False) as stream:
+            yield stream
+        txn.commit = True
 
 
 @contextlib.contextmanager
@@ -637,7 +676,7 @@ def unlink(path, *, root=None):
     """Remove a leaf in a pinned directory, never following its ancestors;
     degrade to Path.unlink(missing_ok=True) on platforms without fd writes."""
     p = _write_target(path, root=root)
-    if _legacy_guard():
+    if _directory_guard():
         p.unlink(missing_ok=True)
         return
     if not p.parent.exists():
@@ -654,7 +693,7 @@ def replace(source, target, *, root=None):
     (mux tmp→final 等)；降级平台等价 os.replace（main 行为）。"""
     source = _write_target(source, root=root)
     target = _write_target(target, root=root)
-    if _legacy_guard():
+    if _directory_guard():
         os.replace(source, target)
         return
     with pinned_parent(source, create=False, root=root) as (srcfd, srcname, srcpath):
@@ -672,7 +711,7 @@ def atomic_write(path, data, *, root=None):
     fd 锚定平台附提交前 inode 对账（issue #59），降级平台为 main 行为。"""
     payload = data if isinstance(data, bytes) else str(data).encode("utf-8")
     p = _write_target(path, root=root)
-    if _legacy_guard():
+    if _directory_guard():
         p.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(prefix="." + p.name + ".", suffix=".tmp",
                                     dir=p.parent)

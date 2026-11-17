@@ -48,6 +48,9 @@ def timeline_capabilities():
         "expands_subtitles_src": False, "executes_plugins": False,
         "write_operations": [],
         "frame": {"schema": "framivra.timeline.frame/v1", "explicit_render_required": True,
+                  "prepare_gfx": {"flag": "--prepare-gfx", "trust_flag": "--trust-html",
+                                  "kind": "current-composite", "preview_only": True,
+                                  "inline_required": True},
                   "inline_png": {"flag": "--include-png", "encoding": "base64",
                                  "wire_limit_bytes": 8388608}},
     }
