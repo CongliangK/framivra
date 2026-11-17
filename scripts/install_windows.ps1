@@ -1,4 +1,4 @@
-# install_windows.ps1 —— Windows 一键安装引导(克隆/安全更新仓库 + 运行 vt.py init)
+﻿# install_windows.ps1 —— Windows 一键安装引导(克隆/安全更新仓库 + 运行 vt.py init)
 # 设计理念对齐 ibus-voice-ime 的 remote-install.sh:一键安装=快速初始化手段
 # (克隆或安全更新仓库,再跑仓内既有幂等 init),不替代手动克隆(README「快速
 # 开始」的 clone 路径始终可用),不依赖发版资产(Releases)与 git 以外的工具
