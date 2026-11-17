@@ -628,13 +628,18 @@ class MediaRecovery(unittest.TestCase):
         class BoundedFinalLock:
             # A lock-order regression must fail inside the safety mocks, not
             # leave a daemon waiting forever after those mocks are removed.
+            def __init__(self):
+                # Like production holders, retain the exact weakly registered
+                # lock throughout acquisition, waiting and release.
+                self.lock = original_lock(final)
+
             def __enter__(self):
-                if not original_lock(final).acquire(timeout=5):
+                if not self.lock.acquire(timeout=5):
                     raise RuntimeError('final lock acquisition exceeded test deadline')
                 return self
 
             def __exit__(self, *exc):
-                original_lock(final).release()
+                self.lock.release()
 
         def lock(path):
             if Path(path) == final:

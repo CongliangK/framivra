@@ -47,6 +47,8 @@ def timeline_capabilities():
         "preserves_extensions": True, "resolves_assets": False,
         "expands_subtitles_src": False, "executes_plugins": False,
         "write_operations": [],
+        "storage": {"schema": "framivra.storage/v1",
+                    "operations": ["inspect", "plan", "clean"], "request_stdin": True},
         "frame": {"schema": "framivra.timeline.frame/v1", "explicit_render_required": True,
                   "prepare_gfx": {"flag": "--prepare-gfx", "trust_flag": "--trust-html",
                                   "kind": "current-composite", "preview_only": True,

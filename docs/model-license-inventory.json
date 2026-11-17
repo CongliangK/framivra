@@ -1122,9 +1122,13 @@
       "license_status": "DECLARED",
       "license_identifier": "MIT",
       "default_payload": true,
-      "distribution": ["git-source"],
+      "distribution": [
+        "git-source"
+      ],
       "evidence": "html-preview-baseline-capture",
-      "additional_evidence": ["framivra"],
+      "additional_evidence": [
+        "framivra"
+      ],
       "files_sha256": {
         "docs/reports/assets/html-preview/before.png": "e9f5683c2b82eb35ef33848631bbaf5fc6cdbdcb4ed0a0028ffb1fe3ed76a585"
       },
@@ -1136,9 +1140,14 @@
       "license_status": "DECLARED",
       "license_identifier": "MIT",
       "default_payload": true,
-      "distribution": ["git-source"],
+      "distribution": [
+        "git-source"
+      ],
       "evidence": "cold-composite-ui-capture",
-      "additional_evidence": ["framivra", "html-preview-baseline-capture"],
+      "additional_evidence": [
+        "framivra",
+        "html-preview-baseline-capture"
+      ],
       "files_sha256": {
         "docs/reports/assets/html-preview/composite-before.png": "bd1c15592bf0ceb80866d93cd5733c7529ce7b748ad556c1e9f79d48e2b78857",
         "docs/reports/assets/html-preview/composite-after.png": "e7579dab39081341b63a742d02374231175ed52b12bb978364158f4c5585d04c",
@@ -1392,6 +1401,59 @@
       ],
       "preserved_notice_filename": "JetBrainsMono-OFL.txt",
       "notes": "Official JetBrains/JetBrainsMono distribution, Regular and Bold TTF files at the same fixed commit as the full OFL notice. Copyright 2020 The JetBrains Mono Project Authors; no font-byte modifications. Git/source archives and the kernel wheel contain no font binary payload. Explicit invocation of the full managed non-AI source installer acquires this group by default; on-demand-download describes this install-time boundary, not an extra per-font opt-in. Exact matching local bytes may be reused. The installer retains the unmodified notice and source/SHA provenance under root/fonts and with native user-font copies. Existing host fonts, system font preference, external packages and transitive/bundled code rights remain separate and are not cleared by this declaration."
+    },
+    "timeline-config-ui-captures": {
+      "kind": "data",
+      "source": "https://github.com/CongliangK/framivra/pull/373",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT (project-authored capture/fixture data; depicted DSH software notice separately preserved)",
+      "default_payload": true,
+      "distribution": [
+        "git-source"
+      ],
+      "evidence": "timeline-config-capture-provenance",
+      "additional_evidence": [
+        "dsh-rc1-observed-software-notice"
+      ],
+      "files_sha256": {
+        "docs/reports/assets/timeline-config/after-controls.png": "157702495d9e4657d73886a0ac994de2c33946b27bcc4f99ee3b8ee60ac58b63",
+        "docs/reports/assets/timeline-config/after.png": "e7f12eaf1fc8900ce0af2b4a58a7758bb8b9f35919af99da2101106ceb42ffd2",
+        "docs/reports/assets/timeline-config/before.png": "1b5eed3fe4a0fa545200bbe5e0f83b8feb1a0ccf954b729a9bb28a1975f1043a"
+      },
+      "notes": "Existing PR373 official-host captures of a separate synthetic 120-frame timeline, not the resource-management fixture. Blank monitor means no generated image. Project-authored capture/content declaration and recorded DSH software notice do not grant trademark rights or relicense other dependencies/fonts. No vendor binaries, font files or private media included; historical validation limits remain unchanged."
+    },
+    "single-frame-chart-evidence": {
+      "kind": "data",
+      "source": "docs/reports/single-frame-preview-evidence.json",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT (project-authored chart fixture and generated evidence data)",
+      "default_payload": true,
+      "distribution": [
+        "git-source"
+      ],
+      "evidence": "single-frame-chart-generation",
+      "files_sha256": {
+        "docs/reports/assets/single-frame-preview/chart-f305.png": "db8dfd44c7b5934cf8c47b7e0d5064ac5942e311349fe799e3df40c7709fb15b"
+      },
+      "notes": "Internal CDP output of the existing public project-authored chart fixture with illustrative data, not a DSH screenshot or a complete current-composite result. Browser/runtime and font inputs remain separately governed external dependencies; no font files or browser binaries included. Registration does not upgrade the historical sample to full-frame, full-project or UI acceptance."
+    },
+    "html-workflow-chart-evidence": {
+      "kind": "data",
+      "source": "docs/reports/html-workflow-evidence/index.json",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT (project-authored chart fixture and generated evidence data)",
+      "default_payload": true,
+      "distribution": [
+        "git-source"
+      ],
+      "evidence": "html-workflow-chart-generation",
+      "files_sha256": {
+        "docs/reports/html-workflow-evidence/frame-0060.png": "b86915c2593866cc9a5506b5cd430184e72e9f80c7eefff41fdac9d286050c50",
+        "docs/reports/html-workflow-evidence/frame-0300.png": "f30977464f448bc46ce95d13c5e4944857f1409fdb08d5920eb3e6e545c39b10",
+        "docs/reports/html-workflow-evidence/frame-0540.png": "ebfdb40168a1e1c1406bd99a2a08a65f215a533dad5e80ceaa6b4cca1a7cdf7f",
+        "docs/reports/html-workflow-evidence/overview.jpg": "3acde609451f3df91eb1164aef657d228bd49bab67ac92c4c748365b3644497c"
+      },
+      "notes": "Existing Linux HTML/CDP study samples of the public project-authored chart; overview is assembled from actual cache samples, not redrawn media. Distinct from macOS single-frame and DSH UI captures. Runtime/font inputs are external and not relicensed or bundled here. Existing study scope and uncertainty are unchanged; no new rendering or performance qualification is claimed."
     }
   },
   "evidence": {
@@ -1694,6 +1756,39 @@
       "sha256": "30f0c136e3c88e422d0791acd97238870f9054a9729bc34cf2ff0d4ed8cac4ad",
       "text": "Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license is copied below, and is also available with a FAQ at:\nhttps://scripts.sil.org/OFL\n\n\n-----------------------------------------------------------\nSIL OPEN FONT LICENSE Version 1.1 - 26 February 2007\n-----------------------------------------------------------\n\nPREAMBLE\nThe goals of the Open Font License (OFL) are to stimulate worldwide\ndevelopment of collaborative font projects, to support the font creation\nefforts of academic and linguistic communities, and to provide a free and\nopen framework in which fonts may be shared and improved in partnership\nwith others.\n\nThe OFL allows the licensed fonts to be used, studied, modified and\nredistributed freely as long as they are not sold by themselves. The\nfonts, including any derivative works, can be bundled, embedded, \nredistributed and/or sold with any software provided that any reserved\nnames are not used by derivative works. The fonts and derivatives,\nhowever, cannot be released under any other type of license. The\nrequirement for fonts to remain under this license does not apply\nto any document created using the fonts or their derivatives.\n\nDEFINITIONS\n\"Font Software\" refers to the set of files released by the Copyright\nHolder(s) under this license and clearly marked as such. This may\ninclude source files, build scripts and documentation.\n\n\"Reserved Font Name\" refers to any names specified as such after the\ncopyright statement(s).\n\n\"Original Version\" refers to the collection of Font Software components as\ndistributed by the Copyright Holder(s).\n\n\"Modified Version\" refers to any derivative made by adding to, deleting,\nor substituting -- in part or in whole -- any of the components of the\nOriginal Version, by changing formats or by porting the Font Software to a\nnew environment.\n\n\"Author\" refers to any designer, engineer, programmer, technical\nwriter or other person who contributed to the Font Software.\n\nPERMISSION & CONDITIONS\nPermission is hereby granted, free of charge, to any person obtaining\na copy of the Font Software, to use, study, copy, merge, embed, modify,\nredistribute, and sell modified and unmodified copies of the Font\nSoftware, subject to the following conditions:\n\n1) Neither the Font Software nor any of its individual components,\nin Original or Modified Versions, may be sold by itself.\n\n2) Original or Modified Versions of the Font Software may be bundled,\nredistributed and/or sold with any software, provided that each copy\ncontains the above copyright notice and this license. These can be\nincluded either as stand-alone text files, human-readable headers or\nin the appropriate machine-readable metadata fields within text or\nbinary files as long as those fields can be easily viewed by the user.\n\n3) No Modified Version of the Font Software may use the Reserved Font\nName(s) unless explicit written permission is granted by the corresponding\nCopyright Holder. This restriction only applies to the primary font name as\npresented to the users.\n\n4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font\nSoftware shall not be used to promote, endorse or advertise any\nModified Version, except to acknowledge the contribution(s) of the\nCopyright Holder(s) and the Author(s) or with their explicit written\npermission.\n\n5) The Font Software, modified or unmodified, in part or in whole,\nmust be distributed entirely under this license, and must not be\ndistributed under any other license. The requirement for fonts to\nremain under this license does not apply to any document created\nusing the Font Software.\n\nTERMINATION\nThis license becomes null and void if any of the above conditions are\nnot met.\n\nDISCLAIMER\nTHE FONT SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT\nOF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE\nCOPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,\nINCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL\nDAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM\nOTHER DEALINGS IN THE FONT SOFTWARE.\n",
       "scope": "Complete original font copyright/license notice, byte-identical to the pinned installer notice; not a legal opinion, host-installation attestation or clearance of all contents of the source package/runtime dependency chain."
+    },
+    "timeline-config-capture-provenance": {
+      "revision": "25092559744966d72ed3e2c0f08b9736c1ac4489",
+      "url": "https://github.com/CongliangK/framivra/pull/373",
+      "text": "Project-authored timeline-configuration feature captures from PR373, official DSH 0.2.2-rc.1, synthetic 120-frame 1080p30 project, 1440x1000 dark UI. Before sidebar 741f74b466605df310334461b9c74e4ec735d0ed; after implementation 1eea8494a7e3d7ba24566b5a1786497d63d4ba83; capture evidence commit 25092559744966d72ed3e2c0f08b9736c1ac4489. The black monitor is explicitly unrendered, not a generated video frame. Project-authored capture/fixture data is declared under root MIT; depicted DSH software notice is preserved separately, without a trademark or third-party dependency/font grant. Capture identities and original validation limitations are recorded in the PR373 description. This evidence revision identifies Framivra capture provenance, not a DSH upstream source revision.\n",
+      "sha256": "db011b268c98966b9f69a943aebb7f7f3a7aeaf364eb1e930294a1ee04c1aba0",
+      "scope": "Capture-provenance summary of the existing PR373 evidence; not a claim of new rendering, macOS write authorization or trademark rights."
+    },
+    "single-frame-chart-generation": {
+      "local_path": "docs/reports/single-frame-preview-evidence.json",
+      "sha256": "3469065faa10a2bed4835f4342afe9ed2974b27c19d6417201ab20d3479f9f64",
+      "revision": "c590630f1751ab23baf7fd011ff4161600924642",
+      "url": "https://github.com/CongliangK/framivra/blob/c590630f1751ab23baf7fd011ff4161600924642/docs/reports/single-frame-preview-evidence.json",
+      "scope": "Existing macOS internal CDP frame305 of project-authored chart_curve.html and illustrative data. Records input/hash/probe details and historical uncertainty; not a DSH UI capture or full-project acceptance. Root MIT declaration covers project-authored fixture/data, not external browser or font rights."
+    },
+    "html-workflow-chart-generation": {
+      "local_path": "docs/reports/html-workflow-evidence/index.json",
+      "sha256": "dc141f3c19cd9f23db910e9f24a3077bbe38d400d90d73f8582d242271d717ea",
+      "revision": "424e25643cbb2e28f817158ebd745320832d335e",
+      "url": "https://github.com/CongliangK/framivra/blob/424e25643cbb2e28f817158ebd745320832d335e/docs/reports/html-workflow-evidence/index.json",
+      "scope": "Existing Linux HTML/CDP chart study input and sample hashes; overview assembled from real cache frames. Project-authored fixture/data declaration only, not a browser/font license or a new 900-frame SVG qualification."
+    },
+    "dsh-rc1-observed-software-notice": {
+      "revision": "ed85bf7b35b132c1c76271594aef48b3e243e0bd",
+      "revision_scope": "Framivra historical resource-capture provenance anchor ONLY; no DSH upstream Git revision or exact capture-time vendor-byte attestation is asserted.",
+      "url": "https://www.npmjs.com/package/@deepseek-ai/dsh/v/0.2.2-rc.1",
+      "observed_package": "@deepseek-ai/dsh",
+      "observed_version": "0.2.2-rc.1",
+      "observed_package_json_sha256": "3e14837ceb3bbc0ba419ed08e9b5ba164338369b1268b93c3c25d89f7b1c9953",
+      "observation_scope": "Read-only inspection of the existing official isolated debug runtime package metadata and full LICENSE during resource-ticket follow-up. Package metadata declares MIT. This is an observed package/notice identity, not a DSH upstream source pin, complete runtime/dependency audit, trademark grant or newly issued permission.",
+      "text": "MIT License\n\nCopyright (c) 2026 DeepSeek\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
+      "sha256": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be",
+      "scope": "Preserved actual DeepSeek vendor MIT software notice for the depicted official host. Separate from root project copyright and capture/data declaration; does not relicense trademarks, stock assets, external fonts or transitive UI dependencies. No vendor runtime binaries are added to the repository."
     }
   },
   "legacy_downloads": {

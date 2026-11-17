@@ -168,7 +168,10 @@ export function frameDraftText(generated, selection, positionOnly = false) {
   return text
 }
 
-export function FrameTools({ owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call, active = true }) {
+export function FrameTools({ owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call, active = true, suspended = false }) {
+  const scheduling = useRef({ suspended, revision: 0, intent: 0 })
+  if (scheduling.current.suspended !== suspended) scheduling.current.revision++
+  scheduling.current.suspended = suspended
   const [state, setState] = useState({}), [consent, setConsent] = useState(false), [positionOnly, setPositionOnly] = useState(false)
   const [prepareGfx, setPrepareGfx] = useState(false), [htmlTrust, setHTMLTrust] = useState(false)
   const [follow, setFollow] = useState(false)
@@ -211,7 +214,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       setState({ message: '已验证 PNG，未发送。复制与入稿请展开图片工具。' })
     } catch (error) {
       if (sequence === generation.current) {
-        if (!operation?.signal.aborted) { setState({ message: `错误：${error.message}` }); if (automatic) setFollow(false) }
+        if (!operation?.signal.aborted) { setState({ message: `错误：${error.message}` }); if (automatic) { scheduling.current.intent++; setFollow(false) } }
         else setState({ message: '操作已失效/取消；未加入草稿。' })
       }
     } finally {
@@ -260,11 +263,14 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       setState({ message: operation.signal.aborted ? '剪贴板写入可能已完成；OS 无法撤回，当前选择已变化。' : 'PNG 已复制；OS 可能重新编码，不承诺剪贴板字节恒等。' })
     } catch (error) { setState({ message: `图片未确认复制：${error.message}；无自动文本降级。` }) }
   }
-  const blocked = !whole(frame) || !!owner.ghost || owner.edit.dirty || owner.edit.busy || owner.edit.unknown
+  const blocked = suspended || !whole(frame) || !!owner.ghost || owner.edit.dirty || owner.edit.busy || owner.edit.unknown
   function enqueue(automatic = false) {
+    const revision = scheduling.current.revision, intent = ++scheduling.current.intent
     const start = () => {
-      // A superseded debounced intent must not begin work or abort a newer one.
-      if (owner.epoch !== viewEpoch || !active || tabSignal.aborted) return
+      // Suspension invalidates old intents even if it ends before cleanup;
+      // a newer queued intent or automatic failure also supersedes this one.
+      const current = scheduling.current
+      if (owner.epoch !== viewEpoch || !active || current.suspended || current.revision !== revision || current.intent !== intent || tabSignal.aborted) return
       return generate(automatic)
     }
     const task = serial.current ? serial.current.then(start) : start()

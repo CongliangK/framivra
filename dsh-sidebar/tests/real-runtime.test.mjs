@@ -159,6 +159,96 @@ test('real reference CLI -> provider -> Host -> copy is source-exact, stale and 
   console.log(JSON.stringify(result))
 })
 
+test('real storage inspect -> plan -> explicit clean uses owner token and reports actual protected-file-safe removal', { skip, timeout: 30000 }, async t => {
+  await mkdir(evidence, { recursive: true })
+  const dir = await mkdtemp(join(evidence, 'real-storage-'))
+  const project = join(dir, 'project')
+  await mkdir(join(project, 'cache'), { recursive: true })
+  await mkdir(join(project, 'out'))
+  const stalePath = join(project, 'cache', 'stale.bin')
+  const staleBytes = Buffer.from('owned stale cache bytes\n')
+  const sourceBytes = Buffer.from('protected source bytes\0\xff', 'latin1')
+  const authorBytes = Buffer.from('<svg><!-- author source --></svg>\n')
+  const outBytes = Buffer.from('protected final output\n')
+  const timeline = Buffer.from(JSON.stringify({ version: 2, project: { fps: 30, width: 1920, height: 1080, duration_frames: 30 }, sources: [{ id: 'source', path: 'cache/source.mov' }], video_tracks: [], audio_tracks: [], subtitles: [] }) + '\n')
+  const protectedFiles = new Map([
+    [join(project, 'timeline.json'), timeline],
+    [join(project, 'cache', 'source.mov'), sourceBytes],
+    [join(project, 'cache', 'original.svg'), authorBytes],
+    [join(project, 'out', 'final.mp4'), outBytes],
+  ])
+  await writeFile(stalePath, staleBytes)
+  for (const [path, bytes] of protectedFiles) await writeFile(path, bytes)
+  const runtime = await provider(t)
+  const sessions = new Map([['owner', { id: 'owner' }], ['other', { id: 'other' }]])
+  const host = createPreviewHost({ subprocess: runtime, fs: localFs(), sessions, workingDirectory: { get: () => project } }, { vtxExecutable: vtx })
+  t.after(() => host.dispose())
+  const control = async (name, payload) => {
+    const response = await host.control(new Request('http://test/api/framivra/control', { method: 'POST', body: JSON.stringify({ sessionId: 'owner', ...payload }) }))
+    const wire = await response.text()
+    await writeFile(join(dir, `${name}-wire.json`), wire)
+    return { status: response.status, body: JSON.parse(wire) }
+  }
+  const opened = await control('open', { op: 'open', timeline: 'timeline.json' })
+  assert.equal(opened.status, 200, JSON.stringify(opened.body))
+  const grant = opened.body.grant
+  const version = `sha256:${createHash('sha256').update(timeline).digest('hex')}`
+  const inspected = await control('inspect', { op: 'storage-inspect', grant })
+  assert.equal(inspected.status, 200, JSON.stringify(inspected.body))
+  assert.equal(inspected.body.ok, true, JSON.stringify(inspected.body))
+  assert.equal(inspected.body.content_version, version)
+  const protectedCacheBytes = sourceBytes.length + authorBytes.length
+  assert.deepEqual(inspected.body.usage, { project_bytes: timeline.length + protectedCacheBytes + staleBytes.length + outBytes.length, cache_bytes: protectedCacheBytes + staleBytes.length, out_bytes: outBytes.length, other_bytes: timeline.length, file_count: 5, symlinks_skipped: 0 })
+  const planned = await control('plan', { op: 'storage-plan', grant })
+  assert.equal(planned.status, 200, JSON.stringify(planned.body))
+  assert.equal(planned.body.ok, true, JSON.stringify(planned.body))
+  assert.equal(planned.body.content_version, version)
+  assert.equal(typeof planned.body.planToken, 'string')
+  assert.ok(planned.body.planToken.length > 0)
+  assert.equal(planned.body.plan.count, 1)
+  assert.equal(planned.body.plan.bytes, staleBytes.length)
+  assert.deepEqual(planned.body.plan.entries.map(({ path, bytes }) => ({ path, bytes })), [{ path: 'cache/stale.bin', bytes: staleBytes.length }])
+  const clean = { op: 'storage-clean', grant, planToken: planned.body.planToken, confirm: 'stopped-writers-and-cleanup' }
+  const other = await control('wrong-owner', { ...clean, sessionId: 'other' })
+  assert.equal(other.status, 403, JSON.stringify(other.body))
+  const unconfirmed = await control('unconfirmed', { ...clean, confirm: 'cache/preview-only' })
+  assert.equal(unconfirmed.status, 403, JSON.stringify(unconfirmed.body))
+  const paths = await control('injected-path', { ...clean, request: { paths: ['cache/stale.bin'] } })
+  assert.equal(paths.status, 400, JSON.stringify(paths.body))
+  assert.deepEqual(await readFile(stalePath), staleBytes)
+  for (const [path, bytes] of protectedFiles) assert.deepEqual(await readFile(path), bytes)
+  const cleaned = await control('clean', clean)
+  assert.equal(cleaned.status, 200, JSON.stringify(cleaned.body))
+  assert.equal(cleaned.body.ok, true, JSON.stringify(cleaned.body))
+  assert.equal(cleaned.body.content_version, version)
+  assert.equal(cleaned.body.plan.id, planned.body.plan.id)
+  assert.deepEqual(cleaned.body.removed, { bytes: staleBytes.length, count: 1 })
+  assert.deepEqual(cleaned.body.remaining, { bytes: 0, count: 0 })
+  await assert.rejects(stat(stalePath), { code: 'ENOENT' })
+  const replay = await control('replay', clean)
+  assert.equal(replay.status, 409, JSON.stringify(replay.body))
+  for (const [path, bytes] of protectedFiles) assert.deepEqual(await readFile(path), bytes)
+  const after = await control('after-inspect', { op: 'storage-inspect', grant })
+  assert.equal(after.status, 200, JSON.stringify(after.body))
+  assert.equal(after.body.ok, true, JSON.stringify(after.body))
+  assert.equal(after.body.usage.out_bytes, outBytes.length)
+  // Cleanup may create its protected lock sidecar; do not equate total usage delta with reclaimed bytes.
+  assert.equal(after.body.usage.cache_bytes, protectedCacheBytes + (await stat(join(project, 'cache', '.cache-policy.lock.lock'))).size)
+  const reader = new TimelineReader(runtime)
+  t.after(() => reader.dispose())
+  const early = await reader.storage(vtx, join(project, 'missing-timeline.json'), 'inspect', undefined, AbortSignal.timeout(5000))
+  await writeFile(join(dir, 'early-error-wire.json'), JSON.stringify(early))
+  assert.equal(early.schema, 'framivra.storage/v1')
+  assert.equal(early.operation, 'inspect')
+  assert.equal(early.ok, false)
+  assert.equal(early.content_version, null)
+  assert.ok(early.diagnostics.length > 0)
+  assert.equal(Object.hasOwn(early, 'usage'), false)
+  const result = { evidence: dir, vtx, node: process.version, provider: 'LocalSubprocessRuntime', removed: cleaned.body.removed, removedPath: 'cache/stale.bin', protectedBytesUnchanged: true, wrongOwnerStatus: other.status, unconfirmedStatus: unconfirmed.status, injectedPathStatus: paths.status, replayStatus: replay.status, earlyError: early.diagnostics }
+  await writeFile(join(dir, 'result.json'), JSON.stringify(result, null, 2))
+  console.log(JSON.stringify(result))
+})
+
 async function stopped(pid) {
   try {
     const status = await readFile(`/proc/${pid}/stat`, 'utf8')

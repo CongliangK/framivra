@@ -99,7 +99,7 @@ export function RenderedPlayer({ opened, sessionId, frame, fps, duration, onFram
     media && usable ? h('p', { role: 'status' }, `${formatTimecode(frame, fps)} · ${status}`) : null)
 }
 
-export function ProgramMonitor({ owner, opened, sessionId, frame, blank = false, fps, duration, onFrame, selection, tabSignal, getDraftServices, call }) {
+export function ProgramMonitor({ owner, opened, sessionId, frame, blank = false, fps, duration, onFrame, selection, tabSignal, getDraftServices, call, suspended = false }) {
   const [mode, setMode] = useState('live')
   function change(next) {
     if (next === mode) return
@@ -111,6 +111,6 @@ export function ProgramMonitor({ owner, opened, sessionId, frame, blank = false,
     h('div', { className: 'fv-preview-modes', role: 'group', 'aria-label': '预览模式' },
       h('button', { type: 'button', 'aria-pressed': mode === 'live', onClick: () => change('live') }, '实时真预览'),
       h('button', { type: 'button', 'aria-pressed': mode === 'rendered', onClick: () => change('rendered') }, '成片渲染')),
-    h(FrameTools, { owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call, active: mode === 'live' }),
+    h(FrameTools, { owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call, active: mode === 'live', suspended }),
     mode === 'rendered' ? h(RenderedPlayer, { opened, sessionId, frame, fps, duration, onFrame }) : null)
 }
