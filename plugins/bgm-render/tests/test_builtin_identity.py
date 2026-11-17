@@ -20,7 +20,9 @@ class ProducerIdentity(_Base):
     def test_runtime_and_ref_change_all_identities_same_context(self):
         c = self._ctx(True)
         before = self.state(c)
-        self.ref_file.write_text('{"notes": [3, 2, 1]}', encoding="utf-8")
+        track = json.loads(self.ref_file.read_text(encoding="utf-8"))
+        track["notes"].append([64, 1, 1, 90])
+        self.ref_file.write_text(json.dumps(track), encoding="utf-8")
         after = self.state(c)
         self.assertTrue(all(a != b for a, b in zip(before, after)))
         with self.assertRaises(Exception):
@@ -173,7 +175,9 @@ class ProducerIdentity(_Base):
         original = _bgm._run_bgm
         def change_after_render(*args):
             result = original(*args)
-            self.ref_file.write_text('{"changed": true}', encoding="utf-8")
+            track = json.loads(self.ref_file.read_text(encoding="utf-8"))
+            track["notes"].append([64, 1, 1, 90])
+            self.ref_file.write_text(json.dumps(track), encoding="utf-8")
             return result
         with mock.patch.object(_bgm, "_run_bgm", side_effect=change_after_render):
             with self.assertRaisesRegex(RuntimeError, "输入在渲染期间变化"):
