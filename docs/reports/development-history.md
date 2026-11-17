@@ -71,13 +71,13 @@ A臂冷态中位：启动覆盖0.289s；608次截图（600目标帧+8探针）�
 
 ### 资源生命周期排查（#362）
 
-原静态审查以 `908064d` 为起点；接续在 main `562ecd8` 的生产实现上（测量源码 `e742589`，署名重写后同树 `9e0e4cc`），以已安装候选 wheel 验证唯一 portable-v2 30秒/900帧/1080p30 SVG。三档共7次正式 `all` 及另行7次strict QC通过（aggressive响度/TP复用有效回执），core连续3次；三档末次完整解码的视频、PCM及音频时序摘要相同。详细包身份、逐轮资源、实际宿主与清理证据统一见 [PR #366](<https://github.com/CongliangK/framivra/pull/366>)。有限样本不证明永久无泄漏，也不宣称整体提速。
+原静态审查以 `908064d` 为起点；接续在 main `fa5d28d` 的生产实现上（测量源码 `99fd603`），以已安装候选 wheel 验证唯一 portable-v2 30秒/900帧/1080p30 SVG。三档共7次正式 `all` 及另行7次strict QC通过（aggressive响度/TP复用有效回执），core连续3次；三档末次完整解码的视频、PCM及音频时序摘要相同。详细包身份、逐轮资源、实际宿主与清理证据统一见 [PR #366](<https://github.com/CongliangK/framivra/pull/366>)。有限样本不证明永久无泄漏，也不宣称整体提速。
 
 | 链路 / 空间归属 | 已确认机制与待验风险 |
 | --- | --- |
 | prepare / audio | 源抽音频、插件派生及混音交接件，保留取决于[缓存档位](../cache-provenance.md#全局缓存档位)；模型服务、外部素材与共享资产不属于项目 cache，未实测其生命周期。 |
 | gfx | 本机core保留约56.76MB认证PNG/证据，aggressive约66.18MB，off仅约1–2KB账本/锁；macOS未冒充Linux压缩包支持。[文件事务](../../vtx/runtime/fstxn.py)原强引用锁表为每个唯一加锁路径保留 Python 锁，[CLI 截图](../../vtx/render/gfx_cli.py)的逐帧 `locked_staging` 等调用会持续增加条目（CDP 的无锁 `atomic_write` 本身不经过该表）；改为弱引用注册表，所有持有者/等待者仍强引用同一锁。不删除磁盘锁文件、不改变跨进程锁协议。 |
-| video / mux / qc | seg、逐层无损 pass、交接音视频与最终成片性质不同；不能按扩展名统一删除。`core/off` 用后回收媒体，`aggressive` 的保留属于策略而非泄漏；失败/截断链保留必要交接件。本轮采样树RSS峰值约1.02–1.41GiB；共享页重复计数、短命进程及漏峰限制保留，非独占物理内存。 |
+| video / mux / qc | seg、逐层无损 pass、交接音视频与最终成片性质不同；不能按扩展名统一删除。`core/off` 用后回收媒体，`aggressive` 的保留属于策略而非泄漏；失败/截断链保留必要交接件。本轮采样树RSS峰值约1.00–1.37GiB；共享页重复计数、短命进程及漏峰限制保留，非独占物理内存。 |
 | audit / df | [体积检查](../../vtx/cache/hygiene.py)的 quiet 路径原先仍全量排序 cache 路径、扫描孤儿并读取账本，仅丢弃打印。本轮跳过这些展示专用步骤，verbose top-20 改为有界候选选择，保留排序/同尺寸顺序及返回值。逻辑字节统计仍需遍历，不能当物理独占空间或原子快照。 |
 | 缓存回收 / DSH | 历史键、预览、报告、实验缓存与事务锁各有不同保留边界；[清理约束](../cache-provenance.md#容量与保留)要求停写。本次新增[空间接口](<../reference/storage-api.md>)与侧栏采样、冻结预演及独立确认，复用原 GC 与参与者策略锁；不把文本 `gc` 输出冒充绑定确认，也不承诺排斥任意外部写入者。 |
 
@@ -87,7 +87,7 @@ A臂冷态中位：启动覆盖0.289s；608次截图（600目标帧+8探针）�
 
 用户已明确本次档位仅指既有 `off/core/aggressive`。DSH 复用原全局三档确认/CAS 保存，不新增 CPU/RAM/并发档位；[资源预算](../reference/resource-budget.md)仍是未接入渲染 CLI 的 Linux 协作记账原语，不是 OS 限制。空间管理实现与有界响应、过期/替换/失败等机制回归见[接口](<../reference/storage-api.md>)、[内核测试](<../../tests/cache/test_storage_api.py>)和[侧栏记录](<../../dsh-sidebar/DEVELOPMENT.md#project-storage-controls-362>)。最终已安装组合以完整主片副本核对显示、可见采样、三档原生保存与下一操作、取消/失败恢复及工程切换；维护者明确批准原冻结范围后，自动化通过正式界面执行一次清理，所有未删文件身份/哈希不变，源件、成片及历史/回执保留。当前对比、精确字节和有限观测限制见[PR #366](<https://github.com/CongliangK/framivra/pull/366>)；[旧合成图例](<https://github.com/CongliangK/framivra/blob/501e6a0a8b4fcd56c7a9fd1f4859989c1ed4e5fd/docs/reports/resource-management-362/README.md>)只作历史溯源，不冒充当前整片或所有平台验收。
 
-每档新建项目经官方prepare/verify，不混旧cache/out；core三次`all`约73.06/62.14/62.53秒，off两次74.13/75.17秒，aggressive两次73.14/35.48秒，不作跨版本性能配对。均按实际探测回落x264/原生AAC，不称无回落；三档源容器900帧整数PTS乘时基逐帧等于n/30，非仅归一解码帧数通过。每次结束已观测的命令子进程均退出，观察器返回1个Python线程/3个FD；其all结束即时RSS约21–57MB、后续inspect端点最高约78MB，不是渲染器残留。0.5秒采样单轮调用成本约0.75–1.75秒，完整空间inspect约106–175ms（含启动），没有扣减计时。逻辑字节与st_blocks分账；后者含硬链接/共享extent重复，不是独占物理占用。core账本每轮约增489B，但既有4000/5000条轮转有界；out增长来自受保护历史成片，不当作缓存泄漏去删。未使用的CEF、模型/音乐服务、其他平台及长期存活仍UNRUN，既有[小型三档机制集成](<../../tests/cache/test_cache_modes_integration.py>)不替代主片。
+每档新建项目经官方prepare/verify，不混旧cache/out；core三次`all`约73.46/61.73/61.07秒，off两次72.31/73.62秒，aggressive两次73.88/35.75秒，不作跨版本性能配对。均按实际探测回落x264/原生AAC，不称无回落；三档源容器900帧整数PTS乘时基逐帧等于n/30，非仅归一解码帧数通过。每次结束已观测的命令子进程均退出，观察器返回1个Python线程/3个FD；其all结束即时RSS约21–60MB、后续端点最高约81MB，不是渲染器残留。0.5秒目标采样的单轮调用成本约0.77–1.64秒，完整空间inspect约102–225ms（含启动），没有扣减计时。逻辑字节与st_blocks分账；后者含硬链接/共享extent重复，不是独占物理占用。core账本每轮约增491B，但既有4000/5000条轮转有界；out增长来自受保护历史成片，不当作缓存泄漏去删。未使用的CEF、模型/音乐服务、其他平台及长期存活仍UNRUN，既有[小型三档机制集成](<../../tests/cache/test_cache_modes_integration.py>)不替代主片。
 
 ### DSH 单帧预览研究（#363）
 
