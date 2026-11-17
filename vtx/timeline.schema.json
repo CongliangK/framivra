@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "bilibili-video/timeline/v2",
   "title": "时间线数据契约 v2（轨道等价模型）",
-  "description": "精确剪辑的单一事实源。所有时间量为【整数帧】（项目时基 fps 固定）。区间统一为 [in, out) 左闭右开。音频对齐到帧网格，量化误差 ≤1ms（adelay 毫秒精度）。字幕经 ASS 烧录，粒度 1cs（< 1 帧）。v2 核心变化（D15）：① video_tracks 所有轨道等价，数组顺序即图层顺序（[0] 最底、末位最上），画布为黑场，无任何轨道有全覆盖特权；② role 字段废除，kind 为纯语义标注（aroll/broll/screen/pip/gfx），只服务于编排规范、预览与统计，渲染机制完全不区分；③ HTML 动效并入 video_tracks（kind=gfx），不再使用独立 overlays 数组；④ clip 的 scale/x/y/opacity/fade 全部可选——缺省即全屏不透明，fade 统一为 alpha 淡入淡出（无下层时自然露出黑场，视觉等价淡黑）。机制层唯一约束：同轨 clips 时间不重叠。本 Schema 为规范文档；vtx.py 内置同语义的强制校验器，渲染前执行。",
+  "description": "精确剪辑的单一事实源。所有时间量为【整数帧】（项目时基 fps 固定）。区间统一为 [in, out) 左闭右开。音频按绝对帧端点就近量化到 48kHz 采样网格（误差 ≤半采样），不逐帧累积舍入。字幕经 ASS 烧录；高帧率使用局部拉伸时钟保持整数帧窗口。v2 核心变化（D15）：① video_tracks 所有轨道等价，数组顺序即图层顺序（[0] 最底、末位最上），画布为黑场，无任何轨道有全覆盖特权；② role 字段废除，kind 为纯语义标注（aroll/broll/screen/pip/gfx），只服务于编排规范、预览与统计，渲染机制完全不区分；③ HTML 动效并入 video_tracks（kind=gfx），不再使用独立 overlays 数组；④ clip 的 scale/x/y/opacity/fade 全部可选——缺省即全屏不透明，fade 统一为 alpha 淡入淡出（无下层时自然露出黑场，视觉等价淡黑）。机制层唯一约束：同轨 clips 时间不重叠。本 Schema 为规范文档；vtx.py 内置同语义的强制校验器，渲染前执行。",
   "type": "object",
   "required": [
     "version",
@@ -37,8 +37,8 @@
       ],
       "properties": {
         "fps": {
-          "enum": [30],
-          "description": "项目时基固定 30fps（D24 换基，≠29.97）；素材必须 CFR 且一致。允许值单一来源=vtx/constraints.py ALLOWED_FPS（本 enum 为其静态镜像，tests/media/test_fps_constraints.py 守护与 infra/preview 三面一致：仅 30 放行，23.976/24/25/29.97/50/59.94/60 一律拒绝；数学等值 30.0 视同 30）"
+          "enum": [24, 25, 30, 48, 50, 60, 100, 120, 23.976, 29.97, 47.952, 59.94, 119.88, "24000/1001", "30000/1001", "48000/1001", "60000/1001", "120000/1001"],
+          "description": "项目时基；素材须 CFR 且匹配。23.976/29.97/47.952/59.94/119.88 是精确 N/1001 时基的别名，也可写对应分数字符串。允许值单一来源=vtx/pipeline/constraints.py ALLOWED_FPS；本 enum 与 preview 的镜像由 tests/media/test_fps_constraints.py 守护。数学等值 30.0 视同 30。"
         },
         "width": {
           "const": 1920,

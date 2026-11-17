@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { PreviewError, TimelineReader, fail, HOST_IDENTITY, createRequestLogger, BAKED_BUILD_STAMP, BUILD_STAMP_MARKER, HOST_LIB_MODULES, CLIENT_MODULES, composeBuildStamp } from './protocol.mjs'
+import { PreviewError, TimelineReader, prepareGfxArgs, prepareGfxCapable, fail, HOST_IDENTITY, createRequestLogger, BAKED_BUILD_STAMP, BUILD_STAMP_MARKER, HOST_LIB_MODULES, CLIENT_MODULES, composeBuildStamp } from './protocol.mjs'
 import { mediaResponse } from './media.mjs'
 import { boundedText, CONTROL_REQUEST_LIMIT, FRAME_REQUEST_LIMIT, FRAME_WIRE_LIMIT } from './bounded.mjs'
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
@@ -77,6 +77,10 @@ export function createPreviewHost(ctx, config = {}) {
   const operations = new Set()
   const streams = new Set()
   const frameOwners = new Set()
+  const storageOwners = new Set()
+  // Explicit FIFO: one running frame plus at most four waiting clicks. Each
+  // entry owns its grant/controller/deadline from admission through cleanup.
+  const frameQueue = []
   let semanticAdmission = 0
   const clock = config.clock ?? Date.now
   const ttlMs = 30 * 60 * 1000
@@ -132,6 +136,8 @@ export function createPreviewHost(ctx, config = {}) {
   }
   function revoke(grant) {
     grant.frame?.abort()
+    grant.storage?.abort()
+    grant.storagePlan = undefined
     grant.write?.abort()
     grant.write = undefined
     grant.plan = undefined
@@ -142,7 +148,7 @@ export function createPreviewHost(ctx, config = {}) {
       grants.delete(id)
       // The id is about to become unaddressable; a last best-effort scoped reap
       // prevents an expired grant from wedging the global semantic gate.
-      reader.reap(id).catch(() => {})
+      reader.reap(id).then(() => storageOwners.delete(grant)).catch(() => {})
     }
   }
   function grantFor(sessionId, id, allowStaleConfig = false) {
@@ -347,6 +353,7 @@ export function createPreviewHost(ctx, config = {}) {
         if (snapshotConfig().fingerprint !== config.fingerprint) fail('CONFIG_CHANGED', 'Host plugin configuration changed while opening; retry', 409)
         expire()
         if (grants.size >= 32) fail('GRANT_LIMIT', 'Close an existing preview before opening another', 429)
+        for (const previous of grants.values()) if (previous.session === session && previous.timeline.targetKey === timeline.targetKey) { previous.storagePlan = undefined; previous.storageEpoch = (previous.storageEpoch ?? 0) + 1 }
         grants.set(grantId, { id: grantId, session, cwd, root, relative, timeline, project, projectPath, executable, executableTarget, executableVersion, capabilities, media, contentVersion: snapshot.content_version, expiresAt: clock() + ttlMs, configFingerprint: config.fingerprint, configSnapshot: config })
         return json({ grant: grantId, snapshot, capabilities, expires_in_ms: ttlMs, host: hostIdentity(),
           media: [...media].map(([mediaId, item]) => ({ mediaId, label: item.path, provenance: 'unknown', warning: 'Existing output; correspondence to this timeline content_version is NOT verified' })) })
@@ -364,18 +371,21 @@ export function createPreviewHost(ctx, config = {}) {
       }
       // Cleanup-only operations keep working after a configuration change so a
       // stale grant or write permission can always be torn down explicitly.
-      const cleanup = ['close'].includes(data.op) || ['revoke-write', 'invalidate-plan', 'cancel-write'].includes(data.op)
+      const cleanup = ['close', 'storage-cancel'].includes(data.op) || ['revoke-write', 'invalidate-plan', 'cancel-write'].includes(data.op)
       const grant = grantFor(data.sessionId, data.grant, cleanup)
       if (data.op === 'close') {
         revoke(grant)
-        await Promise.all([grant.runningDone, grant.frameDone])
+        await Promise.all([grant.runningDone, grant.frameDone, grant.storageDone])
         // Scoped reap BEFORE untracking: an unconfirmed teardown keeps the grant
         // alive so an explicit retry can finish it; never half-deleted.
         await reader.reap(grant.id)
+        storageOwners.delete(grant)
         grants.delete(data.grant)
         return json({ ok: true })
       }
+      if (['storage-inspect', 'storage-plan', 'storage-clean', 'storage-cancel'].includes(data.op)) return await storageControl(data, grant, hold.signal)
       if (['proposal-list', 'proposal-reject', 'proposal-confirm'].includes(data.op)) {
+        if (data.op === 'proposal-confirm' && storageOwners.size) fail('STORAGE_BUSY', 'Wait for storage process cleanup before confirming', 409)
         if (data.op === 'proposal-confirm' && frameOwners.size) fail('FRAME_BUSY', 'Cancel the frame and wait for actual cleanup before confirming', 409)
         semanticAdmission++
         try { return json(await agent.handle(data, grant, hold.signal)) }
@@ -394,7 +404,7 @@ export function createPreviewHost(ctx, config = {}) {
       const result = await reader.read(grant.executable, ctx.fs.processPath(timeline), data.op, data.query, hold.signal, grant.configSnapshot, grant.id)
       grantFor(data.sessionId, data.grant)
       if (data.op === 'inspect') {
-        if (grant.contentVersion !== result.content_version) { grant.plan = undefined; grant.planEpoch = (grant.planEpoch ?? 0) + 1 }
+        if (grant.contentVersion !== result.content_version) { grant.storagePlan = undefined; grant.storageEpoch = (grant.storageEpoch ?? 0) + 1; grant.plan = undefined; grant.planEpoch = (grant.planEpoch ?? 0) + 1 }
         grant.contentVersion = result.content_version
         if (grant.recoveryObserved) { grant.outcomeUnknown = false; grant.recoveryObserved = false }
         // Every successful inspect reports the observed version; agent.observed()
@@ -404,9 +414,98 @@ export function createPreviewHost(ctx, config = {}) {
       return json(result)
     } finally { hold.release() }
   }
+  /** Owner-only storage controls. No model/tool adapter calls this authority. */
+  async function storageControl(data, grant, signal) {
+    const allowed = ['op', 'sessionId', 'grant', ...(data.op === 'storage-clean' ? ['planToken', 'confirm'] : [])]
+    if (Object.keys(data).some(key => !allowed.includes(key))) fail('BAD_STORAGE_REQUEST', 'Storage accepts only host-owned plan tokens, never paths or replacement requests')
+    if (data.op === 'storage-cancel') {
+      grant.storagePlan = undefined
+      grant.storage?.abort()
+      await grant.storageDone
+      await reader.reap(grant.id)
+      if (!reader.activeFor(grant.id, 'storage-read') && !reader.activeFor(grant.id, 'storage-clean')) storageOwners.delete(grant)
+      return json({ ok: true, reaped: true, message: 'Cleanup may already have removed files; cancellation does not roll back or retry.' })
+    }
+    const capability = grant.capabilities?.capabilities?.storage
+    if (capability?.schema !== 'framivra.storage/v1' || capability.request_stdin !== true || !['inspect', 'plan', 'clean'].every(op => capability.operations?.includes(op))) fail('STORAGE_UNSUPPORTED', 'Installed core lacks storage/v1; ordinary timeline reads remain available', 422)
+    if (grant.storage || storageOwners.has(grant)) fail('STORAGE_BUSY', 'Wait for this project storage scan and managed cleanup', 409)
+    if (semanticAdmission || frameOwners.size || reader.semanticBusy || grant.running || grant.plan || grant.outcomeUnknown || agent.hasLive(grant)) fail('WRITE_BUSY', 'Resolve local rendering, semantic writes and proposals before storage operations. External writers must be manually stopped.', 409)
+    const operation = data.op.slice('storage-'.length)
+    let frozen
+    if (operation === 'clean') {
+      if (data.confirm !== 'stopped-writers-and-cleanup') fail('STORAGE_CONFIRMATION', 'Independently confirm stopped external writers and cleanup', 403)
+      frozen = grant.storagePlan
+      if (!frozen || frozen.token !== data.planToken || clock() >= frozen.expiresAt || frozen.version !== grant.contentVersion) { grant.storagePlan = undefined; fail('STORAGE_PLAN_INVALID', 'Storage plan expired or changed; explicitly request a new plan', 409) }
+      grant.storagePlan = undefined // Single use, including every validation/spawn failure.
+    }
+    if (operation === 'plan') grant.storagePlan = undefined
+    const controller = new AbortController()
+    grant.storage = controller
+    storageOwners.add(grant) // Synchronous admission before any async validation.
+    semanticAdmission++
+    const epoch = grant.storageEpoch ?? 0
+    let settled, mutating = false
+    grant.storageDone = new Promise(resolve => { settled = resolve })
+    const combined = AbortSignal.any([signal, controller.signal])
+    const monitor = setInterval(() => {
+      try {
+        if (clock() >= grant.expiresAt || ctx.sessions.get(data.sessionId) !== grant.session || ctx.workingDirectory.get(grant.session) !== grant.cwd || !configCurrent(grant)) controller.abort()
+      } catch { controller.abort() }
+    }, 50)
+    monitor.unref?.()
+    const validate = async () => {
+      combined.throwIfAborted()
+      grantFor(data.sessionId, data.grant)
+      const timeline = await validateTimeline(grant, combined)
+      const project = await localTarget(grant.projectPath, undefined, combined)
+      if (project.targetKey !== grant.project.targetKey || (await ctx.fs.stat(project, combined))?.type !== 'directory') fail('PATH_CHANGED', 'Project identity changed; reopen', 409)
+      const executable = await localTarget(grant.executable, undefined, combined)
+      const info = await ctx.fs.stat(executable, combined)
+      if (executable.targetKey !== grant.executableTarget.targetKey || info?.type !== 'file' || info.version !== grant.executableVersion || ctx.fs.contains(grant.root, executable)) fail('EXECUTABLE_CHANGED', 'Installed executable identity changed; reopen', 409)
+      grantFor(data.sessionId, data.grant)
+      return ctx.fs.processPath(timeline)
+    }
+    try {
+      const path = await validate()
+      if (operation === 'clean') {
+        const current = await reader.read(grant.executable, path, 'inspect', undefined, combined, grant.configSnapshot, grant.id)
+        if (current.content_version !== frozen.version) { grant.contentVersion = current.content_version; fail('STORAGE_PLAN_INVALID', 'Saved timeline changed; refresh and request a new storage plan', 409) }
+        await validate()
+        if (clock() >= frozen.expiresAt || (grant.storageEpoch ?? 0) !== epoch) fail('STORAGE_PLAN_INVALID', 'Storage plan expired or preview reopened before cleanup; explicitly plan again', 409)
+      }
+      const request = operation === 'clean' ? { plan_id: frozen.id, content_version: frozen.version, confirm: 'stopped-writers-and-cleanup' } : undefined
+      mutating = operation === 'clean'
+      const result = await reader.storage(grant.executable, path, operation, request, combined, grant.configSnapshot, grant.id)
+      await validate()
+      combined.throwIfAborted()
+      if (result.content_version !== grant.contentVersion) {
+        grant.storagePlan = undefined
+        if (result.ok) fail('STORAGE_PLAN_INVALID', 'Timeline changed; refresh before storage planning', 409)
+      }
+      if (operation === 'plan' && result.ok) {
+        if ((grant.storageEpoch ?? 0) !== epoch) fail('STORAGE_PLAN_INVALID', 'Preview reopened or changed while planning; explicitly plan again', 409)
+        const token = randomUUID()
+        const plan = Object.freeze({ ...result.plan, entries: Object.freeze(result.plan.entries.map(entry => Object.freeze({ ...entry }))) })
+        grant.storagePlan = Object.freeze({ token, id: plan.id, plan, version: result.content_version, expiresAt: clock() + 60_000 })
+        return json({ ...result, planToken: token, expires_in_ms: 60_000 })
+      }
+      return json(result)
+    } catch (error) {
+      if (mutating) return json({ ok: false, schema: 'framivra.storage/v1', operation: 'clean', content_version: frozen.version, code: 'outcome_unknown', outcome_unknown: true,
+        diagnostics: [{ code: error.code ?? error.name, message: 'Cleanup interrupted or result unavailable; files may have been removed. Never retry this token. Inspect and explicitly plan again after stopping external writers.' }] })
+      throw error
+    } finally {
+      clearInterval(monitor)
+      semanticAdmission--
+      grant.storage = undefined
+      if (!reader.activeFor(grant.id, 'storage-read') && !reader.activeFor(grant.id, 'storage-clean')) storageOwners.delete(grant)
+      settled()
+    }
+  }
   async function writeCapabilities(grant, signal) {
-    if (process.platform !== 'linux') fail('WRITE_UNSUPPORTED', 'Semantic writes are verified only on the local Linux backend', 422)
+    if (!['linux', 'darwin'].includes(process.platform)) fail('WRITE_UNSUPPORTED', 'Semantic writes require a supported local Linux or macOS backend', 422)
     const capabilities = await reader.store(grant.executable, ctx.fs.processPath(grant.timeline), 'capabilities', undefined, signal, grant.configSnapshot, grant.id)
+    if (process.platform === 'darwin' && capabilities.platform_support?.darwin !== true) fail('WRITE_UNSUPPORTED', 'Installed vtx lacks macOS-safe timeline locking and path identity; update the core before authorizing writes.', 422)
     if (!capabilities.ok || !capabilities.operations?.includes('edit') || !capabilities.edit?.operations?.length) fail('WRITE_UNSUPPORTED', 'Installed vtx does not advertise semantic edit/plan', 422)
     const transport = capabilities.request_transport?.stdin
     if (transport?.flag !== '--request-stdin' || transport.max_bytes !== 8388608) fail('WRITE_UNSUPPORTED', 'Installed vtx lacks the official bounded --request-stdin transport; read/copy remain available. Reopening /dev/stdin is not a supported fallback.', 422)
@@ -414,10 +513,12 @@ export function createPreviewHost(ctx, config = {}) {
   }
   // readOnlyPlan is private host authority, never a browser/model input field.
   async function editControl(data, grant, signal, readOnlyPlan = false, cleanup = false) {
+    if (['plan', 'commit', 'adopt', 'undo', 'recover'].includes(data.op)) grant.storagePlan = undefined
+    if (storageOwners.size && !['revoke-write', 'invalidate-plan', 'cancel-write'].includes(data.op)) fail('STORAGE_BUSY', 'Wait for storage process cleanup before semantic operations', 409)
     if (readOnlyPlan && data.op !== 'plan') fail('WRITE_DENIED', 'Model authority is restricted to zero-write planning', 403)
     await validateTimeline(grant, signal, cleanup)
     grantFor(data.sessionId, data.grant, cleanup)
-    if (data.op === 'revoke-write') { revoke(grant); await Promise.all([grant.runningDone, grant.frameDone]); return json({ ok: true }) }
+    if (data.op === 'revoke-write') { revoke(grant); await Promise.all([grant.runningDone, grant.frameDone, grant.storageDone]); return json({ ok: true }) }
     // Revoking a frozen plan is host bookkeeping, not permission to spawn or write.
     // cancel-write IS the explicit store-child cancel: it must never be gated
     // by a stuck semanticBusy (a failed cleanup), or the retry path wedges.
@@ -523,13 +624,13 @@ export function createPreviewHost(ctx, config = {}) {
   async function frame(request, note = {}) {
     if (request.method !== 'POST') fail('METHOD_NOT_ALLOWED', 'Frame is POST-only', 405)
     const hold = lease(request)
-    let grant, controller, settled, monitor, expiry
+    let grant, controller, settled, monitor, expiry, queued
     try {
       let text
       try { text = await boundedText(request, FRAME_REQUEST_LIMIT, hold.signal) }
       catch (error) { if (error.message?.startsWith('BODY_LIMIT:')) fail('REQUEST_TOO_LARGE', error.message, 413); throw error }
       const data = parseJSON(text)
-      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['op', 'sessionId', 'grant', 'frame', 'contentVersion', 'renderConsent', 'operationId'].includes(key))) fail('BAD_FRAME', 'Only the bounded frame operation fields are accepted')
+      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['op', 'sessionId', 'grant', 'frame', 'contentVersion', 'renderConsent', 'operationId', 'prepareGfx', 'htmlTrust'].includes(key))) fail('BAD_FRAME', 'Only the bounded frame operation fields are accepted')
       if (typeof data.op === 'string') note.op = data.op
       grant = grantFor(data.sessionId, data.grant, data.op === 'cancel')
       if (data.op === 'cancel') {
@@ -543,20 +644,30 @@ export function createPreviewHost(ctx, config = {}) {
         frameOwners.delete(grant)
         return json({ ok: true, reaped: true })
       }
-      if (data.op !== 'render' || data.renderConsent !== 'cache/preview-only' || !/^[a-f0-9-]{36}$/.test(data.operationId)) fail('RENDER_DENIED', 'A fresh explicit preview-cache write consent is required', 403)
+      if (data.op !== 'render' || data.renderConsent !== 'cache/preview-only' || typeof data.operationId !== 'string' || !/^[a-f0-9-]{36}$/.test(data.operationId)) fail('RENDER_DENIED', 'A fresh explicit preview-cache write consent is required', 403)
       if (!Number.isSafeInteger(data.frame) || data.frame < 0 || data.contentVersion !== grant.contentVersion || !/^sha256:[a-f0-9]{64}$/.test(data.contentVersion)) fail('STALE_FRAME', 'Use an exact saved version and pinned integer frame', 409)
+      const options = Object.hasOwn(data, 'prepareGfx') || Object.hasOwn(data, 'htmlTrust') ? Object.fromEntries(['prepareGfx', 'htmlTrust'].filter(key => Object.hasOwn(data, key)).map(key => [key, data[key]])) : undefined
+      prepareGfxArgs(options) // Validate exact types/combinations before admission or spawning.
       if (!inlineCapable(grant.capabilities)) fail('FRAME_UNSUPPORTED', 'Installed core must actually advertise --include-png; no path fallback', 422)
+      if (options?.prepareGfx === true && !prepareGfxCapable(grant.capabilities)) fail('FRAME_UNSUPPORTED', 'Installed core must advertise current-composite preview-only graphics preparation', 422)
       if (semanticAdmission || grant.running || grant.outcomeUnknown || grant.plan || agent.hasLive(grant)) fail('WRITE_BUSY', 'Resolve the active/unknown write or pending plan and refresh before a frame', 409)
-      if (frameOwners.size || grant.frame || reader.active.size) fail('FRAME_BUSY', 'Previous process ownership has not been reaped', 409)
+      if (grant.frame || (!frameQueue.length && (frameOwners.size || reader.active.size))) fail('FRAME_BUSY', 'Previous process ownership has not been reaped; cancel it explicitly', 409)
+      if (frameQueue.length >= 5) fail('FRAME_QUEUE_FULL', 'At most four explicit frame clicks may wait; no automatic retry', 429)
       grant.frameNonces ??= new Set()
       if (grant.frameNonces.has(data.operationId)) fail('FRAME_REPLAY', 'A render click is single-use; no automatic retry', 409)
       if (grant.frameNonces.size >= 128) fail('FRAME_LIMIT', 'Reopen this preview before more captures', 429)
       grant.frameNonces.add(data.operationId)
+      grant.storagePlan = undefined
       controller = new AbortController()
       grant.frame = controller // Synchronous admission: held until actual done + waitForExit.
       frameOwners.add(grant)
       grant.frameDone = new Promise(resolve => { settled = resolve })
       const signal = AbortSignal.any([hold.signal, controller.signal])
+      let start
+      const turn = new Promise(resolve => { start = resolve })
+      queued = { start, grant }
+      frameQueue.push(queued)
+      if (frameQueue.length === 1) start()
       monitor = setInterval(() => {
         // Same fail-closed rule as the edit monitor: a throwing provider must
         // abort this frame, never escape as an uncaught timer exception.
@@ -579,8 +690,20 @@ export function createPreviewHost(ctx, config = {}) {
         signal.throwIfAborted()
         return ctx.fs.processPath(timeline)
       }
+      // Waiting consumes the SAME request lease; no polling, retries or
+      // deadline extension. Abort removes only this entry in finally.
+      await new Promise((resolve, reject) => {
+        const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason) }
+        signal.addEventListener('abort', abort, { once: true })
+        turn.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+        if (signal.aborted) abort()
+      })
+      signal.throwIfAborted()
+      // Predecessor cleanup is complete, but failed cleanup or an unrelated
+      // read may still own a child. Refuse once, never wait/retry behind it.
+      if (reader.active.size || [...frameOwners].some(owner => owner !== grant && !frameQueue.some(entry => entry.grant === owner))) fail('FRAME_BUSY', 'Previous process ownership has not been reaped', 409)
       const path = await validate()
-      const result = await reader.frame(grant.executable, path, data.frame, data.contentVersion, signal, grant.configSnapshot, grant.id)
+      const result = await reader.frame(grant.executable, path, data.frame, data.contentVersion, signal, grant.configSnapshot, grant.id, options)
       await validate()
       signal.throwIfAborted()
       // Exact whole response bound INCLUDING final newline; image.path is never resolved/read.
@@ -597,6 +720,11 @@ export function createPreviewHost(ctx, config = {}) {
         // semanticBusy) and reap(owner) semantics are unchanged elsewhere.
         if (!reader.activeFor(grant.id, 'frame') && grant.frame === controller) { grant.frame = undefined; frameOwners.delete(grant) }
         settled()
+        const index = frameQueue.indexOf(queued)
+        if (index >= 0) {
+          frameQueue.splice(index, 1)
+          if (index === 0) frameQueue[0]?.start()
+        }
       }
       hold.release()
     }
@@ -663,6 +791,7 @@ export function createPreviewHost(ctx, config = {}) {
     }
   }
   async function internalControl(session, data, signal) {
+    if (typeof data.op === 'string' && data.op.startsWith('storage-')) fail('STORAGE_DENIED', 'Storage authority is owner-only, never model tools', 403)
     if (data.op === 'close') {
       // Private cleanup authority is the exact Session object that opened this grant.
       // It must still release its own resources after the Session/cwd has disappeared.
@@ -670,7 +799,7 @@ export function createPreviewHost(ctx, config = {}) {
       if (!grant) return { ok: true }
       if (grant.session !== session) fail('BAD_GRANT', 'Cannot close another Session preview', 403)
       revoke(grant); grants.delete(data.grant)
-      await Promise.all([grant.runningDone, grant.frameDone])
+      await Promise.all([grant.runningDone, grant.frameDone, grant.storageDone])
       return { ok: true }
     }
     return decodeControl(await control(new Request('http://owner/api/framivra/control', { method: 'POST', signal,

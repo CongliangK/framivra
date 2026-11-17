@@ -119,10 +119,11 @@ print(json.dumps({'incoming': incoming, 'ignored': ignored}, ensure_ascii=True))
   $prev = $ErrorActionPreference
   $ErrorActionPreference = 'SilentlyContinue'
   try {
-    # 原生命令无法启动时 LASTEXITCODE 可保留上次的 0,不得当空枚举成功。
-    $LASTEXITCODE = $null
+    # 原生命令更新全局 LASTEXITCODE；局部同名变量会遮蔽实际退出码。
+    # 无法启动时可保留上次的 0，故须重置并读取同一全局槽，空值仍拒绝。
+    $global:LASTEXITCODE = $null
     $pathJson = & $py[0] $collisionArgs -c $collisionCode $Dir $TargetRef 2>$null
-    $probeCode = $LASTEXITCODE
+    $probeCode = $global:LASTEXITCODE
   } finally { $ErrorActionPreference = $prev }
   if ($null -eq $probeCode -or $probeCode -ne 0 -or -not $pathJson) { throw '[bootstrap] ignored 碰撞预检失败(路径枚举;fail-closed),拒绝自动更新。' }
   $paths = $pathJson | ConvertFrom-Json -ErrorAction Stop

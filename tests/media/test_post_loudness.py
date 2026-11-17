@@ -142,7 +142,7 @@ class TestAudioDigestStreaming(unittest.TestCase):
             stream.writeframes(b'\0' * self.frames * self.samples_per_frame * 4)
         self.expected = hashlib.sha256(self.source.read_bytes()).hexdigest()
         self.c = SimpleNamespace(
-            out=self.out, dry=False, dur=self.frames, spf_samples=self.samples_per_frame,
+            out=self.out, dry=False, dur=self.frames, fps=30, spf_samples=self.samples_per_frame,
             tl={'audio_tracks': []}, receipt=mock.Mock(),
             run=mock.Mock(return_value=self._measurement()))
 

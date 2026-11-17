@@ -10,7 +10,7 @@
     --i-know-this-nukes-everything 显式危险旗标（见 vtx/cli/commands.py）。
   - 回收只由显式命令或预算门触发，无后台守护、无静默删除。
 """
-import fnmatch, hashlib, itertools, json, os, re, shutil, time, stat, secrets
+import fnmatch, hashlib, heapq, itertools, json, os, re, shutil, time, stat, secrets
 from pathlib import Path
 
 from ..runtime import fstxn
@@ -260,7 +260,8 @@ def gfx_key(c, cl) -> str:
     environment = environment_identity(c)
     if environment:
         blob += b"|environment:" + environment.encode()
-    return _sha1(blob + f"|{c.fps}|{c.w}x{c.h}|{cl['dur']}".encode())
+    from ..pipeline.constraints import fps_expression
+    return _sha1(blob + f"|{fps_expression(c.fps)}|{c.w}x{c.h}|{cl['dur']}".encode())
 
 
 
@@ -324,13 +325,14 @@ def seg_key(c, cl, ti: int, ci: int, windowed: bool, need_alpha: bool, encoder: 
     src = c.src_path(cl["src"])
     # Bind decoding to the same first video stream used by Ctx.probe. Legacy
     # auto-selected (default/largest) streams can differ even for opaque clips.
+    from ..pipeline.constraints import fps_expression
     spec = ["seg:decode-v0-alpha-v2", _fp(src), str(cl["src_in"]), str(cl["src_out"]), str(cl["dur"]),
             repr(cl.get("scale")), repr(cl.get("x")), repr(cl.get("y")),
             repr(cl.get("opacity")), repr(cl.get("fade_in_frames")),
             repr(cl.get("fade_out_frames")),
             "win" if windowed else "full", "alpha" if need_alpha else "opaque",
             encoder,
-            f"{c.fps}|{c.w}x{c.h}"]
+            f"{fps_expression(c.fps)}|{c.w}x{c.h}"]
     # Full-frame normalization now centers wide inputs horizontally too. Old
     # left-cropped segs have valid media certificates but the wrong pixels;
     # invalidate only this path, leaving explicit window geometry unchanged.
@@ -789,9 +791,15 @@ def df(c, quiet: bool = False):
             P(f"  {x.name:24s} {gb(s):>10s}"); tout += s
     P(f"  out 合计 {gb(tout)}")
     total = tcache + tout
+    # audit consumes only totals. Do not traverse the tree again for invisible
+    # diagnostics, or read the ledger just to discard its diagnostic text.
+    if quiet:
+        return {"cache": tcache, "out": tout, "total": total}
     P(f"总计 {gb(total)}")
-    files = sorted(c.cache.rglob("*"), key=lambda p: p.stat().st_size if p.is_file() else 0,
-                   reverse=True)[:20]
+    # Keep only the selected candidates instead of materializing/sorting every
+    # cache path. nlargest preserves sorted(..., reverse=True) tie order.
+    files = heapq.nlargest(20, c.cache.rglob("*"),
+                          key=lambda p: p.stat().st_size if p.is_file() else 0)
     P("== top-20 大文件（cache）==")
     for p in files:
         if p.is_file(): P(f"  {gb(p.stat().st_size):>10s}  {p.relative_to(c.root)}")

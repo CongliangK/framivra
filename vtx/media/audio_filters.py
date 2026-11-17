@@ -5,6 +5,8 @@ selection. No source resolution, plugin transforms, loudness gain, limiting,
 or output orchestration belongs here: consumers retain their own graphs.
 """
 
+from ..pipeline.constraints import frame_sample
+
 
 def duck_track_indices(tracks, present):
     """Return active ducks and exact key-index groups mapped to their targets.
@@ -52,8 +54,8 @@ def track_mix(c, labels, out):
     """Mix nonempty event labels and pad one track on the shared sample grid."""
     head = (labels[0] if len(labels) == 1 else
             f"{''.join(labels)}amix=inputs={len(labels)}:duration=longest:normalize=0,")
-    return (f"{head}apad=whole_len={c.dur*c.spf_samples},"
-            f"atrim=end_sample={c.dur*c.spf_samples},asetpts=PTS-STARTPTS{out}")
+    return (f"{head}apad=whole_len={frame_sample(c.dur, c.fps)},"
+            f"atrim=end_sample={frame_sample(c.dur, c.fps)},asetpts=PTS-STARTPTS{out}")
 
 
 def duck_chains(c, signal, key, out, *, threshold, ratio, attack, release, makeup):
@@ -67,7 +69,7 @@ def duck_chains(c, signal, key, out, *, threshold, ratio, attack, release, makeu
     return [f"{signal}apad{padded_signal}", f"{key}apad{padded_key}",
             f"{padded_signal}{padded_key}sidechaincompress=threshold={threshold}:ratio={ratio}:"
             f"attack={attack}:release={release}:makeup={makeup},"
-            f"atrim=end_sample={c.dur*c.spf_samples}{out}"]
+            f"atrim=end_sample={frame_sample(c.dur, c.fps)}{out}"]
 
 
 def event_chain(c, k, e, *, require_volume=True):
@@ -77,7 +79,19 @@ def event_chain(c, k, e, *, require_volume=True):
     # duck-static 插件已在上游切段时钳制，此处兜底手写 timeline 的同类错）
     fi = min(e["fade_in_frames"], dur) if e.get("fade_in_frames") else 0
     fo = min(e["fade_out_frames"], dur) if e.get("fade_out_frames") else 0
-    fl = [f"atrim=start_sample={sin*c.spf_samples}:end_sample={(sin+dur)*c.spf_samples}", "asetpts=PTS-STARTPTS"]
+    delay = frame_sample(e['in'], c.fps)
+    length = frame_sample(e['out'], c.fps) - delay
+    # Quantize one source->timeline offset, not each block's source endpoint
+    # independently. Adjacent split events share this shift and therefore read
+    # contiguous samples even when NTSC frame boundaries alternate in length.
+    shift = frame_sample(e['in'] - sin, c.fps)
+    start = delay - shift
+    end = start + length
+    fl = [f"atrim=start_sample={start}:end_sample={end}", "asetpts=PTS-STARTPTS"]
+    # The mapped endpoint can request one extra sample at a true source EOF.
+    # Interior cuts read that sample from the source, never insert silence.
+    if end > frame_sample(sin + dur, c.fps):
+        fl += [f"apad=whole_len={length}", f"atrim=end_sample={length}"]
     volume = e["volume"] if require_volume else e.get("volume", 1)
     fl.append(f"volume={volume}")
     if e.get("pan"):
@@ -88,5 +102,5 @@ def event_chain(c, k, e, *, require_volume=True):
         fl.append(f"afade=t=out:st={(dur-fo)*c.spf:.6f}:d={fo*c.spf:.6f}")
     # Decimal milliseconds truncate frame 1 at 30fps to 1599 samples, not 1600.
     # Use the same exact sample grid as atrim for every event start.
-    fl.append(f"adelay=delays={e['in']*c.spf_samples}S:all=1")
+    fl.append(f"adelay=delays={delay}S:all=1")
     return f"[{k}:a]" + ",".join(fl) + f"[e{k}]"

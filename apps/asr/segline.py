@@ -114,6 +114,11 @@ def build_subtitles(words, fps=30, limit=18, rate_cap=9.0, min_dur=18, gap=2,
     返回 subs: [{"in": 帧整数, "out": 帧整数, "text": 行文本}, ...] 按 in 升序；
     summary: {"n_lines", "n_chars", "max_rate", "max_width", "rates", "warnings"}。
     """
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from vtx.pipeline.constraints import parse_fps
+    fps = float(parse_fps(fps))
     warnings = []
     tokens = [(w["w"], float(w["s"]), float(w["e"])) for w in words]
     tokens = textnorm.normalize_stream(tokens, remove_fillers=remove_fillers)
@@ -216,7 +221,10 @@ if __name__ == "__main__":
     import json
     import sys
     ap = argparse.ArgumentParser(description="words[] → subtitles[]（stdin json 入，stdout json 出）")
-    ap.add_argument("--fps", type=int, default=30)
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from vtx.pipeline.constraints import parse_fps
+    ap.add_argument("--fps", type=lambda value: float(parse_fps(float(value) if '/' not in value else value)), default=30)
     ap.add_argument("--limit", type=int, default=18)
     ap.add_argument("--rate-cap", type=float, default=9.0)
     ap.add_argument("--min-dur", type=int, default=18, help="最短时长（帧）")

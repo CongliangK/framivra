@@ -54,7 +54,7 @@ test('monitor chrome and diagnostics follow the host while output canvas remains
   assert.equal(code.background, 'var(--fv-bg)')
   assert(code.font.includes('--ds-font-family-code'))
   assert.equal(declarations(workbenchCSS, '.fv-workbench [role=alert]').color, 'var(--dsw-alias-state-error-primary,#f0bc91)')
-  assert.equal(declarations(workbenchCSS, '.fv-output video').background, 'rgb(8, 10, 12)')
+  assert.equal(declarations(workbenchCSS, '.fv-program-stage video').background, 'rgb(0, 0, 0)')
   const tip = declarations(iconControlCSS, '.fv-icon-tooltip[popover]')
   assert.equal(tip.background, 'var(--dsw-alias-tooltip-bg,#2b2e35)')
   assert.equal(tip.color, 'var(--dsw-alias-toast-label,#eceef2)')

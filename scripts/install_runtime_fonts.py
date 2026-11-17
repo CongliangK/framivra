@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Install pinned non-AI runtime fonts and their notices, without administrator rights.
 
-Writes root/fonts and platform user fonts only; never edits system fontconfig or
-replaces a different existing file. Linux callers MUST propagate the returned
+Writes managed fonts, the verified resume cache and platform user fonts only;
+never edits system fontconfig or replaces a different existing file. Linux callers MUST propagate the returned
 FONTCONFIG_FILE to every browser/FFmpeg/fontconfig child. Native macOS/Windows
 registration has contract tests, not Linux-hosted physical-platform validation.
 """
@@ -21,9 +21,10 @@ import urllib.request
 from xml.sax.saxutils import escape
 
 if __package__:
-    from . import demo_fonts
+    from . import demo_fonts, install_downloads
 else:
     import demo_fonts
+    import install_downloads
 
 FontError = demo_fonts.FontError
 MAX_BYTES = demo_fonts.MAX_FONT_BYTES
@@ -114,17 +115,45 @@ class PinnedRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def download(source):
+def candidates(source, network='cn'):
+    """Transport choices only; SOURCES and installed manifest keep canonical URLs."""
+    if network not in ('cn', 'official'):
+        raise FontError('network must be cn or official')
     url = urllib.parse.urlsplit(source['url'])
-    if url.scheme != 'https' or url.netloc != 'raw.githubusercontent.com':
+    if 'package_sha256' in source:
+        if not source['url'].startswith('https://deb.debian.org/debian/pool/'):
+            raise FontError('unexpected pinned Debian font origin')
+        if network == 'cn':
+            return [host + url.path for host in ('https://mirrors.tuna.tsinghua.edu.cn',
+                                                'https://mirrors.ustc.edu.cn')] + [source['url']]
+    elif url.scheme != 'https' or url.netloc != 'raw.githubusercontent.com':
         raise FontError('unexpected pinned font origin')
-    # The default ProxyHandler honors the caller's existing proxy environment.
-    opener = urllib.request.build_opener(PinnedRedirect())
-    request = urllib.request.Request(source['url'], headers={'User-Agent': 'Framivra-runtime-fonts/1'})
-    with opener.open(request, timeout=60) as response:
-        if response.geturl() != source['url']:
-            raise FontError('unexpected final pinned font URL')
-        return checked(response.read(source['size'] + 1), source)
+    return [source['url']]
+
+
+def download(source, *, cache, network='cn'):
+    """Use the common verified Range cache, then recheck bounded bytes locally."""
+    package = 'package_sha256' in source
+    size = source['package_size'] if package else source['size']
+    sha256 = source['package_sha256'] if package else source['sha256']
+    limit = demo_fonts.MAX_TAR_BYTES if package else MAX_BYTES
+    if not isinstance(size, int) or not 0 < size <= limit:
+        raise FontError('pinned font download size is out of bounds')
+    urls = candidates(source, network)
+    name = (urllib.parse.unquote(urllib.parse.urlsplit(source['url']).path.rsplit('/', 1)[-1])
+            if package else source['filename'])
+    try:
+        path = install_downloads.acquire(cache, urls, sha256, size=size, filename=name)
+        path = physical(path)
+        if not path.is_file() or path.stat().st_size != size:
+            raise FontError('font/package size or SHA256 mismatch: ' + source['filename'])
+        with path.open('rb') as stream:
+            data = stream.read(size + 1)
+    except install_downloads.DownloadError as error:
+        raise FontError('pinned font acquisition failed: ' + str(error)) from error
+    if len(data) != size or hashlib.sha256(data).hexdigest() != sha256:
+        raise FontError('font/package size or SHA256 mismatch: ' + source['filename'])
+    return data if package else checked(data, source)
 
 
 def user_font_directory(system, home, environment):
@@ -153,7 +182,7 @@ def local_candidates(source, user_fonts, home):
         yield directory / name
 
 
-def acquire(directory, sources, user_fonts, home):
+def acquire(directory, sources, user_fonts, home, *, cache, network='cn'):
     result, missing = {}, []
     for source in sources:
         name = source['filename']
@@ -173,12 +202,12 @@ def acquire(directory, sources, user_fonts, home):
     for url in dict.fromkeys(s['url'] for s in missing if 'package_sha256' in s):
         group = [s for s in missing if s['url'] == url]
         # Reuse bounded ar/xz/tar parsing and both package/member SHA checks.
-        package = demo_fonts._download(group[0])
+        package = download(group[0], cache=cache, network=network)
         result.update(demo_fonts._extract(package, group))
     for source in missing:
         name = source['filename']
         if name not in result:
-            result[name] = download(source)
+            result[name] = download(source, cache=cache, network=network)
         checked(result[name], source)
     return result
 
@@ -238,7 +267,9 @@ def register_windows(paths):
             raise FontError('Windows WM_FONTCHANGE notification failed')
 
 
-def install(root, *, system=None, home=None, environment=None):
+def install(root, *, system=None, home=None, environment=None, network='cn'):
+    if network not in ('cn', 'official'):
+        raise FontError('network must be cn or official')
     system = system or sys.platform
     home = Path.home() if home is None else Path(home)
     environment = dict(os.environ if environment is None else environment)
@@ -257,7 +288,8 @@ def install(root, *, system=None, home=None, environment=None):
         # A conflicting user destination is an error, never a local-source miss.
         if user_fonts:
             existing(user_fonts / source['filename'], source)
-    blobs = acquire(directory, sources, user_fonts, home)
+    blobs = acquire(directory, sources, user_fonts, home,
+                    cache=physical(root / 'cache' / 'downloads'), network=network)
     for source in sources:
         keep(directory / source['filename'], blobs[source['filename']])
     child_environment = {}
@@ -290,9 +322,10 @@ def install(root, *, system=None, home=None, environment=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True)
+    parser.add_argument('--network', choices=('cn', 'official'), default='cn')
     args = parser.parse_args(argv)
     try:
-        report = install(args.root)
+        report = install(args.root, network=args.network)
     except (FontError, OSError, ValueError, subprocess.SubprocessError) as error:
         print(json.dumps(dict(ok=False, error=str(error)), ensure_ascii=False), file=sys.stderr)
         return 1

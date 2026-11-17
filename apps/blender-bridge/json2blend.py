@@ -50,7 +50,10 @@ _timeline_bytes = tl_path.read_bytes()
 tl = json.loads(_timeline_bytes)
 base = tl_path.parent
 P = tl["project"]
-W, H, FPS, DUR = P["width"], P["height"], P["fps"], P["duration_frames"]
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from vtx.pipeline.constraints import parse_fps
+FRAME_RATE = parse_fps(P["fps"])
+W, H, FPS, DUR = P["width"], P["height"], float(FRAME_RATE), P["duration_frames"]
 SRC = {s["id"]: (base / s["path"]).resolve() for s in tl["sources"]}
 
 
@@ -79,8 +82,9 @@ if "Video Editing" not in {w.name for w in bpy.data.workspaces} and _VE_TPL.is_f
 
 # ---------- 场景 ----------
 sc = bpy.context.scene
-sc.render.fps = FPS
-sc.render.fps_base = 1.0
+# Blender stores an integer rate plus a base, e.g. 30 / 1.001.
+sc.render.fps = round(FPS)
+sc.render.fps_base = sc.render.fps / FPS
 sc.render.resolution_x, sc.render.resolution_y, sc.render.resolution_percentage = W, H, 100
 sc.frame_start, sc.frame_end = 0, DUR - 1
 sc.view_settings.view_transform, sc.view_settings.look = "Standard", "None"

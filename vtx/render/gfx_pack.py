@@ -131,8 +131,8 @@ def _path(path, root=None):
 
 
 def _capability():
-    if sys.platform != 'linux' or fstxn.write_capability() != 'fd-anchored':
-        raise GfxPackError('gfx packs require Linux fd-anchored I/O')
+    if sys.platform not in ('linux', 'darwin') or not fstxn.directory_write_capability():
+        raise GfxPackError('gfx packs require supported directory-anchored I/O')
 
 
 def _version(info):
@@ -209,8 +209,10 @@ def pack_page(directory, target, *, expected_record, max_frame_bytes=None,
     if _canonical(_json(complete)) != canonical:
         raise GfxPackError('source completion differs from trusted expected record')
     source_bytes = 0
-    with fstxn.locked_write(target, root=root) as temporary:
-        with temporary.open('wb') as output:
+    with contextlib.ExitStack() as transaction:
+        # Close the stream before the source recheck, but publish only after it.
+        output = transaction.enter_context(fstxn.locked_stream(target, root=root))
+        with contextlib.closing(output):
             output.write(_MAGIC)
             def flush():
                 if not pending:
@@ -475,15 +477,17 @@ def read_frame(pack, index, *, expected_record, max_frame_bytes=None, root=None)
 
 
 def _rename_new(parent, source, target, *, destination=None):
-    # Linux atomic no-replace: unlike rename(), cannot clobber a raced empty dir.
+    # Native atomic no-replace: cannot clobber a raced empty dir.
+    # Darwin sys/stdio.h: RENAME_EXCL=4; Linux renameat2: RENAME_NOREPLACE=1.
     libc = ctypes.CDLL(None, use_errno=True)
-    rename = getattr(libc, 'renameat2', None)
+    darwin = sys.platform == 'darwin'
+    rename = getattr(libc, 'renameatx_np' if darwin else 'renameat2', None)
     if rename is None:
         raise GfxPackError('atomic directory no-replace is unsupported')
     rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
     rename.restype = ctypes.c_int
     if rename(parent, os.fsencode(source), parent if destination is None else destination,
-              os.fsencode(target), 1) != 0:
+              os.fsencode(target), 4 if darwin else 1) != 0:
         error = ctypes.get_errno()
         raise OSError(error, os.strerror(error), target)
 

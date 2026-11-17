@@ -11,6 +11,7 @@ from pathlib import Path
 from ..cache.hygiene import (audio_key, manifest_record, rotate_history, versions_check,
                      versions_record)
 from .infra import Ctx, run_parallel
+from .constraints import frame_sample
 from ..runtime.diagnostics import (emit, key_path, subtitle_location, required_field, indexed,
                           source_structure, mark_handled, operation)
 from ..runtime import fstxn
@@ -311,10 +312,19 @@ def _validate(c: Ctx, *, plugin_hooks=True, reporting=True):
     # 解析失败（infra.Ctx 构造期记入，语义裁定见 vtx/media/subtitles_src.py 模块头）。
     for e in getattr(c, "subtitles_errors", []):
         err(e, "$.subtitles_src", 'validate.subtitle_source', None, None)
+    from .composite import subtitle_timing_error
     for si, s in indexed(c, field(c.tl, "subtitles", "$"), "$.subtitles"):
         observed.clear()
         subpath, subsource = subtitle_location(c, si)
         if not (native(subpath, lambda: 0 <= field(s, 'in', subpath) < field(s, 'out', subpath) <= c.dur, 'comparison', paths=[key_path(subpath, 'in'), key_path(subpath, 'out'), '$.project.duration_frames'], source=subsource)): err(f"字幕区间非法: {native(subpath, lambda: field(s, 'text', subpath)[:10], 'native operation', paths=[key_path(subpath, 'text')], source=subsource)}", subpath, 'validate.subtitle_bounds', {'start': observed.get(key_path(subpath, 'in'), {'status': 'not_observed'}), 'end': observed.get(key_path(subpath, 'out'), {'status': 'not_observed'}), 'unit': 'frames'}, {'min': 0, 'max': c.dur, 'start_before_end': True, 'unit': 'frames'}, subsource)
+        # Preserve legacy interval failure order and permissive text handling;
+        # this gate rejects timed overrides, not missing/non-string text.
+        if c.fps > 50:
+            text = native(subpath, lambda: s.get('text'), 's.get', source=subsource)
+            timing_problem = subtitle_timing_error(text, c.fps)
+            if timing_problem:
+                err(timing_problem, subpath + '.text', 'validate.subtitle_timed_override',
+                    {'fps': c.fps}, {'timed_ass_max_fps': 50}, subsource)
     for ti, tr in indexed(c, field(c.tl, "audio_tracks", "$"), "$.audio_tracks"):
         ap = f"$.audio_tracks[{ti}]"
         # 容器与必填键防御（P6 修复 B-P2-3）：schema 声明 events[].volume 等必填
@@ -656,7 +666,7 @@ def _audio_graph(c: Ctx, win=None, margin_frames: int = 60):
         # A valid preview may lie wholly in a silent gap. With no inputs amix
         # is invalid; synthesize only the exact window, without changing the
         # full-project path or its terminal loudness checks.
-        silence = (f"anullsrc=r=48000:cl=stereo,atrim=end_sample={(fb-fa)*c.spf_samples},"
+        silence = (f"anullsrc=r=48000:cl=stereo,atrim=end_sample={frame_sample(fb, c.fps)-frame_sample(fa, c.fps)},"
                    "asetpts=PTS-STARTPTS")
         return cmd, [silence], 0, False
     for ti, tr, e in evs:
@@ -702,9 +712,9 @@ def _audio_graph(c: Ctx, win=None, margin_frames: int = 60):
         print("⚠ duck 声明无效：找不到 duck_by 指向的非 duck 轨，跳过避让")
     # 总混音头（不归一，保留音量比例）：全片补齐到 dur；窗口模式多一截 atrim 到
     # [fa,fb) 采样网格（apad 定长在上游已保证窗口尾不足时有静音可截）。
-    tail = (f"atrim=end_sample={c.dur*c.spf_samples},asetpts=PTS-STARTPTS"
+    tail = (f"atrim=end_sample={frame_sample(c.dur, c.fps)},asetpts=PTS-STARTPTS"
             if win is None else
-            f"atrim=start_sample={fa*c.spf_samples}:end_sample={fb*c.spf_samples},"
+            f"atrim=start_sample={frame_sample(fa, c.fps)}:end_sample={frame_sample(fb, c.fps)},"
             f"asetpts=PTS-STARTPTS")
     mix_head = (f"{''.join(trk_lbl[ti] for ti in sorted(trk_lbl))}"
                 f"amix=inputs={len(trk_lbl)}:duration=longest:normalize=0,aresample=48000,{tail}")
@@ -810,7 +820,7 @@ def build_audio(c: Ctx):
                   "如需硬过请调 bed 音量后重渲")
         with wave.open(str(out_wav), "rb") as w:
             n_samples = w.getnframes()
-        expect = c.dur * c.spf_samples
+        expect = frame_sample(c.dur, c.fps)
         if abs(n_samples - expect) > 1:
             print(f"✗ 音频时长校验失败：{n_samples} 采样 ≠ 期望 {expect}（±1 采样）"); sys.exit(1)
         extra["post_loudness"] = {

@@ -131,17 +131,10 @@ def _params(s):
     return {} if val is True else val
 
 
-def _walk_refs(node, out):
-    """递归收集 music_tools schema v2 的 "$ref" 字符串值（track 外部拆分件）。"""
-    if isinstance(node, dict):
-        for k, v in node.items():
-            if k == "$ref" and isinstance(v, str):
-                out.append(v)
-            else:
-                _walk_refs(v, out)
-    elif isinstance(node, list):
-        for x in node:
-            _walk_refs(x, out)
+def _track_refs(project):
+    """只收集 v2 tracks 的纯字符串引用槽位；这不是路径安全校验。"""
+    from apps.bgm.bgm_gen.ref_slots import track_ref_slots
+    return [ref for _, ref in track_ref_slots(project)]
 
 
 # 目录递归签名的伴生件豁免（对齐 hygiene gc 的 .lock/.tmp/__pycache__ 惯例）：
@@ -210,7 +203,7 @@ def _dep_sigs(c, s, proj: Path) -> dict:
     """深度依赖内容签名集：$ref 拆分件 + extra_deps 显式声明件（排序确定性）。"""
     refs = []
     try:
-        _walk_refs(json.loads(proj.read_text(encoding="utf-8")), refs)
+        refs = _track_refs(json.loads(proj.read_text(encoding="utf-8")))
     except (OSError, ValueError):
         pass
     dep_sigs = {}

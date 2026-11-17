@@ -121,7 +121,11 @@ class WindowsCleanup(unittest.TestCase):
         result = subprocess.run(['cmd.exe', '/d', '/c', 'mklink', '/J', str(link), str(run)], capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.addCleanup(lambda: link.rmdir() if link.exists() else None)
-        c = SimpleNamespace(root=self.root, cache=cache, out=self.root / 'out')
+        timeline = self.root / 'timeline.json'
+        timeline.write_text(json.dumps({'version': 2, 'project': {'fps': 30,
+            'width': 640, 'height': 360, 'duration_frames': 30},
+            'sources': [], 'video_tracks': [], 'subtitles': [], 'audio_tracks': []}), encoding='utf-8')
+        c = SimpleNamespace(root=self.root, cache=cache, out=self.root / 'out', tl_path=timeline)
         with patch.object(hygiene, '_current_keys', return_value=(set(), set(), set())), \
                 patch.object(hygiene._plugin_hooks, 'get_cache_dirs', return_value=set()), \
                 patch.object(hygiene._plugin_hooks, 'get_cache_dir_keys', return_value={}):

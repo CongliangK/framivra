@@ -115,7 +115,7 @@ def main():
 
     w1, h1, fps1, nb1 = probe(args.nvenc_4k)
     w2, h2, fps2, nb2 = probe(args.x264_ref)
-    if nb1 != nb2 or (w1, h1) != (w2, h2):
+    if nb1 != nb2 or (w1, h1) != (w2, h2) or fps1 != fps2:
         print(f"✗ 两版不可比：nvenc {w1}x{h1}/{nb1}f vs x264 {w2}x{h2}/{nb2}f", file=sys.stderr)
         sys.exit(2)
     if nb1 <= 0:

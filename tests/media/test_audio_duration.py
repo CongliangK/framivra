@@ -16,10 +16,10 @@ def audio_payload():
 
 
 class AudioDurationProbeTest(unittest.TestCase):
-    def probe(self, payload):
+    def probe(self, payload, fps=30):
         # Ordinary JSON provider data; no media, subprocess, or filesystem fixture.
         c = Ctx.__new__(Ctx)
-        c.fps = 30
+        c.fps = fps
         c.probes = {}
         c.diagnostics = []
         calls = []
@@ -38,6 +38,18 @@ class AudioDurationProbeTest(unittest.TestCase):
         result = self.probe(audio_payload())
         self.assertEqual(result, {'fps': None, 'nb_frames': 34, 'w': 0, 'h': 0,
                                   'has_video': False, 'has_audio': True})
+
+    def test_fractional_rates_accept_rounded_endpoint_not_one_sample_short(self):
+        from vtx.pipeline.constraints import parse_fps, frame_sample
+        for fps in (23.976, 29.97, 47.952, 59.94, 119.88):
+            for frames in (1, 2, 3, 1001, 108001):
+                samples = frame_sample(frames, fps)
+                for short in (0, 1):
+                    with self.subTest(fps=fps, frames=frames, short=short):
+                        payload = audio_payload()
+                        payload['streams'][0]['duration_ts'] = samples - short
+                        count = self.probe(payload, float(parse_fps(fps)))['nb_frames']
+                        self.assertEqual(count, frames - short)
 
     def test_exact_ticks_floor_partial_frames(self):
         for samples, expected in ((54399, 33), (54401, 34)):

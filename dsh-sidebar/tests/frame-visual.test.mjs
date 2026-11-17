@@ -6,11 +6,12 @@ import { FrameEpoch, FrameTools } from '../src/client/frame.mjs'
 
 // Presentation-only regression for the FrameTools UI branch: preview stage,
 // objectURL lifecycle, folded prose/certificate, preserved test-facing labels.
-// All async generate/stage/copy semantics stay covered by frame-ghost.test.mjs.
+// Generate/stage/copy semantics also stay covered by frame-ghost.test.mjs;
+// follow opt-in and serialized cleanup are exercised below with held HTTP replies.
 const snapshot = { content_version: 'sha256:' + 'a'.repeat(64), document: { project: { duration_frames: 100 } } }
 const cleanResult = () => ({
   file: new File(['png-bytes'], 'framivra-frame-10-0000.png', { type: 'image/png' }),
-  certificate: { frame: 10, content_version: snapshot.content_version, width: 1920, height: 1080 },
+  certificate: { kind: 'current-composite', frame: 10, content_version: snapshot.content_version, width: 1920, height: 1080 },
   reference: { selection: { tracks: [], blocks: [] } },
 })
 
@@ -31,18 +32,72 @@ async function fixture(t, { withObjectURL = false } = {}) {
     urlBase.revokeObjectURL = url => { calls.push({ op: 'revoke', url }) }
     t.after(() => { if (savedCreate) urlBase.createObjectURL = savedCreate; else delete urlBase.createObjectURL; if (savedRevoke) urlBase.revokeObjectURL = savedRevoke; else delete urlBase.revokeObjectURL })
   }
-  let frame = 10, refresh
+  let frame = 10, suspended = false, refresh
   function Harness() {
     const [, update] = useState(0); refresh = () => update(n => n + 1)
-    return React.createElement(FrameTools, { owner, opened: { snapshot, grant: 'grant' }, sessionId: 'one', frame, tabSignal: tab.signal, getDraftServices: () => ({}), call: async () => ({}) })
+    return React.createElement(FrameTools, { owner, opened: { snapshot, grant: 'grant' }, sessionId: 'one', frame, suspended, tabSignal: tab.signal, getDraftServices: () => ({}), call: async () => ({}) })
   }
   await act(async () => root.render(React.createElement(Harness)))
   const section = () => document.querySelector('[aria-label="当前合成帧与草稿"]')
-  const rerender = async next => { if (next !== undefined) frame = next; await act(async () => refresh()) }
+  const rerender = async (next, paused) => { if (next !== undefined) frame = next; if (paused !== undefined) suspended = paused; await act(async () => refresh()) }
   t.after(async () => { await act(async () => { tab.abort(); root.unmount(); await Promise.resolve() }); dom.window.close(); for (const [key, descriptor] of Object.entries(saved)) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key] } })
   return { owner, root, section, rerender, calls, act }
 }
 
+test('prepare and independent HTML trust synchronously invalidate; no layer mode or automatic render', async t => {
+  const f = await fixture(t)
+  assert.equal(f.section().querySelector('select'), null)
+  const prepare = [...f.section().querySelectorAll('input')].find(input => input.parentElement.textContent.includes('允许按需准备当前帧图形'))
+  assert(prepare); assert.equal(prepare.checked, false)
+  assert(!f.section().textContent.includes('仅信任的工程'))
+  const operation = f.owner.begin(new AbortController().signal)
+  f.owner.generated = cleanResult()
+  await f.act(async () => {
+    prepare.click()
+    assert.equal(operation.signal.aborted, true); assert.equal(f.owner.generated, undefined)
+  })
+  assert(f.section().textContent.includes('浏览器允许的文件和网络'))
+  assert(f.section().textContent.includes('不是沙箱'))
+  const trust = [...f.section().querySelectorAll('input')].find(input => input.parentElement.textContent.includes('仅信任的工程'))
+  assert.equal(trust.checked, false, 'prepare is not HTML trust')
+  const next = f.owner.begin(new AbortController().signal); f.owner.generated = cleanResult()
+  await f.act(async () => { trust.click(); assert.equal(next.signal.aborted, true); assert.equal(f.owner.generated, undefined) })
+  await f.act(async () => prepare.click())
+  await f.act(async () => prepare.click())
+  assert.equal([...f.section().querySelectorAll('input')].find(input => input.parentElement.textContent.includes('仅信任的工程')).checked, false)
+  assert.equal(f.owner.generated, undefined)
+})
+test('UI prepare allows cold SVG without HTML trust; only explicit clicks send bounded opt-in payloads', async t => {
+  const f = await fixture(t), requests = []
+  const previous = globalThis.fetch
+  globalThis.fetch = async (_url, init) => {
+    requests.push(JSON.parse(init.body))
+    return new Response(JSON.stringify({ ok: false, error: 'FIXTURE_STOP', message: 'request recorded, no render' }), { status: 403 })
+  }
+  t.after(() => { globalThis.fetch = previous })
+  const input = label => [...f.section().querySelectorAll('input')].find(node => node.parentElement.textContent.includes(label))
+  const button = () => [...f.section().querySelectorAll('button')].find(node => node.textContent.startsWith('显式生成并验证'))
+  await f.act(async () => input('允许写入预览缓存').click())
+  const oldButton = button(), oldGenerate = oldButton[Object.keys(oldButton).find(key => key.startsWith('__reactProps$'))].onClick
+  await f.act(async () => {
+    input('允许按需准备').click()
+    oldGenerate() // Retained closure from the previous authorization cannot render.
+  })
+  assert.deepEqual(requests, [])
+  assert.equal(input('仅信任的工程').checked, false)
+  assert.equal(button().disabled, false, 'SVG preparation needs no HTML trust')
+  await f.act(async () => button().click())
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].prepareGfx, true); assert(!Object.hasOwn(requests[0], 'htmlTrust'))
+  await f.act(async () => input('仅信任的工程').click())
+  assert.equal(requests.length, 1, 'trust never automatically generates')
+  await f.act(async () => button().click())
+  assert.equal(requests[1].htmlTrust, 'trusted-local-html'); assert.equal(requests[1].prepareGfx, true)
+  await f.act(async () => input('允许按需准备').click())
+  await f.act(async () => button().click())
+  assert(!Object.hasOwn(requests[2], 'prepareGfx')); assert(!Object.hasOwn(requests[2], 'htmlTrust'))
+  for (const request of requests) { assert.equal(request.renderConsent, 'cache/preview-only'); assert(!Object.hasOwn(request, 'htmlBlockAddress')) }
+})
 test('frame visual: stage placeholders, folded prose/certificate, labels and consent order preserved', async t => {
   const f = await fixture(t)
   const section = f.section()
@@ -99,4 +154,86 @@ test('frame visual: verified objectURL only from owner.generated.file, revoked o
   await f.rerender(10)
   await f.act(async () => { f.root.unmount(); await Promise.resolve() })
   assert.deepEqual(f.calls.at(-1), { op: 'revoke', url: 'blob:frame-3' })
+})
+
+function followControls(f) {
+  const input = label => [...f.section().querySelectorAll('input')].find(node => node.parentElement.textContent.includes(label))
+  return { consent: () => input('允许写入预览缓存'), follow: () => input('随播放头实时生成') }
+}
+const stopReply = () => new Response(JSON.stringify({ ok: false, error: 'FIXTURE_STOP', message: 'no render fixture' }), { status: 403 })
+
+test('live follow requires both opt-ins, supersession waits for confirmed cleanup, and a render failure disables follow', async t => {
+  const f = await fixture(t), controls = followControls(f), requests = []
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const previous = globalThis.fetch
+  let releaseCleanup
+  globalThis.fetch = (_url, init) => {
+    const request = JSON.parse(init.body); requests.push({ ...request, signal: init.signal })
+    if (request.op === 'cancel') return new Promise(resolve => { releaseCleanup = () => resolve(new Response('{"ok":true}')) })
+    if (requests.filter(item => item.op === 'render').length === 1) return new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true }))
+    return Promise.resolve(stopReply())
+  }
+  t.after(() => { globalThis.fetch = previous })
+  const tick = () => f.act(async () => t.mock.timers.tick(121))
+  assert(controls.follow().disabled)
+  await tick(); assert.deepEqual(requests, [], 'mount never auto-renders')
+  await f.act(async () => controls.consent().click())
+  await tick(); assert.deepEqual(requests, [], 'cache consent alone is not follow consent')
+  await f.act(async () => controls.follow().click())
+  await f.rerender(undefined, true); await tick()
+  assert.deepEqual(requests, [], 'storage suspension cancels the pending follow timer')
+  assert.equal(controls.follow().checked, true, 'suspension preserves the explicit follow choice')
+  await f.rerender(undefined, false); await tick()
+  assert.deepEqual(requests.map(item => [item.op, item.frame]), [['render', 10]])
+  f.owner.invalidate(); await f.rerender(11)
+  assert(requests[0].signal.aborted)
+  assert.equal(requests[1].op, 'cancel')
+  await tick()
+  f.owner.invalidate(); await f.rerender(12); await tick()
+  assert.deepEqual(requests.map(item => item.op), ['render', 'cancel'], 'no render may race a pending managed-child cleanup')
+  await f.rerender(undefined, true)
+  await f.rerender(undefined, false); await tick()
+  assert.deepEqual(requests.map(item => item.op), ['render', 'cancel'], 'resumed follow must still wait for managed cleanup')
+  assert.equal(controls.follow().checked, true)
+  await f.act(async () => releaseCleanup())
+  assert.deepEqual(requests.map(item => [item.op, item.frame]), [['render', 10], ['cancel', undefined], ['render', 12]], 'suspension and resume before cleanup cannot duplicate the queued frame or retry its failure')
+  assert.equal(controls.follow().checked, false, 'automatic render error stops follow')
+  f.owner.invalidate(); await f.rerender(13); await tick()
+  assert.equal(requests.length, 3, 'pin changes after an error never retry without a new opt-in')
+  assert(f.section().textContent.includes('FIXTURE_STOP'))
+})
+
+test('failed cleanup latches follow off and blocks new renders until explicit successful cleanup and re-enable', async t => {
+  const f = await fixture(t), controls = followControls(f), requests = []
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const previous = globalThis.fetch
+  let rejectCleanup, cleanupCount = 0
+  globalThis.fetch = (_url, init) => {
+    const request = JSON.parse(init.body); requests.push(request)
+    if (request.op === 'cancel') {
+      if (++cleanupCount === 1) return new Promise(resolve => { rejectCleanup = () => resolve(new Response('{"ok":false,"error":"PROCESS_CLEANUP_FAILED","message":"held child"}', { status: 502 })) })
+      return Promise.resolve(new Response('{"ok":true}'))
+    }
+    if (requests.filter(item => item.op === 'render').length === 1) return new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true }))
+    return Promise.resolve(stopReply())
+  }
+  t.after(() => { globalThis.fetch = previous })
+  const tick = () => f.act(async () => t.mock.timers.tick(121))
+  await f.act(async () => controls.consent().click())
+  await f.act(async () => controls.follow().click()); await tick()
+  f.owner.invalidate(); await f.rerender(11); await tick()
+  assert.deepEqual(requests.map(item => item.op), ['render', 'cancel'])
+  await f.act(async () => rejectCleanup())
+  assert.equal(controls.follow().checked, false)
+  assert.equal(requests.filter(item => item.op === 'render').length, 1, 'queued work cannot start after failed cleanup')
+  await f.act(async () => controls.follow().click()); await tick()
+  assert.equal(controls.follow().checked, false, 're-enabling alone cannot clear the cleanup latch')
+  assert.equal(requests.filter(item => item.op === 'render').length, 1)
+  const cancel = [...f.section().querySelectorAll('button')].find(node => node.getAttribute('aria-label') === '显式取消帧并等待回收')
+  await f.act(async () => cancel.click())
+  assert(f.section().textContent.includes('已回收；未自动重试'))
+  f.owner.invalidate(); await f.rerender(12); await tick()
+  assert.equal(requests.filter(item => item.op === 'render').length, 1, 'successful cleanup does not itself re-enable follow')
+  await f.act(async () => controls.follow().click()); await tick()
+  assert.deepEqual(requests.filter(item => item.op === 'render').map(item => item.frame), [10, 12], 'explicit re-enable after confirmed cleanup admits new work')
 })

@@ -54,21 +54,39 @@ def _darwin_bundle(root):
     """Hash one app, including framework links, without traversing outside it."""
     root = Path(root).resolve(strict=True)
     files, links = {}, {}
+    root_prefix = str(root).rstrip(os.sep) + os.sep
+
+    def directory_token(path):
+        # This prefix guard uses stat metadata only. _file_token additionally
+        # opens Windows file handles, which are not valid directory handles;
+        # synthetic Darwin collectors must remain portable to Windows hosts.
+        st = path.stat()
+        return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
+
     for base, dirs, names in os.walk(root, onerror=lambda e: _raise(e)):
+        directory = Path(base)
+        canonical = directory.resolve(strict=True)
+        if not canonical.is_relative_to(root):
+            raise EnvironmentError(f'Darwin bundle link escapes distribution: {directory}')
+        before = directory_token(canonical)
         for name in sorted(dirs + names):
-            p = Path(base) / name
-            target = p.resolve(strict=True)
-            if not target.is_relative_to(root):
+            p = directory / name
+            entry_stat = p.lstat()
+            link = stat.S_ISLNK(entry_stat.st_mode)
+            # os.walk never follows directory links. Resolve each walked prefix
+            # once, not every component of every regular member. The prefix is
+            # guarded below; links still require a complete strict resolution.
+            target = p.resolve(strict=True) if link else canonical / name
+            if link and not target.is_relative_to(root):
                 raise EnvironmentError(f'Darwin bundle link escapes distribution: {p}')
-            relative = str(p.relative_to(root))
-            link = p.is_symlink()
+            relative = str(p)[len(root_prefix):]
             link_text = os.readlink(p) if link else None
             if link:
                 links[relative] = [link_text, str(target.relative_to(root))]
-            target_stat = target.stat()
+            target_stat = target.stat() if link else entry_stat
             if stat.S_ISREG(target_stat.st_mode):
-                # `target` is already the canonical strict resolution above.
-                # Reuse it and its stat instead of resolving/statting it again
+                # `target` is canonical via the guarded prefix or strict link
+                # resolution. Reuse it and its stat instead of resolving again
                 # in _file; the helper still hashes bytes and checks the file
                 # token both before and after the read. Check the lexical entry
                 # after hashing: regular files need only lstat, while links are
@@ -77,6 +95,9 @@ def _darwin_bundle(root):
                     target, target_stat, verify_entry=(p, link_text, target_stat)))
             elif not stat.S_ISDIR(target_stat.st_mode):
                 raise EnvironmentError(f'unknown Darwin bundle member: {p}')
+        if (directory.resolve(strict=True) != canonical
+                or directory_token(canonical) != before):
+            raise EnvironmentError(f'Darwin bundle directory changed while hashing: {directory}')
     if not files:
         raise EnvironmentError(f'empty Darwin app distribution: {root}')
     return {'files': files, 'links': links}
@@ -675,7 +696,8 @@ def _file(path):
 
 def _file_resolved(p, st, *, verify_entry=None):
     """Hash a canonical regular file, optionally checking its bundle alias."""
-    p = Path(p)
+    if not isinstance(p, Path):
+        p = Path(p)
     if not stat.S_ISREG(st.st_mode):
         raise EnvironmentError(f'not a regular environment input: {p}')
     token = _file_token(p, st)
@@ -684,11 +706,11 @@ def _file_resolved(p, st, *, verify_entry=None):
         if verify_entry is None:
             return
         entry, expected_link, entry_stat = verify_entry
-        entry = Path(entry)
+        if not isinstance(entry, Path):
+            entry = Path(entry)
         if expected_link is None:
             current = entry.lstat()
-            if stat.S_ISLNK(current.st_mode) or (current.st_dev, current.st_ino) != (
-                    entry_stat.st_dev, entry_stat.st_ino):
+            if stat.S_ISLNK(current.st_mode) or _file_token(entry, current) != _file_token(entry, entry_stat):
                 raise EnvironmentError(f'Darwin bundle member changed while hashing: {entry}')
         elif (entry.resolve(strict=True) != p or os.readlink(entry) != expected_link):
             raise EnvironmentError(f'Darwin bundle link changed while hashing: {entry}')
@@ -716,7 +738,31 @@ def _file_resolved(p, st, *, verify_entry=None):
 
 
 def _files(paths):
-    return dict(sorted(_file(p) for p in sorted(set(map(str, paths)))))
+    paths = sorted(set(map(str, paths)))
+    if os.name != 'posix':
+        return dict(sorted(_file(p) for p in paths))
+    # Font inventories contain thousands of siblings. Resolve their shared
+    # prefix once per collection, never cache membership or directory authority
+    # across calls. File links still take the original full-resolution path.
+    groups = {}
+    for path in paths:
+        entry = Path(path)
+        groups.setdefault(entry.parent, []).append(entry)
+    files = []
+    for directory, entries in groups.items():
+        canonical = directory.resolve(strict=True)
+        before = _file_token(canonical, canonical.stat())
+        for entry in entries:
+            info = entry.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                files.append(_file(entry))
+            else:
+                files.append(_file_resolved(canonical / entry.name, info,
+                                            verify_entry=(entry, None, info)))
+        if (directory.resolve(strict=True) != canonical
+                or _file_token(canonical, canonical.stat()) != before):
+            raise EnvironmentError(f'environment input directory changed while hashing: {directory}')
+    return dict(sorted(files))
 
 
 def _tree(root):
@@ -817,6 +863,27 @@ def _fonts():
             'libraries': _libraries(shutil.which('fc-list'))}
 
 
+def _rpm_package_files(package, name):
+    """Read the owning RPM's inventory when Python RECORD metadata is absent."""
+    # PathDistribution exposes no public metadata-directory accessor. Restrict
+    # this fallback to its local filesystem implementation, not zip/providers.
+    root = getattr(package, '_path', None)
+    if (platform.system() != 'Linux'
+            or not isinstance(package, importlib.metadata.PathDistribution)
+            or not isinstance(root, Path)):
+        raise EnvironmentError(f'unknown installed renderer package inventory: {name}')
+    metadata = (root / 'METADATA').resolve(strict=True)
+    if not metadata.is_file():
+        raise EnvironmentError(f'unknown installed renderer package inventory: {name}')
+    # One query binds the file list directly to the owner of this distribution,
+    # without guessing an RPM name or selecting another version/architecture.
+    files = _command(['rpm', '-q', '--file', str(metadata),
+                      '--queryformat', '[%{FILENAMES}\\n]']).splitlines()
+    if str(metadata) not in files or any(not Path(p).is_absolute() for p in files):
+        raise EnvironmentError(f'unknown installed renderer package inventory: {name}')
+    return files
+
+
 def _python_runtime():
     packages = {}
     for name in ('numpy', 'Pillow'):
@@ -827,9 +894,11 @@ def _python_runtime():
             continue
         files = package.files
         if files is None:
-            raise EnvironmentError(f'unknown installed renderer package inventory: {name}')
-        paths = [package.locate_file(f) for f in files
-                 if str(f).endswith(('.py', '.so', '.pyd', '.dll', '.dylib'))]
+            paths = _rpm_package_files(package, name)
+        else:
+            paths = [package.locate_file(f) for f in files]
+        paths = [p for p in paths
+                 if str(p).endswith(('.py', '.so', '.pyd', '.dll', '.dylib'))]
         if not paths:
             raise EnvironmentError(f'empty installed renderer package inventory: {name}')
         packages[name] = {'version': package.version, 'files': _files(paths)}
@@ -1023,7 +1092,10 @@ def certificate(c):
                                + record.get('error', 'incomplete resolver'))
     if record is None:
         return None
-    axes = dict(record, viewport={'width': c.w, 'height': c.h}, fps=c.fps)
+    from ..pipeline.constraints import parse_fps
+    rate = parse_fps(c.fps)
+    axes = dict(record, viewport={'width': c.w, 'height': c.h},
+                fps=int(rate) if rate.denominator == 1 else str(rate))
     return {'schema': SCHEMA, 'sha256': digest(axes), 'status': record['status'], 'axes': axes}
 
 

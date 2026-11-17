@@ -4,7 +4,7 @@ import { createHash, webcrypto } from 'node:crypto'
 import { Readable } from 'node:stream'
 import { FrameEpoch, verifyFrame, frameDraftText, decodePNG, frameRequest, fpsMatchesReference, FPS_TOKEN_LIMIT, FPS_DIGIT_LIMIT, FPS_EXPONENT_LIMIT } from '../src/client/frame.mjs'
 import { boundedText, FRAME_WIRE_LIMIT } from '../src/bounded.mjs'
-import { TimelineReader, referenceArgs } from '../src/protocol.mjs'
+import { TimelineReader, referenceArgs, prepareGfxArgs } from '../src/protocol.mjs'
 import { parseJSON, stringifyJSON } from '../src/json.mjs'
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aCioAAAAASUVORK5CYII=', 'base64')
@@ -13,6 +13,28 @@ function fixture() {
  return { schema:'framivra.timeline.frame/v1',operation:'frame',ok:true,content_version:version,diagnostics:[],image:{state:'generated',kind:'current-composite',approximate:false,mime_type:'image/png',width:1,height:1,frame:9,fps:{num:30,den:1},content_version:version,input_fingerprint:'a'.repeat(64),identity_semantics:'Fast media stat identity; not live atomic',render_key:'b'.repeat(64),cache_hit:false,bytes:png.length,sha256:hash(png),inline:{encoding:'base64',data:png.toString('base64')}},reference:{schema:'framivra.timeline.reference/v1',operation:'reference',ok:true,content_version:version,diagnostics:[],document:{raw,content_version:version},selection:{global_frame:9,fps:30,tracks:[],blocks:[{address:'/video_tracks/0/clips/0',stable_id:'clip',content_version:version,raw:'{"id":"clip","big":9007199254740993}'}]},coverage:{complete:true}} }
 }
 const verify = (value, extra={}) => verifyFrame(value,{frame:9,contentVersion:value.content_version,signal:new AbortController().signal,crypto:webcrypto,decode:async()=>{},...extra})
+test('reader prepare/trust options validate before children; exact additive argv only', async () => {
+ for (const options of [undefined, {}, { prepareGfx: false }]) assert.deepEqual(prepareGfxArgs(options), [])
+ assert.deepEqual(prepareGfxArgs({ prepareGfx: true }), ['--prepare-gfx'])
+ assert.deepEqual(prepareGfxArgs({ prepareGfx: true, htmlTrust: 'trusted-local-html' }), ['--prepare-gfx', '--trust-html'])
+ const reader = new TimelineReader({ spawn() { throw Error('must not spawn') } })
+ for (const options of [null, { prepareGfx: 'true' }, { prepareGfx: null }, { htmlBlockAddress: '/video_tracks/0/clips/0' }, { htmlTrust: 'trusted-local-html' }, { prepareGfx: false, htmlTrust: 'trusted-local-html' }, { prepareGfx: true, htmlTrust: true }, { prepareGfx: true, htmlTrust: undefined }]) await assert.rejects(reader.frame('/opt/vtx', '/own/timeline.json', 9, fixture().content_version, new AbortController().signal, undefined, undefined, options), /prepareGfx|trusted-local-html/)
+ await reader.dispose()
+})
+test('only full composite kind verifies and drafts never relabel HTML layer certificates', async () => {
+ const result = await verify(fixture()), address = '/video_tracks/0/clips/0'
+ const text = frameDraftText(result, { kind: 'block', address })
+ assert(text.includes('当前完整合成帧')); assert(text.includes('不是 final/音频 QC')); assert(text.includes('Fast 媒体'))
+ assert(!text.includes('HTML 图层预览'))
+ for (const kind of ['html-layer', 'final', undefined]) {
+  const value = fixture(); value.image.kind = kind
+  await assert.rejects(verify(value), /FRAME_INVALID/)
+  assert.throws(() => frameDraftText({ ...result, certificate: { ...result.certificate, kind } }), /FRAME_INVALID/)
+ }
+ const value = fixture(); value.image.layer = {}
+ await assert.rejects(verify(value), /FRAME_INVALID/)
+ assert.throws(() => frameDraftText({ ...result, certificate: { ...result.certificate, layer: {} } }), /FRAME_INVALID/)
+})
 test('exact PNG File and raw reference; image.path is never accessed',async()=>{
  const value=fixture();Object.defineProperty(value.image,'path',{get(){throw new Error('path access forbidden')}})
  const result=await verify(value)
@@ -39,6 +61,10 @@ test('fps identity: kernel non-canonical 30.0 rawJSON token verifies exactly; ro
   assert.equal(fpsMatchesReference(60,2,30),true)
   assert.equal(fpsMatchesReference(30,1,30.5),false)
   assert.equal(fpsMatchesReference(30,1,31),false)
+  assert.equal(fpsMatchesReference(30000,1001,'30000/1001'),true)
+  assert.equal(fpsMatchesReference(30000,1001,parseJSON('{"fps":29.970}').fps),true)
+  assert.equal(fpsMatchesReference(30000,1001,parseJSON('{"fps":29.97000000000000001}').fps),false)
+  assert.equal(fpsMatchesReference(30,1,'30000/1001'),false)
   // Exact rational comparison: 30.0000000000000000000001 !== 30 even though
   // Number(rawJSON) would round both to 30.
   assert.equal(fpsMatchesReference(30,1,parseJSON('{"fps":30.0000000000000000000001}').fps),false)

@@ -69,6 +69,10 @@ def _plugin_hooks_declared(name: str, repo_root=None, *, entry=None) -> list:
     return []
 
 
+class _CoreOnlyPreviewError(RuntimeError):
+    code = "plugins.changed"
+
+
 def active_plugins(c=None, repo_root=None) -> list:
     """生效插件清单（installed+enabled、有钩子，且无键声明或本 timeline 声明了其键）
     → [{name, version, module, entry}]；entry 是本次解析的实体，不跨运行缓存。
@@ -93,6 +97,11 @@ def active_plugins(c=None, repo_root=None) -> list:
             continue
         out.append({"name": name, "version": _plugin_version(name, repo_root, entry=entry),
                     "module": None, "entry": entry})
+    # Frame contexts carry this class-owned guard before Ctx construction. Every
+    # fingerprint and hook enumerates here before importing plugin code, so an
+    # activation/config change cannot run a provider before eventual rejection.
+    if out and getattr(c, "_core_only_preview", False) is True:
+        raise _CoreOnlyPreviewError("core-only preview refuses newly active plugins")
     return out
 
 
