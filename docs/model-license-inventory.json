@@ -1143,9 +1143,11 @@
         "docs/reports/assets/html-preview/composite-before.png": "bd1c15592bf0ceb80866d93cd5733c7529ce7b748ad556c1e9f79d48e2b78857",
         "docs/reports/assets/html-preview/composite-after.png": "e7579dab39081341b63a742d02374231175ed52b12bb978364158f4c5585d04c",
         "docs/reports/assets/html-preview/composite-after-edited.png": "78ea5849e7b301d6c4a80a3d61b38f2b469044a48ec4edd22a44bed42ae08809",
-        "docs/reports/assets/html-preview/composite-capture.json": "8a932a867a99b43b5b8d3c47815743adcc71c445df8da931a3b320859e6be297"
+        "docs/reports/assets/html-preview/composite-capture.json": "8a932a867a99b43b5b8d3c47815743adcc71c445df8da931a3b320859e6be297",
+        "docs/reports/assets/html-preview/closeout-capture.json": "3a80b5118d7764c0a85a1c24c619e4c9fdd4ff65f64e5b16b3e9ebb6b0831dd5",
+        "docs/reports/assets/html-preview/closeout-after-edited.png": "8eeda88a3a01fb0c8217fada3505e450c90424c91086897033b2c1ab1bd95dc5"
       },
-      "notes": "Matched real Before/After cold complete-composite captures, plus separately labelled saved-edit supplement and measured metadata. Only project-authored capture/fixture data and the inspected host declaration are recorded; no private inputs, font/runtime binaries or transitive rights clearance. Functional/quality checks and explicit UNRUN/measurement limitations in the metadata are not a release or speedup certification."
+      "notes": "Matched real Before/After cold complete-composite captures, plus separately labelled saved-edit supplement and measured metadata. Only project-authored capture/fixture data and the inspected host declaration are recorded; no private inputs, font/runtime binaries or transitive rights clearance. Functional/quality checks and explicit UNRUN/measurement limitations in the metadata are not a release or speedup certification. closeout-capture.json and the separately labelled closeout saved-edit screenshot add real integrated macOS evidence while retaining all earlier bytes and identities; the recorded inherited 180-frame strict-QC failure makes that handoff incomplete, not a passing full-film certificate."
     },
     "macos-plugin-screenshot-evidence": {
       "kind": "data",
