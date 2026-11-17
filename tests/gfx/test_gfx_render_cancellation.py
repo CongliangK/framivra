@@ -17,12 +17,57 @@ class SocketCancellationTests(unittest.TestCase):
                 endpoint = mock.Mock()
                 endpoint.shutdown.side_effect = error
                 ws = render.WSConn.__new__(render.WSConn)
-                ws.sock = endpoint
+                ws.sock, ws._io_guard = endpoint, threading.Lock()
                 ws.interrupt()
                 self.assertEqual(endpoint.mock_calls, [mock.call.shutdown(socket.SHUT_RDWR)])
                 ws.close()
                 self.assertEqual(endpoint.mock_calls,
-                                 [mock.call.shutdown(socket.SHUT_RDWR), mock.call.close()])
+                                 [mock.call.shutdown(socket.SHUT_RDWR),
+                                  mock.call.shutdown(socket.SHUT_RDWR), mock.call.close()])
+
+    def test_close_retains_fd_until_inflight_io_has_returned(self):
+        entered, shutdown, release, closed, close_acquiring = (threading.Event() for _ in range(5))
+        lock = threading.Lock()
+
+        class Guard:
+            def __enter__(self):
+                if shutdown.is_set():
+                    close_acquiring.set()
+                return lock.__enter__()
+
+            def __exit__(self, *args):
+                return lock.__exit__(*args)
+
+        endpoint = mock.Mock()
+        endpoint.shutdown.side_effect = lambda *_: shutdown.set()
+        endpoint.close.side_effect = closed.set
+
+        def receive():
+            entered.set()
+            if not release.wait(3):
+                raise AssertionError('probe I/O was not released')
+            return b''
+
+        endpoint.recv.side_effect = receive
+        ws = render.WSConn.__new__(render.WSConn)
+        ws.sock, ws._io_guard = endpoint, Guard()
+        reader = threading.Thread(target=lambda: ws._io(endpoint.recv))
+        closer = threading.Thread(target=ws.close)
+        reader.start()
+        try:
+            self.assertTrue(entered.wait(1))
+            closer.start()
+            self.assertTrue(shutdown.wait(1))
+            self.assertTrue(close_acquiring.wait(1))
+            self.assertFalse(closed.is_set(), 'close must preserve an active I/O fd')
+        finally:
+            release.set()
+            reader.join(4)
+            if closer.ident is not None:
+                closer.join(4)
+        self.assertFalse(reader.is_alive())
+        self.assertFalse(closer.is_alive())
+        self.assertTrue(closed.is_set())
 
     def test_interrupt_wakes_blocked_receive_without_peer_exit(self):
         import socket
@@ -31,7 +76,7 @@ class SocketCancellationTests(unittest.TestCase):
         entered, finished = threading.Event(), threading.Event()
         errors = []
         ws = render.WSConn.__new__(render.WSConn)
-        ws.sock, ws._rbuf = local, bytearray()
+        ws.sock, ws._rbuf, ws._io_guard = local, bytearray(), threading.Lock()
 
         def receive():
             entered.set()

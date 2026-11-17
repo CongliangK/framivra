@@ -188,6 +188,11 @@ class WSConn:
         return remaining
 
     def _io(self, operation, *args):
+        # close may run on another worker during a shared-browser heal.
+        with self._io_guard:
+            return self._guarded_io(operation, *args)
+
+    def _guarded_io(self, operation, *args):
         remaining = self._remaining()
         if remaining is None:
             return operation(*args)
@@ -201,6 +206,7 @@ class WSConn:
             self.sock.settimeout(previous)
 
     def __init__(self, port, path, timeout=20):
+        self._io_guard = threading.Lock()
         self._rbuf = bytearray()   # 握手响应同包尾随的帧字节（罕见），交 recv 消费
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
         self.sock.settimeout(timeout)
@@ -315,10 +321,14 @@ class WSConn:
             pass  # Already disconnected/closed is harmless.
 
     def close(self):
-        try:
-            self.sock.close()
-        except OSError:
-            pass
+        self.interrupt()
+        # A healed pool can be retired while another worker still receives.
+        # Wait only for its awakened I/O, never for a callback or browser lock.
+        with self._io_guard:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
 
 
 class Tab:
