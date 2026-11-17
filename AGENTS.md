@@ -10,6 +10,7 @@
 - 开发读[架构](<docs/ARCHITECTURE.md>)/[开发](<docs/DEV.md>)；API/事务见[接口](<docs/reference/timeline-api.md>)。
 - 环境见[依赖](<README.md#依赖矩阵>)：Python≥3.9，工具按路径配置；模型默认关；空依赖≠仅需标准库。
 - [安装](<docs/guides/installation.md#受管非-ai-制作环境>)：独立venv/固定身份缓存/内核锁，验收后ready；Win主进程不提权，厂商系统包UAC。DSH显式连接；登记≠平台验收。
+- 安装验收会运行 BGM 合成；其引擎发现不得依赖 POSIX 专用模块，GPU 互斥须使用平台原生锁。
 
 ## 常用命令
 
