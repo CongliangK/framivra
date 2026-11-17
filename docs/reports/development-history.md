@@ -69,6 +69,14 @@ A臂冷态中位：启动覆盖0.289s；608次截图（600目标帧+8探针）�
 
 最终12次 `all` 均exit0、事件完整、无失败/回落；6个项目的冷暖pack字节及mtime均未变。逐件解码全部600帧PNG、完整视频/PTS、48k双声道音频/连续PTS；跨臂/轮次/冷暖的PNG字节与RGBA、视频帧/时间戳、音频采样/时间戳全部相等，12件无黑帧；6次额外strict QC通过。抽看f60/300/540字体/图表正常，不等于独立艺术审查或用户成片确认。主SVG、透明叠层/多页/真实整期及其他平台仍 **UNRUN**。此次给出的是明确的负收益决策与可复现取舍，不宣称产品加速。
 
+### CEF 非推进绘制正确性（#368）
+
+本轮 [PR #368](<https://github.com/CongliangK/framivra/pull/368>)按[维护者取舍](<https://github.com/CongliangK/framivra/pull/368#issuecomment-6963084388>)收敛为非推进绘制路径的正确性修复，不交付 CDP 动态领项或 renderer 优先级原型，也不改变默认并发、就绪门、质量或公开契约；**#365 / #361 两后端默认全链减时30%目标仍未完成**。
+
+旧候选附加核验曾发现 signed 计数不足及5次拒收回调直接推进第一或第二 signed 阶段，缺少对应绘制后 JS 围栏；使两次读取判定不同的上游原因仍未知。修复将拒收入口隔离为只能计账，负读变正读也无权推进、冻结候选或写输出；合法 owned 快照仍须对应 post-paint JS 围栏及完整见证/字节 veto。累计围栏数不代替逐阶段授权；必须重编并绑定实际 native worker 身份。旧实机次数不是当前 main 的新复现或最终组合验收，实际部署与复验资格须由本轮回执另证。
+
+历史性能及失败原件固定在清理前 `9623d064aebcb2d37728a0f3ad8d6b1ba2a5c367`：[PNG 局部校验](<https://github.com/CongliangK/framivra/blob/9623d064aebcb2d37728a0f3ad8d6b1ba2a5c367/docs/reports/png-validation-evidence.json>)、[CEF 并发与拒收反例](<https://github.com/CongliangK/framivra/blob/9623d064aebcb2d37728a0f3ad8d6b1ba2a5c367/docs/reports/cef-concurrency-evidence.json>)、[受扰样本](<https://github.com/CongliangK/framivra/blob/9623d064aebcb2d37728a0f3ad8d6b1ba2a5c367/docs/reports/browser-cold-chain-screens.json>)和[锁下补测](<https://github.com/CongliangK/framivra/blob/9623d064aebcb2d37728a0f3ad8d6b1ba2a5c367/docs/reports/browser-cold-chain-repeats.json>)。旧 HTML 派生输入不替代唯一 SVG 主片；已有三块配置相对默认约6%、相对单worker档33.1%分母不同，不是本轮新增算法或默认30%达标。导航预取/预热更慢、四块增内存、两原型收益不足及GUI未取锁污染等负结果不改判；旧帧时钟/回执失败与报告器误判亦保留在[原历史](<https://github.com/CongliangK/framivra/blob/9623d064aebcb2d37728a0f3ad8d6b1ba2a5c367/docs/reports/development-history.md>)。无当前代码/测试消费者的过程 JSON 经引用审计、逐件 SHA256 原字节保全及固定提交恢复核验后退出交付树，不删除原生 worker 源码或改写冻结证据。
+
 ### 资源生命周期排查（#362）
 
 原静态审查以 `908064d` 为起点；接续在 main `fa5d28d` 的生产实现上（测量源码 `99fd603`），以已安装候选 wheel 验证唯一 portable-v2 30秒/900帧/1080p30 SVG。三档共7次正式 `all` 及另行7次strict QC通过（aggressive响度/TP复用有效回执），core连续3次；三档末次完整解码的视频、PCM及音频时序摘要相同。详细包身份、逐轮资源、实际宿主与清理证据统一见 [PR #366](<https://github.com/CongliangK/framivra/pull/366>)。有限样本不证明永久无泄漏，也不宣称整体提速。
