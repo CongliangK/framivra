@@ -95,7 +95,7 @@ Host 全局 FIFO 最多 1 个执行 + 4 个等待的不同 grant；同 grant 仍
 
 时间定位提供折叠的整数秒与零基秒内偏移，30fps 下 `10 + 5` 明确换算为全局帧 305；换算定位本身不查询或渲染。完整合成始终使用该规范整数帧，不能把单页图层帧替代 current-composite。
 
-[合入组合复验证据](../docs/reports/assets/html-preview/closeout-capture.json) 分别绑定真实异常探针、安装包及官方宿主闭环；保留旧证据版本，不把主干既有 QC 失败、平台 skip 或未重跑的主片写成当前通过。CDP 取消先 shutdown 唤醒 I/O，再等待实际 worker 结束并关闭 fd；自愈跨 worker 关闭同样保留在途 I/O 的 fd，不能仅凭浏览器退出推断线程已回收。
+[首次组合记录](../docs/reports/assets/html-preview/closeout-capture.json) 保留当时 QC 阻塞的未完成身份；[授权修正后的验收](../docs/reports/assets/html-preview/qc-correction-capture.json) 另绑定最终包、真实异常、官方宿主及正式链，不覆盖旧证据或把 skip/UNRUN 写成通过。CDP 取消先 shutdown 唤醒 I/O，再等待实际 worker 结束并关闭 fd；自愈跨 worker 关闭同样保留在途 I/O 的 fd，不能仅凭浏览器退出推断线程已回收。
 
 ### Manual editing (writes require explicit authorization)
 

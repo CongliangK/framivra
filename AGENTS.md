@@ -13,7 +13,7 @@
 
 ## 常用命令
 
-- 离线体检：`env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor`；联网会 fetch 写入。
+- 离线体检：`env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor`；联网会fetch 写入。
 - 链接预演：`python3 vt.py --fix-links --dry`；实改前核对目标/权限。
 - 渲染：`python3 vtx/vtx.py -t <timeline.json> all`（写缓存/产物）；前置见[交付链](<docs/skill/references/edit.md#正式交付链r1-r4-共用>)。
 - 测试：`bash scripts/run_all_tests.sh`；局部见[贡献指南](<CONTRIBUTING.md#测试入口>)。
@@ -31,7 +31,7 @@
 
 ## 编辑纪律
 
-- 代码PR同步指南；QC统一矩阵/范围，变更重测证书。
+- 代码PR同步本指南；QC统一矩阵/范围，变更重测证书。
 - 仅留跨目录常驻要点，一点一行；无流水账/平行指南。
 - 一事实一家；迁移修活引用、链权威文档，不留旧壳。
 - 实现后独立复审并交维护者；契约/API 变更须维护方同意及独立对抗审查。
