@@ -6,7 +6,8 @@ import { FrameEpoch, FrameTools } from '../src/client/frame.mjs'
 
 // Presentation-only regression for the FrameTools UI branch: preview stage,
 // objectURL lifecycle, folded prose/certificate, preserved test-facing labels.
-// All async generate/stage/copy semantics stay covered by frame-ghost.test.mjs.
+// Generate/stage/copy semantics also stay covered by frame-ghost.test.mjs;
+// follow opt-in and serialized cleanup are exercised below with held HTTP replies.
 const snapshot = { content_version: 'sha256:' + 'a'.repeat(64), document: { project: { duration_frames: 100 } } }
 const cleanResult = () => ({
   file: new File(['png-bytes'], 'framivra-frame-10-0000.png', { type: 'image/png' }),
@@ -153,4 +154,78 @@ test('frame visual: verified objectURL only from owner.generated.file, revoked o
   await f.rerender(10)
   await f.act(async () => { f.root.unmount(); await Promise.resolve() })
   assert.deepEqual(f.calls.at(-1), { op: 'revoke', url: 'blob:frame-3' })
+})
+
+function followControls(f) {
+  const input = label => [...f.section().querySelectorAll('input')].find(node => node.parentElement.textContent.includes(label))
+  return { consent: () => input('允许写入预览缓存'), follow: () => input('随播放头实时生成') }
+}
+const stopReply = () => new Response(JSON.stringify({ ok: false, error: 'FIXTURE_STOP', message: 'no render fixture' }), { status: 403 })
+
+test('live follow requires both opt-ins, supersession waits for confirmed cleanup, and a render failure disables follow', async t => {
+  const f = await fixture(t), controls = followControls(f), requests = []
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const previous = globalThis.fetch
+  let releaseCleanup
+  globalThis.fetch = (_url, init) => {
+    const request = JSON.parse(init.body); requests.push({ ...request, signal: init.signal })
+    if (request.op === 'cancel') return new Promise(resolve => { releaseCleanup = () => resolve(new Response('{"ok":true}')) })
+    if (requests.filter(item => item.op === 'render').length === 1) return new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true }))
+    return Promise.resolve(stopReply())
+  }
+  t.after(() => { globalThis.fetch = previous })
+  const tick = () => f.act(async () => t.mock.timers.tick(121))
+  assert(controls.follow().disabled)
+  await tick(); assert.deepEqual(requests, [], 'mount never auto-renders')
+  await f.act(async () => controls.consent().click())
+  await tick(); assert.deepEqual(requests, [], 'cache consent alone is not follow consent')
+  await f.act(async () => controls.follow().click()); await tick()
+  assert.deepEqual(requests.map(item => [item.op, item.frame]), [['render', 10]])
+  f.owner.invalidate(); await f.rerender(11)
+  assert(requests[0].signal.aborted)
+  assert.equal(requests[1].op, 'cancel')
+  await tick()
+  f.owner.invalidate(); await f.rerender(12); await tick()
+  assert.deepEqual(requests.map(item => item.op), ['render', 'cancel'], 'no render may race a pending managed-child cleanup')
+  await f.act(async () => releaseCleanup())
+  assert.deepEqual(requests.map(item => [item.op, item.frame]), [['render', 10], ['cancel', undefined], ['render', 12]], 'superseded queued frame 11 is dropped, not rendered')
+  assert.equal(controls.follow().checked, false, 'automatic render error stops follow')
+  f.owner.invalidate(); await f.rerender(13); await tick()
+  assert.equal(requests.length, 3, 'pin changes after an error never retry without a new opt-in')
+  assert(f.section().textContent.includes('FIXTURE_STOP'))
+})
+
+test('failed cleanup latches follow off and blocks new renders until explicit successful cleanup and re-enable', async t => {
+  const f = await fixture(t), controls = followControls(f), requests = []
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const previous = globalThis.fetch
+  let rejectCleanup, cleanupCount = 0
+  globalThis.fetch = (_url, init) => {
+    const request = JSON.parse(init.body); requests.push(request)
+    if (request.op === 'cancel') {
+      if (++cleanupCount === 1) return new Promise(resolve => { rejectCleanup = () => resolve(new Response('{"ok":false,"error":"PROCESS_CLEANUP_FAILED","message":"held child"}', { status: 502 })) })
+      return Promise.resolve(new Response('{"ok":true}'))
+    }
+    if (requests.filter(item => item.op === 'render').length === 1) return new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true }))
+    return Promise.resolve(stopReply())
+  }
+  t.after(() => { globalThis.fetch = previous })
+  const tick = () => f.act(async () => t.mock.timers.tick(121))
+  await f.act(async () => controls.consent().click())
+  await f.act(async () => controls.follow().click()); await tick()
+  f.owner.invalidate(); await f.rerender(11); await tick()
+  assert.deepEqual(requests.map(item => item.op), ['render', 'cancel'])
+  await f.act(async () => rejectCleanup())
+  assert.equal(controls.follow().checked, false)
+  assert.equal(requests.filter(item => item.op === 'render').length, 1, 'queued work cannot start after failed cleanup')
+  await f.act(async () => controls.follow().click()); await tick()
+  assert.equal(controls.follow().checked, false, 're-enabling alone cannot clear the cleanup latch')
+  assert.equal(requests.filter(item => item.op === 'render').length, 1)
+  const cancel = [...f.section().querySelectorAll('button')].find(node => node.getAttribute('aria-label') === '显式取消帧并等待回收')
+  await f.act(async () => cancel.click())
+  assert(f.section().textContent.includes('已回收；未自动重试'))
+  f.owner.invalidate(); await f.rerender(12); await tick()
+  assert.equal(requests.filter(item => item.op === 'render').length, 1, 'successful cleanup does not itself re-enable follow')
+  await f.act(async () => controls.follow().click()); await tick()
+  assert.deepEqual(requests.filter(item => item.op === 'render').map(item => item.frame), [10, 12], 'explicit re-enable after confirmed cleanup admits new work')
 })

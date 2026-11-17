@@ -4,7 +4,9 @@ import { captureCurrentDraft, performReferenceAction } from './reference.mjs'
 import { TimelineHelp, VisualTimeline } from './timeline.mjs'
 import { ManualEditor } from './manual.mjs'
 import { emptySelection, transitionSelection, preserveSelection } from './selection.mjs'
-import { FrameEpoch, FrameTools } from './frame.mjs'
+import { FrameEpoch } from './frame.mjs'
+import { ProgramMonitor } from './monitor.mjs'
+import { formatTimecode } from './timecode.mjs'
 import { registerBundleConfig } from './settings.mjs'
 import { createOfficialDraftServices, draftResultMessage } from './draft-services.mjs'
 import { WorkbenchStyles, FileBrowser, buildMismatchMessage } from './workbench.mjs'
@@ -118,7 +120,7 @@ export function ReferenceTools({ selection, sessionId, opened, frame, tabSignal,
   return h('section', { 'aria-label': '时间线引用', style: { border: '1px solid currentColor', padding: 8 } },
     h('h3', null, '时间线引用 · 仅存储语义'),
     h('details', null, h('summary', null, '引用与草稿说明'),
-      h('p', null, '选择轨道或块后可复制。raw JSON 是 vtx 提取的原文，不是上方 read/v1 的重编码。整数帧由 vtx 解释；播放未与选择联动，不能代替精确帧。此处仅提取引用；生成 PNG 与加入图片草稿需在帧工具中单独授权、点击。'),
+      h('p', null, '选择轨道或块后可复制。raw JSON 是 vtx 提取的原文，不是上方 read/v1 的重编码。整数帧由 vtx 解释；成片播放与工程播放头联动，但来源版本未验证，不能替代当前合成帧证书。此处仅提取引用；生成 PNG 与加入图片草稿需在帧工具中单独授权、点击。'),
       h('p', null, '加入草稿通过官方会话 InputActions；在点击时选区起点插入，不替换已选文字或原有引用。文本和图片顺序加入，部分结果会明确提示；不会创建会话、自动补投或发送。')),
     selection ? h('p', null, `当前选择：${selection.kind} ${selection.address} · ${opened.snapshot.content_version}`) : h('p', null, '尚未选择轨道或块。'),
     h('div', { className: 'fv-reference-actions', role: 'group', 'aria-label': '引用与草稿工具' },
@@ -367,6 +369,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   const activePath = ready ? state.timeline : timeline
   const filename = activePath.split('/').at(-1) || '时间线'
   const duration = state.opened?.snapshot.document?.project?.duration_frames
+  const fps = state.opened?.snapshot.document?.project?.fps
   const manualPane = useRef()
   function showProperties(edit = false) {
     setInspectorVisible(true)
@@ -378,7 +381,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
     catch (error) { setState(previous => ({ ...previous, message: error.message })) }
   }
   function editorKey(event) {
-    if (!ready || event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey || editingTarget(event.target) || !event.target.closest?.('.fv-monitor,.fv-timeline-pane')) return
+    if (!ready || event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey || editingTarget(event.target) || (!event.target.closest?.('.fv-monitor,.fv-timeline-pane') || event.target.closest?.('video'))) return
     if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
       if (event.target.closest?.('[role=slider],[role=separator]')) return
       let next = event.key === 'Home' ? 0 : event.key === 'End' && Number.isSafeInteger(duration) ? duration - 1 : stepFrame(frameValue, duration, event.key === 'ArrowLeft' ? -1 : 1, event.shiftKey ? 10 : 1)
@@ -414,16 +417,10 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
           filesVisible ? h(FileBrowser, { key: `${sessionId}:${browserEpoch}`, sessionId, tabSignal: tab.signal, call: control, selectedPath: ready ? activePath : undefined, onChoose: path => void load(false, path), onClose: closeFiles, recalibrate: browserRecalibrate, hostOps: state.opened?.host?.ops }) : null,
           h('main', { className: 'fv-monitor', 'aria-label': ready ? '画面预览' : '时间线启动区' },
             ready ? h(React.Fragment, null,
-              h('div', { className: 'fv-monitor-title' }, h('span', null, '节目监视器'), h('span', null, frameValue === undefined ? '尚未定位' : `帧 ${frameValue}`)),
-              h(Transport, { frame: frameValue, frameText: frame, frameError, duration, fps: state.opened.snapshot.document?.project?.fps, onFrame: pin, onText: pin, onQuery: () => void load(true) }),
+              h('div', { className: 'fv-monitor-title' }, h('span', null, '节目监视器'), h('span', null, frameValue === undefined ? '尚未定位' : formatTimecode(frameValue, fps) ?? '时间码不可显示')),
+              h(Transport, { frame: frameValue, frameText: frame, frameError, duration, fps, onFrame: pin, onText: pin, onQuery: () => void load(true) }),
               frameError ? h('p', { role: 'alert' }, `${frameError} 引用已暂停；不会暗用旧帧。`) : null,
-              valid && !grantDead && !frameError ? h(FrameTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, selection, tabSignal: tab.signal, getDraftServices, call: control }) : null,
-              h('details', { className: 'fv-output', hidden: !state.opened.media.length },  h('summary', null, `已有成片${state.opened.media.length ? ` · ${state.opened.media.length}` : ' · 暂无'}`),
-                h('h3', null, 'Existing output preview — provenance UNKNOWN'),
-                h('p', null, 'These files are not verified to correspond to this timeline. Playback time is not linked to frame selection. Grants expire after 30 minutes; reopen on expiry.'),
-                !state.opened.media.length ? h('p', null, 'No existing final.mp4 / draft_final.mp4 output found. No render was started.') : null,
-                ...state.opened.media.map(media => h('section', { key: media.mediaId }, h('p', null, media.label, ' — ', media.warning),
-                  h('video', { controls: true, preload: 'none', 'aria-label': `${media.label}（未验证对应版本）`, src: `/api/framivra/media?${new URLSearchParams({ sessionId, grant: state.opened.grant, mediaId: media.mediaId })}` }))))) :
+              valid && !grantDead ? h(ProgramMonitor, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, blank: frame === '', fps, duration, onFrame: pin, selection, tabSignal: tab.signal, getDraftServices, call: control }) : null) :
               h('div', { className: 'fv-empty' }, h(Icon, { name: 'film', size: 32 }), h('h3', null, '从一条时间线开始'), h('p', null, '选择当前工作区中的时间线 JSON 文件，开始预览与剪辑。'),
                 h('div', { className: 'fv-start-actions' },
                   h('button', { className: 'fv-primary', type: 'button', onClick: browseWorkspace }, h(Icon, { name: 'folder', size: 17 }), '浏览工作区'),
@@ -439,7 +436,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
              valid ? h(TimelineHelp, { result: state.result, onGesture: gesture }) : null) : null),
         ready ? h(LayoutDivider, { value: timelineShare, onChange: setTimelineShare }) : null,
         ready ? h('section', { className: 'fv-timeline-pane', 'aria-label': '工程时间线' },
-          valid ? h(SelectionSummary, { selection, selected, result: state.result, frame: frameValue, onFrame: pin, onClear: clearSelection, onProperties: () => showProperties(true), quick: quickEdit ? runQuick : undefined }) : null,
+          valid ? h(SelectionSummary, { selection, selected, result: state.result, frame: frameValue, fps, onFrame: pin, onClear: clearSelection, onProperties: () => showProperties(true), quick: quickEdit ? runQuick : undefined }) : null,
           state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请刷新保存版本。') : h(TimelineView, { compact: true, snapshot: state.opened.snapshot, result: state.result, hits: state.hits, frame: frameValue, onFrame: value => pin(String(value)), onSelect: pick, activeSelection: selection, selectionIntent, onGesture: gesture, onGestureState: gestureState })) : null)))
 }
 // DSH 0.2.2-rc.1: this is the tab-scoped action, not ISidebarRight.

@@ -156,10 +156,10 @@ test('SelectionSummary: shows the saved clip name and range; split gated by boun
   const { root } = await mount(t)
   const result = mkResult('aroll', 'A-roll 开场')
   const quickCalls = []
-  const render = (props) => act(async () => root.render(h(SelectionSummary, { selection: { kind: 'block', address: '/t/0/b/0' }, selected: [{ kind: 'block', address: '/t/0/b/0' }], result, frame: 20, onFrame: () => {}, onClear: () => {}, onProperties: () => {}, quick: op => quickCalls.push(op), ...props })))
+  const render = (props) => act(async () => root.render(h(SelectionSummary, { selection: { kind: 'block', address: '/t/0/b/0' }, selected: [{ kind: 'block', address: '/t/0/b/0' }], result, frame: 20, fps: 30, onFrame: () => {}, onClear: () => {}, onProperties: () => {}, quick: op => quickCalls.push(op), ...props })))
   await render({})
   assert(document.body.textContent.includes('A-roll 开场'), 'name comes from saved block data')
-  assert(document.body.textContent.includes('10–40 · 30 帧'), 'range from saved projection')
+  assert(document.body.textContent.includes('00:00:10–00:01:10 · 长度 00:01:00'), 'range from saved projection displayed as timecode')
   const split = document.querySelector('[aria-label="在播放头分割选中片段"]')
   assert(!split.disabled, 'interior frame + write grant enables split')
   await act(async () => split.click())
