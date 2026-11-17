@@ -306,6 +306,14 @@ class WSConn:
             if fin:
                 return op, bytes(frag)
 
+    def interrupt(self):
+        # Keep the fd open until its receiving worker settles. On macOS a close
+        # racing the socket's readiness wait can otherwise strand that wait.
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass  # Already disconnected/closed is harmless.
+
     def close(self):
         try:
             self.sock.close()
@@ -328,6 +336,10 @@ class Tab:
         except BaseException:
             self.ws.close()   # 半初始化 Tab 显式关 fd（RECP-20260916-002）
             raise
+
+    def interrupt(self):
+        """Wake the owned worker without closing its readiness-wait fd."""
+        self.ws.interrupt()
 
     def close(self):
         """释放本 tab 的 CDP socket（对端已死时为无害 no-op，close 内吞 OSError）。"""
@@ -1177,26 +1189,30 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 try:
                     return operation()
                 except KeyboardInterrupt as exc:
-                    interrupted = exc
+                    if interrupted is None:
+                        interrupted = exc
 
         finish_cleanup(browser.lock.acquire)
         try:
             try:
                 for t in owned_tabs:
-                    finish_cleanup(t.close)
+                    finish_cleanup(t.interrupt)
             finally:
                 finish_cleanup(browser.stop)
         finally:
             browser.lock.release()
-            # Closing sockets/stopping Chrome releases blocked CDP calls. Also
-            # drain CPU/write/callback work before callers remove scratch output.
-            for idx, thread in enumerate(threads):
-                if thread.ident is None:
-                    # Either start failed or native bootstrap is still pending.
-                    # A target not yet entered will see stopping and remain inert.
-                    continue
-                finish_cleanup(settled[idx].wait)
-                finish_cleanup(thread.join)
+            try:
+                # Shutdown wakes CDP I/O while preserving its fd until the worker
+                # exits. Drain CPU/write/callback work before removing scratch.
+                for idx, thread in enumerate(threads):
+                    if thread.ident is None:
+                        # A late target sees stopping and remains inert.
+                        continue
+                    finish_cleanup(settled[idx].wait)
+                    finish_cleanup(thread.join)
+            finally:
+                for t in owned_tabs:
+                    finish_cleanup(t.close)
         if interrupted is not None and sys.exc_info()[0] is None:
             raise interrupted
     dt = (time.monotonic() - t0) * 1000

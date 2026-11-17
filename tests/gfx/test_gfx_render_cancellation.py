@@ -9,6 +9,55 @@ from unittest import mock
 from vtx.render import gfx_render as render
 
 
+class SocketCancellationTests(unittest.TestCase):
+    def test_interrupt_does_not_close_readiness_fd_even_when_disconnected(self):
+        import socket
+        for error in (None, OSError('already disconnected')):
+            with self.subTest(error=error):
+                endpoint = mock.Mock()
+                endpoint.shutdown.side_effect = error
+                ws = render.WSConn.__new__(render.WSConn)
+                ws.sock = endpoint
+                ws.interrupt()
+                self.assertEqual(endpoint.mock_calls, [mock.call.shutdown(socket.SHUT_RDWR)])
+                ws.close()
+                self.assertEqual(endpoint.mock_calls,
+                                 [mock.call.shutdown(socket.SHUT_RDWR), mock.call.close()])
+
+    def test_interrupt_wakes_blocked_receive_without_peer_exit(self):
+        import socket
+        local, peer = socket.socketpair()
+        local.settimeout(3)
+        entered, finished = threading.Event(), threading.Event()
+        errors = []
+        ws = render.WSConn.__new__(render.WSConn)
+        ws.sock, ws._rbuf = local, bytearray()
+
+        def receive():
+            entered.set()
+            try:
+                ws.recv_msg()
+            except (OSError, ConnectionError) as error:
+                errors.append(error)
+            finally:
+                finished.set()
+
+        thread = threading.Thread(target=receive)
+        thread.start()
+        try:
+            self.assertTrue(entered.wait(1))
+            ws.interrupt()
+            # Keep both fds alive: close can strand a concurrent readiness wait.
+            self.assertTrue(finished.wait(1), 'owned receive must wake on shutdown')
+            self.assertTrue(errors)
+            ws.close()  # Already closed/disconnected is harmless.
+        finally:
+            peer.close()
+            local.close()
+            thread.join(4)
+        self.assertFalse(thread.is_alive())
+
+
 class RenderCancellationTests(unittest.TestCase):
     def setUp(self):
         self.events = []
@@ -25,6 +74,9 @@ class RenderCancellationTests(unittest.TestCase):
 
             def eval(self, expression):
                 return True if '__vtx_export_png' in expression else None
+
+            def interrupt(self):
+                case.events.append('interrupt')
 
             def close(self):
                 case.events.append('close')
@@ -97,6 +149,8 @@ class RenderCancellationTests(unittest.TestCase):
         self.assertNotIn('heal', self.events)
         self.assertEqual(self.events.count('start'), 1)
         self.assertEqual(self.events.count('stop'), 1)
+        self.assertLess(self.events.index('interrupt'), self.events.index('stop'))
+        self.assertLess(self.events.index('worker-failed'), self.events.index('close'))
         self.assertEqual(self.written, set())
 
     def test_teardown_waits_for_inflight_write_before_returning(self):
