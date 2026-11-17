@@ -16,14 +16,14 @@
 - 离线体检：`env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor`；联网会 fetch 写入。
 - 链接预演：`python3 vt.py --fix-links --dry`；实改前核对目标/权限。
 - 渲染：`python3 vtx/vtx.py -t <timeline.json> all`（写缓存/产物）；前置见[交付链](<docs/skill/references/edit.md#正式交付链r1-r4-共用>)。
-- 测试：`bash scripts/run_all_tests.sh`；局部入口见[贡献指南](<CONTRIBUTING.md#测试入口>)。
-- 文档必跑：`bash scripts/doc_gates.sh`；如实报告 PASS/FAIL/SKIP/UNRUN；冒烟、语法检查不等于业务或全量验证。
+- 测试：`bash scripts/run_all_tests.sh`；局部见[贡献指南](<CONTRIBUTING.md#测试入口>)。
+- 文档必跑：`bash scripts/doc_gates.sh`；报告 PASS/FAIL/SKIP/UNRUN；冒烟、语法检查不等于业务或全量验证。
 
 ## 写态红线
 
 - CI（工作流、门禁、选测/分片、判据、检查设置）改前说明必要性/影响及验证/回滚，获用户明确批准后限范围修改。
-- 未授权不动 CI；不删减/跳测、放宽门禁或绕必需检查刷绿，先修根因。
-- 视频项目/素材放仓外；cache/out 是产物非源件；示例默认零写态，写操作警示。
+- 未授权不动CI；不删减/跳测、放宽门禁或绕必需检查刷绿，先修根因。
+- 视频项目/素材放仓外；cache/out为产物非源件；示例默认零写态，写操作警示。
 - 不手改 catalog 生成区；manifest/registry 改动须[重注并过门](<docs/DOC-CHARTER.md#单一事实来源>)。
 - [VERSION](<VERSION>)、[pyproject](<pyproject.toml>)、[内核版本](<vtx/__init__.py>)改一必三；遵循[冻结规则](<docs/releases.md>)。
 - 技能/工作流文档改前公告影响并经[消费面评审](<docs/DOC-CHARTER.md#消费面>)，改后核对真实入口。
@@ -31,9 +31,9 @@
 
 ## 编辑纪律
 
-- 代码PR同步本指南。
+- 代码PR同步指南；QC统一矩阵/范围，变更重测证书。
 - 仅留跨目录常驻要点，一点一行；无流水账/平行指南。
-- 一事实一家；链接权威文档；迁移修活引用，不留旧入口壳。
+- 一事实一家；迁移修活引用、链权威文档，不留旧壳。
 - 实现后独立复审并交维护者；契约/API 变更须维护方同意及独立对抗审查。
 - 遵守[文档规则](<docs/DOC-CHARTER.md>)；[预算快照](<scripts/doc_budget.snapshot.json>)不改，另测现文，不改门禁藏超限。
 
@@ -41,5 +41,5 @@
 
 - 唯一主基线：30秒/900帧/1080p30 SVG；禁用退役12秒基线，探针不替主片。
 - 准备/核验只用 `scripts/demo.py prepare/verify`；portable-v2 锁字体/标准库音频，旧输入不混用，见[Demo](<templates/demo-timeline-svg/README.md#主性能基线>)。
-- 固定输入、同质量/环境/后端/配置分冷暖测全链；留身份、哈希、证据；未跑写 UNRUN，探针不冒充整体提速。
+- 同输入/质量/环境/后端/配置分冷暖测全链；留身份/哈希/证据；未测UNRUN，探针非整体提速。
 - 正式/区间拼接共用内核帧端点 concat 时长；不以容器或仅总帧数代替帧时钟判据。
