@@ -207,9 +207,20 @@ def _dep_sigs(c, s, proj: Path) -> dict:
     except (OSError, ValueError):
         pass
     dep_sigs = {}
+    from apps.bgm.bgm_gen.ref_slots import scan_ref_file
     for ref in sorted(set(refs)):
-        rp = (proj.parent / ref).resolve()
-        dep_sigs[str(rp)] = _file_sig(rp)
+        rp, exists = scan_ref_file(proj, ref)
+        if not exists:
+            dep_sigs[str(rp)] = "MISSING"
+            continue
+        try:
+            with rp.open("rb") as stream:
+                h = hashlib.sha256()
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    h.update(block)
+            dep_sigs[str(rp)] = h.hexdigest()[:16]
+        except FileNotFoundError:
+            dep_sigs[str(rp)] = "MISSING"
     params = _params(s)
     extras = params.get("extra_deps", []) if isinstance(params, dict) else []
     for extra in sorted(x for x in (extras if isinstance(extras, list) else [])
