@@ -88,7 +88,7 @@ class SourceInstall(unittest.TestCase):
             if '-c' in argv:
                 return real_command(argv, **kwargs)
             return ''  # Only skip network pip install; real ensurepip is vendored.
-        with mock.patch.object(install, 'command', side_effect=no_network):
+        with mock.patch.object(install, 'command', side_effect=no_network), mock.patch.object(install.python_packages, 'install', return_value={}):
             python, env = install.prepare_python(self.root, self.upstream, {'chrome': '/unused/chrome'})
         subprocess.run([str(python), '-I', '-c', 'import pip'], env=env, check=True, capture_output=True)
 
@@ -136,9 +136,96 @@ class SourceInstall(unittest.TestCase):
             return real_git(*args, **kwargs)
         with mock.patch.object(install, 'git', side_effect=fail_fetch):
             with self.assertRaisesRegex(install.InstallError, 'network interrupted'):
-                self.deploy()
+                self.deploy(update=True)
         self.assertFalse((self.root / 'source').exists())
-        self.assertEqual(self.deploy(), self.run_git('rev-parse', 'HEAD'))
+        pending = json.loads((self.root / '.source-progress.json').read_text())
+        approved = pending['commit']
+        stage = self.root / pending['stage']
+        self.assertTrue((stage / '.git').is_dir())
+        (self.upstream / 'later').write_text('main advanced during interruption')
+        later = self.commit('newer main while interrupted')
+        self.assertEqual(install.update_source(self.root, str(self.upstream), 'main', update=True, source_commit=later), approved)
+        self.assertFalse(stage.exists())
+        self.assertFalse((self.root / '.source-progress.json').exists())
+        self.assertEqual(self.deploy(update=True), later)
+
+    def test_clean_approved_checkout_recovers_after_receipt_publication_interruption(self):
+        first = self.deploy()
+        (self.upstream / 'later').write_text('new source')
+        second = self.commit('update')
+        real_git = install.git
+        def crash_after_checkout(*args, **kwargs):
+            value = real_git(*args, **kwargs)
+            if 'checkout' in args:
+                raise install.InstallError('interrupted after checkout')
+            return value
+        with mock.patch.object(install, 'git', side_effect=crash_after_checkout):
+            with self.assertRaisesRegex(install.InstallError, 'after checkout'):
+                self.deploy(update=True)
+        self.assertEqual(json.loads((self.root / 'installation.json').read_text())['commit'], first)
+        self.assertEqual(self.deploy(), second)
+        self.assertEqual(json.loads((self.root / 'installation.json').read_text())['status'], 'preparing')
+        self.assertFalse((self.root / '.source-progress.json').exists())
+
+    def test_fresh_bootstrap_pin_is_source_identity_but_retry_does_not_follow_new_main(self):
+        first = self.run_git('rev-parse', 'HEAD')
+        (self.upstream / 'later').write_text('later')
+        second = self.commit('advance main before source fetch')
+        self.assertEqual(install.update_source(self.root, str(self.upstream), 'main', source_commit=first), first)
+        self.assertEqual(install.update_source(self.root, str(self.upstream), 'main', source_commit=second), first)
+        self.assertEqual(install.update_source(self.root, str(self.upstream), 'main', update=True, source_commit=second), second)
+
+    def test_no_system_reuses_receipt_bound_keg_only_pair(self):
+        selected = {}
+        for name in (*install.TOOL_NAMES, 'chrome'):
+            path = self.root / 'private-full' / 'bin' / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('native fixture')
+            selected[name] = str(path)
+        (self.root / 'installation.json').write_text(json.dumps(dict(
+            schema=install.SCHEMA, sourceRoot=str(self.root / 'source'), tools=selected)))
+        capabilities = ' '.join((*install.REQUIRED_ENCODERS, *install.REQUIRED_FILTERS))
+        with mock.patch.object(install.sys, 'platform', 'darwin'), mock.patch.object(install.shutil, 'which', return_value=None), mock.patch.object(install, 'native_browser', return_value=None), mock.patch.object(install, 'command', return_value=capabilities) as run:
+            actual = install.prepare_tools(True, self.root)
+        self.assertEqual(actual['ffmpeg'], selected['ffmpeg'])
+        self.assertEqual(actual['ffprobe'], selected['ffprobe'])
+        self.assertEqual(run.call_count, 2)  # capability inventory, no package install
+
+    def test_source_recovery_does_not_adopt_a_journal_escaping_root(self):
+        (self.root / '.source-progress.json').write_text(json.dumps(dict(
+            schema='framivra.source-progress/v1', kind='clone', repository=str(self.upstream),
+            ref='main', commit=self.run_git('rev-parse', 'HEAD'), stage='../upstream')))
+        with self.assertRaisesRegex(install.InstallError, 'staging path'):
+            self.deploy()
+        self.assertFalse((self.root / 'source').exists())
+
+    def test_same_update_after_dependency_failure_keeps_approved_source(self):
+        approved = self.run_git('rev-parse', 'HEAD')
+        args = ['--root', str(self.root), '--repo', str(self.upstream), '--yes', '--update']
+        with mock.patch.object(install, 'prepare_tools', return_value={}), mock.patch.object(install, 'verify_native_tools'), mock.patch.object(install, 'prepare_python', side_effect=install.InstallError('fixture dependency failure')), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(install.main(args), 1)
+            (self.upstream / 'advanced').write_text('main moved after source approval')
+            self.commit('main advanced during dependency interruption')
+            self.assertEqual(install.main(args), 1)
+        self.assertEqual(self.run_git('rev-parse', 'HEAD', cwd=self.root / 'source'), approved)
+        self.assertEqual(json.loads((self.root / 'installation.json').read_text())['status'], 'preparing')
+
+    def test_foreign_receipt_cannot_authorize_an_unmanaged_venv(self):
+        foreign = self.root / 'venv' / 'marker'
+        foreign.parent.mkdir()
+        foreign.write_text('unrelated environment')
+        receipts = ({}, dict(schema='other/v1', status='preparing', repository=str(self.upstream), sourceRoot=str(self.root / 'source')),
+                    dict(schema=install.SCHEMA, status='preparing', repository=str(self.upstream), sourceRoot=str(self.base / 'other/source')))
+        for receipt in receipts:
+            with self.subTest(receipt=receipt):
+                encoded = json.dumps(receipt)
+                (self.root / 'installation.json').write_text(encoded)
+                with mock.patch.object(install, 'prepare_tools') as native, contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(install.main(['--root', str(self.root), '--repo', str(self.upstream), '--yes']), 1)
+                native.assert_not_called()
+                self.assertEqual(foreign.read_text(), 'unrelated environment')
+                self.assertEqual((self.root / 'installation.json').read_text(), encoded)
+                self.assertFalse((self.root / 'source').exists())
 
     def test_unowned_clone_is_never_adopted(self):
         self.run_git('clone', str(self.upstream), str(self.root / 'source'))

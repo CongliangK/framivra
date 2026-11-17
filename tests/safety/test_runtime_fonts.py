@@ -34,7 +34,7 @@ class RuntimeFonts(unittest.TestCase):
         self.patch = mock.patch.object(fonts, 'SOURCES', self.sources)
         self.patch.start()
         self.addCleanup(self.patch.stop)
-        network = mock.patch.object(fonts, 'download', side_effect=lambda s: self.payload[s['filename']])
+        network = mock.patch.object(fonts, 'download', side_effect=lambda s, **kwargs: self.payload[s['filename']])
         self.network = network.start()
         self.addCleanup(network.stop)
         command = mock.patch.object(fonts, 'run', side_effect=lambda args, env:
@@ -88,7 +88,7 @@ class RuntimeFonts(unittest.TestCase):
         self.assertEqual(list(destination.iterdir()), [target])
 
     def test_wrong_download_sha_leaves_destination_absent(self):
-        self.network.side_effect = lambda s: b'corrupt download'
+        self.network.side_effect = lambda s, **kwargs: b'corrupt download'
         with self.assertRaisesRegex(fonts.FontError, 'SHA256'):
             self.install()
         self.assertFalse(self.root.exists())
@@ -203,16 +203,83 @@ class SourceAndRegistrationContracts(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(fonts.FontError):
                 handler.redirect_request(request, None, 302, '', {}, url)
         entry = source('font.ttf', b'font')
+        cached = mock.Mock()
+        cached.is_file.return_value = True
+        cached.stat.return_value.st_size = entry['size']
         response = mock.MagicMock()
-        response.geturl.return_value = entry['url']
         response.read.return_value = b'wrong'
-        opener = mock.Mock()
-        opener.open.return_value.__enter__ = mock.Mock(return_value=response)
-        opener.open.return_value.__exit__ = mock.Mock(return_value=False)
-        with mock.patch.object(fonts.urllib.request, 'build_opener', return_value=opener):
+        cached.open.return_value.__enter__ = mock.Mock(return_value=response)
+        cached.open.return_value.__exit__ = mock.Mock(return_value=False)
+        with mock.patch.object(fonts.install_downloads, 'acquire', return_value=cached), \
+             mock.patch.object(fonts, 'physical', return_value=cached):
             with self.assertRaises(fonts.FontError):
-                fonts.download(entry)
+                fonts.download(entry, cache=Path('/fixture/cache'))
         response.read.assert_called_once_with(entry['size'] + 1)
+
+    def test_mirror_order_official_mode_and_raw_commit_identity(self):
+        package = fonts.demo_fonts.FONT_SOURCES[0]
+        path = fonts.urllib.parse.urlsplit(package['url']).path
+        self.assertEqual(fonts.candidates(package),
+                         ['https://mirrors.tuna.tsinghua.edu.cn' + path,
+                          'https://mirrors.ustc.edu.cn' + path, package['url']])
+        self.assertEqual(fonts.candidates(package, 'official'), [package['url']])
+        raw = next(s for s in fonts.SOURCES if s['filename'] == 'InterVariable.ttf')
+        self.assertEqual(fonts.candidates(raw, 'cn'), [raw['url']])
+        self.assertEqual(fonts.candidates(raw, 'official'), [raw['url']])
+        self.assertIn(fonts.INTER_COMMIT, raw['url'])
+        with self.assertRaises(fonts.FontError):
+            fonts.candidates(raw, 'untrusted-provider')
+        self.assertEqual(fonts.SOURCES[0]['url'], package['url'])
+
+    def test_shared_cache_receives_exact_package_pin_and_reuses_bounded_extract(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            payload = b'package fixture'
+            package = base / 'package.deb'
+            package.write_bytes(payload)
+            member = b'font member fixture'
+            notice = b'notice fixture'
+            first = dict(source('Example.ttf', member), url='https://deb.debian.org/debian/pool/main/f/font/font_1_all.deb',
+                         member='./font.ttf', package_size=len(payload), package_sha256=hashlib.sha256(payload).hexdigest())
+            second = dict(source('COPYRIGHT.txt', notice, 'license'), url=first['url'], member='./copyright',
+                          package_size=first['package_size'], package_sha256=first['package_sha256'])
+            sources = (first, second)
+            before = json.dumps(sources, sort_keys=True)
+            with mock.patch.object(fonts.install_downloads, 'acquire', return_value=package) as fetch, \
+                 mock.patch.object(fonts.demo_fonts, '_extract', return_value={'Example.ttf': member, 'COPYRIGHT.txt': notice}) as extract:
+                result = fonts.acquire(base / 'fonts', sources, None, base / 'home',
+                                       cache=base / 'cache/downloads', network='official')
+            fetch.assert_called_once_with(base / 'cache/downloads', [first['url']], first['package_sha256'],
+                                          size=first['package_size'], filename='font_1_all.deb')
+            extract.assert_called_once_with(payload, list(sources))
+            self.assertEqual(result, {'Example.ttf': member, 'COPYRIGHT.txt': notice})
+            self.assertEqual(json.dumps(sources, sort_keys=True), before)
+            self.assertFalse((base / 'fonts').exists())
+
+    def test_integrity_error_stops_acquisition_without_new_font_fallback(self):
+        entry = fonts.SOURCES[0]
+        with tempfile.TemporaryDirectory() as temporary, \
+             mock.patch.object(fonts.install_downloads, 'acquire', side_effect=fonts.install_downloads.IntegrityError('SHA256 mismatch')) as fetch, \
+             mock.patch.object(fonts.demo_fonts, '_extract') as extract:
+            with self.assertRaisesRegex(fonts.FontError, 'SHA256 mismatch'):
+                fonts.acquire(Path(temporary) / 'fonts', (entry,), None, Path(temporary) / 'home',
+                              cache=Path(temporary) / 'cache/downloads')
+        fetch.assert_called_once()
+        self.assertEqual(fetch.call_args.args[1], fonts.candidates(entry))
+        self.assertEqual(fetch.call_args.args[2], entry['package_sha256'])
+        self.assertEqual(fetch.call_args.kwargs['size'], entry['package_size'])
+        extract.assert_not_called()
+
+    def test_raw_pins_use_safe_logical_filename_in_persistent_cache(self):
+        entry = source('InterVariable.ttf', b'font')
+        entry['url'] = fonts.INTER_BASE + 'Inter%5Bopsz,wght%5D.ttf'
+        with tempfile.TemporaryDirectory() as temporary:
+            cached = Path(temporary) / 'cached-font'
+            cached.write_bytes(b'font')
+            with mock.patch.object(fonts.install_downloads, 'acquire', return_value=cached) as fetch:
+                self.assertEqual(fonts.download(entry, cache=Path(temporary) / 'cache', network='cn'), b'font')
+            fetch.assert_called_once_with(Path(temporary) / 'cache', [entry['url']], entry['sha256'],
+                                          size=entry['size'], filename='InterVariable.ttf')
 
     def test_windows_hkcu_and_notification_contract(self):
         registry = types.SimpleNamespace(HKEY_CURRENT_USER=1, KEY_QUERY_VALUE=2,
