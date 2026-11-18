@@ -610,7 +610,12 @@ def install(args):
             for name in ('source', 'venv', 'bin/vtx'):
                 if (root / name).exists():
                     raise InstallError('Refusing existing unmanaged installation component: ' + name)
-        resuming = (previous is not None and previous.get('status') == 'preparing'
+        if args.restart_update:
+            if physical(root / '.source-progress.json').exists():
+                raise InstallError('A source checkout is still in progress; resume it without --restart-update')
+            if previous is None or not physical(root / 'source').is_dir():
+                raise InstallError('--restart-update requires an existing managed source checkout')
+        resuming = (not args.restart_update and previous is not None and previous.get('status') == 'preparing'
                     and previous.get('sourceApproved') is True
                     and previous.get('updateRequested') == args.update
                     and previous.get('requestedRef') == args.ref)
@@ -627,6 +632,9 @@ def install(args):
                     updateRequested=args.update, requestedRef=args.ref,
                     pythonDependenciesPrepared=bool(resuming and previous.get('pythonDependenciesPrepared'))))
         commit = update_source(root, args.repo, args.ref, args.update and not resuming, args.source_commit)
+        print('[install] Source commit: ' + commit +
+              (' (resuming; use --update --restart-update to select a new target)' if resuming and args.update else ''),
+              flush=True)
         source = root / 'source'
         preparing = json_record(root / 'installation.json')
         native_metadata = native_metadata or preparing.get('nativePreparation', {})
@@ -685,14 +693,18 @@ def main(argv=None):
     parser.add_argument('--plan', action='store_true', help='read-only plan: no network, mkdir, install or execution of candidates')
     parser.add_argument('--no-system', action='store_true', help='use existing native tools; fail if any required tool is missing')
     parser.add_argument('--update', action='store_true', help='explicitly update a clean owned checkout; otherwise reuse pinned source')
+    parser.add_argument('--restart-update', action='store_true', help='with --update, select a new target instead of resuming a completed checkout')
     args = parser.parse_args(argv)
+    if args.restart_update and not args.update:
+        parser.error('--restart-update requires --update')
+    resume = 'Rerun without --restart-update to resume.' if args.restart_update else 'Rerun the same command to resume.'
     try:
         return install(args)
     except (InstallError, downloads.DownloadError, posix.NativeInstallError, OSError, ValueError, subprocess.SubprocessError) as error:
-        print('[install] FAILED: ' + str(error) + '\nRerun the same command to resume. No failed installation was registered ready.', file=sys.stderr)
+        print('[install] FAILED: ' + str(error) + '\n' + resume + ' No failed installation was registered ready.', file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print('[install] Interrupted; verified cache and partial downloads were retained. Rerun the same command to resume.', file=sys.stderr)
+        print('[install] Interrupted; verified cache and partial downloads were retained. ' + resume, file=sys.stderr)
         return 130
 
 

@@ -185,6 +185,15 @@ class SourceInstall(unittest.TestCase):
         approved = pending['commit']
         stage = self.root / pending['stage']
         self.assertTrue((stage / '.git').is_dir())
+        progress = self.root / '.source-progress.json'
+        saved = progress.read_bytes()
+        with mock.patch.object(install, 'prepare_tools') as tools, \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(install.main(['--root', str(self.root), '--repo', str(self.upstream),
+                                           '--yes', '--update', '--restart-update']), 1)
+        self.assertIn('source checkout is still in progress', errors.getvalue())
+        tools.assert_not_called()
+        self.assertEqual(progress.read_bytes(), saved)
         (self.upstream / 'later').write_text('main advanced during interruption')
         later = self.commit('newer main while interrupted')
         self.assertEqual(install.update_source(self.root, str(self.upstream), 'main', update=True, source_commit=later), approved)
@@ -291,6 +300,47 @@ class SourceInstall(unittest.TestCase):
             self.assertEqual(install.main(args), 1)
         self.assertEqual(self.run_git('rev-parse', 'HEAD', cwd=self.root / 'source'), approved)
         self.assertEqual(json.loads((self.root / 'installation.json').read_text())['status'], 'preparing')
+
+    def test_restart_failed_verification_selects_new_pin_without_bypassing_probes(self):
+        old = self.run_git('rev-parse', 'HEAD')
+        (self.upstream / 'VERSION').write_text('2.3.0\n', encoding='utf-8')
+        new = self.commit('fixed source')
+        config = self.root / 'config.json'
+        config.write_text('{"cache":{"mode":"core"}}', encoding='utf-8')
+        args = ['--root', str(self.root), '--repo', str(self.upstream), '--yes', '--update']
+        receipt = self.root / 'installation.json'
+
+        def verify(root, source, python, env):
+            if self.run_git('rev-parse', 'HEAD', cwd=source) != new:
+                raise install.InstallError('old verification failed')
+            return {}, 'fixture evidence'
+
+        font_env = {'FONTCONFIG_FILE': str(self.root / 'fonts/fonts.conf')} if sys.platform == 'linux' else {}
+        install_command = install.command
+
+        def command(argv, **kwargs):
+            if Path(argv[1]).name == 'install_runtime_fonts.py':
+                return json.dumps({'environment': font_env})
+            return install_command(argv, **kwargs)
+
+        with mock.patch.object(install, 'prepare_tools', return_value={}), \
+                mock.patch.object(install, 'verify_native_tools'), \
+                mock.patch.object(install, 'prepare_python', return_value=(Path(sys.executable), {})), \
+                mock.patch.object(install.windows, 'ensure_python_runtime'), \
+                mock.patch.object(install, 'verify_macos_tool_paths'), \
+                mock.patch.object(install, 'command', side_effect=command), \
+                mock.patch.object(install, 'verify', side_effect=verify) as probe, \
+                contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(install.main(args + ['--source-commit', old]), 1)
+            self.assertEqual(install.main(args + ['--source-commit', new]), 1)
+            self.assertEqual(install.json_record(receipt)['commit'], old)
+            self.assertEqual(install.json_record(receipt)['status'], 'preparing')
+            self.assertIn('resuming', output.getvalue())
+            self.assertEqual(install.main(args + ['--restart-update', '--source-commit', new]), 0)
+        self.assertEqual(probe.call_count, 3)
+        self.assertEqual(install.json_record(receipt)['commit'], new)
+        self.assertEqual(install.json_record(receipt)['status'], 'ready')
+        self.assertEqual(config.read_text(encoding='utf-8'), '{"cache":{"mode":"core"}}')
 
     def test_foreign_receipt_cannot_authorize_an_unmanaged_venv(self):
         foreign = self.root / 'venv' / 'marker'
