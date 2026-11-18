@@ -49,7 +49,20 @@ _STANDARD_SVG_SHA256 = '7f6ef5e87080ad55248052ebd5857d2fd1be84aca2ad7f28a2edc06c
 _STANDARD_RGBA_SHA256 = '3b245999b54791dcc7be240418965d8c91445a758bfc9450afbe5227c70edfd5'
 # Full portable-v2 reference: original prepared checker; independent verified
 # Inkscape 1.4.4 x64 CLI export and FFmpeg 9.0.2 RGBA framehash reopen.
-_RASTER_FRAMES = 900
+_RASTER_FRAMES, _RASTER_FPS = 900, 30
+_RASTER_MANIFEST = 'gfx/demo.frames.json'
+_RASTER_GENERATOR = 'build_demo.js'
+# Only these ordered, inert source leaves are added to the existing four font leaves.
+_RASTER_SOURCE_DEPS = (
+    _RASTER_GENERATOR, 'renderer.js', 'motion-plan.json', 'fonts.lock.json', 'audio/build.py',
+    'vendor/scoreweft/SOURCES.json', 'vendor/scoreweft/bgm_gen/__init__.py',
+    'vendor/scoreweft/bgm_gen/synthlib.py', 'vendor/scoreweft/bgm_gen/engines/__init__.py',
+    'vendor/scoreweft/bgm_gen/engines/base.py', 'vendor/scoreweft/bgm_gen/engines/descriptor_check.py',
+    'vendor/scoreweft/bgm_gen/engines/synth.py', 'vendor/scoreweft/bgm_gen/engines/_wavio.py',
+    'vendor/scoreweft/bgm_gen/engines/descriptors/synth.json',
+)
+_RASTER_TIMELINE_LIMIT = 4 * 1024
+_RASTER_DEP_LIMIT, _RASTER_DEP_TOTAL = 32 * 1024, 96 * 1024
 # Original #465 prepared Windows manifest, byte-for-byte reproduced by the
 # locked build_demo.js manifest() with JSON.stringify(..., null, 2) plus LF.
 _RASTER_MANIFEST_BYTES = 29140
@@ -141,14 +154,20 @@ def _read_pinned(handle, info, directory, limit):
     return buffer.raw[:count.value]
 
 
-def _locked_font_digests():
-    def read(relative):
-        with _pin_entry(_DEMO / relative) as (handle, info, _, directory):
-            return _read_pinned(handle, info, directory, 16 * 1024)
+def _read_demo_lock(relative):
+    with _pin_entry(_DEMO / relative) as (handle, info, _, directory):
+        return _read_pinned(handle, info, directory, 16 * 1024)
 
-    baseline = json.loads(read('benchmark/portable-v2.json'))
-    lock = read('fonts.lock.json')
-    if hashlib.sha256(lock).hexdigest() != baseline['runtime_files_sha256']['fonts.lock.json']:
+
+def _locked_runtime_digests():
+    return json.loads(_read_demo_lock('benchmark/portable-v2.json'))['runtime_files_sha256']
+
+
+def _locked_font_digests(runtime_digests=None):
+    if runtime_digests is None:
+        runtime_digests = _locked_runtime_digests()
+    lock = _read_demo_lock('fonts.lock.json')
+    if hashlib.sha256(lock).hexdigest() != runtime_digests['fonts.lock.json']:
         raise ValueError('Windows SVG demo font lock byte identity mismatch')
     fonts = {row['path']: row['sha256'] for row in json.loads(lock)['fonts']}
     return tuple(fonts['assets/fonts/' + name] for name in _FONT_NAMES)
@@ -511,15 +530,41 @@ def _raster_time(deadline):
         raise TimeoutError('Windows SVG canonical raster deadline expired')
 
 
+def _require_raster_timeline(project_root, font_paths, runtime_digests, deadline):
+    raw = win_input.read(project_root, 'timeline.json', limit=_RASTER_TIMELINE_LIMIT, expected_path=None)
+    if gfx_svg.digest(raw) != runtime_digests['timeline.json']:
+        raise ValueError('Windows SVG canonical raster timeline byte identity mismatch')
+    timeline = json.loads(raw)
+    width, height = _STANDARD_SIZE
+    project = {'fps': _RASTER_FPS, 'width': width, 'height': height, 'duration_frames': _RASTER_FRAMES}
+    clip = {'format': 'svg-sequence', 'src': _RASTER_MANIFEST, 'dst_in': 0, 'dur': _RASTER_FRAMES,
+            'cache_dependencies': [*_RASTER_SOURCE_DEPS, *font_paths]}
+    tracks = [{'name': 'timeline-motion', 'kind': 'gfx', 'clips': [clip]}]
+    if (not isinstance(timeline, dict) or type(timeline.get('version')) is not int or timeline['version'] != 2
+            or timeline.get('project') != project or timeline.get('video_tracks') != tracks
+            or any(type(value) is not int for value in timeline['project'].values())
+            or any(type(timeline['video_tracks'][0]['clips'][0][key]) is not int for key in ('dst_in', 'dur'))):
+        raise ValueError('Windows SVG canonical raster timeline fields mismatch')
+
+    # Declaration values above are comparison-only. Hash the fixed source leaves
+    # as data, not scripts to run; font content is verified at existing staging.
+    remaining = _RASTER_DEP_TOTAL
+    for name in _RASTER_SOURCE_DEPS:
+        _raster_time(deadline)
+        data = win_input.read(project_root, name, limit=min(_RASTER_DEP_LIMIT, remaining), expected_path=None)
+        if gfx_svg.digest(data) != runtime_digests[name]:
+            raise ValueError(f'Windows SVG canonical raster dependency byte identity mismatch: {name}')
+        remaining -= len(data)
+
+
 def _require_raster_manifest(project_root, frame_paths, font_paths):
-    raw = win_input.read(project_root, 'gfx/demo.frames.json',
-                         limit=_RASTER_MANIFEST_BYTES, expected_path=None)
+    raw = win_input.read(project_root, _RASTER_MANIFEST, limit=_RASTER_MANIFEST_BYTES, expected_path=None)
     if len(raw) != _RASTER_MANIFEST_BYTES or gfx_svg.digest(raw) != _RASTER_MANIFEST_SHA256:
         raise ValueError('Windows SVG canonical raster manifest byte identity mismatch')
     manifest = json.loads(raw.decode('utf-8'))
     width, height = _STANDARD_SIZE
-    if (manifest != {'format': gfx_svg.FORMAT, 'fps': 30, 'width': width, 'height': height,
-                     'frame_count': _RASTER_FRAMES, 'generator': 'build_demo.js',
+    if (manifest != {'format': gfx_svg.FORMAT, 'fps': _RASTER_FPS, 'width': width, 'height': height,
+                     'frame_count': _RASTER_FRAMES, 'generator': _RASTER_GENERATOR,
                      'fonts': font_paths, 'frames': frame_paths}
             or any(type(manifest[key]) is not int for key in ('fps', 'width', 'height', 'frame_count'))):
         raise ValueError('Windows SVG canonical raster manifest fields mismatch')
@@ -573,7 +618,9 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
     """Attest only the fixed portable-v2 raster, not project or render eligibility.
 
     Use an authorized stable NTFS project root and an exclusive disjoint
-    scratch parent. The pinned manifest is checked, never used to select inputs.
+    scratch parent. The timeline, manifest and declared source bytes are checked
+    against fixed identities; declarations never select inputs. These reads are
+    not an atomic project snapshot.
     """
     from PIL import Image
 
@@ -584,6 +631,8 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
     frame_paths = [f'gfx/frames-svg/{stem}.svg' for stem in stems]
     font_paths = ['assets/fonts/' + name for name in _FONT_NAMES]
     _raster_time(launch_deadline)
+    runtime_digests = _locked_runtime_digests()
+    _require_raster_timeline(project_root, font_paths, runtime_digests, launch_deadline)
     _require_raster_manifest(project_root, frame_paths, font_paths)
 
     outputs = tuple(stem + '.png' for stem in stems)
@@ -622,7 +671,7 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
             pins.enter_context(_pin_dir(frames))
             pins.enter_context(_pin_dir(fonts))
             staged_fonts = []
-            for i, (name, expected) in enumerate(zip(_FONT_NAMES, _locked_font_digests())):
+            for i, (name, expected) in enumerate(zip(_FONT_NAMES, _locked_font_digests(runtime_digests))):
                 _raster_time(launch_deadline)
                 data = win_input.read(project_root, font_paths[i], limit=_FONT_LIMIT, expected_path=None)
                 target = fonts / f'font{i}{Path(name).suffix}'
