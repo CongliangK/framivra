@@ -340,7 +340,16 @@ class Tab:
             self._mid = 0
             self.request_policy = None
             self._policy_commands = set()
-            self.call("Page.enable")
+            try:
+                self.call("Page.enable")
+            except (TimeoutError, socket.timeout) as exc:
+                # Before Python 3.10, socket.timeout is a distinct exception.
+                timeout_type = TimeoutError if isinstance(exc, TimeoutError) else socket.timeout
+                raise timeout_type(
+                    "CDP Page.enable timeout: page CDP WebSocket handshake completed, but Page.enable "
+                    "did not complete in time (Page domain readiness unconfirmed); "
+                    "this timeout alone does not identify a renderer or token root cause"
+                ) from exc
             self.call("Emulation.setDeviceMetricsOverride",
                       width=width, height=height, deviceScaleFactor=1, mobile=False)
         except BaseException:
@@ -552,8 +561,17 @@ class Browser:
                     f"http://127.0.0.1:{self.port}/json/version", timeout=1)
                 break
             except Exception:
-                if self.proc.poll() is not None:
-                    raise RuntimeError("chrome exited during startup")
+                status = self.proc.poll()
+                if status is not None:
+                    message = "chrome exited during startup"
+                    # Only native-sized integers, not arbitrary poll values or process details.
+                    if type(status) is int:
+                        if sys.platform == "win32":
+                            if -(1 << 31) <= status <= 0xFFFFFFFF:
+                                message += f" (exit status: 0x{status & 0xFFFFFFFF:08X})"
+                        elif -255 <= status <= 255:
+                            message += f" (exit status: {status})"
+                    raise RuntimeError(message)
                 time.sleep(0.2)
         else:
             raise RuntimeError("chrome devtools not ready in 15s")
