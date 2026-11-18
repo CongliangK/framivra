@@ -1,4 +1,4 @@
-"""Private Windows SVG shell input selection, without launching a process.
+"""Private Windows SVG shell input selection; this module starts no process.
 
 The caller supplies a trusted, stable vendor extraction and owns an exclusive
 scratch parent on a stable local volume mapping. Source and scratch chains
@@ -13,9 +13,9 @@ traversal depth and entry inventory are bounded. Nothing is shared or reused.
 
 The digest identifies vendor names and default streams, not OS/loader state
 (e.g. SxS, registry, system DLLs, dynamic loads or access to other resources).
-The inputs are only usable inside the operation. Cleanup assumes exclusive
-scratch and no child process; a future launcher needs its own ownership and
-exit guarantees before it can use this layout. No cache or completion use.
+The inputs are only usable inside the operation. The no-launch consumer can
+always clean its exclusive scratch; the owned shell must withhold cleanup
+until it has settled its writers. No cache or completion use.
 """
 import ctypes as C
 from ctypes import wintypes as W
@@ -187,17 +187,15 @@ class _ShellInputs(NamedTuple):
     cwd: Path
 
 
-@contextmanager
-def _runtime_snapshot(portable_root, *, scratch):
-    """Yield only the verified shell input paths, active inside this scope.
+class _SnapshotOperation:
+    def __init__(self, inputs):
+        self.inputs = inputs
+        self.keep = False  # the shell owner must set this before it can start a writer
 
-    portable_root contains the trusted, stable official inkscape/ extraction.
-    scratch must be a caller-owned, exclusive existing ASCII directory disjoint
-    from that tree. A filesystem without handle-based directory identities is not
-    supported. The caller must not start a process with these inputs; this
-    only verifies the copy and selects its fixed entry and empty cwd.
-    A future shell launcher must take these paths together, without rediscovery.
-    """
+
+@contextmanager
+def _snapshot_operation(portable_root, *, scratch):
+    """Own the verified private copy. Close pins, but never delete while keep is set."""
     if sys.platform != 'win32' or sysconfig.get_platform() != 'win-amd64':
         raise ValueError('SVG snapshot requires Windows x64 Python')
     source, scratch = _local_path(portable_root) / 'inkscape', _local_path(scratch)
@@ -208,14 +206,28 @@ def _runtime_snapshot(portable_root, *, scratch):
         source_ids = _pin_dirs(outer, source)
         if source_ids[-1] in scratch_ids or scratch_ids[-1] in source_ids:
             raise ValueError('SVG snapshot scratch overlaps the vendor tree')
-        operation = Path(tempfile.mkdtemp(prefix='vtx-svg-', dir=scratch))
+        directory = Path(tempfile.mkdtemp(prefix='vtx-svg-', dir=scratch))
+        operation = None
         try:
-            with _pin_dir(operation):
-                vendor = operation / 'inkscape'
+            with _pin_dir(directory):
+                vendor = directory / 'inkscape'
                 _tree(source, destination=vendor)
                 executable = _tree(vendor)
-                cwd = operation / 'shell'
+                cwd = directory / 'shell'
                 cwd.mkdir()
-                yield _ShellInputs(vendor, executable, cwd)
+                operation = _SnapshotOperation(_ShellInputs(vendor, executable, cwd))
+                yield operation
         finally:
-            shutil.rmtree(operation)
+            if operation is None or not operation.keep:
+                shutil.rmtree(directory)
+
+
+@contextmanager
+def _runtime_snapshot(portable_root, *, scratch):
+    """Verify/select inputs only; this consumer must not start a process.
+
+    Use a trusted stable extraction and a caller-owned exclusive existing
+    ASCII scratch directory on a local volume, disjoint from the vendor tree.
+    """
+    with _snapshot_operation(portable_root, scratch=scratch) as operation:
+        yield operation.inputs

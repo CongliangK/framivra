@@ -635,6 +635,46 @@ time.sleep(15)
             self.assertEqual(raised.exception.winerror, 2)
             launch.assert_called_once()
 
+    def test_launch_retains_first_interrupt_while_closing_stdio(self):
+        self.isolated('_launch_interrupt_fixture')
+
+    def _launch_interrupt_fixture(self):
+        from vtx.runtime import windows_browser as wb
+        api = wb._api()
+        create, close = api.CreateProcessW, api.CloseHandle
+        for phase in ('create', 'stdio'):
+            with self.subTest(phase=phase):
+                cancel = KeyboardInterrupt(phase)
+                faults = ([OSError('temporary stdio close failed')] if phase == 'create'
+                          else [cancel, OSError('temporary stdio close failed')])
+                launched = False
+
+                def create_then_interrupt(*args):
+                    nonlocal launched
+                    launched = bool(create(*args))
+                    if launched and phase == 'create':
+                        raise cancel
+                    return launched
+
+                def close_then_interrupt(handle):
+                    result = close(handle)
+                    if launched and result and faults:  # first callbacks close distinct pipe writers
+                        raise faults.pop(0)
+                    return result
+
+                args = [self.python, '-I', '-B', '-c', 'import time; time.sleep(25)']
+                with patch.object(api, 'CreateProcessW', side_effect=create_then_interrupt), \
+                        patch.object(api, 'CloseHandle', side_effect=close_then_interrupt), \
+                        patch.object(api, 'TerminateJobObject', wraps=api.TerminateJobObject) as stop, \
+                        patch.object(api, 'QueryInformationJobObject', wraps=api.QueryInformationJobObject) as settle:
+                    with self.assertRaises(KeyboardInterrupt) as interrupted:
+                        wb.run_browser(args)
+                self.assertTrue(launched)
+                self.assertIs(interrupted.exception, cancel)
+                self.assertIsInstance(cancel.__cause__, OSError)
+                stop.assert_called_once()
+                settle.assert_called()
+
     def test_launch_attribute_init_failure_closes_acquired_handles(self):
         from vtx.runtime import windows_browser as wb
         api = wb._api()
