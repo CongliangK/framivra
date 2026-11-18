@@ -32,7 +32,7 @@
       "name": "guitar",
       "engine": "sf2",
       "instrument": "FluidR3_GM:0:24",
-      "gain_db": 11.0,
+      "gain_db": 18.0,
       "pan": -0.15,
       "space": {
         "depth": 0.1,
@@ -171,7 +171,7 @@
       "name": "piano",
       "engine": "sfz",
       "instrument": "SalamanderGrand/Salamander Grand Piano V3.sfz",
-      "gain_db": 2.0,
+      "gain_db": 9.0,
       "pan": 0.17,
       "space": {
         "depth": 0.26,

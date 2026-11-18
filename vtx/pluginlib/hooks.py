@@ -73,6 +73,24 @@ class _CoreOnlyPreviewError(RuntimeError):
     code = "plugins.changed"
 
 
+def _visual_bgm_token(plugin, repo_root=None):
+    """Recognize the official audio-only declaration, without importing it."""
+    entry = plugin.get('entry') or {}
+    if (plugin['name'] != 'bgm-render' or entry.get('source') != 'builtin'
+            or entry.get('dir') != _registry._root(repo_root) / 'plugins' / 'bgm-render'
+            or entry.get('manifest_errors') or not entry.get('manifest')):
+        return None
+    expected_keys = [{'path': 'sources[]', 'key': 'bgm'}]
+    expected_hooks = {'validate', 'probe_source', 'prepare_source'}
+    registered = _registry.declared_plugins(repo_root).get('bgm-render', {})
+    extends = entry['manifest'].get('extends', {})
+    if (registered.get('keys') != expected_keys or extends.get('schema_keys') != expected_keys
+            or set(registered.get('hooks', ())) != expected_hooks
+            or set(extends.get('hooks', ())) != expected_hooks):
+        return None
+    return (plugin['version'], entry['manifest'].get('version'))
+
+
 def active_plugins(c=None, repo_root=None) -> list:
     """生效插件清单（installed+enabled、有钩子，且无键声明或本 timeline 声明了其键）
     → [{name, version, module, entry}]；entry 是本次解析的实体，不跨运行缓存。
@@ -100,8 +118,13 @@ def active_plugins(c=None, repo_root=None) -> list:
     # Frame contexts carry this class-owned guard before Ctx construction. Every
     # fingerprint and hook enumerates here before importing plugin code, so an
     # activation/config change cannot run a provider before eventual rejection.
-    if out and getattr(c, "_core_only_preview", False) is True:
-        raise _CoreOnlyPreviewError("core-only preview refuses newly active plugins")
+    if getattr(c, "_core_only_preview", False) is True:
+        expected = getattr(c, '_visual_bgm', None)
+        if expected and len(out) == 1 and _visual_bgm_token(out[0], repo_root) == expected:
+            # Never expose BGM to hook or provider-identity callers in a PNG request.
+            return []
+        if out or expected:
+            raise _CoreOnlyPreviewError("core-only preview refuses changed or unsupported plugins")
     return out
 
 

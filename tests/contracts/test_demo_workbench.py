@@ -19,6 +19,15 @@ class DemoWorkbenchTests(unittest.TestCase):
             self.assertEqual(main(args + ['--soundtrack', 'portable']), 0)
             self.assertEqual(prepare.call_args.args[0].soundtrack, 'portable')
 
+    def test_music_source_is_direct_and_never_replaces_the_independent_cue(self):
+        default, portable = timeline('html', []), timeline('html', [], 'portable')
+        self.assertEqual(default['sources'][1], {'id': 'demo_bed',
+            'path': 'assets/audio/carulli-andantino.json', 'bgm': {'output': 'premaster'}})
+        self.assertEqual(portable['sources'][1], {'id': 'demo_bed', 'path': 'assets/audio/bed-premaster.wav'})
+        self.assertEqual(default['video_tracks'], portable['video_tracks'])
+        self.assertEqual(default['audio_tracks'][1:], portable['audio_tracks'][1:])
+        self.assertEqual([event['in'] for event in default['audio_tracks'][-1]['events']], [228, 462])
+
     def test_only_gfx_sources_differ_between_routes(self):
         artifacts = {kind: timeline(kind, []) for kind in ('html', 'svg')}
         spec = graphics_spec()

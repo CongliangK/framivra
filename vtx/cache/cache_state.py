@@ -368,11 +368,16 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     # Keep one sort/key evaluation and carry original indices through its order.
     # Keys are str(), so native key comparisons cannot fail on mixed JSON types.
     sources = _get(c, c.tl, 'sources', '$', [])
+    visual_bgm = getattr(c, '_visual_bgm_source_ids', ())
     for index, s in sorted(_SourceEntries(c, sources), key=source_key):
         origin = f'$.sources[{index}]'
         p = _path(c, _field(c, s, 'path', origin), origin + '.path')
         prefix = _text(c, _get(c, s, 'path', origin, ''), origin + '.path') + ':'
-        digest = media_stat_digest(p) if p.is_file() else 'MISSING'
+        if visual_bgm and s['id'] in visual_bgm:
+            # PNG scope binds the declared score bytes, not its audio runtime.
+            digest = 'visual-bgm-json:' + (file_digest(p) if p.is_file() else 'MISSING')
+        else:
+            digest = media_stat_digest(p) if p.is_file() else 'MISSING'
         h.update(_encode(c, prefix + digest + '\n', origin + '.path'))
     gfx_inputs = []
     tracks = _get(c, c.tl, 'video_tracks', '$', [])
