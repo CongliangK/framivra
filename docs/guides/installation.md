@@ -47,7 +47,9 @@ Windows 主流程须普通非提升 PowerShell；提升写态在引导下载前�
 
 默认源码通道明确 `main`，或用 `--ref` 选 SHA/tag。引导 bundle 七文件从同一完整提交获取，不能每次请求漂移 main；`--source-commit <SHA>` 让新装 main 源码绑定到已解析提交。复用旧 owned source 或显式选择其他 ref 时，不把 installer 版次当该源码身份，仍须核对实际完整 commit 与兼容性。七文件含源码安装、公共下载、POSIX/Windows 原生准备、Python 依赖、运行字体及冻结提取 helper；信任仍是官方 Git/HTTPS、平台签名源与文件 pin，不宣称独立签名/keyless provenance，也不把插件 latest 当内核稳定版。
 
-**一般直接重跑同一命令即可恢复，不用删根重装。** 若安装器明确指出旧 macOS 源码的运行态 PATH 会遮住合格工具，使用 `--update` 更新 owned source 后重试。无新更新事务时复用原 owned source commit；Python 计划在解释器/平台/需求身份不变时复用，身份变化或新更新事务才重解析。`--update` 开启更新事务；一旦批准目标，失败重试（包括再次带 `--update`）先恢复该 commit/stage 和已完成的依赖计划，不因 main 前移另起事务；成功后再执行 `--update` 才追新并重新验收。`.source-progress.json` 记录已批准 commit 与唯一自有 stage；继续其 Git 获取/验证，不收养未知克隆，不 reset/clean 开发目录。origin、所有权、HEAD、干净状态和 ignored→tracked 碰撞仍检查；异常目录不静默删除。
+**一般直接重跑同一命令即可恢复，不用删根重装。** 若安装器明确指出旧 macOS 源码的运行态 PATH 会遮住合格工具，使用 `--update` 更新 owned source 后重试。无新更新事务时复用原 owned source commit；Python 计划在解释器/平台/需求身份不变时复用，身份变化或新更新事务才重解析。`--update` 开启更新事务；一旦批准目标，失败重试（包括再次带 `--update`）先恢复该 commit/stage 和已完成的依赖计划，不因 main 前移另起事务。`.source-progress.json` 记录已批准 commit 与唯一自有 stage；继续其 Git 获取/验证，不收养未知克隆，不 reset/clean 开发目录。origin、所有权、HEAD、干净状态和 ignored→tracked 碰撞仍检查；异常目录不静默删除。
+
+安装日志的 `Source commit` 是实际验收的源码提交。若上次 `--update` 已经完成 Git 检出，但旧源码无法通过验收，而上游已修复，则给原引导命令加 `--update --restart-update`（写操作），显式重新选取目标并完整验收。该选项不会覆盖尚在进行的源码 checkout journal，也不删除原下载缓存；若新尝试中断，去掉 `--restart-update` 再续跑。
 
 根 `.install.lock` 是内核 advisory lock：**不删除“stale”锁文件**；文件保留不表示锁仍被占用，持锁进程退出后自动释放，活锁冲突明确失败。HTTP 部分文件、Git stage、pip 计划与系统包缓存各由对应层恢复；断点恢复不承诺跨层原子回滚，也不绕过任何原有 ready 判据。
 
