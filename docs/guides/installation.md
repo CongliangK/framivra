@@ -15,7 +15,7 @@
 | 系统 | 默认用户根 | 适配与资格 |
 |---|---|---|
 | Linux | `~/.local/share/framivra` | apt-get/dnf/pacman；保留发行版/组件/架构与签名，不跨装发行版包。精简容器或缺库时明确失败；主干既有 [#381](https://github.com/CongliangK/framivra/issues/381) 阻止隔离安装 ready，本轮不修不绕 |
-| macOS | `~/.local/share/framivra` | 当前自动 bottles 路线仅 Apple Silicon、macOS ≥15、原生 Google Chrome.app；Intel/旧系统不静默转源码编译。实机安装 UNRUN |
+| macOS | `~/.local/share/framivra` | 自动 bottles 路线限 Apple Silicon、macOS ≥15、原生 Google Chrome.app。macOS 26.5.2 arm64 已实机验收非 AI/CDP；Intel、其余系统版本及从无 Homebrew/Chrome 起步未验，不静默转源码编译 |
 | Windows | `%LOCALAPPDATA%\framivra`（缺失时用户 AppData/Local） | Win10 x64 已实跑到字体/CLI 协议，旧 Git 权限修复后可用；soxr 缺 C++ 运行库阻塞制作验收。新 MinGit/自动运行库修复待实机复验，不声明 SVG 主 Demo 支持；Linux portable PS7 夹具不证明 PS5 整体验收 |
 
 根内含 `source/`、`venv/`、`config.json`、`fonts/`、`verification/`、`installation.json` 和下载缓存；POSIX 入口 `bin/vtx`，Windows 入口 `venv/Scripts/vtx.exe`。配置、字体、验证产物在源码外。Linux 只用根内 fontconfig；macOS/Windows 另复制到用户字体目录，不覆盖不同字节的同名文件。已合格工具复用，缺失或 FFmpeg 能力不足才准备；keg-only/私有工具路径由受管 CLI 真实加载，重跑仍核验，不把登记路径当合格证明。
@@ -35,7 +35,7 @@ Windows 主流程须普通非提升 PowerShell；提升写态在引导下载前�
 - Linux：临时复制 apt legacy/deb822、dnf repo 或 pacman Include 配置；不永久重写已有系统源。Debian/Ubuntu 主镜像为 TUNA，Fedora/Arch 为 USTC；失败回同一可信上游（Arch 回原可信 mirrorlist），不轮询不存在的全站覆盖；自定义 provider 保留。Ubuntu FFmpeg 要 universe，ports 架构不混 archive；包解析/缓存由原管理器负责。
 - Fedora：受限 `ffmpeg-free` 不当完整成功；额外确认后，从已信任 Fedora 安装 `distribution-gpg-keys`，临时启 RPM Fusion **free** 并验证签名，可能导入 RPM key 数据库、执行 `swap --allowerasing`；不自行持久注册 RPM Fusion、不启 nonfree/tainted。Arch 明示并确认 `-Syu` 整机升级，避免 partial upgrade；自定义外部下载器不在当前自动恢复支持内。
 - Ubuntu：优先已有合格原生浏览器；缺失时仅 amd64 选择 Google 官方签名 apt Chrome（核对锁定 key 及公开指纹），不静默走 Snap。额外确认 **Google 包正常 postinst 可能注册其自己的持久更新源**，这是厂商包副作用，不等于安装器获准重写其他源；其他架构需自行提供合格原生浏览器。
-- Homebrew：TUNA API/bottles 使用其官方回退；不改已有 brew remote、不把 cask/API 镜像当 Chrome DMG 镜像。普通 `ffmpeg` 缺 libass 时明确选 `ffmpeg-full`，仅受管环境取 keg-only prefix 下同套 ffmpeg/ffprobe，不 force-link；递归依赖也强制 bottle，无匹配 bottle 就失败。Chrome 仍是厂商 DMG。缺 Homebrew 时执行官方安装脚本，cn 下**新建 brew** 的 Git/API/bottles 优先 TUNA、失败官方，新 origin 可能保留所选镜像；CLT 仍是 Apple 渠道。Linux 尚无 Python 的 stage-zero 只能先用用户现有可信系统源及原生缓存/网络超时，不冒称此阶段已强制国内镜像。
+- Homebrew：优先使用 `PATH` 上的 brew；不自动更新 brew 本体或改 remote。旧 brew 若无法解析签名 API，先自行 `brew update`（更新 Homebrew/元数据），或将受支持的新版 brew 放在 `PATH` 前端，再重跑。TUNA API/bottles 使用其官方回退，不把 cask/API 镜像当 Chrome DMG 镜像。普通 FFmpeg 不可用或缺 libass 时，先核验 Apple Silicon 默认前缀下已装的 `ffmpeg-full` 同套 ffmpeg/ffprobe，再考虑安装；不 force-link，递归依赖也强制 bottle，无匹配 bottle 就失败。Chrome 仍是厂商 DMG。缺 Homebrew 时执行官方安装脚本，cn 下**新建 brew** 优先 TUNA、失败官方，新 origin 可能保留所选镜像；CLT 仍是 Apple 渠道。Linux 尚无 Python 的 stage-zero 先用用户现有可信系统源，不冒称此阶段已强制国内镜像。
 - Windows：Python 原 exe、普通 MinGit 原 ZIP 使用固定身份的国内候选/官方回退；FFmpeg 仍取 Gyan 官方同一原 ZIP，SoX 私有解包完整归档。保留全部 helper/DLL/许可，不拿 busybox 实验变体代替。已有 Edge 可复用；缺浏览器时 winget 使用官方动态元数据，不冒称固定字节或高校镜像覆盖。
 - Windows C++：先真实 import 全套依赖并做 soxr 最小重采样；仅 ImportError 且白名单 CRT 确定缺失（含 ctypes 包装的 126）才准备固定微软 VC++ 14.44.35211 x64 原件。SHA256 与 Windows Authenticode Valid/Microsoft 发布者均须通过；没有已证实的高校等价镜像。确认/`--yes` 后仅厂商 exe 请求 UAC，会更新系统共享运行库、包缓存和卸载登记，可能影响其他应用。不拷 DLL/改 PATH/强制降级或自动重启；`--no-system` 在下载前阻止，取消/信任失败硬停。3010/1641 要求用户重启后重跑；0/1638 也仅在新进程实际 import/重采样通过后继续原制作验收。
 
@@ -47,7 +47,7 @@ Windows 主流程须普通非提升 PowerShell；提升写态在引导下载前�
 
 默认源码通道明确 `main`，或用 `--ref` 选 SHA/tag。引导 bundle 七文件从同一完整提交获取，不能每次请求漂移 main；`--source-commit <SHA>` 让新装 main 源码绑定到已解析提交。复用旧 owned source 或显式选择其他 ref 时，不把 installer 版次当该源码身份，仍须核对实际完整 commit 与兼容性。七文件含源码安装、公共下载、POSIX/Windows 原生准备、Python 依赖、运行字体及冻结提取 helper；信任仍是官方 Git/HTTPS、平台签名源与文件 pin，不宣称独立签名/keyless provenance，也不把插件 latest 当内核稳定版。
 
-**直接重跑同一命令即可恢复，不用删根重装或先加 `--update`。**无新更新事务时复用原 owned source commit；Python 计划在解释器/平台/需求身份不变时复用，身份变化或新更新事务才重解析。`--update` 开启更新事务；一旦批准目标，失败重试（包括再次带 `--update`）先恢复该 commit/stage 和已完成的依赖计划，不因 main 前移另起事务；成功后再执行 `--update` 才追新并重新验收。`.source-progress.json` 记录已批准 commit 与唯一自有 stage；继续其 Git 获取/验证，不收养未知克隆，不 reset/clean 开发目录。origin、所有权、HEAD、干净状态和 ignored→tracked 碰撞仍检查；异常目录不静默删除。
+**一般直接重跑同一命令即可恢复，不用删根重装。** 若安装器明确指出旧 macOS 源码的运行态 PATH 会遮住合格工具，使用 `--update` 更新 owned source 后重试。无新更新事务时复用原 owned source commit；Python 计划在解释器/平台/需求身份不变时复用，身份变化或新更新事务才重解析。`--update` 开启更新事务；一旦批准目标，失败重试（包括再次带 `--update`）先恢复该 commit/stage 和已完成的依赖计划，不因 main 前移另起事务；成功后再执行 `--update` 才追新并重新验收。`.source-progress.json` 记录已批准 commit 与唯一自有 stage；继续其 Git 获取/验证，不收养未知克隆，不 reset/clean 开发目录。origin、所有权、HEAD、干净状态和 ignored→tracked 碰撞仍检查；异常目录不静默删除。
 
 根 `.install.lock` 是内核 advisory lock：**不删除“stale”锁文件**；文件保留不表示锁仍被占用，持锁进程退出后自动释放，活锁冲突明确失败。HTTP 部分文件、Git stage、pip 计划与系统包缓存各由对应层恢复；断点恢复不承诺跨层原子回滚，也不绕过任何原有 ready 判据。
 

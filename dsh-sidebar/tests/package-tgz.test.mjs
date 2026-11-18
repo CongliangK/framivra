@@ -1,15 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, realpath, stat, symlink } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, stat, symlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { commandFailure, spawnArchivePython } from '../scripts/archive-python.mjs'
 
 const script = fileURLToPath(new URL('../scripts/package.mjs', import.meta.url))
 const runtime = fileURLToPath(new URL('./package-runtime.mjs', import.meta.url))
-const evidence = process.env.SIDEBAR_EVIDENCE_DIR ?? '/tmp/framivra-sidebar-tests'
+const evidence = resolve(process.env.SIDEBAR_EVIDENCE_DIR ?? join(tmpdir(), 'framivra-sidebar-tests'))
 const run = (args, options = {}) => spawnSync(process.execPath, args, {
   encoding: 'utf8', timeout: 60000,
   // Production is for artifacts only; the React test carrier needs act().
@@ -24,7 +26,8 @@ const members = ['LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md', 'cordis.patch
 // Additional format coverage; the existing ZIP/runtime/core tests remain unchanged.
 test('standard npm tarball has the exact ZIP payload and executes the shared-React SDK factory', async () => {
   await mkdir(evidence, { recursive: true })
-  const dir = await mkdtemp(join(evidence, 'package-tgz-'))
+  // Both archive tools must receive these characters literally, not via a shell.
+  const dir = await mkdtemp(join(evidence, 'package 中文 & %PATH%-'))
   const output = join(dir, 'candidate.tgz'), zip = join(dir, 'candidate.zip'), extracted = join(dir, 'extracted')
   const packed = run([script, '--out', output])
   assert.equal(packed.status, 0, packed.stderr + packed.stdout)
@@ -35,7 +38,7 @@ test('standard npm tarball has the exact ZIP payload and executes the shared-Rea
   assert.equal(report.bytes, original.length)
   const zipped = run([script, '--out', zip])
   assert.equal(zipped.status, 0, zipped.stderr + zipped.stdout)
-  const inspect = spawnSync('python3', ['-I', '-B', '-c', `import json, pathlib, sys, tarfile, zipfile
+  const inspect = spawnArchivePython(`import json, pathlib, sys, tarfile, zipfile
 root = pathlib.Path(sys.argv[3])
 with tarfile.open(sys.argv[1], 'r:gz') as archive, zipfile.ZipFile(sys.argv[2]) as zipped:
     names = []
@@ -52,8 +55,8 @@ with tarfile.open(sys.argv[1], 'r:gz') as archive, zipfile.ZipFile(sys.argv[2]) 
         target.write_bytes(data)
     assert sorted(names) == sorted(zipped.namelist())
     print(json.dumps(sorted(names)))
-`, output, zip, extracted], { encoding: 'utf8', timeout: 30000 })
-  assert.equal(inspect.status, 0, inspect.stderr)
+`, [output, zip, extracted], { timeout: 30_000 })
+  assert.equal(inspect.status, 0, commandFailure(inspect))
   assert.deepEqual(JSON.parse(inspect.stdout), members)
   const manifest = JSON.parse(await readFile(join(extracted, 'package.json'), 'utf8'))
   for (const key of ['private', 'scripts', 'dependencies', 'devDependencies']) assert.equal(Object.hasOwn(manifest, key), false, key)
@@ -66,7 +69,7 @@ with tarfile.open(sys.argv[1], 'r:gz') as archive, zipfile.ZipFile(sys.argv[2]) 
   assert.deepEqual(manifest.engines, { node: '>=24.9.0', dsh: '0.2.2-rc.1' })
   const require = createRequire(import.meta.url)
   await mkdir(join(extracted, 'node_modules/@deepseek-ai'), { recursive: true })
-  await symlink(dirname(await realpath(require.resolve('@deepseek-ai/schemastery/package.json'))), join(extracted, 'node_modules/@deepseek-ai/schemastery'), 'dir')
+  await symlink(dirname(await realpath(require.resolve('@deepseek-ai/schemastery/package.json'))), join(extracted, 'node_modules/@deepseek-ai/schemastery'), process.platform === 'win32' ? 'junction' : 'dir')
   const host = run(['--input-type=module', '-e', `
     import { apply } from './lib/index.js';
     import { resolveBuildStamp } from './lib/host.js';
@@ -98,8 +101,17 @@ test('npm pack failure leaves no final tarball and arbitrary client injection is
   assert.notEqual(arbitrary.status, 0)
   assert.match(arbitrary.stderr, /Usage: node scripts\/package.mjs --out/)
   await assert.rejects(stat(output), { code: 'ENOENT' })
-  const failed = run([script, '--out', output], { env: { ...process.env, NODE_ENV: 'production', SIDEBAR_DSH_ROOT: '', PATH: '' } })
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !['path', 'npm_execpath'].includes(key.toLowerCase())))
+  env.PATH = dir
+  const windows = process.platform === 'win32'
+  if (windows) {
+    // Empty PATH cannot disable npm shipped alongside node.exe. Exercise the
+    // npm-run CLI selection via a deliberate failure instead.
+    env.npm_execpath = join(dir, 'npm-cli.js')
+    await writeFile(env.npm_execpath, 'process.stderr.write("forced pack failure"); process.exitCode = 23;')
+  }
+  const failed = run([script, '--out', output], { env: { ...env, NODE_ENV: 'production', SIDEBAR_DSH_ROOT: '' } })
   assert.notEqual(failed.status, 0)
-  assert.match(failed.stderr, /npm pack failed: spawnSync npm ENOENT/)
+  assert.match(failed.stderr, windows ? /npm pack failed: forced pack failure/ : /npm pack failed: spawnSync npm ENOENT/)
   await assert.rejects(stat(output), { code: 'ENOENT' })
 })

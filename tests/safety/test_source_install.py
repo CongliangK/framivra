@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -131,6 +132,8 @@ class SourceInstall(unittest.TestCase):
         with mock.patch.object(install, 'command', side_effect=no_network), mock.patch.object(install.python_packages, 'install', return_value={}):
             python, env = install.prepare_python(self.root, self.upstream, {'chrome': '/unused/chrome'})
         subprocess.run([str(python), '-I', '-c', 'import pip'], env=env, check=True, capture_output=True)
+        if sys.platform == 'darwin':
+            self.assertTrue(python.is_symlink())
 
     def test_dirty_checkout_and_local_commits_are_not_overwritten(self):
         self.deploy()
@@ -231,6 +234,45 @@ class SourceInstall(unittest.TestCase):
         self.assertEqual(actual['ffprobe'], selected['ffprobe'])
         self.assertEqual(run.call_count, 2)  # capability inventory, no package install
 
+    def test_mac_falls_back_to_a_qualified_keg_only_pair_without_brew(self):
+        keg_bin = self.base / 'homebrew/opt/ffmpeg-full/bin'
+        keg_bin.mkdir(parents=True)
+        for name in ('ffmpeg', 'ffprobe'):
+            path = keg_bin / name
+            path.write_text('native fixture')
+            path.chmod(0o755)
+        linked_bin = self.base / 'linked'
+        linked_bin.mkdir()
+        linked = {}
+        for name in (*install.TOOL_NAMES, 'chrome'):
+            path = linked_bin / name
+            path.write_text('linked fixture')
+            path.chmod(0o755)
+            linked[name] = str(path)
+        capabilities = ' '.join((*install.REQUIRED_ENCODERS, *install.REQUIRED_FILTERS))
+
+        def command(argv, **kwargs):
+            if argv[0] == linked['ffmpeg']:
+                return ' '.join(token for token in capabilities.split() if token != 'ass')
+            if argv[0] == str(keg_bin / 'ffmpeg'):
+                return capabilities
+            if argv == [str(keg_bin / 'ffprobe'), '-version']:
+                return 'ffprobe version test'
+            self.fail('Unexpected native command: ' + repr(argv))
+
+        with mock.patch.object(install.sys, 'platform', 'darwin'), \
+                mock.patch.object(install, 'tools', side_effect=lambda root: dict(linked)), \
+                mock.patch.object(install, 'MAC_FFMPEG_FULL_BIN', keg_bin), \
+                mock.patch.object(install, 'command', side_effect=command):
+            selected = install.prepare_tools(True, self.root)
+            env = install.runtime_env(self.root, selected)
+            for name in ('ffmpeg', 'ffprobe'):
+                self.assertEqual(selected[name], str(keg_bin / name))
+                self.assertEqual(install.env_tool(env, name), selected[name])
+            (keg_bin / 'ffprobe').unlink()
+            with self.assertRaisesRegex(install.posix.NativeInstallError, '--no-system'):
+                install.prepare_tools(True, self.root)
+
     def test_source_recovery_does_not_adopt_a_journal_escaping_root(self):
         (self.root / '.source-progress.json').write_text(json.dumps(dict(
             schema='framivra.source-progress/v1', kind='clone', repository=str(self.upstream),
@@ -323,7 +365,8 @@ class SourceInstall(unittest.TestCase):
         configure.assert_not_called()
         verify.assert_not_called()
 
-    def test_linux_fontconfig_and_ensurepip_are_planned_without_replacing_browser(self):
+    @mock.patch.object(install.posix, 'os_release', return_value={'ID': 'debian'})
+    def test_linux_fontconfig_and_ensurepip_are_planned_without_replacing_browser(self, _os_release):
         found = {name: '/tools/' + name for name in (*install.TOOL_NAMES, 'chrome')}
         self.assertEqual(install.platform_packages(found, 'linux', 'apt-get'),
                          [['apt-get', 'install', '-y', 'fontconfig']])

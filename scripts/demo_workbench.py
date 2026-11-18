@@ -16,6 +16,8 @@ else:
 
 ROOT = Path(__file__).resolve().parents[1]
 GRAPHICS = ROOT / 'templates/demo-workbench/graphics.js'
+CARULLI = GRAPHICS.with_name('carulli-andantino.json')
+SOUNDTRACKS = ('carulli', 'portable')
 PROJECT = {'fps': 30, 'width': 1920, 'height': 1080, 'duration_frames': 900}
 MEDIA_IN, MEDIA_OUT = 300, 379
 CUE_AT, CUE_LEN = 462, 34
@@ -115,6 +117,32 @@ def make_media(output):
             raise demo.DemoError('ordinary source encoding failed')
 
 
+def prepare_audio(project, audio_lock, soundtrack):
+    # The short cue is still the locked integer source, never part of the score.
+    staging = project / 'audio-build'
+    run([sys.executable, demo.PACKAGE / 'audio/build.py', '--out', staging])
+    native = staging / 'native-inputs'
+    demo.check_audio(native, audio_lock, transfer=True)
+    audio = project / 'assets/audio'
+    shutil.copyfile(native / 'content-cue.wav', audio / 'content-cue.wav')
+    bed = audio / 'bed-premaster.wav'
+    if soundtrack == 'portable':
+        shutil.copyfile(native / bed.name, bed)
+        return
+
+    score = audio / CARULLI.name
+    shutil.copyfile(CARULLI, score)
+    music = staging / 'carulli'
+    run([sys.executable, ROOT / 'apps/bgm/bgm.py', 'render', score, '-o', music])
+    if demo.load_json_file_strict(music / 'qc.json').get('ok') is not True:
+        raise demo.DemoError('Carulli music QC failed; inspect audio-build/carulli/qc.json')
+    # Match the approved audition: premaster, not an already loudness-normalized
+    # music master. Leave final normalization/limiting to the video audio stage.
+    run(['ffmpeg', '-v', 'error', '-nostdin', '-n', '-i', music / 'mix_premaster.wav',
+         '-af', 'volume=7dB,afade=t=in:ss=0:ns=400,afade=t=out:ss=1424640:ns=12000,'
+                'atrim=end_sample=1440000', '-c:a', 'pcm_s24le', bed])
+
+
 def prepare(args):
     if args.format == 'svg' and (reason := demo.unsupported_prepare_platform()):
         raise demo.DemoError(reason)
@@ -137,18 +165,18 @@ def prepare(args):
         target = project / font['path']
         shutil.copyfile(fonts_dir / target.name, target)
     demo.check_fonts(files, project / 'assets/fonts')
-    # Run the in-tree integer-PCM generator after source_files verified its locked bytes.
-    staging = project / 'audio-build'
-    run([sys.executable, ROOT / 'templates/demo-timeline-svg/audio/build.py', '--out', staging])
-    for filename in demo.AUDIO_SAMPLES:
-        shutil.copyfile(staging / 'native-inputs' / Path(filename).name, project / filename)
-    demo.check_audio(project, audio_lock)
+    prepare_audio(project, audio_lock, args.soundtrack)
     make_media(project / 'assets/rearrangement.mp4')
     dump(project / 'gfx/spec.json', graphics_spec())
     run(['node', GRAPHICS, project, args.format])
     dump(project / 'timeline.json', timeline(args.format, [font['path'] for font in fonts]))
     run([sys.executable, '-m', 'vtx', '-t', project / 'timeline.json', 'validate'])
     print(project / 'timeline.json')
+
+
+def add_soundtrack_option(parser):
+    parser.add_argument('--soundtrack', choices=SOUNDTRACKS, default='carulli',
+                        help='render the Carulli JSON score (default) or use the portable synthetic bed')
 
 
 def main(argv=None):
@@ -158,6 +186,7 @@ def main(argv=None):
     cmd.add_argument('--output', required=True)
     cmd.add_argument('--format', choices=('html', 'svg'), default='html')
     cmd.add_argument('--fonts-dir', required=True, help='directory containing the four locked Demo font files')
+    add_soundtrack_option(cmd)
     args = parser.parse_args(argv)
     try:
         prepare(args)

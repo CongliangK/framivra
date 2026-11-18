@@ -4,6 +4,9 @@
 *.py text eol=lf
 *.mjs text eol=lf
 
+# The release ZIP includes a byte-pinned upstream license in this notice.
+/dsh-sidebar/THIRD-PARTY-NOTICES.md text eol=lf
+
 # portable-v2 锁按原始字节核验 Demo 运行时；Python 已由上方规则覆盖。
 /templates/demo-timeline-svg/.gitignore text eol=lf
 /templates/demo-timeline-svg/SOURCES.json text eol=lf

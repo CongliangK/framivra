@@ -4,12 +4,21 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from scripts.demo_workbench import graphics_spec, timeline
+from scripts.demo_workbench import graphics_spec, main, timeline
 from scripts.demo_workbench_acceptance import exercise_edit, run
 
 
 class DemoWorkbenchTests(unittest.TestCase):
+    def test_soundtrack_defaults_to_score_with_explicit_portable_mode(self):
+        args = ['prepare', '--output', 'project', '--fonts-dir', 'fonts']
+        with patch('scripts.demo_workbench.prepare') as prepare:
+            self.assertEqual(main(args), 0)
+            self.assertEqual(prepare.call_args.args[0].soundtrack, 'carulli')
+            self.assertEqual(main(args + ['--soundtrack', 'portable']), 0)
+            self.assertEqual(prepare.call_args.args[0].soundtrack, 'portable')
+
     def test_only_gfx_sources_differ_between_routes(self):
         artifacts = {kind: timeline(kind, []) for kind in ('html', 'svg')}
         spec = graphics_spec()

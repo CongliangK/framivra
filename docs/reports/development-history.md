@@ -45,6 +45,12 @@
 
 十二次正式 cold/warm all 与十二次独立 strict QC、完整视频/PCM解码、精确900帧 PTS=n/30 与30秒、48kHz双声道1,440,000采样通过；全900 PNG冷暖及跨臂字节、解码视频/音频/连续时序相等。成片响度-14.2LUFS、解码域TP-4.4dBFS；未改任何质量门。原生 shell 失败与隔离 SIGINT 回收通过；定向回归、文档门和最终只读复审记录在 PR，不能代替其他平台或全仓验收。人工艺术/听感批准及其他平台本轮 **UNRUN**。
 
+### Linux x86_64 portable-v2 原生验收（#421）
+
+[Fedora 44 x86_64 实测记录](https://github.com/CongliangK/framivra/issues/421)绑定干净主干 `329da1d`：中文、空格和 `#` 路径下，公开锁定字体与标准库音频通过 preflight、prepare/verify。默认 `core` 八段正式 `all` 在冷态、暖态、单帧缓存损坏后恢复及恢复后暖态四轮通过，独立 strict QC 均为 7/7、无段免检；暖态 900 张 PNG 与完成凭据未改写，损坏后全组重建，成片恢复为原字节。抽查四帧中文字形与布局，无缺字；未做完整人工视听。
+
+逐帧完整解码 1920×1080 的 900 帧，`PTS[n]=n/30`、每帧 `1/30`。48 kHz 双声道，GStreamer 播放输出每声道恰为 1,440,000 采样；该版 Linux FFmpeg 无裁剪解码为 1,440,768，末包仅 256 个样本在播放区间内，其余 768 为 AAC 尾填充。不可把 MP4 播放时钟和任意解码器直接导出的 PCM 长度混为一谈。这是该 Linux 工具链的实测，不替代其他平台或后端验收，也不与 macOS 性能数据混比。
+
 ### HTML/CDP 工作流研究（#346）
 
 本次独立研究使用公开 tech-talk [chart_curve.html](../../templates/tech-talk/assets/gfx-templates/chart_curve.html) 原样全长（20s / 600帧 / 1920×1080 / 30fps，DOM/SVG/文字），配确定性校准音，执行真实 `vtx all`。它不是完整口播节目：无私人素材、真人、字幕或 PIP；模板示例数据不是新的业务实测。**不替代唯一 30s/900帧 SVG 主基线，也不重启已否决路线。** 重现入口与计时边界见[实验说明](../../experiments/perf_html_workflow/README.md)。生产源码、默认配置和 CI 均未修改。
