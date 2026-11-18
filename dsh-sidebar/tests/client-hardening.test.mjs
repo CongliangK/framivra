@@ -56,6 +56,7 @@ function hostFixture() {
     else if (request.op === 'reference') result = { ok: true, content_version: version, selection: { tracks: [], blocks: [{ address: '/t/0/b/0', content_version: version, stable_id: null, raw: null }] }, diagnostics: [], coverage: { complete: true }, document: { raw: '{}', content_version: version } }
     else if (request.op === 'authorize-write') result = { ok: true, writeGrant: 'wg' }
     else if (request.op === 'inspect') result = snapshotFor('g1')
+    else if (request.op === 'commit') result = { ok: true, revision: version }
     else if (request.op === 'plan') result = { ok: true, planToken: `token-${requests.length}`, submitted_request: { op_id: `op-${requests.length}` } }
     else result = { ok: true }
     return new Response(stringifyJSON(result))
