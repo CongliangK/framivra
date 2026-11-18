@@ -41,10 +41,17 @@ def graphics_spec():
     }
 
 
-def timeline(format_name, font_paths):
+def timeline(format_name, font_paths, soundtrack='carulli'):
     spec = graphics_spec()
     html = format_name == 'html'
     common_deps = [*RENDERER, *font_paths]
+    bed = {'id': 'demo_bed', 'path': 'assets/audio/bed-premaster.wav'}
+    bed_event = {'src': 'demo_bed', 'in': 0, 'out': PROJECT['duration_frames'], 'volume': 1}
+    if soundtrack == 'carulli':
+        bed.update(path=f'assets/audio/{CARULLI.name}', bgm={'output': 'premaster'})
+        # The approved gain lives in the score. This event only fits its tail
+        # to the 30-second video; final normalization still runs in vtx.
+        bed_event.update(fade_out_frames=9)
 
     def gfx(key, at):
         return {'format': 'html' if html else 'svg-sequence',
@@ -56,7 +63,7 @@ def timeline(format_name, font_paths):
         'version': 2, 'project': PROJECT,
         'sources': [
             {'id': 'rearrangement', 'path': 'assets/rearrangement.mp4'},
-            {'id': 'demo_bed', 'path': 'assets/audio/bed-premaster.wav'},
+            bed,
             {'id': 'demo_hit', 'path': 'assets/audio/content-cue.wav'},
         ],
         'video_tracks': [
@@ -74,7 +81,7 @@ def timeline(format_name, font_paths):
             {'in': 614, 'out': 681, 'text': '修改时间线，再验证成片。'},
         ],
         'audio_tracks': [
-            {'name': 'bed', 'events': [{'src': 'demo_bed', 'in': 0, 'out': 900, 'volume': 1}]},
+            {'name': 'bed', 'events': [bed_event]},
             {'name': '素材底声', 'events': [
                 {'src': 'rearrangement', 'src_in': src_in, 'in': begin, 'out': end, 'volume': 0.08,
                  'fade_in_frames': 4, 'fade_out_frames': 4}
@@ -130,17 +137,7 @@ def prepare_audio(project, audio_lock, soundtrack):
         shutil.copyfile(native / bed.name, bed)
         return
 
-    score = audio / CARULLI.name
-    shutil.copyfile(CARULLI, score)
-    music = staging / 'carulli'
-    run([sys.executable, ROOT / 'apps/bgm/bgm.py', 'render', score, '-o', music])
-    if demo.load_json_file_strict(music / 'qc.json').get('ok') is not True:
-        raise demo.DemoError('Carulli music QC failed; inspect audio-build/carulli/qc.json')
-    # Match the approved audition: premaster, not an already loudness-normalized
-    # music master. Leave final normalization/limiting to the video audio stage.
-    run(['ffmpeg', '-v', 'error', '-nostdin', '-n', '-i', music / 'mix_premaster.wav',
-         '-af', 'volume=7dB,afade=t=in:ss=0:ns=400,afade=t=out:ss=1424640:ns=12000,'
-                'atrim=end_sample=1440000', '-c:a', 'pcm_s24le', bed])
+    shutil.copyfile(CARULLI, audio / CARULLI.name)
 
 
 def prepare(args):
@@ -169,7 +166,7 @@ def prepare(args):
     make_media(project / 'assets/rearrangement.mp4')
     dump(project / 'gfx/spec.json', graphics_spec())
     run(['node', GRAPHICS, project, args.format])
-    dump(project / 'timeline.json', timeline(args.format, [font['path'] for font in fonts]))
+    dump(project / 'timeline.json', timeline(args.format, [font['path'] for font in fonts], args.soundtrack))
     run([sys.executable, '-m', 'vtx', '-t', project / 'timeline.json', 'validate'])
     print(project / 'timeline.json')
 

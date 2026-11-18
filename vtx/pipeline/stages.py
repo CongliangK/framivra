@@ -145,8 +145,8 @@ def validate(c: Ctx):
 def validate_core(c: Ctx):
     """Same core rules, without plugin execution, prints or receipt writes.
 
-    Caller must statically exclude active plugins before constructing Ctx.
-    Asset probing and diagnostics remain real; this is not a schema-only check.
+    Frame callers gate plugin declarations before constructing Ctx. Audio-only
+    BGM declarations retain their structural checks, but no audio facts are read.
     """
     return _validate(c, plugin_hooks=False, reporting=False)
 
@@ -258,6 +258,7 @@ def _validate(c: Ctx, *, plugin_hooks=True, reporting=True):
         failure = SystemExit(1)
         mark_handled(failure)
         raise failure
+    visual_bgm = getattr(c, '_visual_bgm_source_ids', ()) if not plugin_hooks else ()
     sources = field(c.tl, "sources", "$")
     source_indices = {}
     srcs = {}
@@ -275,6 +276,10 @@ def _validate(c: Ctx, *, plugin_hooks=True, reporting=True):
         sp = f"$.sources[{source_indices[id(s)]}]"
         p = c.src_path(sid)
         if not p.exists(): err(f"source {sid}: 文件不存在 {p}", sp+".path", 'validate.source_exists', {'path': str(p), 'exists': False}, {'exists': True}); continue
+        if sid in visual_bgm:
+            if not p.is_file():
+                err(f'BGM score is not a regular file: {p}', sp + '.path', 'validate.source_exists')
+            continue
         # 缝 C（协议 v1.2，P6）：虚拟源 facts——插件受理的源（如 bgm-render 的
         # music_tools 工程 JSON）用插件供给的 facts，其余照旧 ffprobe 实测
         i = _plugin_hooks.run_probe_source(c, sid) if plugin_hooks else None
@@ -377,6 +382,8 @@ def _validate(c: Ctx, *, plugin_hooks=True, reporting=True):
             if not native(ep, lambda: 0 <= field(e, 'in', ep) < field(e, 'out', ep) <= c.dur, 'comparison', paths=[key_path(ep, 'in'), key_path(ep, 'out'), '$.project.duration_frames']): err(f"音频事件区间非法: {name}@{field(e, 'in', ep)}", ep, 'validate.audio_event_bounds', {'start': observed.get(key_path(ep, 'in'), {'status': 'not_observed'}), 'end': observed.get(key_path(ep, 'out'), {'status': 'not_observed'}), 'unit': 'frames'}, {'min': 0, 'max': c.dur, 'start_before_end': True, 'unit': 'frames'})
             audio_event_fade(e, ep, name)
             if native(ep, lambda: field(e, 'src', ep) not in srcs, 'comparison', paths=[key_path(ep, 'src')]): err(f"音频引用未知 src {field(e, 'src', ep)}", ep + '.src', 'validate.audio_source', {'value': observed.get(key_path(ep, 'src'), {'status': 'not_observed'})}, {'allowed': list(srcs)}); continue
+            if e['src'] in visual_bgm:
+                continue  # PNG preview cannot certify music duration; retain overlap checks below.
             i = _plugin_hooks.run_probe_source(c, field(e, 'src', ep)) if plugin_hooks else None
             if i is None:
                 i = c.probe(c.src_path(field(e, 'src', ep)))

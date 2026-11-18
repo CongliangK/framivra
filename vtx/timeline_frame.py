@@ -1,8 +1,9 @@
 """Authorized single-frame composition; never a delivery/QC shortcut.
 
 The read/reference protocol remains asset independent. This separately versioned
-operation only writes cache/preview, rejects active plugins, and uses the kernel
-compositor/validation. Media input identity is Fast, not adversarial full hashing.
+operation only writes cache/preview and uses the kernel compositor/validation.
+Audio-only BGM references never execute plugin code; other active plugins are
+rejected. Media input identity is Fast, not adversarial full hashing.
 """
 import base64
 import hashlib
@@ -79,13 +80,14 @@ def _render_inner(path, reference, frame, limit, *, prepare_gfx, trust_html, req
     from .runtime import fstxn
     if sys.platform not in ("linux", "darwin") or not fstxn.directory_write_capability():
         raise _FrameError("platform.unsupported", "render requires no-follow directory-anchored writes")
-    from .pluginlib.hooks import active_plugins
+    from .pluginlib.hooks import active_plugins, _visual_bgm_token
     stored = json.loads(reference["document"]["raw"])
-    # Static manifest/config selection, BEFORE Ctx/fingerprints can import any
-    # active plugin. Installed but irrelevant keyed plugins do not block core.
+    # Static selection before Ctx. The official music provider is the only
+    # allowed declaration: a PNG uses no audio and must not import it.
     active = active_plugins(SimpleNamespace(tl=stored))
-    if active:
-        raise _FrameError("plugins.unsupported", "first slice supports core-only projects; active plugins: " +
+    visual_bgm = _visual_bgm_token(active[0]) if len(active) == 1 else None
+    if active and not visual_bgm:
+        raise _FrameError("plugins.unsupported", "visual preview refuses active plugins: " +
                           ", ".join(p["name"] for p in active))
     if prepare_gfx and not trust_html:
         visible_html = any(track.get('kind') == 'gfx' and clip.get('format', 'html') == 'html'
@@ -108,6 +110,14 @@ def _render_inner(path, reference, frame, limit, *, prepare_gfx, trust_html, req
             detail += " (+%d more)" % (len(errors) - 16)
         raise _FrameError("render.structure",
                           "stored structure errors[%d]: %s" % (len(errors), detail))
+    bgm_ids = frozenset(s['id'] for s in stored['sources'] if visual_bgm and 'bgm' in s)
+    if visual_bgm and not bgm_ids:
+        raise _FrameError('plugins.unsupported', 'missing audio-only BGM source declaration')
+    if any(clip['src'] in bgm_ids for track in stored['video_tracks'] if track['kind'] != 'gfx'
+           for clip in track['clips']):
+        raise _FrameError('plugins.unsupported', 'BGM score must not be a video clip source')
+    path = Path(os.path.abspath(Path(path).expanduser()))
+    bgm_paths = {(path.parent / s['path']).resolve() for s in stored['sources'] if s['id'] in bgm_ids}
     # Refuse FFREPORT/loader overrides before even metadata probes can run.
     environment = _environment()
     from .pipeline.infra import Ctx
@@ -120,7 +130,16 @@ def _render_inner(path, reference, frame, limit, *, prepare_gfx, trust_html, req
 
     class PreviewCtx(Ctx):
         _core_only_preview = True
+        _visual_bgm = visual_bgm
+        _visual_bgm_source_ids = bgm_ids
         write_root = None
+
+        def probe(self, path):
+            if bgm_ids:
+                resolved = Path(path).resolve()
+                if resolved in bgm_paths or any(resolved == self.src_path(sid).resolve() for sid in bgm_ids):
+                    raise _FrameError('plugins.unsupported', 'BGM score must not be probed as media')
+            return super().probe(path)
 
         def receipt(self, *args, **kwargs):
             raise RuntimeError("frame preview cannot write delivery receipts")
@@ -159,7 +178,6 @@ def _render_inner(path, reference, frame, limit, *, prepare_gfx, trust_html, req
                 raise _FrameError("render.process", "renderer/probe failed: " + value.stderr[-1500:])
             return value
 
-    path = Path(os.path.abspath(Path(path).expanduser()))
     from .render.png_artifact import project_identity, read_artifact
     root_identity = project_identity(path.parent)
     version = reference["content_version"]
@@ -241,8 +259,7 @@ def _render_inner(path, reference, frame, limit, *, prepare_gfx, trust_html, req
         def current():
             if project_identity(c.root) != root_identity:
                 raise _FrameError("snapshot.changed", "project root identity changed")
-            if active_plugins(SimpleNamespace(tl=stored)):
-                raise _FrameError("plugins.changed", "active plugin selection changed")
+            active_plugins(c)  # Recheck the static selection without importing plugins.
             verify_input_identity(c)
             document_current()
             try:
@@ -330,12 +347,11 @@ def frame_timeline(path, *, frame, expected_content_version=None, render=False,
     The remaining notes describe the unchanged default warm-input path.
 
     Defaults do not construct Ctx, probe assets, lock or create directories.
-    Authorized rendering requires Linux/macOS directory-anchored writes and
-    core-only projects; native toolchain/platform restrictions still apply.
-    Visible native clips may be encoded temporarily inside cache/preview; graphics
-    require existing authenticated inputs (disabled in off mode). It never runs a
-    graphics producer/plugin, modifies timeline/store/delivery state, or uses
-    final/qc_clean as fallback.
+    Authorized rendering requires Linux/macOS directory-anchored writes and the
+    native toolchain. The audio-only BGM declaration is allowed, but no plugins run.
+    Visible native clips may be encoded temporarily inside cache/preview; warm
+    graphics require existing authenticated inputs (disabled in off mode). It
+    never modifies timeline/store/delivery state or uses final/qc_clean as fallback.
     Both timeline/reference and ASCII JSON wire limits are 8 MiB; PNG delivery is
     bounded by max_png_bytes (1..8 MiB). Transient encoder files may exceed it.
     include_png must be bool; it requests canonical base64, not render authority.

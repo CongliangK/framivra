@@ -123,7 +123,7 @@ Trim is inward-only; gfx trim/split and external subtitle edits are explicitly u
 
 「属性与编辑」内的工程配置面板展示保存版本的 FPS、画布、时长与插件声明；项目帧率 / 1920×1080 保持只读。时长、gfx_dependency_policy、cache_dependencies，以及素材 denoise / bgm、音轨 duck_strategy 使用专用配置入口，编译到既有 project.resize、parameters.update/unset 或 track.references，不扩大通用属性白名单、不整文替换、不写 registry 或 VTX_CONFIG。缺失值不自动落默认值；移除字段与设置 false/null 分开。root.blender_bridge 仅展示，未知扩展仍由完整数据详情保留。
 
-配置输入与待提交批次共用写授权、受管身份、旧计划失效、冻结确认、权威刷新和未知结果锁。改输入不写盘、不渲染；加入批次后仍须显式预检与确认。计划只检查结构，不验证插件安装/依赖或渲染效果；插件声明可能使逐帧预览被内核拒绝。PNG 仍仅对应已保存版本和现有平台/纯内核/显式准备边界；实时跟随不提供未保存配置的画面。后续契约与能力缺口集中跟踪 [#372](https://github.com/CongliangK/framivra/issues/372)。
+配置输入与待提交批次共用写授权、受管身份、旧计划失效、冻结确认、权威刷新和未知结果锁。改输入不写盘、不渲染；加入批次后仍须显式预检与确认。计划只检查结构，不验证插件安装/依赖或渲染效果；插件声明可能使逐帧预览被内核拒绝。PNG 仍仅对应已保存版本和现有平台/显式准备边界；[官方 BGM 例外](../docs/reference/timeline-api.md#显式当前帧图像第一切片)只允许无声画面，不运行插件。实时跟随不提供未保存配置的画面。后续契约与能力缺口集中跟踪 [#372](https://github.com/CongliangK/framivra/issues/372)。
 
 ### Agent tools → human confirmation → authoritative refresh
 

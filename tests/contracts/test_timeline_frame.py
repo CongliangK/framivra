@@ -103,6 +103,17 @@ class FrameReadOnly(unittest.TestCase):
         self.assertEqual(result["diagnostics"][0]["code"], "plugins.unsupported")
         self.assertEqual(list(self.root.iterdir()), [self.path])
 
+    def test_bgm_score_is_not_a_native_video_source_even_outside_frame(self):
+        doc = document()
+        doc['sources'][0].update(path='score.json', bgm={'output': 'premaster'})
+        doc['video_tracks'] = [{'kind': 'broll', 'name': 'later', 'clips': [
+            {'src': 's', 'src_in': 0, 'src_out': 3, 'dst_in': 8, 'dur': 3}]}]
+        self.path.write_text(json.dumps(doc))
+        with patch('vtx.timeline_frame._environment', side_effect=AssertionError('environment')):
+            result = frame_timeline(self.path, frame=1, render=True)
+        self.assertEqual(result['diagnostics'][0]['code'], 'plugins.unsupported')
+        self.assertFalse((self.root / 'cache').exists())
+
     def test_platform_rejects_before_write_but_default_reference_works(self):
         with patch("vtx.timeline_frame.sys.platform", "win32"):
             self.assertEqual(frame_timeline(self.path, frame=1, render=True)["diagnostics"][0]["code"], "platform.unsupported")
@@ -148,6 +159,30 @@ class FramePixels(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(len(proc.stdout), 1920 * 1080 * 3)
         return proc.stdout
+
+    def test_audio_only_bgm_preview_never_loads_plugin_and_pins_score(self):
+        score = self.root / 'score.json'
+        score.write_text('{"tracks": [], "score_revision": 1}')
+        self.doc['sources'].append({'id': 'music', 'path': score.name, 'bgm': {'output': 'premaster'}})
+        self.doc['audio_tracks'] = [{'name': 'music', 'events': [
+            {'src': 'music', 'in': 0, 'out': 12, 'volume': 1}]}]
+        self.save()
+        with patch('vtx.pluginlib.hooks._load_plugin_module', side_effect=AssertionError('plugin import')) as load:
+            first = frame_timeline(self.path, frame=1, render=True)
+            self.assertTrue(first['ok'], first['diagnostics'])
+            self.assertEqual(set(self.pixels(first['image'])), {0})
+            self.assertEqual(first['reference']['document']['raw'], self.path.read_text())
+            # Score contents are not interpreted by visual preview, but are pinned.
+            previous = score.stat()
+            score.write_text('{"tracks": [], "score_revision": 2}')
+            os.utime(score, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+            second = frame_timeline(self.path, frame=1, render=True)
+            self.assertTrue(second['ok'], second['diagnostics'])
+            self.assertEqual(first['content_version'], second['content_version'])
+            self.assertNotEqual(first['image']['render_key'], second['image']['render_key'])
+        load.assert_not_called()
+        self.assertFalse((self.root / 'out').exists())
+        self.assertFalse((self.root / 'cache' / 'bgm').exists())
 
     def test_black_actual_pixels_cache_corruption_and_byte_limit(self):
         first = frame_timeline(self.path, frame=1, render=True)

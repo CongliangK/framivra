@@ -4,7 +4,7 @@
 
 - timeline.json/素材→帧精确视频/混音/QC/缓存；[内核](<vtx/>)永不可关
 - [应用](<apps/>)产素材/辅助结果；[插件](<plugins/>)扩时间线，启用不忽略依赖/失败；已知不可用声明先于 probe 拒绝，源声明在 prepare/range 裸缓存前同拒。
-- [侧栏](<dsh-sidebar/README.md>)独立发行：完整合成非单页，预览共用整数播放头、成片联动非合成证书；单行工具栏，帧步进与轨道高度在时间线；轨高/专注视图只改显示；宽屏文件列表独立滚动；生效插件在身份/钩子前拒绝；HTML信任≠沙箱；写态走内核事务，帧率/预览限制不变。
+- [侧栏](<dsh-sidebar/README.md>)独立发行：完整合成非单页，预览共用整数播放头、成片联动非合成证书；单行工具栏，帧步进与轨道高度在时间线；轨高/专注视图只改显示；宽屏文件列表独立滚动；单帧在身份/钩子前拒绝插件，官方 BGM 仅作无声画面引用、不执行；HTML信任≠沙箱；写态走内核事务，帧率/预览限制不变。
 - 侧栏按宿主与内核能力分开报告读、整帧与事务；Windows 不把静态协议声明或成片播放当成内核帧合成、写入资格。
 - [空间管理](<docs/reference/storage-api.md>)删除权归内核；清理须独立确认停写，不向模型开放。
 - macOS授权见接口；目录fd≠proc-fd Path；单帧须全输入前后复核；环境文件批查仅复用本次目录前缀并前后核验，仍重枚举/哈希/查链接；Linux缺RECORD只认元数据所属RPM清单。
@@ -56,7 +56,7 @@
 - [Windows SVG 快照](<vtx/render/gfx_svg_win_snapshot.py>)创建独占 ASCII scratch 操作目录前，持有两侧目录链句柄，查重解析标记并按卷和文件 ID 拒绝重叠；固定官方包树、控制台映像与 cwd 仅供内部输入核验，不启动进程，不证明加载域、缓存或发布资格。
 - [SVG shell](<vtx/render/gfx_svg_stage.py>) 即使退出成功也拒收明确的 Fontconfig error / Pango-CRITICAL，不发布完成凭据；该诊断只报告固定短错误，不回显日志，普通警告不拒收。
 - portable-v2 基线仅用 `scripts/demo.py prepare/verify`；锁字体与标准库音频，禁混旧输入；预检不授渲染资格，见[SVG 基线](<templates/demo-timeline-svg/README.md>)。
-- [可编辑主 Demo](<templates/demo-workbench/README.md>)同源生成 SVG/HTML，默认从乐谱 JSON 现场渲染床乐，不提交音频；CDP、CEF 与 Inkscape 验收不代替安装、冻结与性能基线。
+- [可编辑主 Demo](<templates/demo-workbench/README.md>)同源生成 SVG/HTML，默认由主时间线直引乐谱 JSON，不提交音频；CDP、CEF 与 Inkscape 验收不代替安装、冻结与性能基线。
 - [portable-v2 锁定运行时源](<templates/demo-timeline-svg/benchmark/portable-v2.json>)须以 LF 检出（含 Windows）；[属性规则](<.gitattributes>)仅补齐既有 Python 规则未覆盖的锁成员，核验仍按原始字节。
 - 同输入/质量/环境/后端/配置分冷暖测全链；留身份/哈希/证据；未测UNRUN，探针非整体提速；SVG有界调度/串行回退见[缓存](<docs/cache-provenance.md#产物身份>)。
 - [事件](<docs/reference/execution-events.md>)跨阶段回执绑定实际嵌套任务，区间不相加冒充墙钟。

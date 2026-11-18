@@ -143,7 +143,7 @@ vtx -t /path/to/timeline.json timeline frame --frame 30 --render --include-png
 
 返回独立 `framivra.timeline.frame/v1` envelope：content_version、reference、image、diagnostics。reference 原样保留同版本完整原文/暂态地址/选择；图像不是解析数据投影。成功 image 的 kind 为 `current-composite`、approximate=false，含 PNG 相对工程路径、SHA256/实际字节数、画布宽高、整数 frame、fps={num,den}、content_version、input_fingerprint、render_key 与 cache_hit。图像来自共享 RenderPlan 在 `[frame,frame+1)` 的有序图层/黑画布/ASS 合成，直接 RGB PNG；不是 final/qc_clean 提帧、黑场兜底、丢层近似或已编码成片的像素等价保证。空画布的真实黑场可以成功。
 
-授权渲染支持 **Linux 与原生 arm64 macOS 的 no-follow 目录 fd 写平台、纯内核工程**；仍按当前缓存政策核对上游准备资格。macOS 要求原生 Mach-O FFmpeg 与唯一 CoreText libass 字体后端，绑定外部 dylib 闭包、系统 dyld cache、字体及偏好；Intel/Rosetta、app 包装的 FFmpeg、其他字体后端和无法解析的加载环境明确拒绝，不降级证书。安装但本工程未激活的有键插件不阻挡，任何生效插件在 Ctx/潜在 import 前静态拒绝 `plugins.unsupported`。复用真实纯内核 validate 规则及素材探测，不执行插件钩子、不准备虚拟源；更宽插件及未知工具链支持仍未完成。默认不渲染路径跨平台仍可用。schema 结构失败、素材/缓存缺失、版本不符、运行失败/取消均不返回成功图像；无 prepare/gfx/all/final/qc_clean fallback。不得把 frame 成功视作正式交付/QC 通过。
+授权渲染支持 **Linux 与原生 arm64 macOS 的 no-follow 目录 fd 写平台**；仍按当前缓存政策核对上游准备资格。macOS 要求原生 Mach-O FFmpeg 与唯一 CoreText libass 字体后端，绑定外部 dylib 闭包、系统 dyld cache、字体及偏好；Intel/Rosetta、app 包装的 FFmpeg、其他字体后端和无法解析的加载环境明确拒绝，不降级证书。安装但本工程未激活的有键插件不阻挡。唯一例外是已安装启用的官方 `sources[].bgm` 音频声明，且音乐源不能被任何视频片段引用；固定帧只渲染无声画面，不加载插件、探测或渲染乐谱，不证明音乐时长、音频依赖或可出片。原文与乐谱文件字节仍参与预览身份；音源库、乐谱内部 `$ref` 等音频依赖只在正式链校验。其余生效插件在 Ctx/潜在导入前拒绝 `plugins.unsupported`。默认不渲染路径跨平台仍可用。schema 结构失败、素材/缓存缺失、版本不符、运行失败/取消均不返回成功图像；无 prepare/gfx/all/final/qc_clean fallback。不得把 frame 成功视作正式交付/QC 通过。
 
 `FFREPORT` 与不受支持的 loader 环境在构造 Ctx、素材 probe 之前拒绝，避免诊断文件越出预览写域。目录锚定字节写/锁/staging 与可重开 proc-fd Path 是独立能力；macOS 的 `locked_write/locked_update` 仍为既有 legacy Path 级别，不把 `/dev/fd` 冒充 Linux `/proc`。gfx pack 使用直接 pinned 二进制流，发布恢复用原生 no-replace rename。
 
@@ -168,7 +168,7 @@ vtx -t /path/to/timeline.json timeline frame --frame 305 --expected-content-vers
 
 只为命中请求全局帧的图形生产稀疏 PNG，局部帧由保存的 `global_frame - dst_in` 得到，原 `dur` 不改成 1。HTML 复用 CDP 原帧驱动/字体/透明/Canvas 路径；SVG 复用既有 Inkscape 栅格原语和字体隔离，不运行整个 gfx stage，不签整页完成证书。SVG 全清单及环境身份仍须核验，单张栅格不等于只读一个文件；HTML/SVG 混合工程继续沿现有 route 拒绝。普通媒体仍用生产 seg 采样/编码语义（可能临时编码整个可见 clip），再由同一 RenderPlan 按轨道顺序/变换/裁切、透明层与 ASS 合成，不从旧成片提帧，也不以单页图替代完整画面。
 
-HTML 执行许可独立于预览写入：只信任自己检查过的保存页面及其声明脚本；legacy CDP 不是安全沙箱，页面仍具浏览器允许的本地文件/网络能力，声明依赖不证明动态闭包。不要把不可信/未知脚本或外部资源的使用视为自动授权，不把该入口声称为零网络隔离。strict 仍走原静态子集与请求验证，禁止脚本、不降级成 legacy；冷准备不新增 CEF/CLI 替代渲染路线。生效插件在初始检查及后续身份/钩子消费点、潜在导入之前拒绝，1080p30、已保存版本、未保存编辑互斥和宿主 30 秒预算不变。
+HTML 执行许可独立于预览写入：只信任自己检查过的保存页面及其声明脚本；legacy CDP 不是安全沙箱，页面仍具浏览器允许的本地文件/网络能力，声明依赖不证明动态闭包。不要把不可信/未知脚本或外部资源的使用视为自动授权，不把该入口声称为零网络隔离。strict 仍走原静态子集与请求验证，禁止脚本、不降级成 legacy；冷准备不新增 CEF/CLI 替代渲染路线。插件选择在初始及后续身份/钩子消费点复核；上述 BGM 例外不进入执行列表，1080p30、已保存版本、未保存编辑互斥和宿主 30 秒预算不变。
 
 稀疏帧与生产者输入、完整现有环境证书及输出 SHA 一起绑定到合成身份，发布前后重验；未知环境、变化、坏依赖或取消均不返回成功。缓存档位不授予冷准备许可；新路径不复用跨请求临时图或把 `off` 暗改为读取普通 gfx 缓存。写域仅独立 `cache/preview` 请求目录，不修改 timeline/store/out/正式回执。冷交付为 **inline-only**：同一完整验证后的不可变 PNG bytes 用于 SHA/base64，返回 `image.path:null`，成功响应前清理请求 PNG、媒体和浏览器 profile；不为不可读的临时路径许诺持久寿命。终止未确认时保留必要恢复账本并拒绝成功，不能清掉仍在运行的浏览器证据。再次显式冷准备只恢复带本项目/本 schema 标记的 `request_<32hex>` 内原生 worker 账本，沿用原 reaper 的宿主、进程 lineage/身份复核；仍存活或终止未确认即保留并拒绝。未知标记、无账本的 SIGKILL 残件须核实后显式清理，不自动认作缓存或扩大扫描删除范围。已有默认 metadata-only 路径的合同不变。
 
