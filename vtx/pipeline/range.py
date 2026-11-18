@@ -163,7 +163,7 @@ def run_range(c, fa: int, fb: int):
     print("  ℹ 预览渲染：不写 out/ 与 receipt，产物在 cache/preview/")
 
     t = time.monotonic()
-    layers = prepare_layers(c)      # seg 缓存命中即秒回；缺失时冷填充（键与整片一致）
+    layers = prepare_layers(c, native_window=(fa, fb))
     print(f"[timing] gfx/seg 复用检查（{len(layers)} 层）: {time.monotonic() - t:.1f}s")
     # gfx 冷缓存门（P1-B）：区间渲染复用 gfx 阶段产物但不自动渲 gfx——缺帧时让
     # ffmpeg 报 PNG 读不到的原始错误毫无指向性，故此处显式拦截并指路 `vtx gfx`。
@@ -186,7 +186,9 @@ def run_range(c, fa: int, fb: int):
     # B03（issue #27 / F-05）：布局延迟创建——cli 不再无条件 mkdir cache/，
     # preview 目录自建（parents 兜底零音频事件、prepare_layers 未先建 cache 的边角）。
     vdir = c.cache / "preview"; fstxn.mkdir(vdir, root=c.root)
-    bounds = [(L["cl"]["dst_in"], L["cl"]["dst_in"] + L["cl"]["dur"]) for L in layers]
+    # Cut points still use all clip boundaries, including unprepared layers.
+    bounds = [(cl['dst_in'], cl['dst_in'] + cl['dur'])
+              for track in c.tl['video_tracks'] for cl in track['clips']]
     t = time.monotonic()
     cuts = choose_cutpoints(bounds, c.dur, plan.nseg)   # 与整片同一切点集
     edges = [0] + cuts + [c.dur]
