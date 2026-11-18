@@ -27,7 +27,7 @@
     "engine": "indextts",
     "fallback_engine": "edge",
     "repo": "~/AI/IndexTTS/repo",
-    "python": "~/miniconda3/envs/indextts/bin/python",
+    "python": null,
     "voice_ref": "~/音乐/5_G_Resemble仅降噪.wav",
     "edge_bin": "~/miniconda3/bin/edge-tts",
     "purpose": "IndexTTS-2.5 口播占位语音（apps/tts/，参数化收编 voice-ime 产线）+ edge-tts 兜底",

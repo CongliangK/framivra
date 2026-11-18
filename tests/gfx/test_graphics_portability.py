@@ -154,6 +154,46 @@ class BrowserDiscoveryMock(unittest.TestCase):
                     self.assertEqual(doctor.find_chrome(), str(native))
 
 
+class CDPStartupMock(unittest.TestCase):
+    def test_early_exit_reports_only_bounded_status_and_retires_the_owned_process(self):
+        from vtx.runtime import windows_browser
+
+        prefix = 'chrome exited during startup'
+        for platform, status, suffix in (
+                ('win32', 0, ' (exit status: 0x00000000)'),
+                ('win32', 0xC0000005, ' (exit status: 0xC0000005)'),
+                ('win32', -1073741819, ' (exit status: 0xC0000005)'),
+                ('win32', r'C:\private\profile', ''),
+                ('win32', True, ''),
+                ('win32', 1 << 32, ''),
+                ('linux', -9, ' (exit status: -9)')):
+            with self.subTest(platform=platform, status=status):
+                proc = mock.Mock(**{'poll.return_value': status})
+                job = mock.Mock(proc=proc)
+                http_error = ConnectionRefusedError('DevTools HTTP not ready')
+                record = {'policy': 'strict', 'closure': 'static-subset-v1'}
+                with mock.patch.object(gfx, 'sys', SimpleNamespace(platform=platform)), \
+                        mock.patch.object(windows_browser, 'BrowserJob', return_value=job) as start_job, \
+                        mock.patch.object(gfx.subprocess, 'Popen', return_value=proc) as popen, \
+                        mock.patch.object(gfx.tempfile, 'mkdtemp', return_value='private-profile'), \
+                        mock.patch.object(gfx.shutil, 'rmtree') as rmtree, \
+                        mock.patch.object(gfx.urllib.request, 'urlopen', side_effect=http_error) as urlopen:
+                    with self.assertRaises(RuntimeError) as caught:
+                        gfx.render_strict_page('page.html', 'out', 1, 'private-browser',
+                                               1, 1, None, None, record)
+                self.assertEqual(str(caught.exception), prefix + suffix)
+                self.assertIs(caught.exception.__context__, http_error)
+                self.assertEqual(urlopen.call_count, 1)
+                if platform == 'win32':
+                    start_job.assert_called_once()
+                    job.close.assert_called_once_with()
+                    popen.assert_not_called()
+                else:
+                    popen.assert_called_once()
+                    start_job.assert_not_called()
+                rmtree.assert_called_once_with('private-profile')
+
+
 class CDPDeadlineMock(unittest.TestCase):
     """Owned clock/byte stream only: exercise the real Tab and WS frame loops."""
 
@@ -370,13 +410,54 @@ class CDPDeadlineMock(unittest.TestCase):
             self.assertEqual(sock.closed, 0)
 
     def test_initialization_failure_keeps_fd_cleanup(self):
-        tab, sock = self.tab(delays=[0, 31])
-        def init(ws, *args, **kwargs):
-            ws.sock, ws._rbuf, ws._io_guard = sock, bytearray(), threading.Lock()
-        with mock.patch.object(gfx.WSConn, '__init__', init):
-            with self.assertRaises(TimeoutError): gfx.Tab(1, '/owned')
-        self.assertGreaterEqual(sock.closed, 1)
-        self.assertEqual(sock.timeout, 20)
+        reply = self.frame({'id': 1, 'result': {}})
+        for method, data in (('Page.enable', b''),
+                             ('Emulation.setDeviceMetricsOverride', reply)):
+            with self.subTest(method=method):
+                _, sock = self.tab(data, delays=[0, 0, 31] if data else [31])
+
+                def init(ws, *args, **kwargs):
+                    ws.sock, ws._rbuf, ws._io_guard = sock, bytearray(), threading.Lock()
+
+                with mock.patch.object(gfx.WSConn, '__init__', init):
+                    with self.assertRaises(TimeoutError) as caught:
+                        gfx.Tab(1, '/owned')
+                prefix = f'CDP {method} timeout'
+                self.assertTrue(str(caught.exception).startswith(prefix))
+                cause = caught.exception.__cause__
+                if method == 'Page.enable':
+                    self.assertIn('page CDP WebSocket handshake completed', str(caught.exception))
+                    self.assertIn('Page domain readiness unconfirmed', str(caught.exception))
+                    self.assertIn('does not identify a renderer or token root cause', str(caught.exception))
+                    self.assertEqual(str(cause), prefix)
+                    cause = cause.__cause__
+                else:
+                    self.assertEqual(str(caught.exception), prefix)
+                self.assertIsInstance(cause, TimeoutError)
+                self.assertEqual(len(sock.sent), 1 if method == 'Page.enable' else 2)
+                self.assertGreaterEqual(sock.closed, 1)
+                self.assertEqual(sock.timeout, 20)
+
+    def test_page_enable_preserves_distinct_legacy_socket_timeout(self):
+        class LegacySocketTimeout(OSError):
+            pass
+
+        error = LegacySocketTimeout('socket timed out')
+        ws = mock.Mock(**{'recv_msg.side_effect': error})
+        with mock.patch.object(gfx.socket, 'timeout', LegacySocketTimeout), \
+                mock.patch.object(gfx, 'WSConn', return_value=ws):
+            with self.assertRaisesRegex(LegacySocketTimeout, r'^CDP Page\.enable timeout:.*handshake completed') as caught:
+                gfx.Tab(1, '/owned')
+        self.assertIs(type(caught.exception), LegacySocketTimeout)
+        self.assertIs(caught.exception.__cause__, error)
+        ws.close.assert_called_once_with()
+
+    def test_websocket_open_timeout_does_not_imply_page_cdp_connection(self):
+        error = TimeoutError('opening WebSocket')
+        with mock.patch.object(gfx, 'WSConn', side_effect=error):
+            with self.assertRaises(TimeoutError) as caught:
+                gfx.Tab(1, '/owned')
+        self.assertIs(caught.exception, error)
 
     def test_standalone_transport_keeps_its_original_timeout(self):
         tab, sock = self.tab(timeout=.5)
