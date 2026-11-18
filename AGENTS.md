@@ -49,6 +49,7 @@
 ## 基线与性能
 
 - 唯一主基线：30秒/900帧/1080p30 SVG；禁用退役12秒基线，探针不替主片。
+- Windows SVG 先校验原始项目相对声明，再用 `/` 序列化依赖并集并复核解析路径；不放行 Windows SVG 运行时。
 - 准备/核验仅用 `scripts/demo.py prepare/verify`；portable-v2锁字体/标准库音频，禁混旧输入，见[Demo](<templates/demo-timeline-svg/README.md>)。
 - 同输入/质量/环境/后端/配置分冷暖测全链；留身份/哈希/证据；未测UNRUN，探针非整体提速；SVG有界调度/串行回退见[缓存](<docs/cache-provenance.md#产物身份>)。
 - [事件](<docs/reference/execution-events.md>)跨阶段回执绑定实际嵌套任务，区间不相加冒充墙钟。
