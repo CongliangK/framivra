@@ -86,9 +86,12 @@ for workload, expected in workloads:
         run(cmd + ['all'], root / (key + '-all.txt'), {'VTX_VIDEO_SEGMENTS': str(segments)})
         if workload == 'capability' and env['VTX_GFX'].strip().lower() == 'cdp':
             backend['cdp_observed'][case] = observed_cdp(root / (key + '-all.txt'))
+        cache = project / 'cache'
+        # Linux core mode retires loose frames after persisting certified packs.
         cached = {str(path.relative_to(project)): (path.stat().st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest())
-                  for path in (project / 'cache').rglob('*') if path.is_file()
-                  and path.suffix in ('.png', '.wav', '.mp4') and 'tmp' not in path.relative_to(project / 'cache').parts}
+                  for path in cache.rglob('*') if path.is_file() and 'tmp' not in path.relative_to(cache).parts
+                  and (path.suffix in ('.png', '.wav', '.mp4')
+                       or (path.suffix == '.vtxp' and path.is_relative_to(cache / 'gfx_packs')))}
         run(cmd + ['all'], root / (key + '-warm.txt'), {'VTX_VIDEO_SEGMENTS': str(segments)})
         cache_checks[key] = {'files': len(cached), 'unchanged': bool(cached) and all(
             path.is_file() and (path.stat().st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest()) == before
