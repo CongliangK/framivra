@@ -555,30 +555,52 @@ class TestRangeIntegration(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / 'tone.wav'
-            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
-                            'sine=frequency=440:sample_rate=48000:duration=3', '-ac', '2', str(source)],
-                           check=True, capture_output=True, timeout=60)
+            for name, wav_options in (('tone.wav', []), ('bwf.wav', ['-write_bext', '1'])):
+                subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                                'aevalsrc=0.09*sin(2*PI*440*t)|0.03*sin(2*PI*660*t):s=48000:d=3',
+                                '-c:a', 'pcm_s16le', *wav_options, str(root / name)],
+                               check=True, capture_output=True, timeout=60)
+            pipe = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(root / 'tone.wav'),
+                                   '-f', 'wav', '-'], check=True, capture_output=True, timeout=60).stdout
+            self.assertEqual(pipe[4:8], b'\xff' * 4)  # Stream-written RIFF has no finalized extent.
+            (root / 'stream.wav').write_bytes(pipe)
             # Default millisecond edit lists presented 1584 and 3216 samples.
             # NTSC must use S(61)-S(59) = 97698-94494, not round(2*1601.6).
-            for fps, fa, fb, samples in ((30, 60, 61, 1600), ('30000/1001', 59, 61, 3204)):
-                with self.subTest(fps=fps):
+            ntsc = '30000/1001'
+            mixed = {}
+            for fps, fa, fb, samples, name, force_extract in (
+                    (30, 60, 61, 1600, 'tone.wav', False),
+                    (ntsc, 59, 61, 3204, 'tone.wav', False),
+                    (ntsc, 59, 61, 3204, 'tone.wav', True),
+                    (ntsc, 59, 61, 3204, 'bwf.wav', False),
+                    (30, 60, 61, 1600, 'stream.wav', False)):
+                with self.subTest(fps=fps, source=name, force_extract=force_extract):
+                    direct = name == 'tone.wav' and not force_extract
                     timeline = root / 'timeline.json'
                     timeline.write_text(json.dumps({
                         **TestCliGuards._min_tl(),
                         'project': {'fps': fps, 'width': 1920, 'height': 1080, 'duration_frames': 300},
-                        'sources': [{'id': 'tone', 'path': source.name}],
+                        'sources': [{'id': 'tone', 'path': name}],
                         'audio_tracks': [{'name': 'voice', 'events': [
-                            {'src': 'tone', 'in': 0, 'out': 75, 'volume': 1}]}],
+                            {'src': 'tone', 'src_in': 9, 'in': 0, 'out': 75, 'volume': 1}]}],
                     }), encoding='utf-8')
                     c = Ctx(timeline)
                     self.assertEqual(validate_core(c), [])
-                    workspace = c.cache / 'preview' / f'clock-{fa}'
+                    workspace = c.cache / 'preview' / f'clock-{fa}-{name}-{force_extract}'
                     workspace.mkdir(parents=True)
-                    with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
+                    fallback = (mock.patch('vtx.media.preview_pcm.qualify', return_value=None)
+                                if force_extract else contextlib.nullcontext())
+                    with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}), fallback:
                         output = render_1080p_window(c, fa, fb, workspace=workspace)
                     with wave.open(str(workspace / 'work' / 'preview' / output.with_suffix('.wav').name)) as pcm:
                         self.assertEqual((pcm.getframerate(), pcm.getnframes()), (48000, samples))
+                        if fps == ntsc and name == 'tone.wav':
+                            mixed[force_extract] = pcm.readframes(samples)
+                    # Special BWF metadata and unknown-length pipe output still
+                    # use ordinary extraction; direct PCM has no certificate.
+                    audio_cache = workspace / 'work' / 'audio'
+                    self.assertEqual(len(list(audio_cache.glob('*.wav'))), 0 if direct else 1)
+                    self.assertEqual(len(list(audio_cache.glob('*.wav.complete.json'))), 0 if direct else 1)
 
                     probe = subprocess.run(['ffprobe', '-v', 'error', '-show_streams', '-show_packets',
                                             '-of', 'json', str(output)],
@@ -601,6 +623,9 @@ class TestRangeIntegration(unittest.TestCase):
                             self.assertGreater(packet['duration'], 0)
                             cursor += packet['duration']
                     self.assertEqual(cursor, samples)
+            self.assertEqual(mixed[False], mixed[True])
+            self.assertTrue(any(mixed[False][i:i + 2] != mixed[False][i + 2:i + 4]
+                                for i in range(0, len(mixed[False]), 4)))
 
     def test_1080p_window_uses_isolated_workspace_with_cold_inactive_gfx(self):
         import wave

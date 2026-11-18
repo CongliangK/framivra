@@ -127,21 +127,30 @@ def gain_is_stale(c, f) -> bool:
         return False
 
 
-def _ensure_audio_wavs(c, fa: int, fb: int):
+def _ensure_audio_wavs(c, fa: int, fb: int, *, allow_direct_pcm=False):
     """窗口音频事件引用的 prepare 抽音频 wav 缺失时冷填充。提取语义（键/命令/
     缝 A 触发）与 stages.prepare **同一实现**（source_audio_extraction，v2 §2.2
     对抗审查 P0 复审 P1-5：两处各自为政会让区间预览绕过源级插件裸抽 wav）——
     共享正式缓存非 preview 私有产物；温态零写；dry-run 不落盘。"""
-    if c.dry: return
+    if c.dry: return {}
     from .stages import source_audio_extraction
+    from ..media.preview_pcm import qualify
+    direct = {}
     margin = AUDIO_MARGIN_FRAMES
     need = {e["src"] for tr in c.tl["audio_tracks"] for e in tr["events"]
             if e["in"] < fb + margin and e["out"] > fa - margin}
     for sid in sorted(need):
         wav, cmd = source_audio_extraction(c, sid)
         if cmd is None: continue
+        if allow_direct_pcm:
+            source = qualify(c, c.src_path(sid))
+            if source is not None:
+                direct[sid] = source
+                print(f'  · 原生预览直读 PCM: {sid}')
+                continue
         print(f"  · 抽音频（prepare 同键冷填充）: {sid}")
         c.run(cmd)
+    return direct
 
 
 def run_range(c, fa: int, fb: int):
@@ -290,15 +299,18 @@ def _render_range(c, fa, fb, *, draft):
 
     t = time.monotonic()
     wav = vdir / f'{stem}.wav'
-    _ensure_audio_wavs(c, fa, fb)                   # prepare 抽音频冷填充（键与 prepare 一致）
+    direct = _ensure_audio_wavs(c, fa, fb, allow_direct_pcm=not draft)
     # Draft retains its formal gain lookup. The isolated producer must not read
     # delivery receipts; its result is explicitly window-local loudness only.
     g = _receipt_audio_gain(c) if draft else None
-    mix_audio_wav(c, wav, win=(fa, fb), gain_override=g)  # 同一 filtergraph（含 duck），边界 atrim
+    direct_options = {'direct_pcm': direct} if direct else {}
+    mix_audio_wav(c, wav, win=(fa, fb), gain_override=g, **direct_options)
     print(f"[timing] 窗口音频混音（±{AUDIO_MARGIN_FRAMES}f 事件外延，"
           f"增益{'复用整片回执' if g is not None else '窗口自测'}）: {time.monotonic() - t:.1f}s")
 
     t = time.monotonic()
+    for source in direct.values():
+        source.verify()
     delivery_dir = getattr(c, 'preview_cache', vdir)
     fstxn.mkdir(delivery_dir, root=c.root)
     out = delivery_dir / f'{stem}.mp4'
@@ -330,6 +342,8 @@ def _render_range(c, fa, fb, *, draft):
         # then recheck the full pinned inputs after all artifact reads.
         if not media_cache_valid(out, frames=fb - fa):
             raise RuntimeError('1080p window lacks a valid media completion record')
+        for source in direct.values():
+            source.verify()
         c.verify_inputs(None)
     print(f"[timing] 音视频 mux + 自检（{fr} 帧）: {time.monotonic() - t:.1f}s")
     print(f"✓ 区间预览：{out}（{enc}，总计 [timing] {time.monotonic() - t0:.1f}s）")
