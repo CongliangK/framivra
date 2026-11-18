@@ -391,6 +391,59 @@ class ChromeInstallerTelemetry(unittest.TestCase):
                 self.assertIn(b'require --scope full', result.stderr)
                 self.assertFalse(output.exists())
 
+    def test_e2e_cache_snapshot_requires_unchanged_graphics_packs(self):
+        import subprocess
+        import sys
+        script = Path(__file__).resolve().parents[1] / 'runners/run_e2e.py'
+        output = self.root / 'e2e-packs'
+        # Drive the real runner with deterministic media responses. The only
+        # durable cache payload for each project is its graphics pack.
+        code = '''import os, runpy, subprocess, sys
+from pathlib import Path
+from unittest.mock import patch
+from tests.runners._capability_fixture import FRAMES
+
+script, repo, output = sys.argv[1:]
+root = Path(output)
+sys.argv = [script, '--repo', repo, '--output', output, '--ffmpeg', sys.executable,
+            '--chrome', sys.executable, '--scope', 'capability']
+
+def run(argv, **kwargs):
+    stdout = b''
+    if Path(argv[1]).name == '_capability_fixture.py':
+        (root / 'capability-input').mkdir()
+    elif '-t' in argv:
+        project = Path(argv[argv.index('-t') + 1]).parent
+        pack = project / 'cache/gfx_packs/gfx/page.vtxp'
+        if argv[-1] == 'all' and not pack.exists():
+            pack.parent.mkdir(parents=True)
+            pack.write_bytes(b'cold bytes')
+        elif argv[-1] == 'all' and project.name.startswith('capability-single'):
+            # A same-size mutation with the original mtime must still fail.
+            before = pack.stat()
+            pack.write_bytes(b'warm bytes')
+            os.utime(pack, ns=(before.st_atime_ns, before.st_mtime_ns))
+    elif 'rawvideo' in argv:
+        stdout = bytes(FRAMES * 90 * 160 * 3)
+    elif any('ebur128' in arg for arg in argv):
+        stdout = b'Peak: -9.1 dBFS'
+    return subprocess.CompletedProcess(argv, 0, stdout, b'')
+
+with patch.object(subprocess, 'run', side_effect=run), patch('scripts.release.release_github.observed_cdp', return_value='cdp'):
+    runpy.run_path(script, run_name='__main__')
+'''
+        result = subprocess.run([sys.executable, '-c', code, str(script), str(script.parents[2]), str(output)],
+                                cwd=script.parents[2], capture_output=True)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        report = output / 'results.json'
+        self.assertTrue(report.is_file(), result.stderr)
+        summary = json.loads(report.read_text(encoding='utf-8'))
+        self.assertEqual(summary['checks']['cache'], {
+            'capability-parallel': {'files': 1, 'unchanged': True},
+            'capability-single': {'files': 1, 'unchanged': False},
+        })
+        self.assertFalse(summary['pass'])
+
     def test_e2e_verifier_rejects_missing_mismatched_or_forged_scope(self):
         import subprocess
         import sys
