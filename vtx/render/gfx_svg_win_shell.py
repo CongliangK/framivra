@@ -12,6 +12,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import subprocess
 import time
@@ -52,6 +53,8 @@ _RASTER_SVG_LIMIT, _RASTER_SVG_TOTAL = 5 * 1024, 2326452
 _RASTER_PNG_LIMIT = 72 * 1024  # reference max 73,707 bytes; f0135 retains its own 64 KiB limit
 _RASTER_CAPTURE_LIMIT = 1024 * 1024  # combined streams, including the full shell transcript
 _RASTER_TIMEOUT, _RASTER_VERIFY_RESERVE = 360, 75  # staging through verification; Job reserve is separate
+_FACTS_TIMEOUT, _FACTS_CAPTURE_LIMIT = 15, 1024  # shared subdeadline; combined stdout/stderr per query
+_INKSCAPE_VERSION = 'Inkscape 1.4.4 (dcaf3e7, 2026-05-05)'  # observed from the archive-pinned .com
 _RASTER_SVG_SHA256 = '70ddd6d89d21e9051c4479364cc69003c6612c9da3b3c7caaaa11f25b77c79bc'
 _RASTER_PNG_SHA256 = '30cad9d17b086500d6a15ed285bad63449dc5816806bb3744b68f941b1f0db4b'
 _RASTER_RGBA_SHA256 = '6884a426e5fa0a51cdf0d1b23975c883b69e626bd73a76aa864e9e12b804787f'
@@ -164,12 +167,7 @@ def _settle(operation, job, deadline):
     operation.keep = False
 
 
-def _run(operation, executable, cwd, environment, stdin, *, deadline=None, capture_limit=None):
-    argv = [str(executable), '--shell']
-    if deadline is not None and time.monotonic() >= deadline - _SETTLE_RESERVE:
-        raise TimeoutError('Windows SVG sequence did not stage in time')
-    if capture_limit is None:
-        capture_limit = _LIMIT if deadline is None else _SEQUENCE_CAPTURE_LIMIT
+def _run_owned(operation, argv, cwd, environment, stdin, *, deadline, capture_limit, phase):
     job = native._OwnedJob(argv, capture_limit=capture_limit)
     if deadline is None:
         deadline = time.monotonic() + _TIMEOUT
@@ -178,7 +176,7 @@ def _run(operation, executable, cwd, environment, stdin, *, deadline=None, captu
         job._launch(argv, subprocess.PIPE, subprocess.PIPE, stdin=stdin,
                     cwd=str(cwd), environment=environment)
         if not job._pump(deadline - _SETTLE_RESERVE):
-            raise TimeoutError('Windows SVG shell did not exit and close both outputs in time')
+            raise TimeoutError(f'Windows SVG {phase} did not exit and close both outputs in time')
     except BaseException as primary:
         try:
             _settle(operation, job, deadline)
@@ -190,11 +188,51 @@ def _run(operation, executable, cwd, environment, stdin, *, deadline=None, captu
             raise
         raise
     _settle(operation, job, deadline)
+    return job
+
+
+def _run(operation, executable, cwd, environment, stdin, *, deadline=None, capture_limit=None):
+    if deadline is not None and time.monotonic() >= deadline - _SETTLE_RESERVE:
+        raise TimeoutError('Windows SVG sequence did not stage in time')
+    if capture_limit is None:
+        capture_limit = _LIMIT if deadline is None else _SEQUENCE_CAPTURE_LIMIT
+    job = _run_owned(operation, [str(executable), '--shell'], cwd, environment, stdin,
+                     deadline=deadline, capture_limit=capture_limit, phase='shell')
     if job.proc.returncode != 0:
         raise ValueError(f'Windows SVG shell failed ({job.proc.returncode})')
     _, stderr = job._output()
     if _FONT_ERROR.search(stderr.decode('utf-8', 'replace')):
         raise ValueError('Windows SVG export failed: severe Fontconfig or Pango diagnostic')
+
+
+def _require_runtime_facts(operation, executable, cwd, environment, pins, launch_deadline):
+    deadline = min(launch_deadline, time.monotonic() + _FACTS_TIMEOUT)
+    share = operation.inputs.vendor / 'share'
+    pins.enter_context(_pin_dir(share))
+    system, _ = pins.enter_context(_pin_dir(share / 'inkscape'))
+    profile, _ = pins.enter_context(_pin_dir(cwd / 'profile'))
+    # Use exact normalized DOS names obtained from our own pinned directories.
+    # An untrusted reported path is never opened or used as authority.
+    for flag, expected in (('--version', _INKSCAPE_VERSION),
+                           ('--system-data-directory', str(_dos_path(system))),
+                           ('--user-data-directory', str(_dos_path(profile)))):
+        if time.monotonic() >= deadline - _SETTLE_RESERVE:
+            raise TimeoutError('Windows SVG runtime facts deadline expired before launch')
+        job = _run_owned(operation, [str(executable), flag], cwd, environment, None,
+                         deadline=deadline, capture_limit=_FACTS_CAPTURE_LIMIT, phase='runtime query')
+        if time.monotonic() >= deadline:
+            raise TimeoutError('Windows SVG runtime facts deadline expired')
+        if job.proc.returncode != 0:
+            raise ValueError(f'Windows SVG runtime query failed: {flag}')
+        stdout, stderr = job._output()
+        if stderr:
+            raise ValueError(f'Windows SVG runtime query emitted a diagnostic: {flag}')
+        # The pinned build emits LF on redirected stdout. Allow CR only as CRLF.
+        line = re.fullmatch(rb'([\x20-\x7e]+)\r?\n', stdout)
+        if not line:
+            raise ValueError(f'Windows SVG runtime query returned invalid stdout: {flag}')
+        if line[1] != expected.encode('ascii'):
+            raise ValueError(f'Windows SVG runtime fact mismatch: {flag}')
 
 
 def _accept_frame(portable_root, *, scratch):
@@ -397,6 +435,7 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
                 handle, info, _, directory = pins.enter_context(_pin_entry(target))
                 if _read_pinned(handle, info, directory, len(data)) != data:
                     raise ValueError('Windows SVG staged canonical raster source changed')
+            _require_runtime_facts(operation, executable, cwd, environment, pins, launch_deadline)
             with _fixed_stdin(cwd, actions) as stdin:
                 _run(operation, executable, cwd, environment, stdin, deadline=launch_deadline,
                      capture_limit=_RASTER_CAPTURE_LIMIT)

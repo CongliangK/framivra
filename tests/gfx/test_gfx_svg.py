@@ -1297,7 +1297,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
         root = self.scratch_fixture(snapshot)
         project, scratch = root / '工程 #', root / 'scratch'
         inputs, fonts = project / 'gfx/frames-svg', project / 'assets/fonts'
-        for directory in (inputs, fonts, scratch, root / 'inkscape/bin', root / 'inkscape/share'):
+        for directory in (inputs, fonts, scratch, root / 'inkscape/bin', root / 'inkscape/share/inkscape'):
             directory.mkdir(parents=True)
         (root / 'inkscape/bin/inkscape.com').write_bytes(b'sample')  # never executed
         (inputs.parent / 'demo.frames.json').write_bytes(b'not a trusted input')
@@ -1320,8 +1320,8 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
         with mock.patch.multiple(shell, _RASTER_FRAMES=4, _STANDARD_SIZE=(6, 4),
                                  _RASTER_SVG_TOTAL=sum(map(len, sources)), _RASTER_SVG_SHA256=svg_sha,
                                  _RASTER_PNG_SHA256=png_sha, _RASTER_RGBA_SHA256=rgba_sha), \
-                mock.patch.multiple(snapshot, _MAX_FILES=1, _MAX_DIRS=2, _MAX_BYTES=6,
-                                    _TREE_SHA256='d6d2fef7359bebd313ce33a0e1e68a0ba295112ce886be28446833c0b8755ee0'), \
+                mock.patch.multiple(snapshot, _MAX_FILES=1, _MAX_DIRS=3, _MAX_BYTES=6,
+                                    _TREE_SHA256='a576aafef70b8fd83cdbdf9f581c6734fee849138f38018f824b1ad332bc64a5'), \
                 mock.patch.object(shell, '_locked_font_digests',
                                   return_value=tuple(sha256(data).hexdigest() for data in font_data)), \
                 mock.patch.object(shell.native, '_OwnedJob') as own:
@@ -1343,57 +1343,132 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
             own.assert_not_called()
             self.assertEqual(list(scratch.iterdir()), [])
 
-            for failure, rejection in ((None, None), ('missing', 'missing output frames'),
-                                       ('extra', 'unexpected output entry'), ('reordered', 'ordered pixels differ'),
-                                       ('later', 'ordered pixels differ'), ('encoding', 'ordered PNG bytes differ'),
-                                       ('settlement', 'settlement unconfirmed')):
+            version, system, user = '--version', '--system-data-directory', '--user-data-directory'
+            version_line = b'Inkscape 1.4.4 (dcaf3e7, 2026-05-05)\n'
+            bad_version = b'Inkscape 1.4.4 (dcaf3e8, 2026-05-05)\r\n'
+            outer_system = root / 'inkscape/share/inkscape'  # identical basename, but outside the verified copy
+            other_profile = root / 'profile'
+            other_profile.mkdir()
+            fact_failures = {
+                'build': (version, 'fact mismatch', bad_version),
+                'two-lines': (version, 'invalid stdout', version_line + b'extra\r\n'),
+                'bad-crlf': (version, 'invalid stdout', version_line.replace(b'\n', b'\r\r\n')),
+                'no-terminator': (version, 'invalid stdout', version_line[:-1]),
+                'non-ascii': (version, 'invalid stdout', b'\xff\r\n'),
+                'system-root': (system, 'fact mismatch', os.fsencode(outer_system) + b'\r\n'),
+                'user-root': (user, 'fact mismatch', os.fsencode(other_profile) + b'\r\n'),
+                'stderr': (user, 'emitted a diagnostic', None),
+                'nonzero': (system, 'runtime query failed', None),
+                'capture': (version, 'injected capture overflow', None),
+                'facts-timeout': (system, 'did not exit', None),
+                'facts-settlement': (user, 'settlement unconfirmed', None),
+            }
+            raster_failures = {None: None, 'missing': 'missing output frames', 'extra': 'unexpected output entry',
+                               'reordered': 'ordered pixels differ', 'later': 'ordered pixels differ',
+                               'encoding': 'ordered PNG bytes differ', 'settlement': 'settlement unconfirmed'}
+            for i, failure in enumerate((*raster_failures, *fact_failures)):
                 with self.subTest(failure=failure):
+                    case_scratch = root / f'case-{i}'
+                    case_scratch.mkdir()
                     own.reset_mock()
-                    job = mock.Mock()
-                    own.return_value = job
-                    job._pump.return_value = True
-                    job.proc.returncode = 0
-                    job._output.return_value = (b'', b'')
-                    if failure == 'settlement':
-                        job._close.side_effect = OSError('injected accounting failure')
+                    stop, rejection, wrong = fact_failures.get(failure, ('--shell', raster_failures.get(failure), None))
+                    jobs, settings = [], []
 
-                    def launch(args, stdout, stderr, *, cwd, **kwargs):
-                        cwd = Path(cwd)
-                        self.assertEqual([p.read_bytes() for p in sorted((cwd / 'fonts').iterdir())], font_data)
-                        self.assertEqual([(cwd / (stem + '.svg')).read_bytes() for stem in stems], sources)
-                        actions = (cwd / 'actions.txt').read_bytes().splitlines()
-                        self.assertEqual(len(actions), len(stems) + 1)
-                        self.assertEqual(actions[-1], b'quit')
-                        for stem, action in zip(stems, actions):
-                            self.assertTrue(action.startswith(f'file-open:{stem}.svg;'.encode()))
-                            self.assertIn(f'export-filename:frames/{stem}.png;'.encode(), action)
-                        frames = cwd / 'frames'
-                        for i in reversed(range(4)):  # disk order is not the acceptance order
-                            if failure == 'missing' and i == 3:
-                                continue
-                            data = outputs[3 - i] if failure == 'reordered' and i in (1, 2) else outputs[i]
-                            if i == 3 and failure == 'later':
-                                data = png(6, 4, rgba=b'\0' + pixels[i][1:])
-                            if i == 3 and failure == 'encoding':
-                                data = data[:-12] + chunk(b'tEXt', b'proof\0test') + data[-12:]
-                            (frames / (stems[i] + '.png')).write_bytes(data)
-                        if failure == 'extra':
-                            (frames / 'f0004.png').write_bytes(outputs[0])
+                    def job_for(argv, *, capture_limit):
+                        flag = argv[1]
+                        self.assertEqual(len(argv), 2)
+                        is_fact = flag != '--shell'
+                        self.assertEqual(capture_limit, 1024 if is_fact else 1024 * 1024)
+                        if jobs:
+                            jobs[-1]._close.assert_called_once()
+                        job = mock.Mock()
+                        jobs.append(job)
+                        job._pump.return_value = True
+                        job.proc.returncode = 0
+                        if flag == stop:
+                            if failure in ('settlement', 'facts-settlement'):
+                                job._close.side_effect = OSError('injected accounting failure')
+                            elif failure == 'facts-timeout':
+                                job._pump.return_value = False
+                            elif failure == 'capture':
+                                job._pump.side_effect = OSError('injected capture overflow')
+                            elif failure == 'nonzero':
+                                job.proc.returncode = 1
 
-                    job._launch.side_effect = launch
+                        def launch(args, stdout, stderr, *, cwd, stdin, environment):
+                            self.assertEqual(args, argv)
+                            self.assertEqual((stdout, stderr), (subprocess.PIPE, subprocess.PIPE))
+                            self.assertEqual(stdin is None, is_fact)
+                            if settings:
+                                self.assertEqual((args[0], cwd), tuple(settings[:2]))
+                                self.assertIs(environment, settings[2])
+                            else:
+                                settings[:] = [args[0], cwd, environment]
+                            cwd = Path(cwd)
+                            self.assertEqual(Path(args[0]), cwd.parent / 'inkscape/bin/inkscape.com')
+                            self.assertEqual([p.read_bytes() for p in sorted((cwd / 'fonts').iterdir())], font_data)
+                            self.assertEqual([(cwd / (stem + '.svg')).read_bytes() for stem in stems], sources)
+                            plan = cwd / 'actions.txt'
+                            if is_fact:
+                                self.assertFalse(plan.exists())
+                                facts = {version: version_line,
+                                         system: os.fsencode(cwd.parent / 'inkscape/share/inkscape') + b'\r\n',
+                                         user: os.fsencode(cwd / 'profile') + b'\r\n'}
+
+                                def read_fact():
+                                    job._close.assert_called_once()
+                                    return (wrong if flag == stop and wrong is not None else facts[flag],
+                                            b'private diagnostic' if failure == 'stderr' and flag == stop else b'')
+
+                                job._output.side_effect = read_fact
+                                return
+                            job._output.return_value = (b'', b'')
+                            actions = plan.read_bytes().splitlines()
+                            self.assertEqual(len(actions), len(stems) + 1)
+                            self.assertEqual(actions[-1], b'quit')
+                            for stem, action in zip(stems, actions):
+                                self.assertTrue(action.startswith(f'file-open:{stem}.svg;'.encode()))
+                                self.assertIn(f'export-filename:frames/{stem}.png;'.encode(), action)
+                            frames = cwd / 'frames'
+                            for i in reversed(range(4)):  # disk order is not the acceptance order
+                                if failure == 'missing' and i == 3:
+                                    continue
+                                data = outputs[3 - i] if failure == 'reordered' and i in (1, 2) else outputs[i]
+                                if i == 3 and failure == 'later':
+                                    data = png(6, 4, rgba=b'\0' + pixels[i][1:])
+                                if i == 3 and failure == 'encoding':
+                                    data = data[:-12] + chunk(b'tEXt', b'proof\0test') + data[-12:]
+                                (frames / (stems[i] + '.png')).write_bytes(data)
+                            if failure == 'extra':
+                                (frames / 'f0004.png').write_bytes(outputs[0])
+
+                        job._launch.side_effect = launch
+                        return job
+
+                    own.side_effect = job_for
                     with mock.patch.object(shell, '_require_outputs', wraps=shell._require_outputs) as check_names, \
                             mock.patch.object(shell, '_read_png', wraps=shell._read_png) as read_png:
                         if rejection is None:
-                            self.assertEqual(accept(), (4, (6, 4), svg_sha, png_sha, rgba_sha))
+                            self.assertEqual(accept(case_scratch), (4, (6, 4), svg_sha, png_sha, rgba_sha))
                         else:
-                            with self.assertRaisesRegex((ValueError, OSError), rejection):
-                                accept()
-                        self.assertEqual(check_names.call_count, 0 if failure == 'settlement' else 1)
-                        self.assertEqual(read_png.call_count, 0 if failure in ('settlement', 'missing', 'extra') else 4)
-                    own.assert_called_once()
-                    job._launch.assert_called_once()
-                    job._close.assert_called_once()
-                    self.assertEqual(bool(list(scratch.iterdir())), failure == 'settlement')
+                            with self.assertRaisesRegex((ValueError, OSError), rejection) as rejected:
+                                accept(case_scratch)
+                            self.assertNotIn('private diagnostic', str(rejected.exception))
+                        unchecked = failure in fact_failures or failure == 'settlement'
+                        self.assertEqual(check_names.call_count, 0 if unchecked else 1)
+                        self.assertEqual(read_png.call_count, 0 if unchecked or failure in ('missing', 'extra') else 4)
+                    flags = (version, system, user, '--shell')
+                    self.assertEqual(tuple(call.args[0][1] for call in own.call_args_list),
+                                     flags[:flags.index(stop) + 1])
+                    for job in jobs:
+                        job._launch.assert_called_once()
+                        job._close.assert_called_once()
+                        self.assertEqual(job._close.call_args.args[0] - job._pump.call_args.args[0], 5)
+                    query_jobs = jobs[:3]
+                    self.assertEqual(len({job._close.call_args.args[0] for job in query_jobs}), 1)
+                    if failure in ('facts-settlement', 'capture', 'facts-timeout', 'nonzero'):
+                        jobs[-1]._output.assert_not_called()
+                    self.assertEqual(bool(list(case_scratch.iterdir())), failure in ('facts-settlement', 'settlement'))
 
     def test_fixed_sequence_exact_outputs_and_index_pixels(self):
         from PIL import Image, ImageDraw
