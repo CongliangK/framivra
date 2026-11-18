@@ -239,7 +239,33 @@ def _image_sample_time(deadline):
         raise TimeoutError('Windows SVG image sample deadline expired')
 
 
+def _image_device(drive, unwritten):
+    # Query only trusted root drives. Do not take the first entry of an
+    # ambiguous MULTI_SZ, resolve a SUBST/redirector target, or retry larger.
+    query = _windows_api('QueryDosDeviceW', W.DWORD, W.LPCWSTR, W.LPWSTR, W.DWORD)
+    buffer = C.create_unicode_buffer(unwritten, len(unwritten))
+    size = query(drive, buffer, len(buffer))
+    device = buffer.value
+    if (not 0 < size < len(buffer) or buffer[:size] != device + '\0\0'
+            or not re.fullmatch(r'\\Device\\HarddiskVolume[0-9]+', device)):
+        raise ValueError('Windows SVG image sample requires an unambiguous direct volume mapping')
+    return device
+
+
+def _require_mapped_image_name(buffer, size, expected, *, exact):
+    # The buffer was filled with non-NULs before the call: neither a stale
+    # terminator nor the possibly truncated capacity boundary is acceptable.
+    if not 0 < size < len(buffer) - 1 or buffer[size] != '\0':
+        raise ValueError('Windows SVG image sample returned an invalid mapped name')
+    name = buffer[:size]
+    if '\0' in name or not name.isascii():
+        raise ValueError('Windows SVG image sample returned an invalid mapped name')
+    if not (name == expected if exact else name.lower() == expected.lower()):
+        raise ValueError('Windows SVG mapped name differs from the observed image path')
+
+
 def _query_image_origins(job, executable, roots, deadline):
+    """Compare two non-atomic name observations, not backing objects or bytes."""
     # The original CreateProcessW HANDLE stays owned until _settle. No PID reopen.
     process = job._info.process
     if not process or job.proc.poll() is not None:
@@ -257,7 +283,24 @@ def _query_image_origins(job, executable, roots, deadline):
     if str(root) != str(executable):
         raise ValueError('Windows SVG observed root image differs from the pinned entry')
 
-    # PSAPI is not atomic. One non-full list, one name query per entry, no retries.
+    # Both DOS roots already came from pinned, ordinary local paths. Derive
+    # the NT prefixes from those roots, not from any returned process name.
+    package_images, system32, winsxs = roots
+    package = executable.parent
+    bases = (package, system32, winsxs)
+    devices = {}
+    unwritten = '\uffff' * _IMAGE_NAME_LIMIT
+    for base in bases:
+        drive = base.drive.upper()
+        if drive not in devices:
+            _image_sample_time(deadline)
+            devices[drive] = _image_device(drive, unwritten)
+    prefixes = tuple(devices[base.drive.upper()] + str(base)[2:] + '\\' for base in bases)
+    get_mapped = _windows_api('K32GetMappedFileNameW', W.DWORD, W.HANDLE, C.c_void_p, W.LPWSTR, W.DWORD)
+    mapped = C.create_unicode_buffer(_IMAGE_NAME_LIMIT)
+
+    # PSAPI is not atomic. One non-full list, two pathname queries per entry,
+    # no retries and no reading the memory at a returned module base.
     modules, needed = (W.HMODULE * _IMAGE_MODULE_LIMIT)(), W.DWORD()
     _image_sample_time(deadline)
     native._check(enum(process, modules, C.sizeof(modules), C.byref(needed), 3), 'K32EnumProcessModulesEx')
@@ -265,8 +308,6 @@ def _query_image_origins(job, executable, roots, deadline):
     if not 0 < count < len(modules) or partial:
         raise ValueError('Windows SVG image sample returned an invalid module count')
     counts, seen = [0, 0, 0], set()
-    package_images, system32, winsxs = roots
-    package = executable.parent
     for module in modules[:count]:
         _image_sample_time(deadline)
         if not module:
@@ -281,13 +322,21 @@ def _query_image_origins(job, executable, roots, deadline):
             # exact spelling authenticated on the retained handles, not an alias.
             if str(path) not in package_images:
                 raise ValueError('Windows SVG observed a module without an exact pinned package image')
-            counts[0] += 1
+            group = 0
         elif path.parent == system32:
-            counts[1] += 1
+            group = 1
         elif path.parent.parent == winsxs:
-            counts[2] += 1
+            group = 2
         else:
             raise ValueError('Windows SVG observed a module outside the allowed image roots')
+        # Only the already-validated relative suffix comes from the loader.
+        # Compare text directly; neither reported path is opened or resolved.
+        expected = prefixes[group] + str(path.relative_to(bases[group]))
+        mapped[:] = unwritten
+        _image_sample_time(deadline)
+        size = native._check(get_mapped(process, module, mapped, len(mapped)), 'K32GetMappedFileNameW')
+        _require_mapped_image_name(mapped, size, expected, exact=(group == 0))
+        counts[group] += 1
     if root not in seen:
         raise ValueError('Windows SVG root image missing from module sample')
     if job.proc.poll() is not None:

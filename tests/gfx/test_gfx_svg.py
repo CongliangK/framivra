@@ -1347,6 +1347,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
             shell._png_pixels(animated.getvalue(), width, height, Image.open, static_only=True)
 
     def test_standard_raster_anchors_all_sources_and_proves_closed_ordered_output(self):
+        import ctypes as C
         from hashlib import sha256
         from struct import pack
         from tests.gfx._png import chunk
@@ -1672,8 +1673,8 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                 'facts-settlement': (user, 'settlement unconfirmed', None),
             }
             image_failures = {'image-eof': 'exited before a live image sample',
-                              'image-rejected': 'injected image rejection',
-                              'image-unconfirmed': 'injected image rejection'}
+                              'image-rejected': 'mapped name differs',
+                              'image-unconfirmed': 'invalid mapped name'}
             raster_failures = {None: None, 'missing': 'missing output frames', 'extra': 'unexpected output entry',
                                'reordered': 'ordered pixels differ', 'later': 'ordered pixels differ',
                                'encoding': 'ordered PNG bytes differ', 'settlement': 'settlement unconfirmed',
@@ -1794,7 +1795,11 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                             self.fail('package entry lost its pin before the image sample')
                         self.assertEqual([path.name for path in roots[1:]], ['System32', 'WinSxS'])
                         if failure in ('image-rejected', 'image-unconfirmed'):
-                            raise ValueError('injected image rejection')
+                            other = r'\Device\HarddiskVolume2\private\inkscape\bin\Other.dll'
+                            buffer = C.create_unicode_buffer(other, shell._IMAGE_NAME_LIMIT)
+                            size = len(other) if failure == 'image-rejected' else len(buffer) - 1
+                            shell._require_mapped_image_name(buffer, size, other.replace('Other.dll', 'inkscape.com'),
+                                                             exact=True)
                         return origins
 
                     real_require_outputs = shell._require_outputs
@@ -1849,8 +1854,9 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
         exe = Path(r'C:\private\inkscape\bin\inkscape.com')
         dll = str(exe.with_name('Mixed.DLL'))
         package = frozenset((str(exe), dll))
-        roots = (package, Path(r'C:\Windows\System32'), Path(r'C:\Windows\WinSxS'))
-        good_names = [str(exe), r'c:\WINDOWS\SYSTEM32\ntdll.dll', r'C:\Windows\WinSxS\assembly\gdiplus.dll', dll]
+        roots = (package, Path(r'D:\Windows\System32'), Path(r'D:\Windows\WinSxS'))
+        good_names = [str(exe), r'd:\WINDOWS\SYSTEM32\ntdll.dll', r'D:\Windows\WinSxS\assembly\gdiplus.dll', dll]
+        devices = {'C:': r'\Device\HarddiskVolume2', 'D:': r'\Device\HarddiskVolume4'}
         for case, message in ((None, None), ('dead', 'requires a live shell root'),
                               ('exited', 'exited during image sample'), ('timeout', 'sample deadline expired'),
                               ('root', 'differs from the pinned entry'), ('root-case', 'differs from the pinned entry'),
@@ -1862,14 +1868,21 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                               ('alias', 'invalid DOS name'),
                               ('truncated', 'invalid DOS name'), ('nul-boundary', 'invalid DOS name'),
                               ('unavailable', 'K32GetModuleFileNameExW'),
+                              ('device-alias', 'unambiguous direct volume mapping'),
+                              ('device-history', 'unambiguous direct volume mapping'),
+                              ('device-terminator', 'unambiguous direct volume mapping'),
+                              ('mapped-mismatch', 'mapped name differs'), ('mapped-volume', 'mapped name differs'),
+                              ('mapped-alias', 'mapped name differs'), ('mapped-case', 'mapped name differs'),
+                              ('mapped-boundary', 'invalid mapped name'), ('mapped-nul', 'invalid mapped name'),
+                              ('mapped-terminator', 'invalid mapped name'), ('mapped-unavailable', 'K32GetMappedFileNameW'),
                               ('no-root-module', 'missing from module sample')):
             with self.subTest(case=case):
                 process = object()  # sentinel; no API receives a real process or PID
                 poll = mock.Mock(side_effect=[0 if case == 'dead' else None, 0 if case == 'exited' else None])
                 job = SimpleNamespace(_info=SimpleNamespace(process=process), proc=SimpleNamespace(poll=poll))
                 names = list(good_names)
-                names[1] = {'outside': r'C:\Windows\System32-extra\ntdll.dll',
-                            'alias': r'C:\Windows\System32\..\System32\ntdll.dll'}.get(case, names[1])
+                names[1] = {'outside': r'D:\Windows\System32-extra\ntdll.dll',
+                            'alias': r'D:\Windows\System32\..\System32\ntdll.dll'}.get(case, names[1])
                 names[3] = {'unknown-package': str(exe.with_name('other.dll')),
                             'package-case': str(exe.with_name('mixed.dll')),
                             'package-parent-case': dll.replace('\\bin\\', '\\BIN\\')}.get(case, dll)
@@ -1902,14 +1915,54 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                         self.assertEqual(output[capacity - 1], '\0')
                     return {'truncated': capacity, 'unavailable': 0}.get(case, len(output.value))
 
+                queried_drives, mapped_bases = [], []
+
+                def device(drive, output, capacity):
+                    self.assertEqual(capacity, shell._IMAGE_NAME_LIMIT)
+                    queried_drives.append(drive)
+                    target = devices[drive]
+                    if case == 'device-alias':
+                        target = r'\??\C:\private'
+                    elif case == 'device-history':
+                        target += '\0' + r'\Device\HarddiskVolume3'
+                    multi = target + ('\0' if case == 'device-terminator' else '\0\0')
+                    output[:len(multi)] = multi
+                    return len(target) + 2
+
+                def mapped(handle, module, output, capacity):
+                    self.assertIs(handle, process)
+                    self.assertEqual(capacity, shell._IMAGE_NAME_LIMIT)
+                    mapped_bases.append(module)
+                    dos = names[module - 11]
+                    value = devices[dos[:2].upper()] + dos[2:]
+                    if dos[0].upper() == 'D':
+                        value = value.lower()  # system-only ASCII case semantics
+                    if dos == dll:
+                        value = {'mapped-mismatch': value.replace('Mixed.DLL', 'Other.dll'),
+                                 'mapped-volume': value.replace('Volume2', 'Volume20'),
+                                 'mapped-alias': value.replace('inkscape', 'INKSCA~1'),
+                                 'mapped-case': value.replace('Mixed.DLL', 'mixed.dll'),
+                                 'mapped-boundary': 'a' * (capacity - 1),
+                                 'mapped-nul': value[:9] + '\0' + value[10:]}.get(case, value)
+                        if case == 'mapped-unavailable':
+                            return 0
+                        if case == 'mapped-terminator':
+                            output[:len(value)] = value  # previous longer valid name must not leave a NUL
+                            return len(value)
+                    output[:len(value) + 1] = value + '\0'
+                    return len(value)
+
                 functions = {'QueryFullProcessImageNameW': root, 'K32EnumProcessModulesEx': enum,
-                             'K32GetModuleFileNameExW': name}
+                             'K32GetModuleFileNameExW': name, 'QueryDosDeviceW': device,
+                             'K32GetMappedFileNameW': mapped}
                 with mock.patch.object(shell, '_IMAGE_NAME_LIMIT', 128), \
                         mock.patch.object(shell, '_windows_api', side_effect=lambda name, *_: functions[name]):
                     deadline = time.monotonic() + (-1 if case == 'timeout' else 10)
                     if message is None:
                         self.assertEqual(shell._query_image_origins(job, exe, roots, deadline),
                                          ('bin/inkscape.com', 2, 1, 1))
+                        self.assertEqual(queried_drives, ['C:', 'D:'])
+                        self.assertEqual(mapped_bases, [11, 12, 13, 14])
                     else:
                         with self.assertRaisesRegex((OSError, ValueError), message):
                             shell._query_image_origins(job, exe, roots, deadline)
