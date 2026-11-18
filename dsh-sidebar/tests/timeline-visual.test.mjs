@@ -51,7 +51,8 @@ test('visual timeline: fixed header column grid aligns ruler with clip rows; fam
   assert(rulerRow, 'ruler row exists')
   assert(rulerRow.contains(ruler))
   const trackGrids = [...document.querySelectorAll('.fv-track')]
-  assert.equal(trackGrids.length, tracks.length)
+  assert.deepEqual(trackGrids.map(track => track.getAttribute('aria-label')), ['字幕', '主视频', '动效', '旁白'])
+  assert.deepEqual(result.tracks.map(track => track.address), ['/t/0', '/t/1', '/t/2', '/t/3'])
   for (const track of trackGrids) assert(track.contains(track.querySelector('.fv-track-head')))
   // Ruler and lane rows are second-column siblings: same parent chain, no horizontal margins class.
   const lanes = document.querySelectorAll('.fv-lanes .fv-row')

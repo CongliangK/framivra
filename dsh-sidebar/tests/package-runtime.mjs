@@ -239,7 +239,7 @@ try {
   assert(document.body.textContent.includes('来源 UNKNOWN'))
   assert.equal(document.querySelectorAll('video').length, 1)
   assert(document.querySelector('video').getAttribute('src').startsWith('/api/framivra/media?sessionId=one&grant='))
-  await act(async () => document.querySelector('.fv-clip').click())
+  await act(async () => document.querySelector('.fv-clip[aria-label^="选择块 /fixture/0/blocks/0 ·"]').click())
   await until(() => document.body.textContent.includes('引用就绪。'))
   assert.equal(requests.at(-1).op, 'reference')
   assert.equal(requests.at(-1).query.block_addresses[0], '/fixture/0/blocks/0')

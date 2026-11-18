@@ -391,9 +391,21 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
     const sequence = ++readSequence.current
     const opened = state.opened
     const signal = AbortSignal.any([controller.signal, tab.signal])
-    const snapshot = await control(sessionId, { op: 'inspect', grant: opened.grant }, signal)
-    const result = await control(sessionId, { op: 'query', grant: opened.grant, query: {} }, signal)
+    // Neither authoritative read depends on the other's result. If one fails,
+    // cancel the sibling instead of blocking an already-applied edit on it.
+    const pair = new AbortController()
+    const readSignal = AbortSignal.any([signal, pair.signal])
+    let failure
+    const read = async (op, query) => {
+      try { return await control(sessionId, { op, grant: opened.grant, query }, readSignal) }
+      catch (error) {
+        if (!pair.signal.aborted || terminalGrantFailure(error?.message)) failure = error
+        pair.abort()
+      }
+    }
+    const [snapshot, result] = await Promise.all([read('inspect'), read('query', {})])
     signal.throwIfAborted()
+    if (pair.signal.aborted) throw failure
     if (grant.current !== opened.grant || readSequence.current !== sequence || task.current !== controller) throw new Error('显示已切换，未确认刷新。')
     // A later read cannot be overwritten by an old commit-refresh completion.
     const consistent = snapshot.content_version === result.content_version

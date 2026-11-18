@@ -258,6 +258,45 @@ function hostFixture() {
   return { requests, forbidden, notify, store, getDraftServices, useTabInfo }
 }
 
+test('post-edit reads overlap without publishing a partial or mismatched saved view', async t => {
+  const { root, button, submit, settle, Simulate } = await mount(t)
+  const oldFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = oldFetch })
+  const managed = { ...snapshot, document: { ...snapshot.document, _vtx: { protocol: 1, head: 'head' } } }
+  const editable = { ...full, tracks: [{ ...tracks[0], data: { id: 'track' } }], blocks: [{ ...blocks[0], data: { id: 'clip' } }] }
+  const reply = value => new Response(stringifyJSON(value))
+  let committed = false
+  const reads = new Map()
+  globalThis.fetch = async (_url, init) => {
+    const { op } = JSON.parse(init.body)
+    if (op === 'open') return reply({ ...opened, snapshot: managed })
+    if (op === 'query' && !committed) return reply(editable)
+    if (op === 'authorize-write') return reply({ ok: true, writeGrant: 'write' })
+    if (op === 'plan') return reply({ ok: true, planToken: 'plan' })
+    if (op === 'commit') { committed = true; return reply({ ok: true }) }
+    if (op === 'inspect' || op === 'query') return new Promise(resolve => reads.set(op, resolve))
+    return reply({ ok: true })
+  }
+  const tab = { signal: new AbortController().signal }
+  await act(async () => root.render(h(PreviewBody, { sessionId: 'one', useTabInfo: () => ({ tab }) })))
+  await submit(0)
+  await settle(() => document.querySelector('.fv-clip'))
+  await act(async () => button('启用编辑').click())
+  const clip = document.querySelector('.fv-clip')
+  document.querySelector('.fv-ruler').getBoundingClientRect = () => ({ left: 0, width: 300 })
+  document.querySelector('.fv-track').getBoundingClientRect = () => ({ top: 0, bottom: 50 })
+  await act(async () => Simulate.pointerDown(clip, { pointerId: 1, button: 0, clientX: 0, clientY: 10 }))
+  await act(async () => Simulate.pointerUp(clip, { pointerId: 1, clientX: 50, clientY: 10, altKey: true }))
+  await settle(() => reads.size === 2, 'both reads dispatched while neither has answered')
+  const feedback = () => document.querySelector('.fv-drag-feedback')?.textContent
+  await act(async () => reads.get('query')(reply({ ...editable, content_version: `sha256:${'b'.repeat(64)}` })))
+  assert.equal(feedback(), '正在保存…')
+  assert.match(clip.getAttribute('aria-label'), /帧 \[0, 20\)/)
+  await act(async () => reads.get('inspect')(reply(managed)))
+  await settle(() => document.querySelector('.fv-edit-status')?.textContent.includes('内核已保存，但工程刷新失败'))
+  assert.equal(document.querySelectorAll('.fv-clip').length, 0, 'mixed revisions never become the editable view')
+})
+
 function installDialogAdapter(dom) {
   const calls = []
   const proto = dom.window.HTMLDialogElement.prototype
