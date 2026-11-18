@@ -3,3 +3,18 @@
 *.sh text eol=lf
 *.py text eol=lf
 *.mjs text eol=lf
+
+# portable-v2 锁按原始字节核验 Demo 运行时；Python 已由上方规则覆盖。
+/templates/demo-timeline-svg/.gitignore text eol=lf
+/templates/demo-timeline-svg/SOURCES.json text eol=lf
+/templates/demo-timeline-svg/build_demo.js text eol=lf
+/templates/demo-timeline-svg/fonts.lock.json text eol=lf
+/templates/demo-timeline-svg/licenses/DejaVu-copyright.txt text eol=lf
+/templates/demo-timeline-svg/licenses/Noto-CJK-copyright.txt text eol=lf
+/templates/demo-timeline-svg/motion-plan.json text eol=lf
+/templates/demo-timeline-svg/renderer.js text eol=lf
+/templates/demo-timeline-svg/test_demo.js text eol=lf
+/templates/demo-timeline-svg/timeline.json text eol=lf
+/templates/demo-timeline-svg/vendor/scoreweft/LICENSE text eol=lf
+/templates/demo-timeline-svg/vendor/scoreweft/SOURCES.json text eol=lf
+/templates/demo-timeline-svg/vendor/scoreweft/bgm_gen/engines/descriptors/synth.json text eol=lf
