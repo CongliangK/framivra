@@ -24,12 +24,13 @@ import sysconfig
 import tempfile
 import time
 from types import SimpleNamespace
+from typing import NamedTuple
 from xml.sax.saxutils import escape
 
 from ..runtime import windows_browser as native
 from ..runtime.windows_cleanup import pinned
 from .gfx_svg_win_input import _StandardInfo
-from .gfx_svg_win_snapshot import _AttributeTagInfo, _handle_info, _pin_dir, _pin_entry
+from .gfx_svg_win_snapshot import _AttributeTagInfo, _handle_info, _image_size, _pin_dir, _pin_entry
 
 
 # Normal and delay PE imports, recursively, taking only non-OS imports from
@@ -96,21 +97,53 @@ def _pin_dirs(stack, path):
         stack.enter_context(pinned(directory, directory=True))
 
 
-def _pin_file(stack, path, limit):
-    _, info, _ = stack.enter_context(pinned(path))
-    if not stat.S_ISREG(info.st_mode) or info.st_file_attributes & 0x400:
-        raise _Rejected('face check input is not a regular non-reparse file')
-    if not 0 < info.st_size <= limit:
-        raise _Rejected('face check input exceeds its file size bounds')
-    return info.st_size
+def _file_size(handle, kernel):
+    try:
+        # The snapshot and Fontconfig require the same regular single-link disk file.
+        return _image_size(handle, kernel)
+    except ValueError:
+        raise _Rejected('Fontconfig input is not a regular single-link disk file') from None
 
 
-def _verified(path, size, expected, label):
-    # Read at most size+1 even if metadata is incorrect. The caller pins the
-    # file and ancestors, including across native reads of the private copy.
-    with path.open('rb') as stream:
-        data = stream.read(size + 1)
-    if len(data) != size or hashlib.sha256(data).hexdigest() != expected:
+class _HeldFile(NamedTuple):
+    handle: int
+    kernel: 'C.WinDLL'
+    size: int
+
+
+def _pin_file(stack, path, limit, *, exact=False):
+    # Retain the read-share-only OPEN_REPARSE_POINT handle; discard path lstat facts.
+    handle, _, kernel = stack.enter_context(pinned(path))
+    size = _file_size(handle, kernel)
+    if not 0 < size <= limit or (exact and size != limit):
+        raise _Rejected('Fontconfig input is outside its file size bounds')
+    return _HeldFile(handle, kernel, size)
+
+
+def _verified(held, expected, label, *, collect=False):
+    handle, kernel, size = held
+    if _file_size(handle, kernel) != size:
+        raise _Rejected(f'{label} byte identity mismatch')
+    seek = _bind(kernel, 'SetFilePointerEx', W.BOOL, W.HANDLE, C.c_int64, C.c_void_p, W.DWORD)
+    if not seek(handle, 0, None, 0):  # FILE_BEGIN, including the end revalidation pass
+        raise C.WinError(C.get_last_error())
+    read = _bind(kernel, 'ReadFile', W.BOOL, W.HANDLE, C.c_void_p, W.DWORD, C.POINTER(W.DWORD), C.c_void_p)
+    buffer, count = C.create_string_buffer(min(65536, size)), W.DWORD()
+    digest, data, remaining = hashlib.sha256(), bytearray() if collect else None, size
+    while remaining:
+        amount = min(len(buffer), remaining)
+        if not read(handle, buffer, amount, C.byref(count), None):
+            raise C.WinError(C.get_last_error())
+        if not 0 < count.value <= amount:
+            raise _Rejected(f'{label} byte identity mismatch')
+        block = buffer[:count.value]
+        digest.update(block)
+        if data is not None:
+            data.extend(block)
+        remaining -= count.value
+    if not read(handle, buffer, 1, C.byref(count), None):
+        raise C.WinError(C.get_last_error())
+    if count.value or _file_size(handle, kernel) != size or digest.hexdigest() != expected:
         raise _Rejected(f'{label} byte identity mismatch')
     return data
 
@@ -343,12 +376,9 @@ def _catalog_inputs(stack, cwd, digests):
         raise _Rejected('Fontconfig staged catalog is incomplete')
     verified = []
     for leaf, sha in zip(_CATALOG_LEAVES, digests):
-        path = fonts / leaf
-        _, info, _, is_dir = stack.enter_context(_pin_entry(path))
-        if is_dir or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not 0 < info.st_size <= _MAX_FONT:
-            raise _Rejected('Fontconfig catalog input is not a bounded single-link font')
-        _verified(path, info.st_size, sha, 'font')
-        verified.append((path, info.st_size, sha))
+        font = _pin_file(stack, fonts / leaf, _MAX_FONT)
+        _verified(font, sha, 'font')
+        verified.append((font, sha))
     return verified
 
 
@@ -369,18 +399,20 @@ def _inspect(bundle, font, expected, index, sample, *, catalog=None):
             font = _local_path(font)
             _pin_dirs(stack, font.parent)
             font_name = 'font' + font.suffix.lower()
-            font_size = _pin_file(stack, font, _MAX_FONT)
-            inputs.append((font, font_name, font_size, expected, 'font'))
+            inputs.append((font, font_name, _MAX_FONT, expected, 'font'))
         else:
             cwd = _local_path(bundle) / 'shell'
             staged = _catalog_inputs(stack, cwd, catalog)
-        for source, name, size, sha, label in inputs:
-            if label == 'bundled DLL':
-                _pin_file(stack, source, size)
+        copies = []
+        for path, name, limit, sha, label in inputs:
+            source = _pin_file(stack, path, limit, exact=label == 'bundled DLL')
+            data = _verified(source, sha, label, collect=True)
             with (directory / name).open('xb') as stream:
-                stream.write(_verified(source, size, sha, label))
-            _pin_file(stack, directory / name, size)
-            _verified(directory / name, size, sha, label)
+                stream.write(data)
+            del data
+            copy = _pin_file(stack, directory / name, source.size, exact=True)
+            _verified(copy, sha, label)
+            copies.append((source, copy, sha, label))
 
         # Do not search the original bin directory or allow other files in the
         # private load directory to stand in for OS imports.
@@ -407,11 +439,12 @@ def _inspect(bundle, font, expected, index, sample, *, catalog=None):
         else:
             counts = _catalog(library, cwd)
             _check_catalog_config(cwd / 'fonts.conf')
-            for path, size, sha in staged:
-                _verified(path, size, sha, 'font')
-        for source, name, size, sha, label in inputs:
-            _verified(directory / name, size, sha, label)
-            _verified(source, size, sha, label)
+            for font, sha in staged:
+                _verified(font, sha, 'font')
+        # Native code opens the fixed private names; these pins attest only disk bytes.
+        for source, copy, sha, label in copies:
+            _verified(copy, sha, label)
+            _verified(source, sha, label)
         identity = {'fontconfig_version': version, 'fontconfig_sha256': _DLLS[_FONTCONFIG][1]}
         if catalog is not None:
             return {**identity, 'faces_by_file': counts}

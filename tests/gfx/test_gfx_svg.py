@@ -914,6 +914,36 @@ class LinuxSvgRuntimeDigest(unittest.TestCase):
 
 @unittest.skipUnless(os.name == 'nt' and sysconfig.get_platform() == 'win-amd64', 'native Windows x64')
 class WindowsFontconfigCheck(unittest.TestCase):
+    def test_verified_leaf_reads_the_same_handle_from_start_each_time(self):
+        from vtx.render import gfx_svg_win_fontconfig as fc
+        path = temporary_root(self) / '字体.ttf'
+        data = bytes(range(256)) * 300  # inert data spanning more than one read
+        path.write_bytes(data)
+        sha = gfx_svg.digest(data)
+        with contextlib.ExitStack() as stack, \
+                mock.patch.object(Path, 'lstat', return_value=None), \
+                mock.patch.object(Path, 'open', side_effect=AssertionError('pathname reopened')):
+            held = fc._pin_file(stack, path, len(data), exact=True)
+            self.assertEqual(fc._verified(held, sha, 'font', collect=True), data)
+            self.assertIsNone(fc._verified(held, sha, 'font'))
+            with self.assertRaisesRegex(ValueError, '^font byte identity mismatch$'):
+                fc._verified(held, '0' * 64, 'font', collect=True)
+
+    def test_pin_rejects_invalid_file_metadata(self):
+        from vtx.render import gfx_svg_win_fontconfig as fc
+        root = temporary_root(self)
+        path = root / 'font.ttf'
+        path.write_bytes(b'inert')
+        with contextlib.ExitStack() as stack:
+            with self.assertRaisesRegex(ValueError, 'file size bounds'):
+                fc._pin_file(stack, path, 6, exact=True)
+        alias = root / 'second-name.ttf'
+        os.link(path, alias)
+        for leaf in (path, alias, root):
+            with self.subTest(leaf=leaf.name), contextlib.ExitStack() as stack:
+                with self.assertRaisesRegex(ValueError, 'regular single-link disk file'):
+                    fc._pin_file(stack, leaf, 4096)
+
     def test_refuses_unverified_bundle_before_fontconfig_query(self):
         from vtx.render import gfx_svg_win_fontconfig as fc
         root = temporary_root(self)
