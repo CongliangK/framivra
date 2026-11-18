@@ -207,6 +207,7 @@ class _ImageOrigins(NamedTuple):
     package_bin: int
     system32: int
     winsxs: int
+    system_pathname_set_sha256: str  # sample names only, not mapped objects or bytes
 
 
 def _raster_image_roots(pins, package_images):
@@ -327,6 +328,7 @@ def _query_image_origins(job, executable, roots, deadline):
     if not 0 < count < len(modules) or partial:
         raise ValueError('Windows SVG image sample returned an invalid module count')
     counts, seen = [0, 0, 0], set()
+    system_names = set()
     for module in modules[:count]:
         _image_sample_time(deadline)
         if not module:
@@ -350,7 +352,8 @@ def _query_image_origins(job, executable, roots, deadline):
             raise ValueError('Windows SVG observed a module outside the allowed image roots')
         # Only the already-validated relative suffix comes from the loader.
         # Compare text directly; neither reported path is opened or resolved.
-        expected = prefixes[group] + str(path.relative_to(bases[group]))
+        tail = path.relative_to(bases[group])
+        expected = prefixes[group] + str(tail)
         mapped[:] = unwritten
         _image_sample_time(deadline)
         size = native._check(get_mapped(process, module, mapped, len(mapped)), 'K32GetMappedFileNameW')
@@ -358,12 +361,21 @@ def _query_image_origins(job, executable, roots, deadline):
         _image_sample_time(deadline)
         _require_image_mapping(query_mapping, process, module)
         counts[group] += 1
+        if group:
+            prefix = 'system32/' if group == 1 else 'winsxs/'
+            system_names.add((prefix + tail.as_posix().lower()).encode('ascii'))
     if root not in seen:
         raise ValueError('Windows SVG root image missing from module sample')
+    # Version header, then sorted, LF-terminated literal records. The DOS
+    # name check excludes control characters, so LF cannot occur in a tail.
+    system_sha = hashlib.sha256(b'framivra:windows-svg:system-pathname-set:v1\n')
+    for record in sorted(system_names):
+        system_sha.update(record + b'\n')
+    origins = _ImageOrigins(root.relative_to(package.parent).as_posix(), *counts, system_sha.hexdigest())
     if job.proc.poll() is not None:
         raise ValueError('Windows SVG shell root exited during image sample')
     _image_sample_time(deadline)
-    return _ImageOrigins(root.relative_to(package.parent).as_posix(), *counts)
+    return origins
 
 
 def _sample_raster_images(job, executable, roots, pump_deadline):

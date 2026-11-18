@@ -1709,7 +1709,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                                'reordered': 'ordered pixels differ', 'later': 'ordered pixels differ',
                                'encoding': 'ordered PNG bytes differ', 'settlement': 'settlement unconfirmed',
                                **image_failures}
-            origins = shell._ImageOrigins('bin/inkscape.com', 2, 1, 1)
+            origins = shell._ImageOrigins('bin/inkscape.com', 2, 1, 1, 'a' * 64)
             for i, failure in enumerate((*raster_failures, *fact_failures)):
                 with self.subTest(failure=failure):
                     case_scratch = root / f'case-{i}'
@@ -1879,6 +1879,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
     def test_image_sample_uses_only_live_owned_handle_and_bounded_names_and_metadata(self):
         import ctypes as C
         from ctypes import wintypes as W
+        from hashlib import sha256
         import time
         from vtx.render import gfx_svg_win_shell as shell
 
@@ -1888,7 +1889,12 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
         roots = (package, Path(r'D:\Windows\System32'), Path(r'D:\Windows\WinSxS'))
         good_names = [str(exe), r'd:\WINDOWS\SYSTEM32\ntdll.dll', r'D:\Windows\WinSxS\assembly\gdiplus.dll', dll]
         devices = {'C:': r'\Device\HarddiskVolume2', 'D:': r'\Device\HarddiskVolume4'}
-        for case, message in ((None, None), ('dead', 'requires a live shell root'),
+        header = b'framivra:windows-svg:system-pathname-set:v1\n'
+        baseline = b'system32/ntdll.dll\nwinsxs/assembly/gdiplus.dll\n'
+        records = {'renamed': b'system32/other.dll\nwinsxs/assembly/gdiplus.dll\n',
+                   'classes-exchanged': b'system32/gdiplus.dll\nwinsxs/assembly/ntdll.dll\n'}
+        for case, message in ((None, None), ('reordered', None), ('system-case', None),
+                              ('renamed', None), ('classes-exchanged', None), ('dead', 'requires a live shell root'),
                               ('exited', 'exited during image sample'), ('timeout', 'sample deadline expired'),
                               ('root', 'differs from the pinned entry'), ('root-case', 'differs from the pinned entry'),
                               ('empty', 'invalid module count'), ('full', 'invalid module count'),
@@ -1923,6 +1929,15 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                             'package-parent-case': dll.replace('\\bin\\', '\\BIN\\')}.get(case, dll)
                 if case == 'no-root-module':
                     names.pop(0)
+                elif case == 'reordered':
+                    names.reverse()
+                elif case == 'system-case':
+                    names[1:3] = [name.upper() for name in names[1:3]]
+                elif case == 'renamed':
+                    names[1] = names[1].replace('ntdll.dll', 'other.dll')
+                elif case == 'classes-exchanged':
+                    names[1] = names[1].replace('ntdll.dll', 'gdiplus.dll')
+                    names[2] = names[2].replace('gdiplus.dll', 'ntdll.dll')
                 bases = [i * 0x10000 for i in range(1, len(names) + 1)]
 
                 def root(handle, flags, output, count):
@@ -2018,8 +2033,9 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                         mock.patch.object(shell, '_windows_api', side_effect=lambda name, *_: functions[name]):
                     deadline = time.monotonic() + (-1 if case == 'timeout' else 10)
                     if message is None:
+                        expected = sha256(header + records.get(case, baseline)).hexdigest()
                         self.assertEqual(shell._query_image_origins(job, exe, roots, deadline),
-                                         ('bin/inkscape.com', 2, 1, 1))
+                                         ('bin/inkscape.com', 2, 1, 1, expected))
                         self.assertEqual(queried_drives, ['C:', 'D:'])
                         self.assertEqual(mapped_bases, bases)
                         self.assertEqual(metadata_bases, bases)
