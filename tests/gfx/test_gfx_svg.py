@@ -1674,7 +1674,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
             }
             image_failures = {'image-eof': 'exited before a live image sample',
                               'image-rejected': 'mapped name differs',
-                              'image-unconfirmed': 'invalid mapped name'}
+                              'image-unconfirmed': 'requires a committed image mapping'}
             raster_failures = {None: None, 'missing': 'missing output frames', 'extra': 'unexpected output entry',
                                'reordered': 'ordered pixels differ', 'later': 'ordered pixels differ',
                                'encoding': 'ordered PNG bytes differ', 'settlement': 'settlement unconfirmed',
@@ -1794,12 +1794,13 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                         with self.assertRaises(PermissionError), executable.open('r+b'):
                             self.fail('package entry lost its pin before the image sample')
                         self.assertEqual([path.name for path in roots[1:]], ['System32', 'WinSxS'])
-                        if failure in ('image-rejected', 'image-unconfirmed'):
+                        if failure == 'image-rejected':
                             other = r'\Device\HarddiskVolume2\private\inkscape\bin\Other.dll'
                             buffer = C.create_unicode_buffer(other, shell._IMAGE_NAME_LIMIT)
-                            size = len(other) if failure == 'image-rejected' else len(buffer) - 1
-                            shell._require_mapped_image_name(buffer, size, other.replace('Other.dll', 'inkscape.com'),
-                                                             exact=True)
+                            shell._require_mapped_image_name(buffer, len(other),
+                                                             other.replace('Other.dll', 'inkscape.com'), exact=True)
+                        if failure == 'image-unconfirmed':
+                            shell._require_image_mapping(lambda _h, _base, _out, size: size, object(), 0x10000)
                         return origins
 
                     real_require_outputs = shell._require_outputs
@@ -1845,7 +1846,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                     self.assertEqual(bool(list(case_scratch.iterdir())),
                                      failure in ('facts-settlement', 'settlement', 'image-unconfirmed'))
 
-    def test_image_sample_uses_only_live_owned_handle_and_bounded_exact_names(self):
+    def test_image_sample_uses_only_live_owned_handle_and_bounded_names_and_metadata(self):
         import ctypes as C
         from ctypes import wintypes as W
         import time
@@ -1875,6 +1876,10 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                               ('mapped-alias', 'mapped name differs'), ('mapped-case', 'mapped name differs'),
                               ('mapped-boundary', 'invalid mapped name'), ('mapped-nul', 'invalid mapped name'),
                               ('mapped-terminator', 'invalid mapped name'), ('mapped-unavailable', 'K32GetMappedFileNameW'),
+                              ('mapping-unavailable', 'VirtualQueryEx'),
+                              *((case, 'requires a committed image mapping') for case in
+                                ('mapping-short', 'mapping-oversize', 'mapping-data', 'mapping-private',
+                                 'mapping-reserved', 'mapping-base', 'mapping-allocation', 'mapping-empty')),
                               ('no-root-module', 'missing from module sample')):
             with self.subTest(case=case):
                 process = object()  # sentinel; no API receives a real process or PID
@@ -1888,6 +1893,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                             'package-parent-case': dll.replace('\\bin\\', '\\BIN\\')}.get(case, dll)
                 if case == 'no-root-module':
                     names.pop(0)
+                bases = [i * 0x10000 for i in range(1, len(names) + 1)]
 
                 def root(handle, flags, output, count):
                     self.assertIs(handle, process)
@@ -1900,7 +1906,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                 def enum(handle, modules, capacity, needed, flags):
                     self.assertIs(handle, process)
                     self.assertEqual((capacity, flags), (C.sizeof(W.HMODULE) * shell._IMAGE_MODULE_LIMIT, 3))
-                    modules[:len(names)] = range(11, 11 + len(names))
+                    modules[:len(names)] = bases
                     count = {'empty': 0, 'full': capacity, 'partial': 1}.get(case, C.sizeof(W.HMODULE) * len(names))
                     C.cast(needed, C.POINTER(W.DWORD)).contents.value = count
                     return 1
@@ -1908,14 +1914,14 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                 def name(handle, module, output, capacity):
                     self.assertIs(handle, process)
                     self.assertEqual(capacity, shell._IMAGE_NAME_LIMIT)
-                    output.value = names[module - 11]
-                    if case == 'nul-boundary' and module == 12:
+                    output.value = names[bases.index(module)]
+                    if case == 'nul-boundary' and module == bases[1]:
                         prefix = str(roots[1]) + '\\'
                         output.value = prefix + 'a' * (capacity - 1 - len(prefix))
                         self.assertEqual(output[capacity - 1], '\0')
                     return {'truncated': capacity, 'unavailable': 0}.get(case, len(output.value))
 
-                queried_drives, mapped_bases = [], []
+                queried_drives, mapped_bases, metadata_bases = [], [], []
 
                 def device(drive, output, capacity):
                     self.assertEqual(capacity, shell._IMAGE_NAME_LIMIT)
@@ -1933,7 +1939,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                     self.assertIs(handle, process)
                     self.assertEqual(capacity, shell._IMAGE_NAME_LIMIT)
                     mapped_bases.append(module)
-                    dos = names[module - 11]
+                    dos = names[bases.index(module)]
                     value = devices[dos[:2].upper()] + dos[2:]
                     if dos[0].upper() == 'D':
                         value = value.lower()  # system-only ASCII case semantics
@@ -1952,9 +1958,32 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                     output[:len(value) + 1] = value + '\0'
                     return len(value)
 
+                def mapping(handle, module, output, capacity):
+                    self.assertIs(handle, process)
+                    self.assertEqual(capacity, 48)  # native AMD64 MEMORY_BASIC_INFORMATION
+                    self.assertEqual(mapped_bases, [*metadata_bases, module])
+                    metadata_bases.append(module)
+                    info = C.cast(output, C.POINTER(shell._MemoryBasicInformation)).contents
+                    info.BaseAddress = info.AllocationBase = module
+                    info.State, info.Type, info.RegionSize = 0x1000, 0x1000000, 0x1000
+                    if module == bases[-1]:
+                        if case == 'mapping-base':
+                            info.BaseAddress -= 1
+                        elif case == 'mapping-allocation':
+                            info.AllocationBase = bases[0]
+                        elif case == 'mapping-reserved':
+                            info.State = 0x2000
+                        elif case in ('mapping-data', 'mapping-private'):
+                            info.Type = 0x40000 if case == 'mapping-data' else 0x20000
+                        elif case == 'mapping-empty':
+                            info.RegionSize = 0
+                        return {'mapping-short': capacity - 1, 'mapping-oversize': capacity + 1,
+                                'mapping-unavailable': 0}.get(case, capacity)
+                    return capacity
+
                 functions = {'QueryFullProcessImageNameW': root, 'K32EnumProcessModulesEx': enum,
                              'K32GetModuleFileNameExW': name, 'QueryDosDeviceW': device,
-                             'K32GetMappedFileNameW': mapped}
+                             'K32GetMappedFileNameW': mapped, 'VirtualQueryEx': mapping}
                 with mock.patch.object(shell, '_IMAGE_NAME_LIMIT', 128), \
                         mock.patch.object(shell, '_windows_api', side_effect=lambda name, *_: functions[name]):
                     deadline = time.monotonic() + (-1 if case == 'timeout' else 10)
@@ -1962,7 +1991,8 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                         self.assertEqual(shell._query_image_origins(job, exe, roots, deadline),
                                          ('bin/inkscape.com', 2, 1, 1))
                         self.assertEqual(queried_drives, ['C:', 'D:'])
-                        self.assertEqual(mapped_bases, [11, 12, 13, 14])
+                        self.assertEqual(mapped_bases, bases)
+                        self.assertEqual(metadata_bases, bases)
                     else:
                         with self.assertRaisesRegex((OSError, ValueError), message):
                             shell._query_image_origins(job, exe, roots, deadline)

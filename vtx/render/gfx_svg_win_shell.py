@@ -75,6 +75,7 @@ _FACE_TIMEOUT = 15  # four face checks and the catalog, including Job settlement
 _FACTS_TIMEOUT, _FACTS_CAPTURE_LIMIT = 15, 1024  # shared subdeadline; combined stdout/stderr per query
 _IMAGE_TIMEOUT, _IMAGE_PUMP_SLICE = 15, .025  # inside the shell's existing pump deadline
 _IMAGE_MODULE_LIMIT, _IMAGE_NAME_LIMIT = 512, 1024
+_MEM_COMMIT, _MEM_IMAGE = 0x1000, 0x1000000
 _INKSCAPE_VERSION = 'Inkscape 1.4.4 (dcaf3e7, 2026-05-05)'  # observed from the archive-pinned .com
 _RASTER_SVG_SHA256 = '70ddd6d89d21e9051c4479364cc69003c6612c9da3b3c7caaaa11f25b77c79bc'
 _RASTER_PNG_SHA256 = '30cad9d17b086500d6a15ed285bad63449dc5816806bb3744b68f941b1f0db4b'
@@ -264,8 +265,24 @@ def _require_mapped_image_name(buffer, size, expected, *, exact):
         raise ValueError('Windows SVG mapped name differs from the observed image path')
 
 
+class _MemoryBasicInformation(C.Structure):
+    # Native MEMORY_BASIC_INFORMATION; the snapshot route already requires AMD64 Python.
+    _fields_ = [('BaseAddress', C.c_void_p), ('AllocationBase', C.c_void_p),
+                ('AllocationProtect', W.DWORD), ('PartitionId', W.WORD),
+                ('RegionSize', C.c_size_t), ('State', W.DWORD), ('Protect', W.DWORD), ('Type', W.DWORD)]
+
+
+def _require_image_mapping(query, process, module):
+    info = _MemoryBasicInformation()
+    size = C.sizeof(info)
+    returned = native._check(query(process, module, C.byref(info), size), 'VirtualQueryEx')
+    if (returned != size or info.State != _MEM_COMMIT or info.Type != _MEM_IMAGE
+            or info.BaseAddress != module or info.AllocationBase != module or not info.RegionSize):
+        raise ValueError('Windows SVG image sample requires a committed image mapping at the module base')
+
+
 def _query_image_origins(job, executable, roots, deadline):
-    """Compare two non-atomic name observations, not backing objects or bytes."""
+    """Corroborate names and base metadata non-atomically, not backing objects or bytes."""
     # The original CreateProcessW HANDLE stays owned until _settle. No PID reopen.
     process = job._info.process
     if not process or job.proc.poll() is not None:
@@ -297,10 +314,12 @@ def _query_image_origins(job, executable, roots, deadline):
             devices[drive] = _image_device(drive, unwritten)
     prefixes = tuple(devices[base.drive.upper()] + str(base)[2:] + '\\' for base in bases)
     get_mapped = _windows_api('K32GetMappedFileNameW', W.DWORD, W.HANDLE, C.c_void_p, W.LPWSTR, W.DWORD)
+    query_mapping = _windows_api('VirtualQueryEx', C.c_size_t, W.HANDLE, C.c_void_p,
+                                 C.POINTER(_MemoryBasicInformation), C.c_size_t)
     mapped = C.create_unicode_buffer(_IMAGE_NAME_LIMIT)
 
-    # PSAPI is not atomic. One non-full list, two pathname queries per entry,
-    # no retries and no reading the memory at a returned module base.
+    # One non-full list, two pathname queries and one metadata query per entry.
+    # No retries, region walk, or reads of process memory.
     modules, needed = (W.HMODULE * _IMAGE_MODULE_LIMIT)(), W.DWORD()
     _image_sample_time(deadline)
     native._check(enum(process, modules, C.sizeof(modules), C.byref(needed), 3), 'K32EnumProcessModulesEx')
@@ -336,6 +355,8 @@ def _query_image_origins(job, executable, roots, deadline):
         _image_sample_time(deadline)
         size = native._check(get_mapped(process, module, mapped, len(mapped)), 'K32GetMappedFileNameW')
         _require_mapped_image_name(mapped, size, expected, exact=(group == 0))
+        _image_sample_time(deadline)
+        _require_image_mapping(query_mapping, process, module)
         counts[group] += 1
     if root not in seen:
         raise ValueError('Windows SVG root image missing from module sample')
