@@ -1,4 +1,4 @@
-"""Internal single-file face check; not called by the SVG runtime.
+"""Internal single-file face check for trusted acceptance; not a renderer.
 
 The caller supplies a trusted font digest and an exclusive scratch parent.
 The fresh worker trusts Windows, base CPython, this checkout and the local
@@ -228,7 +228,7 @@ def _inspect(bundle, font, expected, index, sample):
                 'font_sha256': expected, **face}
 
 
-def _run_worker(argv, directory, operation):
+def _run_worker(argv, directory, operation, *, deadline=None):
     system = C.create_unicode_buffer(512)
     n = _bind(_kernel(), 'GetSystemWindowsDirectoryW', W.UINT, W.LPWSTR, W.UINT)(system, len(system))
     if not 0 < n < len(system):
@@ -243,7 +243,10 @@ def _run_worker(argv, directory, operation):
     args = [str(python), '-IBS', '-c', bootstrap, str(Path(__file__).resolve().parents[2]), *argv]
     # Sorted allowlist; the buffer adds the second NUL for CreateProcessW.
     environment = C.create_unicode_buffer(f'SystemRoot={system.value}\0TEMP={directory}\0TMP={directory}\0')
-    deadline = time.monotonic() + _TIMEOUT + _SETTLE_RESERVE
+    if deadline is None:
+        deadline = time.monotonic() + _TIMEOUT + _SETTLE_RESERVE
+    elif time.monotonic() >= deadline - _SETTLE_RESERVE:
+        raise TimeoutError('Fontconfig face check deadline expired before launch')
     operation.keep = True  # revoke scratch cleanup authority before launch can run a writer
     job, launched = None, False
 
@@ -319,6 +322,15 @@ def inspect_face(portable_root, font_path, *, sha256, scratch, index=0, sample='
     or completion integration. ``sha256`` must come from a trusted caller, not
     from rehashing an arbitrary font before running this check.
     """
+    return _inspect_face(portable_root, font_path, sha256=sha256, scratch=scratch, index=index, sample=sample)
+
+
+def _inspect_face(portable_root, font_path, *, sha256, scratch, index, sample='', operation=None, deadline=None):
+    """The private raster caller shares its cleanup authority and absolute deadline."""
+    if operation is None:
+        operation = SimpleNamespace(keep=False)
+    elif operation.keep:
+        raise _Rejected('Fontconfig face check requires confirmed prior Job settlement')
     if sys.platform != 'win32' or sysconfig.get_platform() != 'win-amd64':
         raise _Rejected('face check requires Windows x64 Python')
     if type(sha256) is not str or not re.fullmatch(r'[0-9a-f]{64}', sha256):
@@ -335,14 +347,16 @@ def inspect_face(portable_root, font_path, *, sha256, scratch, index=0, sample='
     with _after(stack.close, 'Fontconfig face scratch pins could not be released'):
         _pin_dirs(stack, scratch)
         directory = Path(tempfile.mkdtemp(dir=scratch, prefix='vtx-fc-'))
-        operation = SimpleNamespace(keep=False)
 
         def remove():
             if not operation.keep:
                 shutil.rmtree(directory)
 
         with _after(remove, 'Fontconfig face scratch removal failed'):
-            _run_worker([str(bundle), str(font), sha256, str(index), json.dumps(sample)], directory, operation)
+            _run_worker([str(bundle), str(font), sha256, str(index), json.dumps(sample)],
+                        directory, operation, deadline=deadline)
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError('Fontconfig face check deadline expired before reply')
             try:
                 with (directory / _REPLY).open('rb') as stream:
                     data = stream.read(_MAX_RESULT + 1)

@@ -1324,14 +1324,21 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
 
         svg_sha, png_sha = fold('svg', sources), fold('png', outputs)
         rgba_sha = fold('rgba', [sha256(data).digest() for data in pixels])
+        font_digests = tuple(sha256(data).hexdigest() for data in font_data)
+        face_keys = ('family', 'style', 'index', 'fontconfig_weight', 'file_face_count')
+        face_values = (('Noto Sans CJK SC', 'Regular', 2, 80.0, 10), ('Noto Sans CJK SC', 'Bold', 2, 200.0, 10),
+                       ('DejaVu Sans', 'Book', 0, 80.0, 1), ('DejaVu Sans', 'Bold', 0, 200.0, 1))
+        receipts = [dict(zip(face_keys, values), font_sha256=digest)
+                    for values, digest in zip(face_values, font_digests)]
+        real_face = shell.fontconfig._inspect_face
         with mock.patch.multiple(shell, _RASTER_FRAMES=4, _STANDARD_SIZE=(6, 4),
                                  _RASTER_MANIFEST_BYTES=len(raw), _RASTER_MANIFEST_SHA256=sha256(raw).hexdigest(),
                                  _RASTER_SVG_TOTAL=sum(map(len, sources)), _RASTER_SVG_SHA256=svg_sha,
                                  _RASTER_PNG_SHA256=png_sha, _RASTER_RGBA_SHA256=rgba_sha), \
                 mock.patch.multiple(snapshot, _MAX_FILES=1, _MAX_DIRS=3, _MAX_BYTES=6,
                                     _TREE_SHA256='a576aafef70b8fd83cdbdf9f581c6734fee849138f38018f824b1ad332bc64a5'), \
-                mock.patch.object(shell, '_locked_font_digests',
-                                  return_value=tuple(sha256(data).hexdigest() for data in font_data)), \
+                mock.patch.object(shell, '_locked_font_digests', return_value=font_digests), \
+                mock.patch.object(shell.fontconfig, '_inspect_face') as inspect_face, \
                 mock.patch.object(shell.native, '_OwnedJob') as own:
             def accept(where=scratch):
                 return shell._accept_standard_raster(root, scratch=where, project_root=project)
@@ -1381,7 +1388,61 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                 accept()
             last_font.write_bytes(font_data[-1])
             own.assert_not_called()
+            inspect_face.assert_not_called()
             self.assertEqual(list(scratch.iterdir()), [])
+
+            def face_for(bundle, target, *, sha256, scratch, index, operation, deadline):
+                i = int(target.stem.removeprefix('font'))
+                self.assertEqual(scratch, bundle)
+                self.assertEqual(bundle / 'inkscape', operation.inputs.vendor)
+                self.assertEqual(target, bundle / 'shell/fonts' / f'font{i}{Path(shell._FONT_NAMES[i]).suffix}')
+                self.assertEqual(target.read_bytes(), font_data[i])
+                self.assertEqual((sha256, index), (font_digests[i], face_values[i][2]))
+                return receipts[i]
+
+            inspect_face.side_effect = lambda *a, **kw: dict(face_for(*a, **kw), style='Wrong')
+            with self.assertRaisesRegex(ValueError, 'staged font face metadata mismatch'):
+                accept()
+            inspect_face.assert_called_once()
+            own.assert_not_called()  # neither Inkscape facts nor raster was launched
+            self.assertEqual(list(scratch.iterdir()), [])
+
+            # A later worker can lose settlement after an earlier worker has
+            # positively settled and removed its own scratch. Use the real
+            # face wrapper/Job supervision here; only native process IO is doubled.
+            uncertain = root / 'uncertain-face'
+            uncertain.mkdir()
+            worker_dirs, worker_jobs = [], []
+
+            def face_job(argv):
+                self.assertEqual(argv[1:3], ['-IBS', '-c'])
+                i = len(worker_jobs)
+                job = mock.Mock()
+                worker_jobs.append(job)
+                job.proc.returncode = 0
+                job._pump.return_value = True
+
+                def launch(args, stdout, stderr, *, cwd, environment):
+                    directory = Path(cwd)
+                    worker_dirs.append(directory)
+                    (directory / 'result.json').write_text(json.dumps({'face': receipts[i]}), encoding='ascii')
+
+                job._launch.side_effect = launch
+                if i == 1:
+                    job._close.side_effect = OSError('injected accounting failure')
+                return job
+
+            inspect_face.side_effect = real_face
+            own.side_effect = face_job
+            with self.assertRaisesRegex(ValueError, 'face worker Job settlement unconfirmed'):
+                accept(uncertain)
+            self.assertEqual(len(worker_jobs), 2)
+            first, second = worker_dirs
+            self.assertFalse(first.exists())
+            self.assertEqual(list(uncertain.iterdir()), [second.parent])
+            self.assertTrue(second.is_dir())
+            self.assertEqual(len({job._close.call_args.args[0] for job in worker_jobs}), 1)
+            inspect_face.side_effect = face_for
 
             version, system, user = '--version', '--system-data-directory', '--user-data-directory'
             version_line = b'Inkscape 1.4.4 (dcaf3e7, 2026-05-05)\n'
@@ -1416,10 +1477,13 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                     case_scratch = root / f'case-{i}'
                     case_scratch.mkdir()
                     own.reset_mock()
+                    inspect_face.reset_mock()
                     stop, rejection, wrong = fact_failures.get(failure, ('--shell', raster_failures.get(failure), None))
                     jobs, settings = [], []
 
                     def job_for(argv, *, capture_limit):
+                        self.assertEqual(inspect_face.call_count, 4)
+                        self.assertEqual(len({call.kwargs['deadline'] for call in inspect_face.call_args_list}), 1)
                         flag = argv[1]
                         self.assertEqual(len(argv), 2)
                         is_fact = flag != '--shell'
