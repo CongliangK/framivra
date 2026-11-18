@@ -185,7 +185,7 @@ export function BundleConfigForm({ form }) {
       const response = await fetch('/api/framivra/diagnostics', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(35000)]) })
       const value = await response.json().catch(() => null)
       if (!response.ok || !value?.ok) outcome = { status: 'failed', error: value?.error ?? `HTTP_${response.status}`, message: value?.message ?? '宿主诊断接口返回异常。', revision: state.revision }
-      else outcome = { status: 'ok', path: value.executable?.path ?? '（未上报）', semantic: value.storeCapabilities?.ok === true, revision: state.revision }
+      else outcome = { status: 'ok', path: value.executable?.path ?? '（未上报）', semantic: value.storeCapabilities?.ok === true, frame: value.capabilities?.capabilities?.frame?.inline_png?.flag === '--include-png', revision: state.revision }
     } catch (error) {
       outcome = { status: 'failed', error: 'NETWORK', message: `无法连接宿主诊断接口：${error?.message ?? error}`, revision: state.revision }
     }
@@ -228,7 +228,9 @@ export function BundleConfigForm({ form }) {
       !checking && !editing && check && state.revision === check.revision && check.status === 'ok' ? h('p', { role: 'status', className: 'fv-check-ok' },
         '检查通过：已保存配置可用。',
         h('br', null), `可执行文件：${check.path}`,
-        h('br', null), check.semantic ? '语义编辑（store/v1）可用。' : '语义编辑不可用：只读预览仍可用。') : null,
+        h('br', null), '时间线读取（read/v1）可用。',
+         h('br', null), check.frame ? '内核声明支持完整合成帧；尚未实测渲染。' : '当前宿主或内核不支持生成完整合成帧。',
+         h('br', null), check.semantic ? '语义编辑（store/v1）可用。' : '语义编辑不可用：时间线只读。') : null,
       !checking && !editing && check && state.revision === check.revision && check.status === 'failed' ? h('p', { role: 'alert', className: 'fv-check-bad' },
         `检查未通过（${check.error}）：${check.message}`,
         CHECK_HINTS[check.error] ? h('br', null) : null,

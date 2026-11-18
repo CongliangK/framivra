@@ -4,7 +4,7 @@ import { readFile, mkdtemp } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
-import { spawnSync } from 'node:child_process'
+import { commandFailure, spawnArchivePython } from '../scripts/archive-python.mjs'
 import { runInNewContext } from 'node:vm'
 import React, { act } from 'react'
 import { JSDOM } from 'jsdom'
@@ -14,7 +14,7 @@ const archive=process.env.SIDEBAR_MANUAL_ZIP
 
 test('candidate ZIP SDK-materialized PreviewBody and extracted Host actually plan/commit via installed core and refresh saved raw',{skip:skip||(!archive&&'Set SIDEBAR_MANUAL_ZIP to a fresh candidate ZIP'),timeout:30000},async t=>{
  const extracted=await mkdtemp(join(process.env.SIDEBAR_EVIDENCE_DIR,'manual-zip-'))
- const extraction=spawnSync('python3',['-I','-B','-c','import zipfile,sys;zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])',archive,extracted],{encoding:'utf8'});assert.equal(extraction.status,0,extraction.stderr)
+ const extraction=spawnArchivePython('import zipfile,sys;zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])',[archive,extracted]);assert.equal(extraction.status,0,commandFailure(extraction))
  const {createPreviewHost}=await import(pathToFileURL(join(extracted,'lib/host.js')))
  const env=await environment(t,'zip-core',fixture(),{createHost:createPreviewHost})
  const queue=[],target={mode:'queue',pendingQueue:queue,load:row=>queue.push(row)},copies=[]

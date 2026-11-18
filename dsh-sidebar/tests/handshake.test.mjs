@@ -10,6 +10,7 @@ import { resolveBuildStamp, computeSourceStampFromDir } from '../src/host.mjs'
 import { FileBrowser, buildMismatchMessage, setClientBuildStampForTests } from '../src/client/workbench.mjs'
 import { PreviewBody } from '../src/client/index.mjs'
 import { setup } from './helpers.mjs'
+import { commandFailure, spawnArchivePython } from '../scripts/archive-python.mjs'
 
 const h = React.createElement
 
@@ -292,10 +293,10 @@ test('build stamp: packaged artifacts bake one identical stamp into host and cli
     const output = join(work, 'candidate.zip'), extracted = join(work, 'extracted')
     const result = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/package.mjs', import.meta.url)), '--out', output], { encoding: 'utf8', timeout: 110_000 })
     assert.equal(result.status, 0, result.stderr + result.stdout)
-    const inspect = spawnSync('python3', ['-c', `import sys, zipfile
+    const inspect = spawnArchivePython(`import sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as archive: archive.extractall(sys.argv[2])
-`, output, extracted], { encoding: 'utf8' })
-    assert.equal(inspect.status, 0, inspect.stderr)
+`, [output, extracted])
+    assert.equal(inspect.status, 0, commandFailure(inspect))
     const protocol = await readFile(join(extracted, 'lib', 'protocol.js'), 'utf8')
     const baked = protocol.match(/export const BAKED_BUILD_STAMP = '([0-9a-f]{16})'/)
     assert(baked, 'packaged protocol.js carries a baked digest')
