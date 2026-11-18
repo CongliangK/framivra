@@ -41,10 +41,10 @@ class SamplingCacheContract(unittest.TestCase):
                 self.assertEqual(code, 0)
                 path = c.cache / qc._QC_SEG_RECORD
                 current = json.loads(path.read_text())
-                self.assertEqual(current['version'], 6)
+                self.assertEqual(current['version'], 7)
                 self.assertEqual(current['probe_filter'], qc._QC_GRAY_FILTER)
                 # Previous readers require their exact version before any reuse.
-                for previous in (1, 2, 3, 4, 5):
+                for previous in (1, 2, 3, 4, 5, 6):
                     self.assertNotEqual(current['version'], previous)
                 for version, value in ((1, None), (1, qc._QC_GRAY_FILTER),
                         (2, None), (2, 'scale=48:27,format=gray'),
@@ -52,7 +52,8 @@ class SamplingCacheContract(unittest.TestCase):
                         (3, None), (3, 'other-filter'), (3, qc._QC_GRAY_FILTER),
                         (4, None), (4, 'other-filter'), (4, qc._QC_GRAY_FILTER),
                         (5, None), (5, 'other-filter'), (5, qc._QC_GRAY_FILTER),
-                         (6, None), (6, 'other-filter'), (7, qc._QC_GRAY_FILTER)):
+                         (6, None), (6, qc._QC_GRAY_FILTER),
+                          (7, None), (7, 'other-filter'), (8, qc._QC_GRAY_FILTER)):
                     old = dict(current, version=version)
                     if value is None:
                         old.pop('probe_filter')
@@ -328,6 +329,49 @@ class SamplingMediaContract(unittest.TestCase):
         failed = [x for x in report['checks'] if not x['pass']]
         self.assertEqual(len(failed), 1, failed)
         self.assertTrue(failed[0]['name'].startswith('窗口 clip'))
+        self.assert_out_of_gamut_bottom_and_real_leak(env)
+
+    def assert_out_of_gamut_bottom_and_real_leak(self, env):
+        project = self.root / 'gamut'; project.mkdir()
+        shutil.copyfile(self.root/'window.mp4', project/'window.mp4')
+        source = project / 'source.mp4'
+        # Legal limited-range YUV codes but R would be negative before RGB
+        # clipping. Keep the authored color in YUV up to the actual compositor.
+        self.command(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+                      'nullsrc=s=320x180:r=30:d=2,geq=lum=81:cb=115:cr=16',
+                      '-f', 'lavfi', '-i', 'sine=frequency=1000:sample_rate=48000:duration=2',
+                      '-c:v', 'libx264', '-threads', '1', '-crf', '0', '-pix_fmt', 'yuv420p',
+                      '-colorspace', 'bt709', '-color_range', 'tv',
+                      '-c:a', 'aac', '-ac', '2', '-shortest', source])
+        timeline = project / 'timeline.json'
+        timeline.write_text(json.dumps({
+            'version': 2, 'project': {'fps': 30, 'width': 1920, 'height': 1080, 'duration_frames': 60},
+            'sources': [{'id': 'source', 'path': 'source.mp4'},
+                        {'id': 'window', 'path': 'window.mp4'}],
+            'video_tracks': [{'name': 'base', 'kind': 'aroll', 'clips': [
+                {'src': 'source', 'src_in': 0, 'src_out': 60, 'dst_in': 0, 'dur': 60}]},
+                {'name': 'window', 'kind': 'aroll', 'clips': [
+                    {'src': 'window', 'src_in': 0, 'src_out': 10, 'dst_in': 40,
+                     'dur': 10, 'scale': 1.0, 'x': 400, 'y': 200}]}],
+            'subtitles': [{'in': 5, 'out': 25, 'text': 'Subtitle before the empty window'}],
+            'audio_tracks': [{'name': 'tone', 'events': [
+                {'src': 'source', 'in': 0, 'out': 60, 'volume': 1.0}]}]}))
+        # The later segment has two passes even though frame 59 is unobscured.
+        self.command([sys.executable, REPO/'vtx/vtx.py', '-t', timeline, 'all', '--until', 'mux'],
+                     env=dict(env, VTX_VIDEO_SEGMENTS='2'), cwd=REPO)
+        final = project/'out/final.mp4'
+        for injected in (False, True):
+            if injected:
+                damaged = final.with_name('damaged.mp4')
+                self.command(['ffmpeg', '-v', 'error', '-i', final, '-vf',
+                              "drawbox=x=0:y=0:w=384:h=216:color=white:t=fill:enable='gte(n,30)'",
+                              '-c:v', 'libx264', '-threads', '1', '-crf', '0', '-c:a', 'copy', damaged])
+                os.replace(damaged, final)
+            c = Ctx(timeline, diagnostics=[]); c.strict = True
+            code, _, report = _run_qc(c)
+            failures = [x['name'] for x in report['checks'] if not x['pass']]
+            self.assertEqual(failures, ['空窗无叠加泄漏 @frame 59'] if injected else [], report)
+            self.assertEqual(code, int(injected))
 
 
 class EmptyVideoTracksQC(unittest.TestCase):
