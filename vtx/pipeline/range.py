@@ -12,10 +12,12 @@ CLI draft 写 cache/preview/range_<A标签>_<B标签>.mp4，可冷填充同键 s
 """
 from copy import copy
 import json, os, re, subprocess, sys, time
+from math import lcm
 from pathlib import Path
 
 from .composite import DEFAULT_SEGMENTS, RenderPlan, choose_cutpoints, prepare_layers, _concat_manifest
 from .infra import ensure_inside_project
+from .constraints import AUDIO_SAMPLE_RATE
 from ..media.encoders import pick_vcodec
 from ..cache.recovery import media_cache_valid
 from .stages import mix_audio_wav
@@ -207,10 +209,11 @@ def render_1080p_window(c, fa: int, fb: int, *, workspace: Path) -> Path:
     ctx.execution = events.ExecutionContext()
     ctx.diagnostics = None
     ctx.verify_inputs(None)
-    return _render_range(ctx, fa, fb, draft=False)
+    return _render_range(ctx, fa, fb, draft=False,
+                         run_tasks=getattr(ctx, '_preview_window_tasks', None))
 
 
-def _render_range(c, fa, fb, *, draft):
+def _render_range(c, fa, fb, *, draft, run_tasks=None):
     t0 = time.monotonic()
     f = 0.5 if draft else 1.0
     W, H = ((c.w // 2) // 2 * 2, (c.h // 2) // 2 * 2) if draft else (c.w, c.h)
@@ -220,7 +223,8 @@ def _render_range(c, fa, fb, *, draft):
     print("  ℹ 预览渲染：不写 out/ 与 receipt，产物在 cache/preview/")
 
     t = time.monotonic()
-    layers = prepare_layers(c, native_window=(fa, fb))
+    layers = (prepare_layers(c, native_window=(fa, fb)) if run_tasks is None else
+              prepare_layers(c, native_window=(fa, fb), run_tasks=run_tasks))
     if not draft:
         layers = [layer for layer in layers if _intersects(layer['cl'], fa, fb)]
         if any(layer['gfx'] for layer in layers):
@@ -300,12 +304,15 @@ def _render_range(c, fa, fb, *, draft):
     delivery_dir = getattr(c, 'preview_cache', vdir)
     fstxn.mkdir(delivery_dir, root=c.root)
     out = delivery_dir / f'{stem}.mp4'
+    # MP4 edit lists use the movie time scale. On the native profile, avoid
+    # rounding either exact frame endpoints or AAC presentation samples to ms.
+    movie_clock = [] if draft else ['-movie_timescale', str(lcm(c.frame_rate.numerator, AUDIO_SAMPLE_RATE))]
     c.run(["ffmpeg", "-v", "error", "-y", "-i", str(tmpv), "-i", str(wav),
            # Both inputs are already bounded to the exact frame/sample window.
            # -shortest can discard trailing copied video packets when rounded
            # audio ends a fraction of one sample before the last frame endpoint.
            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-           "-movflags", "+faststart", str(out)])
+           *movie_clock, "-movflags", "+faststart", str(out)])
     tmpv.unlink(missing_ok=True)
     # 自检：总帧数必须精确 == 窗口帧数（复合段边界丢帧不静默）。dry-run 无产物
     # （P1-A：此前 ffprobe 真执行读空 → 误报「自检失败」），只打印将执行的命令即退出。
@@ -313,10 +320,11 @@ def _render_range(c, fa, fb, *, draft):
         print(f"  [dry-run] 跳过产物自检与落盘（帧数以段切点计算为准 = {fb - fa}）")
         print("✓ [dry-run] 区间预览命令验证通过（未产出文件）")
         return None
-    fr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
-                         "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(out)],
-                        capture_output=True, text=True,
-                        encoding="utf-8", errors="replace").stdout.strip()
+    probe = ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(out)]
+    result = (c.run(probe) if run_tasks is not None else subprocess.run(
+        probe, capture_output=True, text=True, encoding="utf-8", errors="replace"))
+    fr = result.stdout.strip()
     if not (fr.isdigit() and int(fr) == fb - fa):
         print(f"✗ 区间渲染自检失败：总帧数 {fr or '?'} ≠ {fb - fa}"); sys.exit(1)
     if not draft:

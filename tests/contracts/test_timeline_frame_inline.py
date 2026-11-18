@@ -361,5 +361,109 @@ class InlineTransport(unittest.TestCase):
         self.assertIsNone(result['image'])
 
 
+class PreviewWindowCandidate(unittest.TestCase):
+    def test_cli_only_exact_ingress_and_platform_capability(self):
+        from vtx.cli.commands import _main
+        from vtx.timeline_preview_window import SCHEMA
+
+        argv = ['vtx', '-t', 'not-opened.json', 'timeline', 'preview-window', '--frame', '2',
+                '--expected-content-version=sha256:' + 'a' * 64, '--render', '--include-media', '--prepare-inputs']
+        cases = ((argv[:-1], 2), (argv + ['--dry-run'], 2), (argv + ['--render'], 2), (argv, 1))
+        for args, code in cases:
+            with patch.object(sys, 'argv', args), patch.object(sys, 'platform', 'darwin'), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(_main(), code)
+                result = json.loads(output.getvalue())
+                self.assertEqual(set(result), {'schema', 'ok', 'diagnostics'})
+                self.assertEqual(result['schema'], SCHEMA)
+                self.assertFalse(result['ok'])
+                self.assertEqual(result['diagnostics'][0]['code'],
+                                 'cli.arguments' if code == 2 else 'platform.unsupported')
+
+        for platform in ('darwin', 'win32', 'linux'):
+            with patch.object(sys, 'argv', ['vtx', 'capabilities']), patch.object(sys, 'platform', platform), \
+                    patch('vtx.runtime.fstxn.directory_write_capability', return_value=platform != 'linux'), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(_main(), 0)
+                self.assertNotIn('preview_window', json.loads(output.getvalue())['capabilities'])
+        with patch.object(sys, 'platform', 'linux'), patch('vtx.timeline_preview_window.supported', return_value=True):
+            self.assertEqual(timeline_capabilities()['capabilities']['preview_window'],
+                             {'schema': SCHEMA, 'inline_media': True, 'prepare_inputs': True})
+
+    def test_preflight_rejects_declared_bgm_mid_window_gfx_and_unsafe_environment(self):
+        from vtx.timeline_preview_window import _preflight, WindowError
+
+        base = {'version': 2, 'project': {'fps': 29.97, 'width': 1920, 'height': 1080, 'duration_frames': 45},
+                'sources': [{'id': 'unused', 'path': 'voice.wav'}],
+                'video_tracks': [], 'audio_tracks': [], 'subtitles': []}
+        bgm = {'id': 'score', 'path': 'score.json', 'bgm': {'output': 'master'}}
+        gfx = {'name': 'gfx', 'kind': 'gfx', 'clips': [{'src': 'scene.html', 'dst_in': 40, 'dur': 5}]}
+        with self.assertRaises(WindowError) as declaration:
+            _preflight(dict(base, sources=[bgm]), 15)
+        self.assertEqual(declaration.exception.code, 'plugins.unsupported')
+        with self.assertRaises(WindowError) as graphics:
+            _preflight(dict(base, video_tracks=[gfx]), 15)
+        self.assertEqual(graphics.exception.code, 'gfx.unsupported')
+        with patch.dict(os.environ, {'FFREPORT': ''}, clear=True), self.assertRaises(WindowError) as env:
+            _preflight(base, 15)
+        self.assertEqual(env.exception.code, 'environment.unsupported')
+        with patch('vtx.timeline_preview_window._safe_environment'):
+            with self.assertRaisesRegex(WindowError, 'off-window graphics'):
+                _preflight(dict(base, video_tracks=[gfx]), 10)
+            end, rate = _preflight(base, 10)
+            self.assertEqual((end, rate.numerator, rate.denominator), (40, 30000, 1001))
+            self.assertEqual(_preflight(base, 44)[0], 45)
+
+    def test_container_count_does_not_bless_wrong_pts_or_aac_tail(self):
+        from fractions import Fraction
+        from vtx.timeline_preview_window import _probe_facts, WindowError
+
+        rate = Fraction(30000, 1001)
+        streams = [{'index': 0, 'codec_type': 'video', 'codec_name': 'h264', 'width': 1920, 'height': 1080,
+                    'time_base': '1/30000', 'start_pts': 0, 'duration_ts': 1001, 'avg_frame_rate': str(rate)},
+                   {'index': 1, 'codec_type': 'audio', 'codec_name': 'aac', 'sample_rate': '48000', 'channels': 2,
+                    'time_base': '1/48000', 'start_pts': 0, 'duration_ts': 1602}]
+        vp = {'stream_index': 0, 'pts': 0, 'duration': 1001}
+        priming = {'stream_index': 1, 'pts': -1024, 'duration': 1024,
+                   'side_data_list': [{'side_data_type': 'Skip Samples', 'skip_samples': 1024}]}
+        first = {'stream_index': 1, 'pts': 0, 'duration': 1024}
+        tail = {'stream_index': 1, 'pts': 1024, 'duration': 578}
+        self.assertEqual(_probe_facts({'streams': streams, 'packets': [priming, vp, first, tail]}, rate, 1, 1602),
+                         {'width': 1920, 'height': 1080, 'audio_sample_rate': 48000, 'audio_channels': 2})
+        for packets, code in (([priming, dict(vp, pts=1), first, tail], 'media.video_clock'),
+                              ([priming, vp, first, dict(tail, duration=1024)], 'media.audio_clock'),
+                              ([dict(priming, side_data_list=[]), vp, first, tail], 'media.audio_clock')):
+            with self.assertRaises(WindowError) as caught:
+                _probe_facts({'streams': streams, 'packets': packets}, rate, 1, 1602)
+            self.assertEqual(caught.exception.code, code)
+
+    @unittest.skipUnless(sys.platform == 'linux' and artifact.fstxn.directory_write_capability(),
+                         'requires Linux directory anchoring')
+    def test_owned_request_cleanup_preserves_unsettled_ledger_and_primary_failure(self):
+        from vtx.runtime.proc_supervisor import WORKER_LEDGER
+        from vtx.timeline_preview_window import _request, error_result, WindowError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            identity = artifact.project_identity(root)
+            result = error_result('test', 'test')
+            with _request(root, identity, result) as (directory, _):
+                (directory / 'private').write_text('generated')
+                peer = directory.parent / 'old.mp4'
+                peer.write_bytes(b'keep')
+            self.assertFalse(directory.exists())
+            self.assertEqual(peer.read_bytes(), b'keep')
+            primary = WindowError('render.cancelled', 'cancelled by host')
+            with self.assertRaises(WindowError) as caught:
+                with _request(root, identity, result) as (directory, _):
+                    child = directory / 'render'
+                    child.mkdir()
+                    (child / WORKER_LEDGER).write_text('unsettled')
+                    raise primary
+            self.assertIs(caught.exception, primary)
+            self.assertEqual((child / WORKER_LEDGER).read_text(), 'unsettled')
+            self.assertEqual(result['diagnostics'][-1]['code'], 'render.unsettled')
+
+
 if __name__ == '__main__':
     unittest.main()

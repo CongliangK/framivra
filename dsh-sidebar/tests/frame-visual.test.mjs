@@ -205,7 +205,7 @@ test('verified availability status expires with a dirty preview, without hiding 
 
 function followControls(f) {
   const input = label => [...f.section().querySelectorAll('input')].find(node => node.parentElement.textContent.includes(label))
-  return { consent: () => input('允许写入预览缓存'), follow: () => input('随播放头实时生成') }
+  return { consent: () => input('允许写入预览缓存'), follow: () => input('随播放头更新固定帧') }
 }
 const stopReply = () => new Response(JSON.stringify({ ok: false, error: 'FIXTURE_STOP', message: 'no render fixture' }), { status: 403 })
 

@@ -64,6 +64,10 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/framivra/frame', methods: ['POST'], requestBody: 'streaming', fetch: host.frame,
   }))
+  // Separate owner-only render path; never registered as a model tool.
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: '/api/framivra/window', methods: ['POST'], requestBody: 'streaming', fetch: host.window,
+  }))
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/framivra/media', methods: ['GET', 'HEAD'], requestBody: 'buffered', fetch: host.media,
   }))

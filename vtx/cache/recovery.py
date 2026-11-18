@@ -28,9 +28,10 @@ def completion_marker(path):
     return Path(str(path) + '.complete.json')
 
 
-def _inspect(path, kind=None):
+def _inspect(path, kind=None, *, execute=None):
     """Return certified metadata, or None for missing/truncated/undecodable media."""
     path = Path(path)
+    run = execute if execute is not None else lambda args: subprocess.run(args, capture_output=True, text=True)
     try:
         if not path.is_file() or not path.stat().st_size:
             return None
@@ -50,16 +51,13 @@ def _inspect(path, kind=None):
                     return None
             frames = None
         else:
-            probe = subprocess.run(
-                ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_frames',
-                 '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', str(path)],
-                capture_output=True, text=True)
+            probe = run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_frames',
+                         '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', str(path)])
             count = probe.stdout.strip()
             if probe.returncode or probe.stderr.strip() or not count.isdigit() or int(count) <= 0:
                 return None
-            decoded = subprocess.run(
-                ['ffmpeg', '-v', 'error', '-xerror', '-i', str(path),
-                 '-map', '0', '-f', 'null', '-'], capture_output=True, text=True)
+            decoded = run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(path),
+                           '-map', '0', '-f', 'null', '-'])
             if decoded.returncode or decoded.stderr.strip():
                 return None
             frames = int(count)
@@ -97,7 +95,7 @@ def media_output(c, cmd):
 
 
 def atomic_media(c, target, producer, *, max_frames=None,
-                 before_commit=None, after_commit=None):
+                 before_commit=None, after_commit=None, inspect_execute=None):
     """Publish one project-owned media file only after its producer succeeds.
 
     producer(staging_path) must raise on failure and specify its output format
@@ -136,7 +134,8 @@ def atomic_media(c, target, producer, *, max_frames=None,
             if orphan != current and token and '.' not in token:
                 fstxn.unlink(orphan, root=c.root)
         result = producer(temporary)
-        rec = _inspect(temporary, target.suffix.lower())
+        rec = (_inspect(temporary, target.suffix.lower()) if inspect_execute is None
+               else _inspect(temporary, target.suffix.lower(), execute=inspect_execute))
         if rec is None:
             raise RuntimeError('Media producer produced incomplete media: ' + str(target))
         if max_frames is not None and rec['frames'] is not None and rec['frames'] > max_frames:
@@ -151,7 +150,7 @@ def atomic_media(c, target, producer, *, max_frames=None,
     return result
 
 
-def atomic_ffmpeg(c, cmd, execute, *, before_commit=None, after_commit=None):
+def atomic_ffmpeg(c, cmd, execute, *, before_commit=None, after_commit=None, inspect_execute=None):
     """FFmpeg argv/error-policy adapter for the single media transaction."""
     target = media_output(c, cmd)
     if target is None or c.dry:
@@ -171,4 +170,4 @@ def atomic_ffmpeg(c, cmd, execute, *, before_commit=None, after_commit=None):
     caps = [int(cmd[cmd.index(option) + 1]) for option in ('-frames:v', '-vframes')
             if option in cmd]
     return atomic_media(c, target, produce, max_frames=min(caps) if caps else None,
-                        before_commit=before_commit, after_commit=after_commit)
+                        before_commit=before_commit, after_commit=after_commit, inspect_execute=inspect_execute)

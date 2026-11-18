@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import React, { act, useState } from 'react'
 import { JSDOM } from 'jsdom'
 import { FrameEpoch } from '../src/client/frame.mjs'
@@ -12,12 +13,16 @@ const midpoint = (frame, num = 30, den = 1) => (frame + 0.5) * den / num
 
 // Actual React DOM and browser event handlers; only decoding/clock advancement
 // are adapted. These tests do not certify native browser decoding or seek accuracy.
-async function fixture(t, Component = RenderedPlayer, initial = {}, { quantizeToMicroseconds = false } = {}) {
+async function fixture(t, Component = RenderedPlayer, initial = {}, { quantizeToMicroseconds = false, mockBlobURLs = false, deferNativePins = false } = {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://monitor.invalid/' })
-  const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
+  const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch', 'URL'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
   globalThis.window = dom.window; globalThis.document = dom.window.document
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
-  const requests = []
+  const requests = [], urls = [], revoked = []
+  if (mockBlobURLs) globalThis.URL = class extends URL {
+    static createObjectURL(blob) { const url = `blob:http://monitor.invalid/${urls.length}`; urls.push({ blob, url }); return url }
+    static revokeObjectURL(url) { revoked.push(url) }
+  }
   globalThis.fetch = (...args) => { requests.push(args); throw new Error('Monitor must not silently render/upload/send') }
   const states = new WeakMap(), nodes = [], writes = [], pauses = [], pins = [], cancelled = []
   let nextCallback = 0
@@ -36,6 +41,8 @@ async function fixture(t, Component = RenderedPlayer, initial = {}, { quantizeTo
   })
   proto.pause = function () { state(this).paused = true; pauses.push(this) }
   proto.play = function () { state(this).paused = false; this.dispatchEvent(new dom.window.Event('play')); return Promise.resolve() }
+  proto.load = function () {}
+  for (const key of ['videoWidth', 'videoHeight']) Object.defineProperty(dom.window.HTMLVideoElement.prototype, key, { configurable: true, get() { return state(this)[key] ?? 0 } })
   proto.requestVideoFrameCallback = function (callback) { const id = ++nextCallback; state(this).callbacks.set(id, callback); return id }
   proto.cancelVideoFrameCallback = function (id) { state(this).callbacks.delete(id); cancelled.push({ node: this, id }) }
   const { createRoot } = await import('react-dom/client'), { Simulate } = await import('react-dom/test-utils')
@@ -45,10 +52,16 @@ async function fixture(t, Component = RenderedPlayer, initial = {}, { quantizeTo
       capabilities: { capabilities: { frame: { inline_png: { flag: '--include-png' } } } } },
     sessionId: 'session', frame: 0, fps: 30, duration: 300,
     tabSignal: tab.signal, call: () => assert.fail('No control request expected'), ...initial,
-  }, refresh
+  }, refresh, pendingPin
+  function pin(value, origin) {
+    owner.invalidate(origin); pins.push(value)
+    const commit = () => { props = { ...props, frame: Number(value) }; refresh() }
+    if (origin && deferNativePins) pendingPin = commit
+    else commit()
+  }
   function Harness() {
     const [, update] = useState(0); refresh = () => update(value => value + 1)
-    return h(Component, { ...props, onFrame: value => { pins.push(value); props = { ...props, frame: Number(value) }; refresh() } })
+    return h(Component, { ...props, onFrame: pin })
   }
   await act(async () => root.render(h(Harness)))
   const render = async patch => { props = { ...props, ...patch }; await act(async () => refresh()) }
@@ -67,9 +80,11 @@ async function fixture(t, Component = RenderedPlayer, initial = {}, { quantizeTo
     dom.window.close()
     for (const [key, descriptor] of Object.entries(saved)) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key] }
   })
-  return { dom, root, Simulate, owner, pins, writes, pauses, requests, cancelled, nodes, state, render, emit, metadata, settle, nativeSeek, decoded,
+  const button = text => [...document.querySelectorAll('button')].find(node => node.textContent === text)
+  return { dom, root, Simulate, owner, tab, pins, writes, pauses, requests, cancelled, nodes, state, render, emit, metadata, settle, nativeSeek, decoded, urls, revoked, button,
     video: () => document.querySelector('video'), frame: () => props.frame,
-    click: async text => act(async () => [...document.querySelectorAll('button')].find(node => node.textContent === text).click()),
+    pin: async value => act(async () => pin(String(value))), flushNativePin: async () => act(async () => { const commit = pendingPin; pendingPin = undefined; commit() }),
+    click: async text => act(async () => button(text).click()),
     change: async (node, value) => act(async () => Simulate.change(node, { target: { value } })),
   }
 }
@@ -93,7 +108,7 @@ test('program monitor switches one visible stage without auto rendering; live co
   assert.deepEqual(stages().map(node => node.dataset.mode), ['rendered'])
   assert.equal(live.hidden, true)
   await f.metadata(f.video()); await f.settle(f.video())
-  await f.click('实时真预览')
+  await f.click('固定帧预览')
   assert(document.querySelector('video') === null, "Expected absent DOM node: document.querySelector('video')")
   assert.deepEqual(stages().map(node => node.dataset.mode), ['live'])
   assert(document.querySelector('.fv-frame-tools') === live, "Expected same DOM node: document.querySelector('.fv-frame-tools')")
@@ -110,7 +125,7 @@ test('storage suspension reaches live follow without hiding its stage or losing 
   const f = await fixture(t, ProgramMonitor)
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const inputs = () => [...document.querySelectorAll('.fv-frame-tools input')]
-  const follow = () => inputs().find(node => node.parentElement.textContent.includes('随播放头实时生成'))
+  const follow = () => inputs().find(node => node.parentElement.textContent.includes('随播放头更新固定帧'))
   await act(async () => inputs()[0].click())
   await act(async () => follow().click())
   await f.render({ suspended: true, frame: 10 })
@@ -255,4 +270,155 @@ test('output switch and new grant rebind media to the canonical cursor; a short 
   await act(async () => f.video().play())
   await f.decoded(f.video(), 1.5)
   assert.equal(f.frame(), 45)
+})
+
+const windowOpened = {
+  grant: 'grant-window', media: [output('final')], snapshot: { content_version: version },
+  host: { ops: ['preview-window'] }, capabilities: { capabilities: {
+    frame: { inline_png: { flag: '--include-png' } },
+    preview_window: { schema: 'framivra.timeline.preview-window/v1', inline_media: true, prepare_inputs: true },
+  } },
+}
+const windowPayload = new Uint8Array([1, 8, 2, 7, 1, 8])
+const windowReply = (request, end, options = {}) => new Response(options.body ?? windowPayload, { headers: {
+  'Content-Type': 'video/mp4', 'X-Framivra-Version': request.contentVersion,
+  'X-Framivra-Start': String(request.frame), 'X-Framivra-End': String(end),
+  'X-Framivra-SHA256': createHash('sha256').update(windowPayload).digest('hex'), ...options.headers,
+} })
+const reaped = () => Response.json({ ok: true, reaped: true })
+const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
+const windowInputs = () => [...document.querySelectorAll('[aria-label="单窗口音画监看"] input')]
+const generateWindow = '生成当前音画窗口'
+const toggle = async input => act(async () => input.click())
+function serveWindows(f, responder) {
+  globalThis.fetch = async (path, init) => {
+    assert.equal(path, '/api/framivra/window')
+    assert.equal(init.method, 'POST')
+    const request = JSON.parse(init.body)
+    f.requests.push({ request, signal: init.signal })
+    return responder(request, init.signal)
+  }
+}
+async function untilWindow(predicate) {
+  for (let attempts = 0; attempts < 100 && !predicate(); attempts++) await act(() => new Promise(done => setTimeout(done, 5)))
+  assert(predicate(), 'window DOM state did not settle')
+}
+
+test('audio window requires both capabilities and both click-time permissions; success uses one decoded Blob and shares the frame without echo seeking', async t => {
+  const f = await fixture(t, ProgramMonitor, { opened: { ...windowOpened, host: { ops: [] } }, frame: 290 }, { mockBlobURLs: true, deferNativePins: true })
+  assert.equal(f.button('音画窗口'), undefined, 'kernel advertisement alone is insufficient')
+  await f.render({ opened: { ...windowOpened, capabilities: { capabilities: { frame: windowOpened.capabilities.capabilities.frame } } } })
+  assert.equal(f.button('音画窗口'), undefined, 'Host advertisement alone is insufficient')
+  await f.render({ opened: windowOpened })
+  await f.click('音画窗口')
+  assert.equal(f.video(), null)
+  assert.equal(f.button(generateWindow).disabled, true)
+  assert.deepEqual(f.requests, [])
+  await toggle(windowInputs()[0]); assert.equal(f.button(generateWindow).disabled, true)
+  await toggle(windowInputs()[1]); assert.equal(f.button(generateWindow).disabled, false)
+  assert.deepEqual(f.requests, [])
+  const stop = deferred()
+  serveWindows(f, request => request.op === 'render' ? windowReply(request, Math.min(request.frame + 30, 300)) : stop.promise)
+  await f.click(generateWindow)
+  const { request, signal } = f.requests[0]
+  assert.match(request.operationId, /^[0-9a-f-]{36}$/)
+  assert.deepEqual({ ...request, operationId: null }, { sessionId: 'session', grant: windowOpened.grant, op: 'render', operationId: null,
+    frame: 290, contentVersion: version, renderConsent: 'cache/preview-only', prepareInputs: true })
+  await untilWindow(f.video)
+  const node = f.video()
+  assert.equal(node.controls, false)
+  assert.equal(visible(node), false)
+  assert.equal(node.autoplay, false)
+  assert.equal(f.urls.length, 1)
+  assert.equal(node.getAttribute('src'), f.urls[0].url)
+  assert.equal(f.urls[0].blob.type, 'video/mp4')
+  Object.assign(f.state(node), { videoWidth: 1920, videoHeight: 1080, duration: 10 / 30, readyState: 2 })
+  await f.emit(node, 'loadeddata')
+  assert(node.controls && visible(node))
+  await act(async () => node.play())
+  await f.decoded(node, 0.1)
+  assert.equal(f.frame(), 290, 'hold the project commit after the native callback')
+  await f.render({ selectionDisplay: 'unrelated committed render' })
+  assert.equal(f.video(), node, 'older committed frame must not replace this playing element')
+  assert.equal(node.getAttribute('src'), f.urls[0].url)
+  assert.equal(node.paused, false)
+  await f.flushNativePin()
+  assert.equal(f.frame(), 293)
+  await f.nativeSeek(node, 0.22)
+  await f.flushNativePin()
+  assert.deepEqual(f.pins, ['293', '296'])
+  assert.deepEqual(f.writes, [], 'native playback and native seek do not assign currentTime')
+  assert.equal(f.requests.length, 1)
+  await f.pin(45)
+  assert.equal(signal.aborted, true)
+  assert.equal(node.paused, true)
+  assert.equal(node.muted, true)
+  assert.equal(f.video(), null)
+  assert.equal(node.hasAttribute('src'), false)
+  assert.deepEqual(f.revoked, [f.urls[0].url])
+  assert.equal(f.state(node).callbacks.size, 0)
+  assert.deepEqual(f.requests[1].request, { sessionId: 'session', grant: windowOpened.grant, op: 'cancel', operationId: request.operationId })
+  assert.equal(f.requests[1].signal.aborted, false)
+  await f.click(generateWindow)
+  assert.equal(f.requests.length, 2, 'no successor before confirmed reap')
+  await act(async () => stop.resolve(reaped()))
+  await untilWindow(() => !f.button(generateWindow).disabled)
+  assert.equal(f.requests.length, 2, 'no automatic continuation')
+  await f.click(generateWindow)
+  await untilWindow(f.video)
+  await f.emit(f.video(), 'error')
+  assert.equal(f.video(), null)
+  assert.deepEqual(f.revoked, f.urls.map(entry => entry.url))
+  assert.equal(f.requests[3].request.operationId, f.requests[2].request.operationId)
+})
+
+test('a superseded response installs no media; unconfirmed cancel stays blocked after grant change until explicit retry', async t => {
+  const f = await fixture(t, ProgramMonitor, { opened: windowOpened, frame: 25 }, { mockBlobURLs: true })
+  const render = deferred(), firstStop = deferred()
+  let cancels = 0
+  serveWindows(f, request => request.op === 'render' ? (request.grant === windowOpened.grant ? render.promise : windowReply(request, 55))
+    : ++cancels === 1 ? firstStop.promise : reaped())
+  await f.click('音画窗口')
+  for (const input of windowInputs()) await toggle(input)
+  await f.click(generateWindow)
+  await act(async () => f.owner.editChanged({ busy: true }))
+  await f.render({ opened: { ...windowOpened, grant: 'replacement', snapshot: { content_version: `sha256:${'b'.repeat(64)}` } } })
+  await act(async () => f.owner.editChanged({ busy: false }))
+  for (const input of windowInputs()) await toggle(input)
+  await act(async () => render.resolve(windowReply(f.requests[0].request, 55))) // transport ignored the old abort
+  await act(async () => firstStop.resolve(Response.json({ ok: false, error: 'BAD_GRANT' }, { status: 403 })))
+  await untilWindow(() => f.button('重试回收音画窗口'))
+  assert.equal(f.button(generateWindow).disabled, true)
+  assert.equal(f.urls.length, 0)
+  assert.equal(f.video(), null)
+  await f.click('重试回收音画窗口')
+  await untilWindow(() => !f.button(generateWindow).disabled)
+  const oldRequest = f.requests[0].request
+  assert.deepEqual(f.requests[1].request, { sessionId: oldRequest.sessionId, grant: oldRequest.grant, op: 'cancel', operationId: oldRequest.operationId })
+  assert.deepEqual(f.requests[1].request, f.requests[2].request, 'retry is bound to the old operation, not the new grant')
+  await f.click(generateWindow)
+  await untilWindow(f.video)
+  assert.equal(f.requests.length, 4)
+  assert.equal(f.requests[3].request.grant, 'replacement')
+  assert.notEqual(f.requests[3].request.operationId, oldRequest.operationId)
+  assert.equal(f.requests[3].signal.aborted, false, 'old cleanup must not abort the replacement request')
+})
+
+test('rejects unknown window bounds, bad checksum and oversized stream before creating media', async t => {
+  const f = await fixture(t, ProgramMonitor, { opened: windowOpened, frame: 25 }, { mockBlobURLs: true })
+  const responses = [request => windowReply(request, 56), request => windowReply(request, 55, { headers: { 'X-Framivra-SHA256': '0'.repeat(64) } }),
+    request => windowReply(request, 55, { body: new ReadableStream({ start: stream => stream.enqueue(new Uint8Array(5 * 1024 * 1024 + 1)) }) }),
+    () => new Response('INTERNAL_SERVER_SENTINEL', { status: 502 })]
+  serveWindows(f, request => request.op === 'render' ? responses.shift()(request) : reaped())
+  await f.click('音画窗口')
+  for (const input of windowInputs()) await toggle(input)
+  for (const message of [/区间/, /SHA-256/, /5 MiB/, /读取或校验窗口失败/]) {
+    await f.click(generateWindow)
+    await untilWindow(() => !f.button(generateWindow).disabled)
+    assert.match(document.querySelector('[aria-label="单窗口音画监看"] [role="status"]').textContent, message)
+    assert.equal(f.video(), null)
+    assert.equal(f.urls.length, 0)
+  }
+  assert(!document.body.textContent.includes('INTERNAL_SERVER_SENTINEL'))
+  assert.deepEqual(f.requests.map(({ request }) => request.op), ['render', 'cancel', 'render', 'cancel', 'render', 'cancel', 'render', 'cancel'])
 })

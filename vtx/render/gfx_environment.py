@@ -833,8 +833,8 @@ def _raise(error):
     raise error
 
 
-def _libraries(binary):
-    text = _command(['ldd', str(binary)])
+def _libraries(binary, *, command=None):
+    text = (command or _command)(['ldd', str(binary)])
     if 'not found' in text:
         raise EnvironmentError(f'unresolved renderer library: {text}')
     paths = re.findall(r'(?:=>\s+)?(/[^\s]+)\s+\(', text)
@@ -843,13 +843,14 @@ def _libraries(binary):
     return _files(paths)
 
 
-def _fonts():
+def _fonts(*, command=None):
+    run = command or _command
     # All installed families, not just the three template fonts: arbitrary HTML
     # can consume any family, fallback glyph or fontconfig alias.
-    names = _command(['fc-list', '--format=%{file}\n']).splitlines()
+    names = run(['fc-list', '--format=%{file}\n']).splitlines()
     if not names or any(not n.startswith('/') for n in names):
         raise EnvironmentError('unknown/empty fontconfig font inventory')
-    configs = _command(['fc-conflist'])
+    configs = run(['fc-conflist'])
     active = re.findall(r'^\+ (.*?): ', configs, re.M)
     if not active:
         raise EnvironmentError('unknown fontconfig active configuration')
@@ -860,7 +861,8 @@ def _fonts():
     return {'files': _files(names), 'configs': _files(active + [config]),
             'inventory': configs, 'tools': _files([shutil.which('fc-list'),
                                                  shutil.which('fc-conflist')]),
-            'libraries': _libraries(shutil.which('fc-list'))}
+            'libraries': (_libraries(shutil.which('fc-list')) if command is None else
+                           _libraries(shutil.which('fc-list'), command=command))}
 
 
 def _rpm_package_files(package, name):

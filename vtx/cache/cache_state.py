@@ -400,7 +400,11 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     不覆盖无源码 pyc/zipimport 或完整工具链，也不改 raw/GFX/seg 内容键。
     """
     h = hashlib.sha256()
-    h.update(c.tl_path.read_bytes() if timeline_bytes is None else timeline_bytes)
+    if timeline_bytes is None:
+        reader = getattr(c, "_read_timeline_bytes", None)
+        timeline_bytes = reader() if reader is not None else c.tl_path.read_bytes()
+    h.update(timeline_bytes)
+    del timeline_bytes
     def source_key(entry):
         index, source = entry
         origin = f'$.sources[{index}]'

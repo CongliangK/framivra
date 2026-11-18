@@ -72,7 +72,11 @@ export class FrameEpoch {
   assertReady() {
     if (this.ghost || this.edit.dirty || this.edit.busy || this.edit.unknown) throw new Error('FRAME_STALE: selection/pin/edit/session changed or write unresolved')
   }
-  invalidate() { this.epoch++; this.controller?.abort(); this.controller = undefined; this.generated = undefined }
+  invalidate(origin) {
+    this.epoch++; this.controller?.abort(); this.controller = undefined; this.generated = undefined
+    // Only the owning window's native cursor report may keep that same media.
+    this.previewWindow?.interrupt(origin)
+  }
   begin(tabSignal) {
     this.controller?.abort()
     this.controller = new AbortController()
@@ -344,7 +348,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, selecti
       h('label', { title: '单独允许本次点击向此工程 cache/preview 写入；不授予 timeline/history 写权限。' }, h('input', { type: 'checkbox', checked: consent, onChange: event => { owner.invalidate(); setConsent(event.target.checked); setState({}) } }), '允许写入预览缓存（不改时间线）'),
       h('label', null, h('input', { type: 'checkbox', checked: prepareGfx, onChange: changePrepare }), '允许按需准备当前帧图形（仅预览域）'),
       prepareGfx ? h('label', null, h('input', { type: 'checkbox', checked: htmlTrust, onChange: changeTrust }), '仅信任的工程：允许执行已保存的可见 HTML / 脚本，可访问浏览器允许的文件和网络；不是沙箱，不授予更广泛的未知权限。') : null,
-      h('label', { title: '明确启用后，播放头变化将按需写入预览缓存并验证完整合成帧；停止拖动后更新，不承诺视频帧率播放。' }, h('input', { type: 'checkbox', checked: follow, disabled: !consent, onChange: event => { owner.invalidate(); setFollow(event.target.checked); setState({}) } }), '随播放头实时生成（写预览缓存）'),
+      h('label', { title: '明确启用后，播放头变化将按需写入预览缓存并验证完整合成帧；停止拖动后更新，不承诺视频帧率播放。' }, h('input', { type: 'checkbox', checked: follow, disabled: !consent, onChange: event => { owner.invalidate(); setFollow(event.target.checked); setState({}) } }), '随播放头更新固定帧（写预览缓存）'),
       )),
       imageTools,
       cancelButton(),

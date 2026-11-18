@@ -124,7 +124,7 @@ class Ctx:
         self.tl_path = timeline_path
         self.root = timeline_path.parent
         try:
-            self.timeline_bytes = timeline_path.read_bytes()
+            self.timeline_bytes = self._read_timeline_bytes()
         except OSError as error:
             emit(self, str(error), rule_id='load.timeline_file', measured={'path': str(timeline_path)},
                  threshold={'readable_file': True})
@@ -213,6 +213,9 @@ class Ctx:
         self._pre_layers = None
 
     # ---- 基础设施 ----
+    def _read_timeline_bytes(self):
+        return self.tl_path.read_bytes()
+
     def run(self, cmd, need=True, *, before_commit=None, after_commit=None):
         """Execute a command; commit callbacks are for owned, need=True media only.
 

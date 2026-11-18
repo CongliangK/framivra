@@ -803,6 +803,11 @@ def _preview_command(c, a):
 
 
 def _main(execution=None):
+    argv = sys.argv[1:]
+    if 'preview-window' in argv:
+        from .timeline_preview_window import matches, run_preview_window_command
+        if matches(argv):
+            return run_preview_window_command(argv)
     execution = execution if execution is not None else events.ExecutionContext()
     ap = argparse.ArgumentParser(description="vtx 视频剪辑中间层", allow_abbrev=False)
     ap.add_argument("-t", "--timeline", default="timeline.json", help="timeline.json 路径（默认 ./timeline.json）")

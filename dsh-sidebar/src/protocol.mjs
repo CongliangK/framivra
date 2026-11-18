@@ -1,4 +1,5 @@
 /** Adapter only: timeline interpretation and selection belong exclusively to vtx. */
+import { createHash } from 'node:crypto'
 import { dirname, isAbsolute } from 'node:path'
 import { Readable } from 'node:stream'
 import { boundedText, FRAME_WIRE_LIMIT } from './bounded.mjs'
@@ -16,7 +17,7 @@ export const fail = (code, message, status) => { throw new PreviewError(code, me
 
 /**
  * Host protocol/build identity used for verifiable client↔host negotiation.
- * `ops` lists every control op this build dispatches. A NEWER client on an
+ * `ops` lists supported control ops and the independent preview-window route. A NEWER client on an
  * OLDER running host gets BAD_GRANT for ops the old host never knew (its
  * grant gate runs before BAD_OPERATION); with this identity the client can
  * distinguish "host too old, refresh/restart" from a real authorization
@@ -27,7 +28,7 @@ export const HOST_PROTOCOL_OPS = [
   'authorize-write', 'revoke-write', 'invalidate-plan', 'cancel-write',
   'plan', 'commit', 'status', 'recover', 'adopt', 'undo',
   'inspect', 'query', 'reference',
-  'storage-inspect', 'storage-plan', 'storage-clean', 'storage-cancel',
+  'storage-inspect', 'storage-plan', 'storage-clean', 'storage-cancel', 'preview-window',
 ]
 export const HOST_IDENTITY = { plugin: '0.2.6', protocol: 1, ops: HOST_PROTOCOL_OPS }
 
@@ -70,6 +71,65 @@ export function prepareGfxArgs(options) {
   if (!object(options) || Object.keys(options).some(key => !['prepareGfx', 'htmlTrust'].includes(key)) || (Object.hasOwn(options, 'prepareGfx') && typeof options.prepareGfx !== 'boolean')) fail('BAD_FRAME', 'prepareGfx must be an optional boolean; unknown frame options are forbidden')
   if (Object.hasOwn(options, 'htmlTrust') && (options.htmlTrust !== 'trusted-local-html' || options.prepareGfx !== true)) fail('HTML_TRUST_REQUIRED', 'Exact trusted-local-html consent requires prepareGfx=true', 403)
   return options.prepareGfx === true ? ['--prepare-gfx', ...(options.htmlTrust === 'trusted-local-html' ? ['--trust-html'] : [])] : []
+}
+
+const WINDOW_SCHEMA = 'framivra.timeline.preview-window/v1'
+const WINDOW_MEDIA_LIMIT = 5 * 1024 * 1024
+const WINDOW_DIAGNOSTICS = new Map([
+  ['plugins.unsupported', 'Audio/video window preview does not support active or declared plugins.'],
+  ['gfx.unsupported', 'Audio/video window preview cannot include or verify graphics.'],
+  ['subtitles.unsupported', 'Audio/video window preview requires inline subtitles.'],
+  ['snapshot.changed', 'The saved timeline changed; refresh and try again.'],
+  ['inputs.changed', 'Preview inputs or tools changed during rendering.'],
+  ['platform.unsupported', 'The installed core cannot render a window on this platform.'],
+  ['environment.unsupported', 'The installed render environment is not supported for window preview.'],
+  ['render.unsettled', 'The core could not confirm cleanup of its preview workspace.'],
+  ['render.process', 'An audio/video render or verification tool failed.'],
+  ['output.limit', 'The generated window exceeds the inline response limit.'],
+])
+export const previewWindowCapable = value => {
+  const capability = value?.capabilities?.preview_window
+  return capability?.schema === WINDOW_SCHEMA && capability.inline_media === true && capability.prepare_inputs === true
+}
+
+function decodePreviewWindow(text, start, version) {
+  let value
+  try { value = parseJSON(text) } catch (error) {
+    if (error instanceof LosslessJSONError) throw error
+    fail('INVALID_JSON', 'vtx did not return complete preview-window JSON', 502)
+  }
+  const mismatch = () => fail('PROTOCOL_MISMATCH', 'Invalid vtx preview-window/v1 receipt', 502)
+  if (!object(value) || value.schema !== WINDOW_SCHEMA || typeof value.ok !== 'boolean') mismatch()
+  if (!value.ok) {
+    if (!Array.isArray(value.diagnostics)) mismatch()
+    return { ok: false, diagnostics: value.diagnostics.slice(0, 8).map(item => {
+      const message = WINDOW_DIAGNOSTICS.get(item?.code)
+      return message ? { code: item.code, message } : { code: 'window.rejected', message: 'The core refused this audio/video window.' }
+    }) }
+  }
+  if (value.content_version !== version || value.start !== start || !integer(value.end) || value.end <= start ||
+      !object(value.fps) || !integer(value.fps.num) || !value.fps.num || !integer(value.fps.den) || !value.fps.den ||
+      value.width !== 1920 || value.height !== 1080 || value.mime !== 'video/mp4' ||
+      value.audio_sample_rate !== 48000 || value.audio_channels !== 2 || !integer(value.byte_length) || value.byte_length === 0 ||
+      typeof value.sha256 !== 'string' || value.sha256.length !== 64 || !/^[a-f0-9]{64}$/.test(value.sha256)) mismatch()
+  if (value.byte_length > WINDOW_MEDIA_LIMIT) fail('WINDOW_MEDIA_LIMIT', 'Window media exceeds 5 MiB', 502)
+  if (typeof value.base64 !== 'string' || value.base64.length !== Math.ceil(value.byte_length / 3) * 4) mismatch()
+  const bytes = Buffer.from(value.base64, 'base64')
+  if (bytes.length !== value.byte_length || bytes.toString('base64') !== value.base64 || createHash('sha256').update(bytes).digest('hex') !== value.sha256) mismatch()
+  // The exact inline bytes are the only payload authority; do not retain or resolve any path.
+  return { ok: true, start, end: value.end, fps: { num: value.fps.num, den: value.fps.den }, sha256: value.sha256, bytes }
+}
+
+export function validatePreviewWindowRange(receipt, project) {
+  const { start, end, fps: { num, den } } = receipt
+  const { duration_frames: duration, fps } = project ?? {}
+  const stored = JSON.isRawJSON(fps) ? Number(fps.rawJSON) : fps
+  // inspect/v1 already validates allowed FPS labels. Map only their wire aliases (NTSC is exact N/1001).
+  const matchesRate = typeof stored === 'string' ? stored === `${num}/${den}`
+    : Number.isInteger(stored) ? den === 1 && stored === num : den === 1001 && stored === Math.round(num / den * 1000) / 1000
+  if (!matchesRate || !integer(duration) || start >= duration || end !== start + Math.min(duration - start, Math.ceil(num / den))) {
+    fail('PROTOCOL_MISMATCH', 'vtx receipt does not cover the exact saved preview window', 502)
+  }
 }
 
 export function queryArgs(query = {}) {
@@ -234,6 +294,17 @@ export class TimelineReader {
       if (!object(value) || value.schema !== 'framivra.timeline.frame/v1' || value.operation !== 'frame' || typeof value.ok !== 'boolean' || !Array.isArray(value.diagnostics)) fail('PROTOCOL_MISMATCH', 'Official frame/v1 envelope required', 502)
       return value
     }, undefined, true, true, snapshot, owner)
+  }
+  async previewWindow(executable, timeline, frame, version, signal, snapshot, owner) {
+    if (!integer(frame) || !/^sha256:[a-f0-9]{64}$/.test(version)) fail('BAD_WINDOW', 'Exact saved version and integer pin required')
+    try {
+      return await this.command(executable, timeline, ['timeline', 'preview-window', '--frame', String(frame), `--expected-content-version=${version}`, '--render', '--include-media', '--prepare-inputs'], signal,
+        text => decodePreviewWindow(text, frame, version), undefined, true, true, snapshot, owner)
+    } catch (error) {
+      if (error?.message?.startsWith('BODY_LIMIT:')) fail('WINDOW_WIRE_LIMIT', 'Window response exceeds 8 MiB including envelope/newline', 502)
+      if (error instanceof PreviewError && error.details) delete error.details // Never forward raw stderr from this route.
+      throw error
+    }
   }
   /**
    * Reap children, optionally scoped to one owner. Cancellation passes the
@@ -404,7 +475,7 @@ export class TimelineReader {
 function spawnKind(args) {
   if (args[0] === 'storage') return args[1] === 'clean' ? 'storage-clean' : 'storage-read'
   if (args[0] === 'store') return args[1] === 'capabilities' ? 'store-capabilities' : 'store'
-  if (args[0] === 'timeline' && args[1] === 'frame') return 'frame'
+  if (args[0] === 'timeline' && ['frame', 'preview-window'].includes(args[1])) return 'frame'
   return 'read'
 }
 

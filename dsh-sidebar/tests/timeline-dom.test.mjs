@@ -177,7 +177,7 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
   assert(document.querySelector('video') === null, 'no native video in live mode')
   await act(async () => button('成片渲染').click())
   assert(document.body.textContent.includes('暂无成片；不会自动启动整片渲染。'))
-  await act(async () => button('实时真预览').click())
+  await act(async () => button('固定帧预览').click())
   nextVersion = `sha256:${'b'.repeat(64)}`
   await submit(1)
   await settle(() => document.body.textContent.includes('旧块已隐藏'))
@@ -242,6 +242,52 @@ test('actual React DOM: references abort on selection/session/unmount, not playh
   await act(async () => reads[4].finish('AFTER_UNMOUNT'))
   assert(document.body.textContent === '', 'body remains empty after unmount and a late response')
   assert.deepEqual(copies, ['CURRENT_B'], 'late unmounted copy cannot publish to Clipboard')
+})
+
+test('window recovery remains available without a valid view and only closes/cancels the retired grant', async t => {
+  const { root, button, submit } = await mount(t)
+  const oldFetch = globalThis.fetch, tab = new AbortController()
+  t.after(() => { globalThis.fetch = oldFetch })
+  const windowCap = { schema: 'framivra.timeline.preview-window/v1', inline_media: true, prepare_inputs: true }
+  const opened = grant => ({ grant, snapshot, media: [], host: { ops: ['preview-window'] }, capabilities: { capabilities: { preview_window: windowCap } } })
+  const calls = []
+  let opens = 0, cancels = 0, finishOpen
+  const pendingOpen = new Promise(resolve => { finishOpen = resolve })
+  globalThis.fetch = async (path, init) => {
+    const request = JSON.parse(init.body)
+    calls.push({ path, request })
+    if (request.op === 'open') return Response.json(++opens === 1 ? opened('old') : await pendingOpen)
+    if (request.op === 'query') return new Response(stringifyJSON(full))
+    if (request.op === 'close') return Response.json({ ok: true })
+    if (request.op === 'cancel') return ++cancels === 1 ? Response.json({ ok: false }, { status: 502 }) : Response.json({ ok: true, reaped: true })
+    assert.equal(request.op, 'render')
+    return Response.json({ ok: false, error: 'BAD_GRANT' }, { status: 403 })
+  }
+  const useTabInfo = () => ({ tab: { signal: tab.signal } })
+  const click = label => act(async () => button(label).click())
+  const configure = async () => {
+    await click('音画窗口')
+    for (const input of document.querySelectorAll('[aria-label="单窗口音画监看"] input')) await act(async () => input.click())
+  }
+  await act(async () => root.render(h(PreviewBody, { useTabInfo, sessionId: 'one' })))
+  await submit(0)
+  await settle(() => button('音画窗口'))
+  await configure(); await click('生成当前音画窗口')
+  await settle(() => !button('音画窗口') && button('重试回收音画窗口'))
+  const initial = calls.find(call => call.request.op === 'render').request
+  await click('刷新保存版本')
+  assert.deepEqual(calls.filter(call => call.request.op === 'close').map(call => call.request.grant), ['old'], 'failed cleanup does not delay revoking old grant')
+  assert.equal(button('音画窗口'), undefined, 'replacement is still loading')
+  await click('重试回收音画窗口')
+  assert.deepEqual(calls.filter(call => call.request.op === 'cancel'), Array.from({ length: 2 }, () => ({ path: '/api/framivra/window',
+    request: { sessionId: 'one', grant: 'old', op: 'cancel', operationId: initial.operationId } })))
+  await act(async () => finishOpen(opened('new')))
+  await settle(() => button('音画窗口'))
+  await configure(); await click('生成当前音画窗口')
+  const newRender = calls.filter(call => call.request.op === 'render').at(-1).request
+  assert.equal(newRender.grant, 'new')
+  assert.notEqual(newRender.operationId, initial.operationId)
+  await act(async () => tab.abort())
 })
 
 test('actual React DOM: empty and unsafe displays retain diagnostics/raw; component CSS is self-contained and scoped', async t => {

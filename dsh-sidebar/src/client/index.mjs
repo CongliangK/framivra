@@ -1,11 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { parseJSON, stringifyJSON } from '../json.mjs'
 import { captureCurrentDraft, performReferenceAction } from './reference.mjs'
 import { VisualTimeline } from './timeline.mjs'
 import { ManualEditor } from './manual.mjs'
 import { emptySelection, transitionSelection, preserveSelection } from './selection.mjs'
 import { FrameEpoch } from './frame.mjs'
-import { ProgramMonitor } from './monitor.mjs'
+import { ProgramMonitor, WindowRecovery } from './monitor.mjs'
 import { registerBundleConfig } from './settings.mjs'
 import { createOfficialDraftServices, draftResultMessage } from './draft-services.mjs'
 import { WorkbenchStyles, FileBrowser, buildMismatchMessage } from './workbench.mjs'
@@ -222,7 +222,11 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   }
   const frameOwner = useRef(new FrameEpoch()).current
   const ownerBinding = useRef()
-  if (ownerBinding.current !== sessionId) { frameOwner.invalidate(); frameOwner.ghost = undefined; frameOwner.edit = { dirty: false, busy: false, unknown: false }; ownerBinding.current = sessionId }
+  useLayoutEffect(() => {
+    if (ownerBinding.current !== sessionId) {
+      frameOwner.invalidate(); frameOwner.ghost = undefined; frameOwner.edit = { dirty: false, busy: false, unknown: false }; ownerBinding.current = sessionId
+    }
+  }, [sessionId, frameOwner])
   const gestureState = React.useCallback((token, active) => {
     if (active) { const video = workbench.current?.querySelector('video'); if (video && !video.paused) video.pause() }
     if (frameOwner.gestureChanged(token, active)) setState(previous => ({ ...previous }))
@@ -230,7 +234,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   const { primary: selection, items: selected } = selectionIntent
   const pick = React.useCallback((item, event) => { frameOwner.invalidate(); setSelectionIntent(previous => transitionSelection(previous, item, event, state.result)) }, [frameOwner, state.result])
   const clearSelection = React.useCallback(() => { frameOwner.invalidate(); setSelectionIntent(emptySelection()) }, [frameOwner])
-  const pin = React.useCallback(value => { frameOwner.invalidate(); setFrame(value) }, [frameOwner])
+  const pin = React.useCallback((value, origin) => { frameOwner.invalidate(origin); setFrame(value) }, [frameOwner])
   const editState = next => { if (state.opened?.grant && grant.current === state.opened.grant && frameOwner.editChanged(next)) setState(previous => ({ ...previous })) }
   const [gesture, setGesture] = useState({})
   const [undoEdit, setUndoEdit] = useState()
@@ -254,6 +258,8 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
     frameOwner.invalidate()
     const current = grant.current
     grant.current = undefined
+    // Revoke the captured grant independently. A window cancel is bound to
+    // its original nonce and can ask the Host for cleanup even after close.
     if (current) void control(sessionId, { op: 'close', grant: current }).catch(() => {})
   }
   useEffect(() => { clearSelection(); setGesture(undefined); setState({ phase: 'idle' }); setGrantDead(undefined); return () => { task.current?.abort(); close() } }, [sessionId])
@@ -487,12 +493,13 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       state.phase === 'loading' || state.loading ? h('p', { className: 'fv-notice', role: 'status' }, '正在通过 vtx 读取时间线…') : null,
       state.message ? h('p', { className: 'fv-notice', role: 'alert' }, state.message.split('\n')[0]) : null,
       grantDead ? h('p', { className: 'fv-notice', role: 'alert', style: { border: '1px solid currentColor', padding: 8 } }, `${GRANT_DEAD_MESSAGE}（${grantDead}）`) : null,
+      !valid || grantDead ? h(WindowRecovery, { owner: frameOwner }) : null,
       valid && (!state.result.coverage.complete || !state.opened.snapshot.coverage.complete) ? h('p', { className: 'fv-notice', role: 'alert' }, '存在未展开的外部素材；请在属性面板查看完整诊断。') : null,
       h('div', { className: 'fv-body' },
         h('div', { className: 'fv-upper' },
           filesVisible ? h(FileBrowser, { key: `${sessionId}:${browserEpoch}`, sessionId, tabSignal: tab.signal, call: control, selectedPath: ready ? activePath : undefined, onChoose: path => void load(false, path), onClose: closeFiles, recalibrate: browserRecalibrate, hostOps: state.opened?.host?.ops }) : null,
           h('main', { className: 'fv-monitor', 'aria-label': ready ? '画面预览' : '时间线启动区' },
-            ready ? (valid && !grantDead ? h('fieldset', { disabled: storageBusy, style: { display: 'contents' } }, h(ProgramMonitor, { key: state.opened.grant, suspended: storageBusy, owner: frameOwner, opened: state.opened, timeline: activePath, selectionDisplay, sessionId, frame: frameValue, blank: frame === '', fps, duration, onFrame: pin, selection, tabSignal: tab.signal, getDraftServices, call: control, transport, disclosureGroup })) : h('div', { className: 'fv-monitor-toolbar' }, transport)) :
+            ready ? (valid && !grantDead ? h('fieldset', { disabled: storageBusy, style: { display: 'contents' } }, h(ProgramMonitor, { key: state.opened.grant, suspended: storageBusy || Boolean(state.loading), owner: frameOwner, opened: state.opened, timeline: activePath, selectionDisplay, sessionId, frame: frameValue, blank: frame === '', fps, duration, onFrame: pin, selection, tabSignal: tab.signal, getDraftServices, call: control, transport, disclosureGroup, onGrantDead: grantDied })) : h('div', { className: 'fv-monitor-toolbar' }, transport)) :
               h('div', { className: 'fv-empty' }, h(Icon, { name: 'film', size: 32 }), h('h3', null, '从一条时间线开始'), h('p', null, '选择当前工作区中的时间线 JSON 文件，开始预览与剪辑。'),
                 h('div', { className: 'fv-start-actions' },
                   h('button', { className: 'fv-primary', type: 'button', onClick: browseWorkspace }, h(Icon, { name: 'folder', size: 17 }), '浏览工作区'),
