@@ -75,10 +75,13 @@ class SvgContract(unittest.TestCase):
         self.assertEqual(record['frame_count'], self.clip['dur'])
 
     def test_manifest_generator_frame_and_dependency_changes_invalidate(self):
-        (self.root / 'dependency.txt').write_text('one')
-        self.clip['cache_dependencies'] = ['dependency.txt']; self.save()
-        for name in ['generator.js', 'dependency.txt', 'f0.svg']:
+        dependency = 'assets/dependency.txt'
+        (self.root / 'assets').mkdir()
+        (self.root / dependency).write_text('one')
+        self.clip['cache_dependencies'] = [dependency]; self.save()
+        for name in ['generator.js', dependency, 'f0.svg']:
             c = self.ctx(); key = gfx_key(c, self.clip)
+            self.assertIn(dependency, gfx_svg.resolve(c, self.clip)['files'])
             p = self.root / name; original = p.read_text()
             p.write_text(original.replace('red', 'blue') if name.endswith('.svg') else original + ' changed')
             self.assertNotEqual(key, gfx_key(c, self.clip))
@@ -87,6 +90,22 @@ class SvgContract(unittest.TestCase):
         c = self.ctx(); old = gfx_key(c, self.clip)
         self.manifest['_meta'] = 'changed'; self.save()
         self.assertNotEqual(old, gfx_key(c, self.clip))
+
+    @unittest.skipUnless(os.name == 'nt', 'native Windows path syntax')
+    def test_windows_project_dependency_spelling_is_checked_before_union(self):
+        c = self.ctx()
+        (self.root / 'assets').mkdir()
+        member = self.root / 'assets' / 'dependency.txt'
+        member.write_text('one')
+        c.tl['project']['cache_dependencies'] = [member.as_posix()]
+        for local in ([], ['assets/dependency.txt']):
+            with self.subTest(local=local), self.assertRaisesRegex(ValueError, 'project-relative'):
+                gfx_svg.resolve(c, dict(self.clip, cache_dependencies=local))
+
+    def test_dependency_read_requires_expected_resolved_member(self):
+        c = self.ctx()
+        with self.assertRaisesRegex(ValueError, 'dependency identity changed'):
+            gfx_svg.read_input(c, 'f0.svg', expected_path=(self.root / 'f1.svg').resolve())
 
     def test_font_bytes_and_actual_engine_version_invalidate(self):
         self.manifest['fonts'] = ['font.ttf']
