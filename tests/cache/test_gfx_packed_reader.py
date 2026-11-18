@@ -18,7 +18,7 @@ from vtx.cache.policy import CachePolicy
 from vtx.cache.session import pack_path
 from vtx.pipeline.infra import Ctx
 from vtx.render import (gfx_backend, gfx_cli, gfx_electron, gfx_electron_stage,
-                        gfx_environment, gfx_pack, gfx_packed_reader, gfx_svg)
+                        gfx_environment, gfx_pack, gfx_packed_reader, gfx_svg, png_artifact)
 from vtx.runtime import fstxn
 
 
@@ -60,7 +60,7 @@ class PackedReaderTests(unittest.TestCase):
             options = dict(dependency_digest=dependency_digest(resolve(self.c, self.clip)),
                            dependency_enforcement='fetch-pinned-local-v1',
                            dependency_observed=[(self.root / 'page.html').as_uri()])
-        gfx_cli.complete_page(self.directory, 3, self.directory.name, 32, 32,
+        gfx_cli.complete_page(self.directory, self.clip['dur'], self.directory.name, 32, 32,
                              verify_inputs=lambda: self.c.verify_inputs('gfx'),
                              environment=gfx_environment.certificate(self.c), **options)
 
@@ -72,7 +72,7 @@ class PackedReaderTests(unittest.TestCase):
         if delete:
             with gfx_pack.PagePack(self.archive, expected_record=self.record) as page:
                 names = page.metadata_names
-            for i in range(3):
+            for i in range(len(self.frames)):
                 (self.directory / f'f{i:04d}.png').unlink()
             for name in names:
                 (self.directory / name).unlink()
@@ -91,6 +91,44 @@ class PackedReaderTests(unittest.TestCase):
         proof.assert_called_once()
         self.assertEqual(before, self.snapshot())
         self.assertFalse((self.directory / 'complete.json').exists())
+
+    def test_packed_interval_verifies_once_and_reads_each_requested_block_once(self):
+        self.frames = [png(i) for i in (0, 1, 2, 1, 2, 3)]
+        self.tl['project']['duration_frames'] = len(self.frames)
+        self.tl['video_tracks'][0]['clips'][0]['dur'] = len(self.frames)
+        self.html()
+        with mock.patch.object(gfx_pack, '_BLOCK_BYTES', 5000):
+            self.store()
+        before = self.snapshot()
+        with mock.patch.object(gfx_pack, 'zlib', wraps=gfx_pack.zlib) as codec, \
+                mock.patch.object(gfx_cli, 'verify_page_record', wraps=gfx_cli.verify_page_record) as proof, \
+                mock.patch.object(gfx_packed_reader, 'verify_input_identity',
+                                  wraps=gfx_packed_reader.verify_input_identity) as inputs:
+            self.assertEqual(gfx_packed_reader.read_frames(self.c, self.clip, 1, 5),
+                             tuple(self.frames[1:5]))
+        proof.assert_called_once()
+        self.assertEqual(inputs.call_args_list, [mock.call(self.c), mock.call(self.c)])
+        self.assertEqual(codec.decompressobj.call_count, 3, 'two requested blocks plus completion')
+        self.assertEqual(before, self.snapshot())
+
+    def test_interval_bounds_apply_before_io_and_charge_repeated_pngs(self):
+        self.frames[1] = self.frames[0]
+        self.html()
+        with mock.patch.object(gfx_packed_reader, 'verify_input_identity') as inputs:
+            for start, stop in ((-1, 1), (0, 0), (2, 1), (False, 1), (0, True), (0, 4)):
+                with self.subTest(start=start, stop=stop), self.assertRaisesRegex(ValueError, 'outside clip'):
+                    gfx_packed_reader.read_frames(self.c, self.clip, start, stop)
+            with self.assertRaisesRegex(ValueError, 'frame limit'):
+                gfx_packed_reader.read_frames(self.c, dict(self.clip, dur=121), 0, 121)
+        inputs.assert_not_called()
+        with mock.patch.object(gfx_packed_reader, '_MAX_BYTES', len(self.frames[0])):
+            with self.assertRaisesRegex(ValueError, 'byte limit'):
+                gfx_packed_reader.read_frames(self.c, self.clip, 0, 2)
+            self.store()
+            with mock.patch.object(gfx_pack.PagePack, 'read_frame') as read:
+                with self.assertRaisesRegex(ValueError, 'byte limit'):
+                    gfx_packed_reader.read_frames(self.c, self.clip, 0, 2)
+                read.assert_not_called()
 
     def test_off_refuses_before_pack_access_or_input_checks(self):
         self.html()
@@ -130,11 +168,12 @@ class PackedReaderTests(unittest.TestCase):
         original = gfx_pack.PagePack.read_frame
         def change(page, index):
             result = original(page, index)
-            (self.root / 'page.html').write_text('<html><body>changed input</body></html>')
+            if index == 2:
+                (self.root / 'page.html').write_text('<html><body>changed input</body></html>')
             return result
         before = self.snapshot()
         with mock.patch.object(gfx_pack.PagePack, 'read_frame', change), self.assertRaises(InputIdentityError):
-            gfx_packed_reader.read_frame(self.c, self.clip, 0)
+            gfx_packed_reader.read_frames(self.c, self.clip, 1, 3)
         after = self.snapshot()
         before.pop('page.html')
         after.pop('page.html')
@@ -177,13 +216,33 @@ class PackedReaderTests(unittest.TestCase):
         self.html()
         self.c.cache_policy = CachePolicy('aggressive')
         before = self.snapshot()
-        self.assertEqual(gfx_packed_reader.read_frame(self.c, self.clip, 1), self.frames[1])
+        with mock.patch.object(gfx_cli, 'verify_page_record', wraps=gfx_cli.verify_page_record) as proof:
+            self.assertEqual(gfx_packed_reader.read_frames(self.c, self.clip, 0, 3), tuple(self.frames))
+        self.assertEqual(proof.call_count, 2, 'bare completion verified at each boundary, not per PNG')
         self.assertEqual(before, self.snapshot())
         (self.directory / 'complete.json').unlink()
         before = self.snapshot()
         with self.assertRaises(ValueError):
             gfx_packed_reader.read_frame(self.c, self.clip, 1)
         self.assertEqual(before, self.snapshot(), 'legacy bare frames never gain a certificate')
+
+    def test_corrupt_pack_appearing_during_bare_interval_is_not_ignored(self):
+        self.html()
+        archive = pack_path(self.c, self.clip)
+        read = png_artifact.read_png
+
+        def appear(path, **kwargs):
+            result = read(path, **kwargs)
+            if path.name == 'f0002.png':
+                archive.parent.mkdir(parents=True)
+                archive.write_bytes(b'corrupt archive')
+            return result
+
+        with mock.patch.object(png_artifact, 'read_png', side_effect=appear):
+            with self.assertRaisesRegex(ValueError, 'appeared during bare read'):
+                gfx_packed_reader.read_frames(self.c, self.clip, 1, 3)
+        with self.assertRaises(gfx_pack.GfxPackError):
+            gfx_packed_reader.read_frames(self.c, self.clip, 1, 3)
 
     def test_present_corrupt_pack_never_falls_back_to_valid_bare_png(self):
         self.html()
@@ -266,9 +325,53 @@ class PackedReaderTests(unittest.TestCase):
         with mock.patch.object(gfx_electron_stage, 'require_result', wraps=gfx_electron_stage.require_result) as proof, \
                 mock.patch.object(gfx_pack.PagePack, 'read_frame', autospec=True,
                                   side_effect=gfx_pack.PagePack.read_frame) as read:
-            self.assertEqual(gfx_packed_reader.read_frame(self.c, self.clip, 1), self.frames[1])
+            self.assertEqual(gfx_packed_reader.read_frames(self.c, self.clip, 1, 3), tuple(self.frames[1:]))
         proof.assert_called_once()
-        self.assertGreaterEqual(read.call_count, 7, 'Electron preserves full-page gates, not just requested frame')
+        self.assertEqual([call.args[1] for call in read.call_args_list].count(0), 2,
+                         'both producer passes still check the unrequested frame')
+        self.assertEqual(before, self.snapshot())
+
+    def test_cancel_mid_interval_or_inside_full_electron_proof_returns_no_result(self):
+        read = gfx_pack.PagePack.read_frame
+        for produce, first in ((self.html, 1), (self.electron, 0)):
+            with self.subTest(producer=produce.__name__):
+                produce()
+                self.store(delete=False)
+                before = self.snapshot()
+                reads = []
+                def read_one(page, index):
+                    data = read(page, index)
+                    reads.append(index)
+                    return data
+                def check_cancel():
+                    if reads:
+                        raise KeyboardInterrupt('cancel after first PNG')
+                with mock.patch.object(gfx_pack.PagePack, 'read_frame', read_one):
+                    with self.assertRaisesRegex(KeyboardInterrupt, 'after first PNG'):
+                        gfx_packed_reader.read_frames(self.c, self.clip, 1, 3,
+                                                     check_cancel=check_cancel)
+                self.assertEqual(reads, [first])
+                self.assertEqual(before, self.snapshot())
+
+    def test_cancel_during_final_input_verification_refuses_complete_interval(self):
+        self.html()
+        self.store()
+        before = self.snapshot()
+        verify = gfx_packed_reader.verify_input_identity
+        checks = []
+
+        def verify_and_cancel(c):
+            verify(c)
+            checks.append(c)
+
+        def check_cancel():
+            if len(checks) == 2:
+                raise KeyboardInterrupt('cancel during final verification')
+
+        with mock.patch.object(gfx_packed_reader, 'verify_input_identity', verify_and_cancel):
+            with self.assertRaisesRegex(KeyboardInterrupt, 'during final verification'):
+                gfx_packed_reader.read_frames(self.c, self.clip, 1, 3, check_cancel=check_cancel)
+        self.assertEqual(checks, [self.c, self.c])
         self.assertEqual(before, self.snapshot())
 
     def test_electron_untrusted_record_cannot_set_resource_bounds(self):
@@ -290,7 +393,7 @@ class PackedReaderTests(unittest.TestCase):
         result.write_text(json.dumps(raw))
         self.store()
         with self.assertRaisesRegex(ValueError, 'producer/completion'):
-            gfx_packed_reader.read_frame(self.c, self.clip, 1)
+            gfx_packed_reader.read_frames(self.c, self.clip, 1, 3)
         self.assertFalse((self.directory / 'complete.json').exists())
 
     def test_electron_missing_receipt_and_changed_backend_settings_refused(self):
