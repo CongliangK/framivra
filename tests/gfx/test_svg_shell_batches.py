@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tests._support import temporary_root
-from tests.gfx._png import write_png
+from tests.gfx._png import png, write_png
 from vtx.render import gfx_svg_stage as stage
 
 
@@ -212,7 +212,16 @@ class ShellBatches(unittest.TestCase):
             self.assertEqual(process.wait.call_args_list, [mock.call(timeout=5), mock.call(timeout=5)])
 
     def test_missing_or_corrupt_shard_never_publishes_completion(self):
-        for mode in ['missing', 'corrupt']:
+        font_errors = {
+            'fontconfig': 'Fontconfig error: cannot load C:/private/font-path',
+            'pango': "(org.inkscape.Inkscape:123): Pango-CRITICAL **: 12:46:41.122: "
+                     "pango_font_get_hb_font: assertion 'PANGO_IS_FONT (font)' failed",
+        }
+        warnings = ('Fontconfig warning: using default weight\n'
+                    '(org.inkscape.Inkscape:123): Pango-WARNING **: fallback\n'
+                    '** (org.inkscape.Inkscape:123): WARNING **: extension skipped; '
+                    'see Fontconfig error: or Pango-CRITICAL **: in the manual\n')
+        for mode in ['missing', 'corrupt', *font_errors]:
             root = self.root / mode
             root.mkdir()
             clip = dict(src='manifest.json', format='svg-sequence', dur=241)
@@ -232,21 +241,32 @@ class ShellBatches(unittest.TestCase):
                 process = mock.Mock(returncode=0)
                 process.poll.return_value = 0
                 def communicate(actions, timeout):
+                    stderr = warnings
                     for i in map(int, re.findall(r'file-open:f(\d+)\.svg', actions)):
-                        if broken and i == 239:
+                        target = cwd / f'f{i:04d}.png'
+                        if i == 239 and mode in font_errors:
+                            target.write_bytes(png(64, 64))  # Valid transparent frame.
+                            if broken:
+                                stderr = font_errors[mode] + '\n' + warnings * 12
+                        elif i == 239 and broken:
                             if mode == 'corrupt':
-                                (cwd / f'f{i:04d}.png').write_bytes(b'not a PNG')
+                                target.write_bytes(b'not a PNG')
                         else:
-                            write_png(cwd / f'f{i:04d}.png', 64, 64, frame=i)
-                    return '', ''
+                            write_png(target, 64, 64, frame=i)
+                    return '', stderr
                 process.communicate.side_effect = communicate
                 return process
             with mock.patch.dict(os.environ, {'VTX_SVG_WORKERS': '2'}), \
                  mock.patch.object(stage.gfx_svg, 'resolve', return_value=record), \
                  mock.patch.object(stage.subprocess, 'Popen', side_effect=launch):
-                with self.assertRaises((OSError, ValueError)):
+                expected = RuntimeError if mode in font_errors else (OSError, ValueError)
+                with self.assertRaises(expected) as rejected:
                     stage.render_stage(c)
+            if mode in font_errors:
+                self.assertEqual(str(rejected.exception),
+                                 'Inkscape SVG export failed: severe Fontconfig or Pango diagnostic')
             self.assertFalse(list(c.cache.rglob(stage.gfx_svg.COMPLETE_FILE)))
+            self.assertFalse(list(c.cache.rglob('f*.png')))
             c.receipt.assert_not_called()
             self.assertFalse(any(t.name.startswith('svg-shell') for t in threading.enumerate()))
             broken = False

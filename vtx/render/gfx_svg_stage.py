@@ -7,6 +7,7 @@ failed cleanup is fatal. This is not browser parent-death supervision.
 import json
 import hashlib
 import os
+import re
 import stat
 import subprocess
 import time
@@ -18,6 +19,13 @@ from ..runtime import fstxn
 from . import gfx_svg
 from .gfx_cli import png_invalid_reason
 from ..cache.hygiene import manifest_record, tmp_run
+
+
+# Match diagnostic headers, not mentions in extension warnings or shell output.
+_FONT_ERROR = re.compile(
+    r'^[ \t]*(?:Fontconfig error:|(?:\([^()\n]+:[0-9]+\): )?Pango-CRITICAL \*\*:)',
+    re.MULTILINE,
+)
 
 
 def _start_shell(executable, directory, *, root):
@@ -58,6 +66,9 @@ def _export(proc, indices, width, height, *, count=None, stop=None):
                 actions = None
     if proc.returncode:
         raise RuntimeError(f'Inkscape failed ({proc.returncode}): {stderr[-1500:]}')
+    # A successful exit and valid PNGs can still hide missing glyphs.
+    if _FONT_ERROR.search(stderr):
+        raise RuntimeError('Inkscape SVG export failed: severe Fontconfig or Pango diagnostic')
 
 
 def _stop_shell(proc):
