@@ -171,13 +171,17 @@ class TestPipelineIntegration(unittest.TestCase):
              "clips": [{"src": "gfx/page.html", "dst_in": 30, "dur": 30}]})
         cls.tl = cls.proj / "timeline.json"
         cls.tl.write_text(json.dumps(tl), encoding="utf-8")
+        # Warm seg reuse is an aggressive-policy contract; default core mode
+        # deliberately retires/rebuilds media intermediates after handoff.
+        cls.config = root / "cache-config.json"
+        cls.config.write_text(json.dumps({"cache": {"mode": "aggressive"}}), encoding="utf-8")
 
     @classmethod
     def tearDownClass(cls):
         cls._tmp.cleanup()
 
     def _all(self, extra_env=None):
-        env = {"VTX_VIDEO_SEGMENTS": "2"}
+        env = {"VTX_VIDEO_SEGMENTS": "2", "VTX_CONFIG": str(self.config)}
         env.update(extra_env or {})
         return _run_vtx(self.tl, "all", extra_env=env)
 
@@ -193,6 +197,9 @@ class TestPipelineIntegration(unittest.TestCase):
         # —— 第一遍：冷跑（全链渲染）——
         r1 = self._all()
         self.assertEqual(r1.returncode, 0, r1.stdout + r1.stderr)
+        # Match the task batch, not the unrelated NVENC fallback diagnostic.
+        preencode_batch = "seg 预编码："
+        self.assertIn(preencode_batch, r1.stdout)
         self._assert_receipt_all_ok()
         fp = shutil.which("ffprobe")
         self.assertIsNotNone(fp)
@@ -214,7 +221,7 @@ class TestPipelineIntegration(unittest.TestCase):
         for i in (2, 3):
             rw = self._all()
             self.assertEqual(rw.returncode, 0, rw.stdout + rw.stderr)
-            self.assertNotIn("seg 预编码", rw.stdout,
+            self.assertNotIn(preencode_batch, rw.stdout,
                              "温态不应再有 seg 预编码任务行（段缓存全命中）")
             self.assertNotIn(": 渲染 ", rw.stdout,
                              "温态不应再有 gfx「渲染」行（页缓存全命中）")

@@ -51,7 +51,7 @@
 - 唯一主基线：30秒/900帧/1080p30 SVG；禁用退役12秒基线，探针不替主片。
 - Windows SVG 先校验原始项目相对声明，再用 `/` 序列化依赖并集并复核解析路径；不放行 Windows SVG 运行时。
 - [SVG shell](<vtx/render/gfx_svg_stage.py>) 即使退出成功也拒收明确的 Fontconfig error / Pango-CRITICAL，不发布完成凭据；该诊断只报告固定短错误，不回显日志，普通警告不拒收。
-- 准备/核验仅用 `scripts/demo.py prepare/verify`；portable-v2锁字体/标准库音频，禁混旧输入，见[Demo](<templates/demo-timeline-svg/README.md>)。
+- 准备/核验仅用 `scripts/demo.py prepare/verify`；portable-v2 锁字体与标准库音频，禁混旧输入；预检不授渲染资格，准备目录拒绝链接/reparse，见[Demo](<templates/demo-timeline-svg/README.md>)。
 - 同输入/质量/环境/后端/配置分冷暖测全链；留身份/哈希/证据；未测UNRUN，探针非整体提速；SVG有界调度/串行回退见[缓存](<docs/cache-provenance.md#产物身份>)。
 - [事件](<docs/reference/execution-events.md>)跨阶段回执绑定实际嵌套任务，区间不相加冒充墙钟。
 - 帧率由[constraints](<vtx/pipeline/constraints.py>)统一；FFmpeg用精确时基，音频按绝对帧端点取采样；正式/区间concat共用端点，不以容器或总帧数替代时钟判据。
