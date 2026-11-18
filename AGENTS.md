@@ -53,7 +53,7 @@
 - 唯一主基线：30秒/900帧/1080p30 SVG；禁用退役12秒基线，探针不替主片。
 - [Windows SVG 读输入](<vtx/render/gfx_svg_win_input.py>)先验原始相对声明，依赖并集用 `/` 并核对精确路径；仅接受调用方授权的稳定项目根与直连固定 NTFS 映射，句柄逐级拒绝重解析，同一文件句柄验单链接并限量读取；不授 Windows SVG 渲染资格。
 - [Windows SVG-only 回执](<vtx/cache/cache_state.py>)的清单和声明依赖字节沿用项目根句柄读取与限额；缺失、拒读或无法读取均直接失败，不记 MISSING 或回退；不是原子指纹。[影响分析](<vtx/inspection/impact.py>)用调用方原始根和精确相对名复核已观测的 SVG 文件，不以报表绝对路径代替，也不作原子快照。
-- [Windows Fontconfig 检查](<vtx/render/gfx_svg_win_fontconfig.py>)只在独立进程用固定官方 DLL 快照查询单个已知字体 face；仅供内部验证，不证明闭包、渲染或产物资格。
+- [Windows Fontconfig 检查](<vtx/render/gfx_svg_win_fontconfig.py>)在私有 Job 中用固定官方 DLL 快照查单个已知字体 face；启动所有权或结算未证则不读回执、不删暂存；不证明闭包、渲染或产物资格。
 - [Windows SVG 快照](<vtx/render/gfx_svg_win_snapshot.py>)先用目录句柄拒绝重解析和物理重叠，再核验独占包树；核验入口不启动进程。[内部验收](<vtx/render/gfx_svg_win_shell.py>)仅以固定官方 `.com` 验几何或锁字体文本单帧、固定 180 帧几何序列；逐帧验像素，期限内未证 Job 结算则不读 PNG、不删操作目录；不证明加载域、成片、缓存或发布资格。
 - [SVG shell](<vtx/render/gfx_svg_stage.py>) 即使退出成功也拒收明确的 Fontconfig error / Pango-CRITICAL，不发布完成凭据；该诊断只报告固定短错误，不回显日志，普通警告不拒收。
 - portable-v2 基线仅用 `scripts/demo.py prepare/verify`；锁字体与标准库音频，禁混旧输入；预检不授渲染资格，见[SVG 基线](<templates/demo-timeline-svg/README.md>)。
