@@ -937,27 +937,121 @@ class WindowsFontconfigCheck(unittest.TestCase):
             with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, reason):
                 fc.inspect_face(None, None, sha256='0' * 64, scratch=None, **kwargs)
 
-    def test_never_reads_or_removes_scratch_when_worker_exit_is_unconfirmed(self):
+    def test_owned_worker_settles_before_read_and_removal(self):
         from vtx.render import gfx_svg_win_fontconfig as fc
-        scratch = temporary_root(self)
-        worker = mock.Mock()
-        worker.poll.return_value = None
-        worker.wait.side_effect = [subprocess.TimeoutExpired('worker', fc._TIMEOUT),
-                                   subprocess.TimeoutExpired('worker', fc._REAP_TIMEOUT)]
-        with mock.patch.object(fc.subprocess, 'Popen', return_value=worker):
-            with self.assertRaisesRegex(ValueError, 'exit not confirmed; scratch retained'):
-                fc.inspect_face(scratch, scratch / 'font.ttf', sha256='0' * 64, scratch=scratch)
-        worker.kill.assert_called_once_with()
-        self.assertEqual(worker.wait.call_args_list, [mock.call(timeout=fc._TIMEOUT), mock.call(timeout=fc._REAP_TIMEOUT)])
-        self.assertEqual(len(list(scratch.iterdir())), 1)
+        scratch = temporary_root(self) / '暂存'
+        scratch.mkdir()
+        job = mock.Mock()
+        job.proc.returncode = 0
+        original_open = Path.open
 
-    def test_interrupted_launch_does_not_remove_unowned_worker_scratch(self):
+        def launch(*args, cwd, **kwargs):
+            with open(Path(cwd) / fc._REPLY, 'wb') as stream:
+                stream.write(b'{"face":{"index":2}}')
+
+        def read_reply(path, *args):
+            job._close.assert_called_once()
+            return original_open(path, *args)
+
+        job._launch.side_effect = launch
+        with mock.patch.object(fc.native, '_OwnedJob', return_value=job) as own, \
+             mock.patch.object(Path, 'open', autospec=True, side_effect=read_reply) as read:
+            self.assertEqual(fc.inspect_face(scratch, scratch / 'font.ttc', sha256='0' * 64,
+                                            scratch=scratch, index=2, sample='中'), {'index': 2})
+        argv, stdout, stderr = job._launch.call_args.args
+        own.assert_called_once_with(argv)
+        self.assertTrue(Path(argv[0]).is_absolute() and Path(argv[0]).suffix.lower() == '.exe')
+        self.assertEqual(argv[1:3], ['-IBS', '-c'])
+        self.assertEqual((stdout, stderr), (subprocess.DEVNULL, subprocess.DEVNULL))
+        cwd, env = (job._launch.call_args.kwargs[key] for key in ('cwd', 'environment'))
+        system, temp, tmp, *terminators = env[:].split('\0')
+        self.assertRegex(system, r'^SystemRoot=[A-Za-z]:')
+        self.assertEqual((temp, tmp, terminators), (f'TEMP={cwd}', f'TMP={cwd}', ['', '']))
+        self.assertAlmostEqual(job._close.call_args.args[0] - job._pump.call_args.args[0], fc._SETTLE_RESERVE)
+        read.assert_called_once_with(Path(cwd) / fc._REPLY, 'rb')
+        self.assertEqual(list(scratch.iterdir()), [])
+
+    def test_owned_worker_failures_do_not_read_and_retain_only_when_unconfirmed(self):
+        from vtx.render import gfx_svg_win_fontconfig as fc
+        for phase, close_fails, reason, keep in (
+            ('launch', False, 'launch not confirmed; scratch retained', True),
+            ('root', True, 'Job settlement unconfirmed; scratch retained', True),
+            ('timeout', False, 'face check timed out', False),
+            ('timeout', True, 'face check timed out', True),
+            ('failed', False, 'face worker failed', False),
+            ('failed', True, 'face worker failed', True),
+        ):
+            with self.subTest(phase=phase, close_fails=close_fails):
+                scratch = temporary_root(self)
+                job = mock.Mock()
+                job.proc.returncode = int(phase == 'failed')
+                job._pump.return_value = phase != 'timeout'
+                if phase == 'launch':
+                    job._launch.side_effect = OSError('private launch details')
+                if close_fails:
+                    job._close.side_effect = OSError('accounting unavailable')
+                with mock.patch.object(fc.native, '_OwnedJob', return_value=job), \
+                     mock.patch.object(Path, 'open', side_effect=AssertionError('early result read')):
+                    with self.assertRaisesRegex(ValueError, reason) as caught:
+                        fc.inspect_face(scratch, scratch / 'font.ttf', sha256='0' * 64, scratch=scratch)
+                job._close.assert_called_once()
+                if phase == 'launch':
+                    job._pump.assert_not_called()
+                    self.assertIsNone(caught.exception.__cause__)
+                if close_fails and phase in {'timeout', 'failed'}:
+                    self.assertIn('settlement unconfirmed', str(caught.exception.__cause__))
+                directory = Path(job._launch.call_args.kwargs['cwd'])
+                self.assertEqual(list(scratch.iterdir()), [directory] if keep else [])
+
+    def test_primary_error_survives_job_or_scratch_cleanup_failure(self):
+        from vtx.render import gfx_svg_win_fontconfig as fc
+        for phase, primary, close_error in (
+            ('launch', KeyboardInterrupt(), OSError('accounting unavailable')),
+            ('pump', KeyboardInterrupt(), KeyboardInterrupt()),
+            ('pump', RuntimeError('primary failure'), KeyboardInterrupt()),
+            ('pump', RuntimeError('primary failure'), None),
+        ):
+            with self.subTest(phase=phase, primary=type(primary), close=type(close_error)):
+                scratch = temporary_root(self)
+                job = mock.Mock()
+                (job._launch if phase == 'launch' else job._pump).side_effect = primary
+                job._close.side_effect = close_error
+                with mock.patch.object(fc.native, '_OwnedJob', return_value=job), \
+                     mock.patch.object(Path, 'open', side_effect=AssertionError('early result read')), \
+                     mock.patch.object(fc.shutil, 'rmtree', side_effect=OSError('scratch removal failed')) as remove:
+                    with self.assertRaises(type(primary)) as caught:
+                        fc.inspect_face(scratch, scratch / 'font.ttf', sha256='0' * 64, scratch=scratch)
+                self.assertIs(caught.exception, primary)
+                directory = Path(job._launch.call_args.kwargs['cwd'])
+                self.assertEqual(list(scratch.iterdir()), [directory])
+                job._close.assert_called_once()
+                if close_error is None:
+                    remove.assert_called_once_with(directory)
+                    self.assertEqual(str(primary.__cause__), 'Fontconfig face scratch removal failed')
+                else:
+                    remove.assert_not_called()
+                    if isinstance(close_error, KeyboardInterrupt):
+                        self.assertIs(primary.__cause__, close_error)
+
+    def test_scratch_pin_release_does_not_replace_worker_cancellation(self):
         from vtx.render import gfx_svg_win_fontconfig as fc
         scratch = temporary_root(self)
-        with mock.patch.object(fc.subprocess, 'Popen', side_effect=KeyboardInterrupt) as launch:
-            with self.assertRaises(KeyboardInterrupt):
+        primary = KeyboardInterrupt()
+
+        def pin_dirs(stack, path):
+            def release():
+                raise OSError('private scratch path')
+            stack.callback(release)
+
+        job = mock.Mock()
+        job._launch.side_effect = primary
+        with mock.patch.object(fc.native, '_OwnedJob', return_value=job), \
+             mock.patch.object(fc, '_pin_dirs', side_effect=pin_dirs):
+            with self.assertRaises(KeyboardInterrupt) as caught:
                 fc.inspect_face(scratch, scratch / 'font.ttf', sha256='0' * 64, scratch=scratch)
-        self.assertEqual(list(scratch.iterdir()), [launch.call_args.kwargs['cwd']])
+        self.assertIs(caught.exception, primary)
+        self.assertEqual(str(primary.__cause__), 'Fontconfig face scratch pins could not be released')
+        self.assertEqual(len(list(scratch.iterdir())), 1)
 
 
 @unittest.skipUnless(os.name == 'nt' and sysconfig.get_platform() == 'win-amd64', 'native Windows x64')

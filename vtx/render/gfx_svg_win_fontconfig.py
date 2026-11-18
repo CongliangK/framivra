@@ -2,13 +2,14 @@
 
 The caller supplies a trusted font digest and an exclusive scratch parent.
 The fresh worker trusts Windows, base CPython, this checkout and the local
-namespace. It pins the Inkscape import set and checks its loaded file paths;
-this does not attest later dynamic loads or already mapped memory. It is not
-an untrusted-font sandbox or evidence of selection, shaping or rendering.
+namespace. Its private Job supervises the process tree, not the loader. The
+worker pins the Inkscape import set and checks its loaded file paths; this does
+not attest later dynamic loads or already mapped memory. It is not an
+untrusted-font sandbox or evidence of selection, shaping or rendering.
 """
 import ctypes as C
 from ctypes import wintypes as W
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import math
@@ -21,7 +22,10 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+import time
+from types import SimpleNamespace
 
+from ..runtime import windows_browser as native
 from ..runtime.windows_cleanup import pinned
 
 
@@ -54,16 +58,12 @@ _DLLS = {
 _SYSTEM32, _DLL_LOAD_DIR = 0x800, 0x100
 _MAX_FONT = 32 * 1024 * 1024
 _MAX_FACES, _MAX_TEXT, _MAX_RESULT = 64, 256, 8192
-_TIMEOUT, _REAP_TIMEOUT = 15, 2
+_TIMEOUT, _SETTLE_RESERVE = 15, 2
 _REPLY = 'result.json'
 
 
 class _Rejected(ValueError):
     """Only fixed, path-free reasons cross the process boundary."""
-
-
-class _WorkerStopped(_Rejected):
-    """The worker did not start or its exit is confirmed; scratch can be removed."""
 
 
 def _bind(library, name, result, *args):
@@ -228,40 +228,53 @@ def _inspect(bundle, font, expected, index, sample):
                 'font_sha256': expected, **face}
 
 
-def _run_worker(argv, directory):
+def _run_worker(argv, directory, operation):
     system = C.create_unicode_buffer(512)
     n = _bind(_kernel(), 'GetSystemWindowsDirectoryW', W.UINT, W.LPWSTR, W.UINT)(system, len(system))
     if not 0 < n < len(system):
-        raise _WorkerStopped('Windows system directory is unavailable')
-    # Launch base CPython directly, not the venv launcher/redirector. Isolated
-    # imports, no site/PYTHONPATH and no bytecode writes in the trusted checkout.
+        raise _Rejected('Windows system directory is unavailable')
+    # Launch trusted base CPython, not the venv redirector. Keep isolated
+    # imports, no site/PYTHONPATH and no bytecode writes in the checkout.
     bootstrap = ('import sys; sys.path.append(sys.argv.pop(1)); '
                  'from vtx.render.gfx_svg_win_fontconfig import _worker; _worker()')
-    env = {'SystemRoot': system.value, 'TEMP': str(directory), 'TMP': str(directory)}
-    python = Path(sys._base_executable)
-    if not python.is_absolute():
-        raise _WorkerStopped('absolute base Python executable is unavailable')
-    try:
-        proc = subprocess.Popen([python, '-IBS', '-c', bootstrap,
-                                 str(Path(__file__).resolve().parents[2]), *argv],
-                                executable=python, cwd=directory, env=env, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                creationflags=subprocess.CREATE_NO_WINDOW)
-    except OSError:
-        raise _Rejected('Fontconfig face worker launch not confirmed; scratch retained') from None
-    try:
-        code = proc.wait(timeout=_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        raise _WorkerStopped('Fontconfig face check timed out') from None
-    finally:
+    python = Path(sys._base_executable or '')
+    if not python.is_absolute() or python.suffix.lower() != '.exe' or '\0' in str(python):
+        raise _Rejected('absolute base Python executable is unavailable')
+    args = [str(python), '-IBS', '-c', bootstrap, str(Path(__file__).resolve().parents[2]), *argv]
+    # Sorted allowlist; the buffer adds the second NUL for CreateProcessW.
+    environment = C.create_unicode_buffer(f'SystemRoot={system.value}\0TEMP={directory}\0TMP={directory}\0')
+    deadline = time.monotonic() + _TIMEOUT + _SETTLE_RESERVE
+    operation.keep = True  # revoke scratch cleanup authority before launch can run a writer
+    job, launched = None, False
+
+    def settle():
         try:
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait(timeout=_REAP_TIMEOUT)
-        except (OSError, subprocess.TimeoutExpired, KeyboardInterrupt):
-            raise _Rejected('Fontconfig face worker exit not confirmed; scratch retained') from None
-    if code:
-        raise _WorkerStopped('Fontconfig face worker failed')
+            job._close(deadline)  # exact root handle and Job accounting, not just root exit
+        except OSError as error:
+            raise _Rejected('Fontconfig face worker Job settlement unconfirmed; scratch retained') from error
+        if launched:
+            operation.keep = False
+
+    try:
+        try:
+            job = native._OwnedJob(args)
+            job._launch(args, subprocess.DEVNULL, subprocess.DEVNULL, cwd=str(directory), environment=environment)
+            launched = True
+        except OSError:
+            raise _Rejected('Fontconfig face worker launch not confirmed; scratch retained') from None
+        if not job._pump(deadline - _SETTLE_RESERVE):
+            raise _Rejected('Fontconfig face check timed out')
+        if job.proc.returncode != 0:
+            raise _Rejected('Fontconfig face worker failed')
+    except BaseException as primary:
+        if job is not None:
+            # Even a clean close cannot prove ownership if launch did not return.
+            try:
+                settle()
+            except BaseException as cleanup:
+                raise primary from cleanup
+        raise
+    settle()
 
 
 def _worker():
@@ -274,6 +287,26 @@ def _worker():
         reply = {'error': 'Fontconfig face check rejected an unreadable or invalid input'}
     with Path(_REPLY).open('xb') as stream:
         stream.write(json.dumps(reply).encode('ascii'))
+
+
+@contextmanager
+def _after(action, message):
+    def finish():
+        try:
+            action()
+        except OSError:
+            raise _Rejected(message) from None
+
+    try:
+        yield
+    except BaseException as primary:
+        try:
+            finish()
+        except BaseException as cleanup:
+            raise primary from cleanup
+        raise
+    else:
+        finish()
 
 
 def inspect_face(portable_root, font_path, *, sha256, scratch, index=0, sample=''):
@@ -298,26 +331,26 @@ def inspect_face(portable_root, font_path, *, sha256, scratch, index=0, sample='
     bundle, font, scratch = map(_local_path, (portable_root, font_path, scratch))
     if font.suffix.lower() not in {'.ttf', '.otf', '.ttc', '.otc'}:
         raise _Rejected('face check requires a TTF, OTF, TTC or OTC file')
-    with ExitStack() as stack:
+    stack = ExitStack()
+    with _after(stack.close, 'Fontconfig face scratch pins could not be released'):
         _pin_dirs(stack, scratch)
         directory = Path(tempfile.mkdtemp(dir=scratch, prefix='vtx-fc-'))
-        # Popen itself may be interrupted before it returns a process handle.
-        # No exit confirmation means neither reading nor removing worker state.
-        cleanup = False
-        try:
-            _run_worker([str(bundle), str(font), sha256, str(index), json.dumps(sample)], directory)
-            cleanup = True
-            with (directory / _REPLY).open('rb') as stream:
-                data = stream.read(_MAX_RESULT + 1)
+        operation = SimpleNamespace(keep=False)
+
+        def remove():
+            if not operation.keep:
+                shutil.rmtree(directory)
+
+        with _after(remove, 'Fontconfig face scratch removal failed'):
+            _run_worker([str(bundle), str(font), sha256, str(index), json.dumps(sample)], directory, operation)
+            try:
+                with (directory / _REPLY).open('rb') as stream:
+                    data = stream.read(_MAX_RESULT + 1)
+            except OSError:
+                raise _Rejected('Fontconfig face reply could not be read') from None
             if len(data) > _MAX_RESULT:
                 raise _Rejected('Fontconfig face reply exceeds its bound')
             reply = json.loads(data)
             if 'error' in reply:
                 raise _Rejected(reply['error'])
             return reply['face']
-        except _WorkerStopped:
-            cleanup = True
-            raise
-        finally:
-            if cleanup:
-                shutil.rmtree(directory)
