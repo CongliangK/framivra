@@ -1,4 +1,4 @@
-"""Internal Windows acceptance of fixed geometry and locked-text fixtures.
+"""Internal Windows acceptance of fixed single-frame and sequence fixtures.
 
 The verified vendor copy, staged fonts and isolated profile belong to one
 operation. A Job controls our process tree, not the OS loader or arbitrary SVG;
@@ -6,7 +6,7 @@ this is neither a public renderer nor a security sandbox.
 """
 import ctypes as C
 from ctypes import wintypes as W
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import hashlib
 import io
 import json
@@ -40,11 +40,15 @@ _TEXT_RGBA_SHA256 = '47b8a9149b9fbc45797fcd95ae0d265f89d9f174f9c314dbf9625f6108d
 _DEMO = Path(__file__).resolve().parents[2] / 'templates/demo-timeline-svg'
 _FONT_NAMES = ('NotoSansCJK-Regular.ttc', 'NotoSansCJK-Bold.ttc', 'DejaVuSans.ttf', 'DejaVuSans-Bold.ttf')
 _FONT_LIMIT = 24 * 1024 * 1024  # Per file; four fixed inputs, no font directory scan.
-_ACTIONS = ('file-open:f0000.svg;export-type:png;export-area-page;export-width:{};export-height:{};'
-            'export-background:#000000;export-background-opacity:0;export-filename:f0000.png;'
-            'export-do;file-close\nquit\n')
-_LIMIT = 64 * 1024  # independently bounds the PNG and the sum of both diagnostic streams
+_EXPORT = ('file-open:{stem}.svg;export-type:png;export-area-page;export-width:{width};export-height:{height};'
+           'export-background:#000000;export-background-opacity:0;export-filename:{png};'
+           'export-do;file-close\n')
+_LIMIT = 64 * 1024  # independently bounds each PNG and both diagnostic streams for a single frame
 _TIMEOUT, _SETTLE_RESERVE = 30, 5
+_SEQUENCE_FRAMES = 180
+_SEQUENCE_CAPTURE_LIMIT = 256 * 1024  # combined streams for the 180-command shell only
+_SEQUENCE_TIMEOUT, _VERIFY_RESERVE = 90, 10  # after snapshot verification, including the Job reserves
+_MARKER = bytes((245, 218, 91, 255))
 
 
 def _dos_path(handle):
@@ -139,10 +143,13 @@ def _settle(operation, job, deadline):
     operation.keep = False
 
 
-def _run(operation, executable, cwd, environment, stdin):
+def _run(operation, executable, cwd, environment, stdin, *, deadline=None):
     argv = [str(executable), '--shell']
-    job = native._OwnedJob(argv, capture_limit=_LIMIT)
-    deadline = time.monotonic() + _TIMEOUT
+    if deadline is not None and time.monotonic() >= deadline - _SETTLE_RESERVE:
+        raise TimeoutError('Windows SVG sequence did not stage in time')
+    job = native._OwnedJob(argv, capture_limit=_LIMIT if deadline is None else _SEQUENCE_CAPTURE_LIMIT)
+    if deadline is None:
+        deadline = time.monotonic() + _TIMEOUT
     operation.keep = True  # revoke cleanup authority before CreateProcessW can run a writer
     try:
         job._launch(argv, subprocess.PIPE, subprocess.PIPE, stdin=stdin,
@@ -181,12 +188,8 @@ def _accept_text_frame(portable_root, *, scratch, font_dir):
     return _accept_fixed(portable_root, scratch, font_dir=Path(font_dir))
 
 
-def _accept_fixed(portable_root, scratch, *, font_dir):
-    from PIL import Image
-
-    text = font_dir is not None
-    width, height = _TEXT_SIZE if text else (_WIDTH, _HEIGHT)
-    actions = _ACTIONS.format(width, height).encode('ascii')
+@contextmanager
+def _fixed_shell(portable_root, scratch):
     with _snapshot_operation(portable_root, scratch=scratch) as operation, ExitStack() as pins:
         inputs = operation.inputs
         pins.enter_context(_pin_dir(inputs.vendor))
@@ -194,32 +197,119 @@ def _accept_fixed(portable_root, scratch, *, font_dir):
         entry, _, _, _ = pins.enter_context(_pin_entry(inputs.executable))
         cwd_handle, _ = pins.enter_context(_pin_dir(inputs.cwd))
         executable, cwd = _dos_path(entry), _dos_path(cwd_handle)
-        environment = _environment(cwd, executable.parent)
+        yield operation, executable, cwd, _environment(cwd, executable.parent), pins
+
+
+@contextmanager
+def _fixed_stdin(cwd, actions):
+    plan = cwd / 'actions.txt'
+    plan.write_bytes(actions)
+    with _pin_entry(plan) as (handle, info, _, directory):
+        if _read_pinned(handle, info, directory, len(actions)) != actions:
+            raise ValueError('Windows SVG fixed actions changed')
+        rewind = _windows_api('SetFilePointerEx', W.BOOL, W.HANDLE, C.c_longlong, C.c_void_p, W.DWORD)
+        native._check(rewind(handle, 0, None, 0), 'SetFilePointerEx (stdin)')
+        yield handle
+
+
+def _read_png(operation, path):
+    try:
+        with _pin_entry(path) as (handle, info, _, directory):
+            return _read_pinned(handle, info, directory, _LIMIT)
+    except OSError as error:
+        if getattr(error, 'winerror', None) in (32, 33):  # sharing or lock violation
+            operation.keep = True
+        raise
+
+
+def _png_pixels(data, width, height, open_image):
+    if _png_stream_invalid_reason(io.BytesIO(data), len(data), width=width, height=height):
+        raise ValueError(f'Windows SVG shell did not export a valid {width}x{height} PNG')
+    with open_image(io.BytesIO(data)) as image:
+        return image.convert('RGBA').tobytes()
+
+
+def _accept_fixed(portable_root, scratch, *, font_dir):
+    from PIL import Image
+
+    text = font_dir is not None
+    width, height = _TEXT_SIZE if text else (_WIDTH, _HEIGHT)
+    actions = (_EXPORT.format(stem='f0000', width=width, height=height, png='f0000.png') + 'quit\n').encode('ascii')
+    with _fixed_shell(portable_root, scratch) as (operation, executable, cwd, environment, pins):
         if text:
             _stage_locked_fonts(font_dir, cwd / 'fonts', pins)
         (cwd / 'f0000.svg').write_bytes(_TEXT_SVG if text else _SVG)
-        plan = cwd / 'actions.txt'
-        plan.write_bytes(actions)
-        with _pin_entry(plan) as (handle, info, _, directory):
-            if _read_pinned(handle, info, directory, len(actions)) != actions:
-                raise ValueError('Windows SVG fixed actions changed')
-            rewind = _windows_api('SetFilePointerEx', W.BOOL, W.HANDLE, C.c_longlong, C.c_void_p, W.DWORD)
-            native._check(rewind(handle, 0, None, 0), 'SetFilePointerEx (stdin)')
-            _run(operation, executable, cwd, environment, handle)
-        try:
-            with _pin_entry(cwd / 'f0000.png') as (handle, info, _, directory):
-                data = _read_pinned(handle, info, directory, _LIMIT)
-        except OSError as error:
-            if getattr(error, 'winerror', None) in (32, 33):  # sharing or lock violation
-                operation.keep = True
-            raise
-        if _png_stream_invalid_reason(io.BytesIO(data), len(data), width=width, height=height):
-            raise ValueError(f'Windows SVG shell did not export a valid {width}x{height} PNG')
-        with Image.open(io.BytesIO(data)) as image:
-            rgba = image.convert('RGBA').tobytes()
+        with _fixed_stdin(cwd, actions) as stdin:
+            _run(operation, executable, cwd, environment, stdin)
+        data = _read_png(operation, cwd / 'f0000.png')
+        rgba = _png_pixels(data, width, height, Image.open)
         if text:
             if hashlib.sha256(rgba).hexdigest() != _TEXT_RGBA_SHA256:
                 raise ValueError('Windows SVG locked text fixture pixels differ')
         elif rgba != _RGBA * (_WIDTH * _HEIGHT):
             raise ValueError('Windows SVG fixture pixels differ')
         return data
+
+
+def _sequence_marker(index):
+    phase, column = divmod(index, 30)  # six rows, thirty positions per row
+    return bytes((32 + index, 64 + phase * 16, 155, 255)), column * 2, 2 + phase * 7
+
+
+def _sequence_svg(index):
+    color, x, y = _sequence_marker(index)
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{_WIDTH}" height="{_HEIGHT}">'
+            f'<rect width="{_WIDTH}" height="{_HEIGHT}" fill="#{color[:3].hex()}"/>'
+            f'<rect x="{x}" y="{y}" width="5" height="6" fill="#{_MARKER[:3].hex()}"/></svg>').encode('ascii')
+
+
+def _sequence_pixels(index):
+    color, x, y = _sequence_marker(index)
+    base = color * _WIDTH
+    marked = color * x + _MARKER * 5 + color * (_WIDTH - x - 5)
+    return base * y + marked * 6 + base * (_HEIGHT - y - 6)
+
+
+def _accept_sequence(portable_root, *, scratch):
+    """Run one owned shell for 180 fixed 64x48 frames; return bytes in index order.
+
+    The tuple is returned only on exact names and per-index full pixel identity.
+    Nothing is published; this does not accept caller-provided render inputs.
+    """
+    from PIL import Image
+
+    names = tuple(f'f{i:04d}' for i in range(_SEQUENCE_FRAMES))
+    outputs = tuple(name + '.png' for name in names)
+    # Exactly 180 fixed-length action lines and one quit; read back that length only.
+    actions = (''.join(_EXPORT.format(stem=name, width=_WIDTH, height=_HEIGHT, png='frames/' + png)
+                       for name, png in zip(names, outputs)) + 'quit\n').encode('ascii')
+    with _fixed_shell(portable_root, scratch) as (operation, executable, cwd, environment, pins):
+        deadline = time.monotonic() + _SEQUENCE_TIMEOUT
+        frames = cwd / 'frames'
+        frames.mkdir()
+        pins.enter_context(_pin_dir(frames))
+        for i, name in enumerate(names):
+            (cwd / (name + '.svg')).write_bytes(_sequence_svg(i))
+        with _fixed_stdin(cwd, actions) as stdin:
+            _run(operation, executable, cwd, environment, stdin, deadline=deadline - _VERIFY_RESERVE)
+
+        missing = set(outputs)
+        with os.scandir(frames) as entries:
+            for entry in entries:
+                if entry.name not in missing:
+                    raise ValueError('Windows SVG sequence has an unexpected output entry')
+                missing.remove(entry.name)
+        if missing:
+            raise ValueError('Windows SVG sequence is missing output frames')
+
+        accepted = []
+        for i, name in enumerate(outputs):
+            if time.monotonic() >= deadline:
+                raise TimeoutError('Windows SVG sequence verification deadline expired')
+            data = _read_png(operation, frames / name)
+            if _png_pixels(data, _WIDTH, _HEIGHT, Image.open) != _sequence_pixels(i):
+                raise ValueError(f'Windows SVG sequence frame {i} pixels differ')
+            accepted.append(data)
+        if time.monotonic() >= deadline:
+            raise TimeoutError('Windows SVG sequence verification deadline expired')
+        return tuple(accepted)
