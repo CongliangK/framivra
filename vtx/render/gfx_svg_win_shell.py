@@ -1,14 +1,17 @@
-"""Internal Windows acceptance of one built-in, font-free SVG frame.
+"""Internal Windows acceptance of fixed geometry and locked-text fixtures.
 
-The verified vendor copy and isolated profile belong to one operation. A Job
-controls our process tree, not the OS loader or arbitrary SVG; this is neither
-a public renderer nor a security sandbox.
+The verified vendor copy, staged fonts and isolated profile belong to one
+operation. A Job controls our process tree, not the OS loader or arbitrary SVG;
+this is neither a public renderer nor a security sandbox.
 """
 import ctypes as C
 from ctypes import wintypes as W
 from contextlib import ExitStack
+import hashlib
 import io
+import json
 import os
+from pathlib import Path
 import stat
 import subprocess
 import time
@@ -17,16 +20,29 @@ from xml.sax.saxutils import escape
 from ..runtime import windows_browser as native
 from .gfx_cli import _png_stream_invalid_reason
 from .gfx_svg_stage import _FONT_ERROR
-from .gfx_svg_win_snapshot import _local_path, _pin_dir, _pin_entry, _snapshot_operation, _windows_api
+from .gfx_svg_win_snapshot import _local_path, _pin_dir, _pin_dirs, _pin_entry, _snapshot_operation, _windows_api
 
 
 _WIDTH, _HEIGHT = 64, 48
 _RGBA = bytes((19, 87, 155, 255))
 _SVG = (b'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="48">'
         b'<rect width="64" height="48" fill="#13579b"/></svg>')
-_ACTIONS = (b'file-open:f0000.svg;export-type:png;export-area-page;export-width:64;export-height:48;'
-            b'export-background:#000000;export-background-opacity:0;export-filename:f0000.png;'
-            b'export-do;file-close\nquit\n')
+_TEXT_SIZE = (300, 160)
+# Fixed sample and decoded RGBA from the f6b19f8 native Windows audit of Inkscape 1.4.4.
+# Its Fontconfig trace matched Noto SC Regular/Bold at index 2 and DejaVu Book/Bold at index 0.
+_TEXT_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="160" viewBox="0 0 300 160">'
+             '<text x="8" y="37" font-family="Noto Sans CJK SC" font-size="29">中渲染</text>'
+             '<text x="8" y="73" font-family="Noto Sans CJK SC" font-weight="700" font-size="29">中渲染</text>'
+             '<text x="8" y="109" font-family="DejaVu Sans" font-size="29">Framivra 123</text>'
+             '<text x="8" y="145" font-family="DejaVu Sans" font-weight="700" font-size="29">Framivra 123</text>'
+             '</svg>').encode('utf-8')
+_TEXT_RGBA_SHA256 = '47b8a9149b9fbc45797fcd95ae0d265f89d9f174f9c314dbf9625f6108de63df'
+_DEMO = Path(__file__).resolve().parents[2] / 'templates/demo-timeline-svg'
+_FONT_NAMES = ('NotoSansCJK-Regular.ttc', 'NotoSansCJK-Bold.ttc', 'DejaVuSans.ttf', 'DejaVuSans-Bold.ttf')
+_FONT_LIMIT = 24 * 1024 * 1024  # Per file; four fixed inputs, no font directory scan.
+_ACTIONS = ('file-open:f0000.svg;export-type:png;export-area-page;export-width:{};export-height:{};'
+            'export-background:#000000;export-background-opacity:0;export-filename:f0000.png;'
+            'export-do;file-close\nquit\n')
 _LIMIT = 64 * 1024  # independently bounds the PNG and the sum of both diagnostic streams
 _TIMEOUT, _SETTLE_RESERVE = 30, 5
 
@@ -79,6 +95,38 @@ def _read_pinned(handle, info, directory, limit):
     return buffer.raw[:count.value]
 
 
+def _locked_font_digests():
+    def read(relative):
+        with _pin_entry(_DEMO / relative) as (handle, info, _, directory):
+            return _read_pinned(handle, info, directory, 16 * 1024)
+
+    baseline = json.loads(read('benchmark/portable-v2.json'))
+    lock = read('fonts.lock.json')
+    if hashlib.sha256(lock).hexdigest() != baseline['runtime_files_sha256']['fonts.lock.json']:
+        raise ValueError('Windows SVG demo font lock byte identity mismatch')
+    fonts = {row['path']: row['sha256'] for row in json.loads(lock)['fonts']}
+    return tuple(fonts['assets/fonts/' + name] for name in _FONT_NAMES)
+
+
+def _stage_locked_fonts(source, destination, pins):
+    digests = _locked_font_digests()
+    source = _local_path(source)
+    pins.enter_context(_pin_dir(destination))
+    with ExitStack() as chain:
+        _pin_dirs(chain, source)
+        for i, (name, expected) in enumerate(zip(_FONT_NAMES, digests)):
+            with _pin_entry(source / name) as (handle, info, _, directory):
+                data = _read_pinned(handle, info, directory, _FONT_LIMIT)
+            if hashlib.sha256(data).hexdigest() != expected:
+                raise ValueError(f'Windows SVG locked demo font byte identity mismatch: {name}')
+            target = destination / f'font{i}{Path(name).suffix}'
+            with target.open('xb') as stream:
+                stream.write(data)
+            handle, info, _, directory = pins.enter_context(_pin_entry(target))
+            if hashlib.sha256(_read_pinned(handle, info, directory, len(data))).hexdigest() != expected:
+                raise ValueError('Windows SVG staged font byte identity mismatch')
+
+
 def _settle(operation, job, deadline):
     try:
         job._close(deadline)
@@ -120,9 +168,25 @@ def _run(operation, executable, cwd, environment, stdin):
 
 
 def _accept_frame(portable_root, *, scratch):
-    """Return validated PNG bytes for the fixed frame; accept no input or output paths."""
+    """Return validated PNG bytes for the font-free geometry fixture."""
+    return _accept_fixed(portable_root, scratch, font_dir=None)
+
+
+def _accept_text_frame(portable_root, *, scratch, font_dir):
+    """Accept the fixed text fixture with the four demo-lock files in font_dir.
+
+    No caller SVG, font declarations, digests or output path. The source
+    directory is read only and is not part of the shell's search paths.
+    """
+    return _accept_fixed(portable_root, scratch, font_dir=Path(font_dir))
+
+
+def _accept_fixed(portable_root, scratch, *, font_dir):
     from PIL import Image
 
+    text = font_dir is not None
+    width, height = _TEXT_SIZE if text else (_WIDTH, _HEIGHT)
+    actions = _ACTIONS.format(width, height).encode('ascii')
     with _snapshot_operation(portable_root, scratch=scratch) as operation, ExitStack() as pins:
         inputs = operation.inputs
         pins.enter_context(_pin_dir(inputs.vendor))
@@ -131,11 +195,13 @@ def _accept_frame(portable_root, *, scratch):
         cwd_handle, _ = pins.enter_context(_pin_dir(inputs.cwd))
         executable, cwd = _dos_path(entry), _dos_path(cwd_handle)
         environment = _environment(cwd, executable.parent)
-        (cwd / 'f0000.svg').write_bytes(_SVG)
+        if text:
+            _stage_locked_fonts(font_dir, cwd / 'fonts', pins)
+        (cwd / 'f0000.svg').write_bytes(_TEXT_SVG if text else _SVG)
         plan = cwd / 'actions.txt'
-        plan.write_bytes(_ACTIONS)
+        plan.write_bytes(actions)
         with _pin_entry(plan) as (handle, info, _, directory):
-            if _read_pinned(handle, info, directory, len(_ACTIONS)) != _ACTIONS:
+            if _read_pinned(handle, info, directory, len(actions)) != actions:
                 raise ValueError('Windows SVG fixed actions changed')
             rewind = _windows_api('SetFilePointerEx', W.BOOL, W.HANDLE, C.c_longlong, C.c_void_p, W.DWORD)
             native._check(rewind(handle, 0, None, 0), 'SetFilePointerEx (stdin)')
@@ -147,9 +213,13 @@ def _accept_frame(portable_root, *, scratch):
             if getattr(error, 'winerror', None) in (32, 33):  # sharing or lock violation
                 operation.keep = True
             raise
-        if _png_stream_invalid_reason(io.BytesIO(data), len(data), width=_WIDTH, height=_HEIGHT):
-            raise ValueError('Windows SVG shell did not export a valid 64x48 PNG')
+        if _png_stream_invalid_reason(io.BytesIO(data), len(data), width=width, height=height):
+            raise ValueError(f'Windows SVG shell did not export a valid {width}x{height} PNG')
         with Image.open(io.BytesIO(data)) as image:
-            if image.convert('RGBA').tobytes() != _RGBA * (_WIDTH * _HEIGHT):
-                raise ValueError('Windows SVG fixture pixels differ')
+            rgba = image.convert('RGBA').tobytes()
+        if text:
+            if hashlib.sha256(rgba).hexdigest() != _TEXT_RGBA_SHA256:
+                raise ValueError('Windows SVG locked text fixture pixels differ')
+        elif rgba != _RGBA * (_WIDTH * _HEIGHT):
+            raise ValueError('Windows SVG fixture pixels differ')
         return data

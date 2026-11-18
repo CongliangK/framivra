@@ -21,7 +21,7 @@ from vtx.render.gfx_cache_reader import resolve_frames
 from vtx.cache.hygiene import gfx_dir, gfx_key
 from vtx.pipeline.infra import Ctx
 from tests._support import temporary_root
-from tests.gfx._png import write_png
+from tests.gfx._png import png, write_png
 
 REAL_ENGINE_IDENTITY = gfx_svg.engine_identity
 
@@ -917,6 +917,46 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                 self.assertEqual(opened.call_args_list[-1].args[0].name,
                                  'f0000.png' if failure in ('bad-png', 'sharing') else 'actions.txt')
                 self.assertEqual(bool(list(scratch.iterdir())), kept)
+
+    def test_locked_text_requires_locked_sources_and_reference_pixels(self):
+        from vtx.render import gfx_svg_win_shell as shell, gfx_svg_win_snapshot as snapshot
+        root = self.scratch_fixture(snapshot)
+        entry = root / 'inkscape/bin/inkscape.com'
+        entry.parent.mkdir(parents=True)
+        (root / 'inkscape/share').mkdir()
+        entry.write_bytes(b'sample')  # known tree shape; never executable
+        scratch, fonts = root / 'scratch', root / '字体 #'
+        scratch.mkdir()
+        fonts.mkdir()
+        expected = 'd6d2fef7359bebd313ce33a0e1e68a0ba295112ce886be28446833c0b8755ee0'
+        with mock.patch.multiple(snapshot, _MAX_FILES=1, _MAX_DIRS=2, _MAX_BYTES=6,
+                                 _TREE_SHA256=expected), mock.patch.object(shell, '_run') as run:
+            with self.assertRaises(FileNotFoundError):
+                shell._accept_text_frame(root, scratch=scratch, font_dir=fonts)
+            (fonts / 'NotoSansCJK-Regular.ttc').write_bytes(b'wrong font')
+            with self.assertRaisesRegex(ValueError, 'locked demo font byte identity mismatch'):
+                shell._accept_text_frame(root, scratch=scratch, font_dir=fonts)
+            run.assert_not_called()
+            self.assertEqual(list(scratch.iterdir()), [])
+
+            # Substitute only the approved bytes for this offline pixel control.
+            # A real, correctly sized transparent PNG from a settled run must fail.
+            font_bytes = tuple(name.encode('ascii') for name in shell._FONT_NAMES)
+            for name, data in zip(shell._FONT_NAMES, font_bytes):
+                (fonts / name).write_bytes(data)
+
+            def blank(operation, executable, cwd, environment, stdin):
+                self.assertTrue(str(cwd).isascii())
+                self.assertNotIn(str(fonts), ''.join(environment))
+                self.assertEqual([p.read_bytes() for p in sorted((cwd / 'fonts').iterdir())], list(font_bytes))
+                (cwd / 'f0000.png').write_bytes(png(300, 160))
+
+            run.side_effect = blank
+            with mock.patch.object(shell, '_locked_font_digests', return_value=tuple(map(gfx_svg.digest, font_bytes))):
+                with self.assertRaisesRegex(ValueError, 'locked text fixture pixels differ'):
+                    shell._accept_text_frame(root, scratch=scratch, font_dir=fonts)
+            run.assert_called_once()
+            self.assertEqual(list(scratch.iterdir()), [])
 
     def test_handle_reparse_metadata_refuses_even_with_ordinary_lstat(self):
         from vtx.render import gfx_svg_win_snapshot as snapshot
