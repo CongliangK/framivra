@@ -547,6 +547,61 @@ class TestRangeIntegration(unittest.TestCase):
             self.assertEqual(int(video['duration_ts']) * Fraction(video['time_base']), 7 / rate)
             self.assertFalse((root / 'out').exists(), 'range must not publish formal outputs')
 
+    def test_native_mp4_preserves_short_window_presentation_clock(self):
+        import wave
+        from vtx.pipeline.infra import Ctx
+        from vtx.pipeline.range import render_1080p_window
+        from vtx.pipeline.stages import validate_core
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'tone.wav'
+            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                            'sine=frequency=440:sample_rate=48000:duration=3', '-ac', '2', str(source)],
+                           check=True, capture_output=True, timeout=60)
+            # Default millisecond edit lists presented 1584 and 3216 samples.
+            # NTSC must use S(61)-S(59) = 97698-94494, not round(2*1601.6).
+            for fps, fa, fb, samples in ((30, 60, 61, 1600), ('30000/1001', 59, 61, 3204)):
+                with self.subTest(fps=fps):
+                    timeline = root / 'timeline.json'
+                    timeline.write_text(json.dumps({
+                        **TestCliGuards._min_tl(),
+                        'project': {'fps': fps, 'width': 1920, 'height': 1080, 'duration_frames': 300},
+                        'sources': [{'id': 'tone', 'path': source.name}],
+                        'audio_tracks': [{'name': 'voice', 'events': [
+                            {'src': 'tone', 'in': 0, 'out': 75, 'volume': 1}]}],
+                    }), encoding='utf-8')
+                    c = Ctx(timeline)
+                    self.assertEqual(validate_core(c), [])
+                    workspace = c.cache / 'preview' / f'clock-{fa}'
+                    workspace.mkdir(parents=True)
+                    with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
+                        output = render_1080p_window(c, fa, fb, workspace=workspace)
+                    with wave.open(str(workspace / 'work' / 'preview' / output.with_suffix('.wav').name)) as pcm:
+                        self.assertEqual((pcm.getframerate(), pcm.getnframes()), (48000, samples))
+
+                    probe = subprocess.run(['ffprobe', '-v', 'error', '-show_streams', '-show_packets',
+                                            '-of', 'json', str(output)],
+                                           check=True, capture_output=True, timeout=60)
+                    info = json.loads(probe.stdout)
+                    video, audio = info['streams']
+                    rate = Fraction(fps)
+                    vtb = Fraction(video['time_base'])
+                    self.assertEqual((video['start_pts'], video['duration_ts'] * vtb), (0, (fb - fa) / rate))
+                    self.assertEqual(sorted(p['pts'] * vtb for p in info['packets'] if p['codec_type'] == 'video'),
+                                     [i / rate for i in range(fb - fa)])
+                    self.assertEqual((audio['codec_name'], Fraction(audio['time_base']),
+                                      audio['start_pts'], audio['duration_ts']), ('aac', Fraction(1, 48000), 0, samples))
+                    # Negative packets carry encoder priming, not presented audio;
+                    # generic AAC decode can still return trailing padding.
+                    cursor = 0
+                    for packet in info['packets']:
+                        if packet['codec_type'] == 'audio' and packet['pts'] >= 0:
+                            self.assertEqual(packet['pts'], cursor)
+                            self.assertGreater(packet['duration'], 0)
+                            cursor += packet['duration']
+                    self.assertEqual(cursor, samples)
+
     def test_1080p_window_uses_isolated_workspace_with_cold_inactive_gfx(self):
         import wave
         from vtx.cache.recovery import completion_marker
