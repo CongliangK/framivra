@@ -1331,6 +1331,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
         receipts = [dict(zip(face_keys, values), font_sha256=digest)
                     for values, digest in zip(face_values, font_digests)]
         real_face = shell.fontconfig._inspect_face
+        real_catalog = shell.fontconfig._inspect_catalog
         with mock.patch.multiple(shell, _RASTER_FRAMES=4, _STANDARD_SIZE=(6, 4),
                                  _RASTER_MANIFEST_BYTES=len(raw), _RASTER_MANIFEST_SHA256=sha256(raw).hexdigest(),
                                  _RASTER_SVG_TOTAL=sum(map(len, sources)), _RASTER_SVG_SHA256=svg_sha,
@@ -1339,6 +1340,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                                     _TREE_SHA256='a576aafef70b8fd83cdbdf9f581c6734fee849138f38018f824b1ad332bc64a5'), \
                 mock.patch.object(shell, '_locked_font_digests', return_value=font_digests), \
                 mock.patch.object(shell.fontconfig, '_inspect_face') as inspect_face, \
+                mock.patch.object(shell.fontconfig, '_inspect_catalog') as inspect_catalog, \
                 mock.patch.object(shell.native, '_OwnedJob') as own:
             def accept(where=scratch):
                 return shell._accept_standard_raster(root, scratch=where, project_root=project)
@@ -1404,6 +1406,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'staged font face metadata mismatch'):
                 accept()
             inspect_face.assert_called_once()
+            inspect_catalog.assert_not_called()
             own.assert_not_called()  # neither Inkscape facts nor raster was launched
             self.assertEqual(list(scratch.iterdir()), [])
 
@@ -1444,6 +1447,95 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
             self.assertEqual(len({job._close.call_args.args[0] for job in worker_jobs}), 1)
             inspect_face.side_effect = face_for
 
+            def catalog_for(bundle, digests, *, operation, deadline):
+                self.assertEqual((digests, bundle / 'shell'), (font_digests, operation.inputs.cwd))
+                last_face = inspect_face.call_args.kwargs
+                self.assertIs(operation, last_face['operation'])
+                self.assertEqual(deadline, last_face['deadline'])
+                config = bundle / 'shell/fonts.conf'
+                with self.assertRaises(PermissionError), config.open('r+b'):
+                    self.fail('configuration open for write')
+                self.assertEqual(config.read_bytes(), shell.fontconfig._expected_catalog_config(config.parent))
+                (config.parent / 'font-cache' / (shell.fontconfig._catalog_cache_name(config.parent) + '.NEW')).write_bytes(
+                    b'private worker output')
+                return (10, 10, 1, 1)
+
+            original_environment = shell._environment
+
+            def wrong_config(cwd, bin_dir):
+                env = original_environment(cwd, bin_dir)
+                with (cwd / 'fonts.conf').open('ab') as stream:
+                    stream.write(b'\n')  # harmless XML change still fails byte identity
+                return env
+
+            own.reset_mock()
+            with mock.patch.object(shell, '_environment', side_effect=wrong_config):
+                with self.assertRaisesRegex(ValueError, 'fixed configuration byte mismatch'):
+                    accept()
+            own.assert_not_called()
+            inspect_catalog.assert_not_called()
+
+            # An unexpected preflight cache leaf, or a non-file at the exact
+            # cache name after the probe, is neither consumed nor torn down.
+            def populated_environment(cwd, bin_dir):
+                env = original_environment(cwd, bin_dir)
+                (cwd / 'font-cache/marker.txt').write_bytes(b'preserve before worker')
+                return env
+
+            def catalog_with_directory(bundle, *args, **kwargs):
+                cwd = bundle / 'shell'
+                (cwd / 'font-cache' / shell.fontconfig._catalog_cache_name(cwd)).mkdir()
+                return (10, 10, 1, 1)
+
+            for before, expected in ((True, 'cache is not empty'), (False, 'invalid cache file')):
+                target = root / f'cache-veto-{before}'
+                target.mkdir()
+                inspect_catalog.side_effect = catalog_with_directory
+                with mock.patch.object(shell, '_environment',
+                                       side_effect=populated_environment if before else original_environment):
+                    with self.assertRaisesRegex(ValueError, expected):
+                        accept(target)
+                own.assert_not_called()
+                (retained,) = target.iterdir()
+                cwd = retained / 'shell'
+                if before:
+                    self.assertEqual((cwd / 'font-cache/marker.txt').read_bytes(), b'preserve before worker')
+                else:
+                    self.assertTrue((cwd / 'font-cache' / shell.fontconfig._catalog_cache_name(cwd)).is_dir())
+                self.assertEqual(inspect_catalog.call_count, int(not before))
+
+            # Run the real catalog wrapper with the native Job IO doubled. An
+            # uncertain worker may have written a cache and even a reply; neither
+            # is consumed and no subsequent runtime/shell Job may launch.
+            uncertain_catalog = root / 'uncertain-catalog'
+            uncertain_catalog.mkdir()
+            catalog_job = mock.Mock()
+            catalog_job._pump.return_value = True
+            catalog_job.proc.returncode = 0
+            catalog_job._close.side_effect = OSError('accounting unavailable')
+
+            def launch_catalog(args, stdout, stderr, *, cwd, environment):
+                self.assertEqual(args[-6], 'catalog')
+                directory = Path(cwd)
+                (directory / 'result.json').write_text('unreadable receipt sentinel', encoding='ascii')
+                cwd = directory.parent / 'shell'
+                (cwd / 'font-cache' / (shell.fontconfig._catalog_cache_name(cwd) + '.NEW')).write_bytes(
+                    b'private worker output')
+
+            catalog_job._launch.side_effect = launch_catalog
+            own.side_effect = None
+            own.return_value = catalog_job
+            inspect_catalog.side_effect = real_catalog
+            with self.assertRaisesRegex(ValueError, 'catalog worker Job settlement unconfirmed'):
+                accept(uncertain_catalog)
+            own.assert_called_once()
+            worker_dir = Path(catalog_job._launch.call_args.kwargs['cwd'])
+            self.assertTrue((worker_dir / 'result.json').is_file())
+            cwd = worker_dir.parent / 'shell'
+            self.assertTrue((cwd / 'font-cache' / (shell.fontconfig._catalog_cache_name(cwd) + '.NEW')).is_file())
+            self.assertEqual(inspect_catalog.call_args.kwargs['deadline'], catalog_job._close.call_args.args[0])
+            inspect_catalog.side_effect = catalog_for
+
             version, system, user = '--version', '--system-data-directory', '--user-data-directory'
             version_line = b'Inkscape 1.4.4 (dcaf3e7, 2026-05-05)\n'
             bad_version = b'Inkscape 1.4.4 (dcaf3e8, 2026-05-05)\r\n'
@@ -1478,11 +1570,13 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                     case_scratch.mkdir()
                     own.reset_mock()
                     inspect_face.reset_mock()
+                    inspect_catalog.reset_mock()
                     stop, rejection, wrong = fact_failures.get(failure, ('--shell', raster_failures.get(failure), None))
                     jobs, settings = [], []
 
                     def job_for(argv, *, capture_limit):
                         self.assertEqual(inspect_face.call_count, 4)
+                        self.assertEqual(inspect_catalog.call_count, 1)
                         self.assertEqual(len({call.kwargs['deadline'] for call in inspect_face.call_args_list}), 1)
                         flag = argv[1]
                         self.assertEqual(len(argv), 2)
@@ -1516,6 +1610,9 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                             cwd = Path(cwd)
                             self.assertEqual(Path(args[0]), cwd.parent / 'inkscape/bin/inkscape.com')
                             self.assertEqual([p.read_bytes() for p in sorted((cwd / 'fonts').iterdir())], font_data)
+                            self.assertFalse(list((cwd / 'font-cache').iterdir()))
+                            with self.assertRaises(PermissionError), (cwd / 'fonts.conf').open('r+b'):
+                                self.fail('configuration open for write at launch')
                             self.assertEqual([(cwd / (stem + '.svg')).read_bytes() for stem in stems], sources)
                             plan = cwd / 'actions.txt'
                             if is_fact:
@@ -1586,7 +1683,8 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                             mock.patch.object(shell, '_read_png', wraps=shell._read_png) as read_png, \
                             mock.patch.object(shell, '_query_image_origins', side_effect=query) as observe:
                         if rejection is None:
-                            self.assertEqual(accept(case_scratch), (4, (6, 4), svg_sha, png_sha, rgba_sha, origins))
+                            self.assertEqual(accept(case_scratch),
+                                             (4, (6, 4), svg_sha, png_sha, rgba_sha, origins, (10, 10, 1, 1)))
                         else:
                             with self.assertRaisesRegex((ValueError, OSError), rejection) as rejected:
                                 accept(case_scratch)

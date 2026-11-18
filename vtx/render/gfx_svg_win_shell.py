@@ -58,7 +58,7 @@ _RASTER_SVG_LIMIT, _RASTER_SVG_TOTAL = 5 * 1024, 2326452
 _RASTER_PNG_LIMIT = 72 * 1024  # reference max 73,707 bytes; f0135 retains its own 64 KiB limit
 _RASTER_CAPTURE_LIMIT = 1024 * 1024  # combined streams, including the full shell transcript
 _RASTER_TIMEOUT, _RASTER_VERIFY_RESERVE = 360, 75  # staging through verification; Job reserve is separate
-_FACE_TIMEOUT = 15  # all four face workers, including Job settlement, within the launch budget
+_FACE_TIMEOUT = 15  # four face checks and the catalog, including Job settlement, within the launch budget
 _FACTS_TIMEOUT, _FACTS_CAPTURE_LIMIT = 15, 1024  # shared subdeadline; combined stdout/stderr per query
 _IMAGE_TIMEOUT, _IMAGE_PUMP_SLICE = 15, .025  # inside the shell's existing pump deadline
 _IMAGE_MODULE_LIMIT, _IMAGE_NAME_LIMIT = 512, 1024
@@ -492,6 +492,7 @@ class _StandardRasterEvidence(NamedTuple):
     png_sha256: str
     rgba_sha256: str
     image_origins: _ImageOrigins
+    font_catalog_faces: tuple[int, ...]
 
 
 def _raster_fold(kind):
@@ -524,7 +525,7 @@ def _require_raster_manifest(project_root, frame_paths, font_paths):
         raise ValueError('Windows SVG canonical raster manifest fields mismatch')
 
 
-def _require_staged_font_faces(operation, executable, cwd, staged, launch_deadline):
+def _require_staged_font_faces(operation, executable, cwd, staged, pins, launch_deadline):
     deadline = min(launch_deadline, time.monotonic() + _FACE_TIMEOUT)
     bundle = cwd.parent
     with _pin_dir(operation.inputs.vendor) as (handle, _):
@@ -542,6 +543,30 @@ def _require_staged_font_faces(operation, executable, cwd, staged, launch_deadli
         fields = ('family', 'style', 'index', 'fontconfig_weight', 'file_face_count')
         if tuple(face.get(key) for key in fields) != expected or face.get('font_sha256') != sha256:
             raise ValueError('Windows SVG staged font face metadata mismatch')
+
+    config, cache = cwd / 'fonts.conf', cwd / 'font-cache'
+    try:
+        cfg, info, _, is_dir = pins.enter_context(_pin_entry(config))
+        expected_config = fontconfig._expected_catalog_config(cwd)
+        if _read_pinned(cfg, info, is_dir, len(expected_config) + 1) != expected_config:
+            raise ValueError('Fontconfig fixed configuration byte mismatch')
+        pins.enter_context(_pin_dir(cache))
+        fontconfig._require_empty_catalog_cache(cwd)
+        counts = fontconfig._inspect_catalog(bundle, tuple(sha for _, sha in staged),
+                                             operation=operation, deadline=deadline)
+        _raster_time(deadline)
+        # Only after confirmed Job settlement; leave the same directory cold.
+        fontconfig._empty_catalog_cache(cwd)
+        fontconfig._check_catalog_config(config)
+    except BaseException as error:
+        # Even after a positively settled writer, generic operation teardown
+        # must not delete a cache that we could not prove empty or reset safely.
+        operation.keep = True
+        if isinstance(error, OSError) and not isinstance(error, TimeoutError):
+            raise ValueError('Windows SVG fixed font catalog staging failed') from None
+        raise
+    _raster_time(deadline)
+    return counts
 
 
 def _accept_standard_raster(portable_root, *, scratch, project_root):
@@ -603,7 +628,8 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
                 target = fonts / f'font{i}{Path(name).suffix}'
                 _stage_font(data, expected, name, target, pins)
                 staged_fonts.append((target, expected))
-            _require_staged_font_faces(operation, executable, cwd, staged_fonts, launch_deadline)
+            font_catalog_faces = _require_staged_font_faces(operation, executable, cwd, staged_fonts, pins,
+                                                            launch_deadline)
             for stem, data in zip(stems, sources):
                 _raster_time(launch_deadline)
                 target = cwd / (stem + '.svg')
@@ -635,7 +661,7 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
                 raise ValueError('Windows SVG canonical raster ordered PNG bytes differ')
     _raster_time(deadline)
     return _StandardRasterEvidence(len(outputs), _STANDARD_SIZE, svg.hexdigest(), png.hexdigest(), rgba.hexdigest(),
-                                   image_origins)
+                                   image_origins, font_catalog_faces)
 
 
 def _require_outputs(frames, outputs):
