@@ -302,6 +302,12 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       if (frameOwner.edit.unknown) showHistory()
       return
     }
+    // A position query cannot re-authorize a view whose saved revision was
+    // never confirmed. Only a full refresh or a settled store readback can.
+    if (queryOnly && (state.stale || frameOwner.edit.dirty)) {
+      setState(previous => ({ ...previous, message: '请先刷新保存版本，再查询播放头。' }))
+      return
+    }
     if (!queryOnly && chosenTimeline !== timeline) { setTimeline(chosenTimeline); setFrame('') }
     frameOwner.invalidate()
     let query
@@ -383,7 +389,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       }
     }
   }
-  async function refreshCommitted({ focusId } = {}) {
+  async function refreshCommitted({ focusId, expectedRevision }) {
     frameOwner.invalidate()
     task.current?.abort()
     const controller = new AbortController()
@@ -407,8 +413,9 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
     signal.throwIfAborted()
     if (pair.signal.aborted) throw failure
     if (grant.current !== opened.grant || readSequence.current !== sequence || task.current !== controller) throw new Error('显示已切换，未确认刷新。')
-    // A later read cannot be overwritten by an old commit-refresh completion.
-    const consistent = snapshot.content_version === result.content_version
+    // Two matching reads can both be from a later, unrelated save.
+    const consistent = typeof expectedRevision === 'string' && /^sha256:[0-9a-f]{64}$/.test(expectedRevision) &&
+      snapshot.content_version === expectedRevision && result.content_version === expectedRevision
     const focus = focusId ? result.blocks.find(block => block.data?.id === focusId) : undefined
     setSelectionIntent(previous => {
       if (!consistent) return emptySelection()

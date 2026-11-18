@@ -59,7 +59,8 @@ test('direct gesture freezes plan/commit, spans busy through refresh, ignores se
  await act(async()=>resolvePlan({ok:true,planToken:'frozen',submitted_request:{op_id:'direct-id',operations}}));assert.equal(Boolean(resolveCommit), true)
  const invalidations=calls.filter(call=>call.op==='invalidate-plan').length
  await act(async()=>root.render(h(ManualEditor,{...props,frame:16})));assert.equal(calls.filter(call=>call.op==='invalidate-plan').length,invalidations)
- await act(async()=>resolveCommit({ok:true,op_id:'direct-id'}));assert.deepEqual(commits,[{focusId:'c'}]);assert.equal(states.at(-1).busy,true)
+ const revision=`sha256:${'b'.repeat(64)}`
+ await act(async()=>resolveCommit({ok:true,op_id:'direct-id',revision}));assert.deepEqual(commits,[{focusId:'c',expectedRevision:revision}]);assert.equal(states.at(-1).busy,true)
  await act(async()=>resolveRefresh());assert.equal((await transaction).ok,true);assert.equal(states.at(-1).busy,false)
  assert.deepEqual(calls.find(call=>call.op==='commit'),{op:'commit',grant:'read',writeGrant:'explicit',planToken:'frozen'})
  assert.equal(Boolean(button('保存更改') === undefined), true,'direct transaction never exposes a second confirmation button')
