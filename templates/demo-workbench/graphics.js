@@ -4,6 +4,15 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+// Preserve the locked frame and continuous backdrop; scale only the artwork
+// into the area above the native subtitle band. Used verbatim by both routes.
+function renderPromo(frame, plan, renderFrame) {
+  const svg = renderFrame(frame, plan);
+  const backdrop = /<\/desc><rect x="0" y="0" width="1920" height="1080"[^>]*\/>/.exec(svg);
+  if (!backdrop || !svg.endsWith('</svg>')) throw new Error('Unexpected locked SVG frame structure');
+  const art = backdrop.index + backdrop[0].length;
+  return svg.slice(0, art) + '<g transform="translate(96 6) scale(0.9)">' + svg.slice(art, -6) + '</g></svg>';
+}
 
 // This very function's source is embedded verbatim in HTML; Node calls it for SVG.
 // Opaque paper badge with the original coral picture / ink type / blue sound palette.
@@ -53,7 +62,7 @@ function main(args) {
     if (mode === 'svg') {
       const frames = Array.from({length: clip.frames}, (_, local) => {
         const filename = `gfx/${key}/f${String(local).padStart(4, '0')}.svg`;
-        const svg = promo ? renderFrame(clip.start + local, plan) : renderCue(local);
+        const svg = promo ? renderPromo(clip.start + local, plan, renderFrame) : renderCue(local);
         if (/NaN|Infinity|<script\b|<foreignObject\b|<animate\b|\bhref\s*=/i.test(svg))
           throw new Error(`Non-static SVG: ${filename}`);
         write(filename, svg + '\n');
@@ -69,7 +78,7 @@ function main(args) {
       // JSON is trusted and identity-checked, but still escape HTML script delimiters.
       const planJSON = JSON.stringify(plan).replace(/</g, '\\u003c');
       const drawing = promo ?
-        `const plan=${planJSON};\nconst draw=f=>FramivraMotion.renderFrame(${clip.start}+f,plan);` :
+        `${renderPromo.toString()}\nconst plan=${planJSON};\nconst draw=f=>renderPromo(${clip.start}+f,plan,FramivraMotion.renderFrame);` :
         `${renderCue.toString()}\nconst draw=renderCue;`;
       write(`gfx/${key}.html`, '<!doctype html>\n<html><head><meta charset="utf-8">' +
         '<style>html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:transparent}svg{display:block}\n' + faces +
