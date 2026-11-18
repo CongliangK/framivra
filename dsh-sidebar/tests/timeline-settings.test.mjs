@@ -25,7 +25,7 @@ test('closed settings compiler: exact frames, explicit unset, typed targets, no 
   assert.deepEqual(settingsIntent('duck_strategy', { id: 'a', remove: true }), { op: 'track.references', id: 'a', set: {}, unset: ['duck_strategy'] })
   for (const kind of ['blender_bridge', 'fps', 'width', '__proto__']) assert.throws(() => settingsIntent(kind, { text: 'true' }))
   assert.throws(() => settingsIntent('denoise', { id: 's', text: ' '.repeat(131073) }))
-  assert.equal(savedSetting({}, 'x'), '未设置'); assert.equal(savedSetting({ x: false }, 'x'), 'false'); assert.equal(savedSetting({ x: null }, 'x'), 'null')
+  assert.equal(savedSetting({}, 'x'), '未设置'); assert.equal(savedSetting({ x: false }, 'x'), '已关闭'); assert.equal(savedSetting({ x: null }, 'x'), '空值')
 })
 
 test('plugin whole JSON preserves unknown nested numeric tokens without compatibility assertions', () => {
@@ -55,7 +55,7 @@ const snapshot = { content_version: 'v1', document: { project: { fps: 30, width:
 const result = { content_version: 'v1', blocks: [], tracks: [{ family: 'audio', data: { id: 'a', name: 'bed', duck_strategy: { voice_track: 'voice' } } }] }
 
 test('ManualEditor settings: no default enqueue, read-only summary, dirty/invalidation and frozen plans', async t => {
-  const { root, Simulate } = await mount(t), calls = [], states = []
+  const { root, Simulate } = await mount(t), calls = [], states = [], queues = [[]]
   const call = async (_session, payload) => {
     calls.push(payload)
     if (payload.op === 'proposal-list') return { ok: true, proposals: [] }
@@ -63,39 +63,39 @@ test('ManualEditor settings: no default enqueue, read-only summary, dirty/invali
     if (payload.op === 'plan') return { ok: true, planToken: 'frozen', submitted_request: { op_id: 'frozen-op', operations: payload.operations } }
     return { ok: true }
   }
-  await act(async () => root.render(h(ManualEditor, { sessionId: 'one', opened: { grant: 'read', snapshot }, result, tabSignal: new AbortController().signal, call, onCommitted: () => {}, onEditState: state => states.push(state) })))
-  assert.match(input('已保存规格').textContent, /FPS 30.*1920.*1080.*900/)
-  assert.match(input('时间线配置').textContent, /根 blender_bridge（只读）：false/)
-  assert.match(input('时间线配置').textContent, /denoise：false · bgm：null/)
+  await act(async () => root.render(h(ManualEditor, { sessionId: 'one', opened: { grant: 'read', snapshot }, result, tabSignal: new AbortController().signal, call, onCommitted: () => {}, onQueueChange: queue => queues.push(queue), onEditState: state => states.push(state) })))
+  assert(/FPS 30.*1920.*1080.*900/.test(input('已保存规格').textContent), "DOM text did not match expected pattern")
+  assert(/Blender 桥接：已关闭/.test(input('时间线配置').textContent), "DOM text did not match expected pattern")
+  assert(/降噪：已关闭 · 音乐源：空值/.test(input('时间线配置').textContent), "DOM text did not match expected pattern")
   assert.equal(input('工程时长').closest('fieldset').disabled, true)
   assert.equal(input('配置素材').disabled, true)
-  assert.equal(input('未保存 typed intents').textContent, '[]')
+  assert.deepEqual(queues.at(-1), [])
   assert(!states.some(state => state.dirty)); assert(!calls.some(call => ['plan', 'commit', 'frame'].includes(call.op)))
-  await act(async () => button('明确允许本会话向此工程及 core 历史写入').click())
+  await act(async () => button('启用编辑').click())
   assert.equal(input('工程时长').value, '900'); assert.equal(input('图形依赖策略').value, '')
-  assert.equal(input('未保存 typed intents').textContent, '[]', 'authorization and initialization do not enqueue saved/default values')
+  assert.deepEqual(queues.at(-1), [], 'authorization and initialization do not enqueue saved/default values')
   await act(async () => Simulate.change(input('工程时长'), { target: { value: '1000' } }))
   assert(states.at(-1).dirty); assert(calls.some(call => call.op === 'invalidate-plan'))
   await act(async () => button('加入批次：工程时长').click())
-  await act(async () => button('内核预检计划（零写）').click())
+  await act(async () => button('预检').click())
   assert.deepEqual(calls.find(call => call.op === 'plan').operations, [{ op: 'project.resize', duration_frames: 1000 }])
-  assert(button('确认提交此冻结计划（一次 revision）'))
+  assert(button('保存更改'))
   await act(async () => Simulate.change(input('图形依赖策略'), { target: { value: 'strict' } }))
-  assert(button('确认提交此冻结计划（一次 revision）') === undefined, "Expected absent DOM node: button('确认提交此冻结计划（一次 revision）')")
+  assert(button('保存更改') === undefined, "Expected absent DOM node")
   await act(async () => Simulate.change(input('配置素材'), { target: { value: 's' } }))
   assert.equal(input('素材降噪').value, 'false'); assert.equal(input('音乐源').value, 'null')
   await act(async () => button('加入批次：音乐源').click())
   await act(async () => button('移除字段：素材降噪').click())
   await act(async () => Simulate.change(input('配置音轨'), { target: { value: 'a' } }))
   await act(async () => button('加入批次：静态闪避').click())
-  const queued = JSON.parse(input('未保存 typed intents').textContent)
+  const queued = queues.at(-1)
   assert.deepEqual(queued.slice(1), [{ op: 'parameters.update', id: 's', path: ['bgm'], value: null }, { op: 'parameters.unset', id: 's', path: ['denoise'] }, { op: 'track.references', id: 'a', set: { duck_strategy: { voice_track: 'voice' } } }])
   assert(!calls.some(call => ['commit', 'frame', 'adopt'].includes(call.op)))
   await act(async () => Simulate.change(input('音乐源'), { target: { value: '{"unsaved":true}' } }))
   await act(async () => button('添加依赖路径').click())
   await act(async () => Simulate.change(input('依赖路径 1'), { target: { value: 'unsaved.ttf' } }))
-  await act(async () => button('清空未保存批次').click())
-  assert.equal(input('未保存 typed intents').textContent, '[]')
+  await act(async () => button('清空').click())
+  assert.deepEqual(queues.at(-1), [])
   assert.equal(input('工程时长').value, '900', 'clear restores saved duration instead of leaving unqueued text')
   assert.equal(input('图形依赖策略').value, '', 'clear restores missing policy without defaults')
   assert(input('依赖路径 1') === null, 'clear discards unqueued dependency paths')
@@ -103,17 +103,17 @@ test('ManualEditor settings: no default enqueue, read-only summary, dirty/invali
   assert.equal(states.at(-1).dirty, false)
   await act(async () => Simulate.change(input('配置素材'), { target: { value: 's' } }))
   assert.equal(input('音乐源').value, 'null', 'clear discards unqueued plugin JSON')
-  await act(async () => button('撤销本会话/工程写许可').click())
+  await act(async () => button('撤销许可').click())
   assert.equal(input('音乐源').closest('fieldset').disabled, true)
 })
 
 test('switching source/audio targets preserves separate unqueued drafts until explicit clear', async t => {
-  const { root, Simulate } = await mount(t)
+  const { root, Simulate } = await mount(t), queues = [[]]
   const call = async (_session, payload) => payload.op === 'proposal-list' ? { ok: true, proposals: [] } : payload.op === 'authorize-write' ? { writeGrant: 'explicit' } : { ok: true }
   const opened = { grant: 'read', snapshot: { ...snapshot, document: { ...snapshot.document, sources: [...snapshot.document.sources, { id: 's2', path: 'other.wav', denoise: null, bgm: false }] } } }
   const twoTracks = { ...result, tracks: [...result.tracks, { family: 'audio', data: { id: 'a2', name: 'other', duck_strategy: null } }] }
-  await act(async () => root.render(h(ManualEditor, { sessionId: 'one', opened, result: twoTracks, tabSignal: new AbortController().signal, call, onCommitted: () => {} })))
-  await act(async () => button('明确允许本会话向此工程及 core 历史写入').click())
+  await act(async () => root.render(h(ManualEditor, { sessionId: 'one', opened, result: twoTracks, onQueueChange: queue => queues.push(queue), tabSignal: new AbortController().signal, call, onCommitted: () => {} })))
+  await act(async () => button('启用编辑').click())
   const change = async (label, value) => await act(async () => Simulate.change(input(label), { target: { value } }))
   await change('配置素材', 's')
   await change('素材降噪', '{"custom":123}')
@@ -134,8 +134,8 @@ test('switching source/audio targets preserves separate unqueued drafts until ex
   assert.equal(input('素材降噪').value, '{"second":null}')
   await change('配置音轨', 'a2')
   assert.equal(input('静态闪避').value, 'false')
-  assert.equal(input('未保存 typed intents').textContent, '[]', 'switching never auto-enqueues drafts')
-  await act(async () => button('清空未保存批次').click())
+  assert.deepEqual(queues.at(-1), [], 'switching never auto-enqueues drafts')
+  await act(async () => button('清空').click())
   await change('配置素材', 's')
   assert.equal(input('素材降噪').value, 'false')
   assert.equal(input('音乐源').value, 'null')
@@ -148,25 +148,25 @@ test('legacy settings stay disabled after authorization, retaining saved summary
   const legacy = { ...snapshot, document: { ...snapshot.document, _vtx: undefined } }
   const call = async (_session, payload) => { calls.push(payload); return payload.op === 'proposal-list' ? { ok: true, proposals: [] } : { writeGrant: 'explicit' } }
   await act(async () => root.render(h(ManualEditor, { sessionId: 'one', opened: { grant: 'read', snapshot: legacy }, result, tabSignal: new AbortController().signal, call, onCommitted: () => {} })))
-  await act(async () => button('明确允许本会话向此工程及 core 历史写入').click())
+  await act(async () => button('启用编辑').click())
   assert.equal(input('工程时长').closest('fieldset').disabled, true)
   assert.equal(input('配置素材').disabled, true)
-  assert.match(input('已保存规格').textContent, /FPS 30/)
+  assert(/FPS 30/.test(input('已保存规格').textContent), "DOM text did not match expected pattern")
   assert(!calls.some(call => ['adopt', 'plan', 'commit'].includes(call.op)))
 })
 
 test('confirmed write with failed refresh locks settings; no enqueue can bypass stale lock', async t => {
-  const { root, Simulate } = await mount(t), calls = []
+  const { root, Simulate } = await mount(t), calls = [], queues = [[]]
   const call = async (_session, payload) => { calls.push(payload); return payload.op === 'proposal-list' ? { ok: true, proposals: [] } : payload.op === 'authorize-write' ? { writeGrant: 'explicit' } : payload.op === 'plan' ? { ok: true, planToken: 'frozen', submitted_request: { op_id: 'op' } } : { ok: true } }
-  await act(async () => root.render(h(ManualEditor, { sessionId: 'one', opened: { grant: 'read', snapshot }, result, tabSignal: new AbortController().signal, call, onCommitted: async () => { throw Error('refresh failed') } })))
-  await act(async () => button('明确允许本会话向此工程及 core 历史写入').click())
+  await act(async () => root.render(h(ManualEditor, { sessionId: 'one', opened: { grant: 'read', snapshot }, result, tabSignal: new AbortController().signal, call, onQueueChange: queue => queues.push(queue), onCommitted: async () => { throw Error('refresh failed') } })))
+  await act(async () => button('启用编辑').click())
   await act(async () => Simulate.change(input('工程时长'), { target: { value: '1000' } }))
   await act(async () => button('加入批次：工程时长').click())
-  await act(async () => button('内核预检计划（零写）').click())
-  await act(async () => button('确认提交此冻结计划（一次 revision）').click())
+  await act(async () => button('预检').click())
+  await act(async () => button('保存更改').click())
   assert.equal(input('工程时长').closest('fieldset').disabled, true)
   assert(/内核已确认本次写入/.test(document.body.textContent), "Body text must match /内核已确认本次写入/")
   await act(async () => button('加入批次：工程时长').click())
-  assert.equal(input('未保存 typed intents').textContent, '[]')
+  assert.deepEqual(queues.at(-1), [])
   assert.equal(calls.filter(call => call.op === 'commit').length, 1)
 })

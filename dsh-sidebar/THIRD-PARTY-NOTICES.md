@@ -18,7 +18,7 @@ structured SVG node data of the icons listed below is copied at build-authoring 
   zoomIn->zoom-in, zoomOut->zoom-out, fit->scan, path->route, query->search, camera->camera,
   copy->copy, draft->pen-line, id->id-card, code->code, diagnostic->activity, cancel->circle-x,
   up->chevron-up, down->chevron-down, add->plus, clear->eraser, undo->undo-2, check->check,
-  info->info, more->ellipsis.
+  info->info, more->ellipsis, magnet->magnet.
 
 The upstream LICENSE file applies to this subset and is reproduced verbatim below. Note that it
 contains two grants: the ISC license for Lucide icons generally, and the MIT license for the

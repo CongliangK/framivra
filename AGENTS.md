@@ -4,7 +4,7 @@
 
 - timeline.json/素材→帧精确视频/混音/QC/缓存；[内核](<vtx/>)永不可关
 - [应用](<apps/>)产素材/辅助结果；[插件](<plugins/>)扩时间线，启用不忽略依赖/失败；已知不可用声明先于 probe 拒绝，源声明在 prepare/range 裸缓存前同拒。
-- [侧栏](<dsh-sidebar/README.md>)独立发行：完整合成非单页，预览共用整数播放头、成片联动非合成证书；单行工具栏，帧步进与轨道高度在时间线；轨高/专注视图只改显示；宽屏文件列表独立滚动；生效插件在身份/钩子前拒绝；HTML信任≠沙箱；写态走内核事务，帧率/预览限制不变。
+- [侧栏](<dsh-sidebar/README.md>)独立发行：完整合成非单页，预览共用整数播放头、成片联动非合成证书；单行工具栏，帧步进与轨道高度在时间线；轨高/专注视图只改显示；宽屏文件列表独立滚动；生效插件在身份/钩子前拒绝；HTML信任≠沙箱；启用直接剪辑后松手走内核预检/CAS 保存，非法保留原位；吸附/闭合同轨空隙不改时基或他轨，侧栏以结构化视图审阅。
 - 侧栏按宿主与内核能力分开报告读、整帧与事务；Windows 不把静态协议声明或成片播放当成内核帧合成、写入资格。
 - [空间管理](<docs/reference/storage-api.md>)删除权归内核；清理须独立确认停写，不向模型开放。
 - macOS授权见接口；目录fd≠proc-fd Path；单帧须全输入前后复核；环境文件批查仅复用本次目录前缀并前后核验，仍重枚举/哈希/查链接；Linux缺RECORD只认元数据所属RPM清单。
@@ -18,7 +18,7 @@
 - [音乐原生验收](<apps/bgm/README.md#macos-原生验收>)用隔离配置与原创输入走完整链；基础、可选引擎、人工听审分别记账，缺资产不算通过。
 - IndexTTS 的 `probe` 和 `gen` 共用原生解释器发现；找到解释器不代表许可允许推理。
 - [CDP 启动诊断](<vtx/render/gfx_render.py>)区分 DevTools HTTP 就绪前进程退出与页面 CDP 握手后初始化 `Page.enable` 超时；退出只报告有界状态，不泄露 argv/profile，超时不证明页面域状态或 renderer/token 根因，不改 strict/CLI 回退。
-- [Windows 浏览器监管](<vtx/runtime/windows_browser.py>)固定绝对 `.exe`，用 JOB_LIST（Win10+/Server 2016+）创建即加入私有 Job，仅继承指定 stdio；不支持或启动失败不回退，双管合计有界，超时先关本方 Job 再有界排空，不接管外部进程。
+- [Windows 浏览器监管](<vtx/runtime/windows_browser.py>)固定绝对 `.exe`，创建即进私有 Job（Win10+/Server 2016+），仅继承指定 stdio；双管合计有界，先终止本方 Job，期限内确认活跃进程归零才算收尾成功；根退出、双 EOF 或关句柄兜底均不作证明。CDP 收尾未证时保留主错误及 profile，不回落 CLI。
 
 ## 常用命令
 

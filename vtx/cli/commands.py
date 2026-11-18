@@ -182,14 +182,19 @@ def gfx(c: Ctx):
             c.receipt("gfx", False, f"gfx 提前退出（退出码 {e.code}）")
         raise
     except Exception as e:
-        c.receipt("gfx", False, str(e))
-        print(f"✗ gfx: {e}")
+        from ..runtime.windows_browser import JobSettlementError
+        detail = str(e)
+        if isinstance(e.__cause__, JobSettlementError):
+            detail += f"; {e.__cause__}"
+        c.receipt("gfx", False, detail)
+        print(f"✗ gfx: {detail}")
         sys.exit(1)
 
 
 def _gfx(c: Ctx):
     budget_gate(c, "gfx")
     from ..render import gfx_svg
+    from ..runtime.windows_browser import job_cleanup_unconfirmed
     if gfx_svg.route(c) == "svg-sequence":
         from ..render.gfx_svg_stage import render_stage
         return render_stage(c)
@@ -364,6 +369,8 @@ def _gfx(c: Ctx):
                 if strict:
                     gfx_cli.invalidate_page(d, root=c.root)
                     raise
+                if job_cleanup_unconfirmed(e):
+                    raise  # CLI cannot establish settlement of a different browser Job.
                 # CDP 块级失败：只回落本块帧区间（frames=None 时整页，与现行一致）
                 fb = range(n) if frames is None else frames
                 print(f"⚠ {cid}: CDP 渲染失败（{e}），"

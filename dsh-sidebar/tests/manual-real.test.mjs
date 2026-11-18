@@ -30,11 +30,11 @@ test('20 typed UI forms -> Host -> frozen public provider -> installed CLI plan/
  const {root,Simulate}=await mount(t);const coverage=[]
  for(const op of EDIT_OPERATIONS){
   const doc=fixture();doc.sources.push({id:'spare',path:'unused.wav'});doc.video_tracks[0].clips[0].opacity=0.5
-  const env=await environment(t,`ui-${op}`,doc);let refreshed=0
+  const env=await environment(t,`ui-${op}`,doc);let refreshed=0,intents=[]
   const block=env.result.blocks.find(b=>b.data.id==='c'),track=env.result.tracks.find(t=>t.data.id===(op==='track.references'?'bed':'v'))
   const selection=op.startsWith('track.')?{kind:'track',address:track.address}:{kind:'block',address:block.address}
-  await act(async()=>root.render(h(ManualEditor,{key:env.dir,sessionId:'one',opened:env.opened,result:env.result,selection,selected:[selection],frame:15,tabSignal:new AbortController().signal,call:env.call,onCommitted:async()=>{refreshed++}})))
-  await click('明确允许本会话向此工程及 core 历史写入');await settle(()=>document.body.textContent.includes('写授权：已明确授予'))
+  await act(async()=>root.render(h(ManualEditor,{key:env.dir,sessionId:'one',opened:env.opened,result:env.result,selection,selected:[selection],frame:15,tabSignal:new AbortController().signal,call:env.call,onQueueChange:queue=>{intents=queue},onCommitted:async()=>{refreshed++}})))
+  await click('启用编辑');await settle(()=>document.body.textContent.includes('已允许本会话写入工程及历史'))
   await change(Simulate,'编辑操作',op);const fill=async(k,v)=>change(Simulate,k,v)
   if(op==='source.add')await fill('素材路径（不复制媒体）','new.mov')
   if(op==='source.remove')await fill('素材 ID','spare')
@@ -51,11 +51,11 @@ test('20 typed UI forms -> Host -> frozen public provider -> installed CLI plan/
   if(op==='parameters.update')await fill('属性值（text 为文本，其余单个 JSON 值）','0.75')
   if(op==='project.resize')await fill('工程新时长帧（不改 FPS/分辨率）','130')
   if(op==='range.ripple'){const check=[...document.querySelectorAll('label')].find(n=>n.textContent==='video main v').querySelector('input');await act(async()=>Simulate.change(check,{target:{checked:true}}));await fill('shift 起点帧','60');await fill('shift 有符号整数偏移','10')}
-  const before=await env.read();await click('加入未保存批次');const intents=parseJSON(document.querySelector('[aria-label="未保存 typed intents"]').textContent);assert.equal(intents[0]?.op,op,domTextExcerpt(document))
-  await click('内核预检计划（零写）');await settle(()=>button('确认提交此冻结计划（一次 revision）')||document.body.textContent.includes('"ok": false'))
-  assert(button('确认提交此冻结计划（一次 revision）'),`${op}: ${domTextExcerpt(document)}`);assert.equal(await env.read(),before,'planning must not write')
+  const before=await env.read();await click('加入批次');assert.equal(intents[0]?.op,op,domTextExcerpt(document));assert(document.querySelector('[aria-label="手动语义编辑"] pre') === null, "Expected absent DOM node")
+  await click('预检');await settle(()=>button('保存更改')||env.wire.findLast(w=>w.request.op==='plan')?.response.ok===false)
+  assert(button('保存更改'),`${op}: ${domTextExcerpt(document)}`);assert.equal(await env.read(),before,'planning must not write')
   const plan=env.wire.findLast(w=>w.request.op==='plan').response,opId=plan.submitted_request.op_id
-  await click('确认提交此冻结计划（一次 revision）');await settle(()=>refreshed===1)
+  await click('保存更改');await settle(()=>refreshed===1)
   const commit=env.wire.findLast(w=>w.request.op==='commit').response;assert.equal(commit.ok,true,stringifyJSON(commit));assert.equal(commit.op_id,opId);assert.deepEqual(commit.submitted_request,plan.submitted_request)
   const after=parseJSON(await env.read());assert.deepEqual(after.unknown_root,doc.unknown_root);assert.equal(after._vtx.head,opId)
   const writeGrant=env.wire.find(w=>w.request.op==='authorize-write').response.writeGrant
@@ -69,26 +69,30 @@ test('20 typed UI forms -> Host -> frozen public provider -> installed CLI plan/
  await writeFile(join(process.env.SIDEBAR_EVIDENCE_DIR,'manual-20ops.json'),stringifyJSON({adapter:'React18/jsdom29; real public LocalSubprocessRuntime + installed vtx; not browser layout',coverage},2))
 })
 
-test('actual PreviewBody gesture ghost -> batch commit -> authoritative inspect/query and exact raw',{skip,timeout:30000},async t=>{
+test('actual PreviewBody gesture preview -> direct commit -> authoritative inspect/query and exact raw',{skip,timeout:30000},async t=>{
  const env=await environment(t,'gesture');const {root,Simulate}=await mount(t);const previous=globalThis.fetch;t.after(()=>{globalThis.fetch=previous})
- globalThis.fetch=async(_url,init)=>env.host.control(new Request('http://owner/api/framivra/control',{method:'POST',body:init.body,signal:init.signal}))
+ globalThis.fetch=async(_url,init)=>{const answer=await env.host.control(new Request('http://owner/api/framivra/control',{method:'POST',body:init.body,signal:init.signal}));env.wire.push({request:parseJSON(init.body),status:answer.status,response:parseJSON(await answer.clone().text())});return answer}
  const controller=new AbortController();await act(async()=>root.render(h(PreviewBody,{sessionId:'one',useTabInfo:()=>({tab:{signal:controller.signal}})})))
  await act(async()=>document.querySelector('form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true})));await settle(()=>document.querySelector('.fv-ruler'))
- await click('明确允许本会话向此工程及 core 历史写入');await settle(()=>document.body.textContent.includes('写授权：已明确授予'))
+ await click('启用编辑');await settle(()=>document.body.textContent.includes('已允许本会话写入工程及历史'))
  const ruler=document.querySelector('.fv-ruler');ruler.getBoundingClientRect=()=>({left:0,width:1200})
- const clip=()=>document.querySelector('[aria-label^="选择块 /video_tracks/0/clips/0"]');await act(async()=>clip().click())
+  document.querySelectorAll('.fv-track').forEach((track,i)=>{track.getBoundingClientRect=()=>({top:i*100,bottom:(i+1)*100})})
+ const clip=()=>document.querySelector('[aria-label^="选择块 /video_tracks/0/clips/0"]');await act(async()=>clip().click());await settle(()=>document.body.textContent.includes('引用就绪。'))
  const before=await env.read(),count=env.specs.length
- await act(async()=>Simulate.pointerDown(clip(),{pointerId:1,button:0,clientX:0,clientY:10}));await act(async()=>Simulate.pointerMove(clip(),{pointerId:1,clientX:300,clientY:10}))
+ await act(async()=>Simulate.pointerDown(clip(),{pointerId:1,button:0,clientX:0,clientY:10}));await act(async()=>Simulate.pointerMove(clip(),{pointerId:1,clientX:900,clientY:10}))
  assert(document.querySelector('[aria-label="未保存拖动 ghost"]'));assert.equal(await env.read(),before);assert.equal(env.specs.length,count)
- await act(async()=>Simulate.pointerUp(clip(),{pointerId:1,clientX:300,clientY:10}));assert(document.querySelector('[aria-label="未保存拖动 ghost"]') === null, "Expected absent DOM node: document.querySelector('[aria-label=\"未保存拖动 ghost\"]')")
- assert.match(document.querySelector('[aria-label="未保存 typed intents"]').textContent,/"at": 30/)
- await click('内核预检计划（零写）');await settle(()=>button('确认提交此冻结计划（一次 revision）'));await click('确认提交此冻结计划（一次 revision）');await settle(()=>parseJSON(document.querySelector('[aria-label="未保存 typed intents"]').textContent).length===0)
- assert.equal(parseJSON(await env.read()).video_tracks[0].clips.find(b=>b.id==='c').dst_in,30)
+ await act(async()=>Simulate.pointerUp(clip(),{pointerId:1,clientX:900,clientY:10}));assert(document.querySelector('[aria-label="未保存拖动 ghost"]') === null, "Expected absent DOM node")
+ await settle(()=>env.wire.some(row=>row.request.op==='commit'))
+ await settle(()=>document.body.textContent.includes('已保存。'))
+ assert(document.querySelector('[aria-label="待保存操作"]') === null, "Expected absent DOM node")
+ assert.equal(parseJSON(await env.read()).video_tracks[0].clips.find(b=>b.id==='c').dst_in,90)
+ assert.equal(env.wire.filter(row=>row.request.op==='plan').length,1)
+ assert.equal(env.wire.filter(row=>row.request.op==='commit').length,1)
  // Core move may reorder its array; refresh must preserve the stable ID, not
  // accidentally retain the old address now occupied by another clip.
  await settle(()=>document.querySelector('[aria-label="活动引用"]')?.textContent.includes('/video_tracks/0/clips/1'))
  const snapshot=await env.call('one',{op:'inspect',grant:env.opened.grant}),raw=await env.call('one',{op:'reference',grant:env.opened.grant,query:{block_ids:['c'],expected_content_version:snapshot.content_version}})
- assert.match(raw.selection.blocks[0].raw,/"dst_in":\s*30\b/)
+ assert.match(raw.selection.blocks[0].raw,/"dst_in":\s*90\b/)
  assert((await env.read()).includes(raw.selection.blocks[0].raw),'reference must be an exact saved-source substring, not presentation serialization')
  await env.save('gesture-result.json',{before,after:await env.read(),raw:raw.selection.blocks[0].raw,adapter:'owned local geometry stub; real pointer handlers; not browser layout claim'})
 })
@@ -161,20 +165,20 @@ test('old installed core lacking required write capabilities keeps read/copy usa
 test('real JSON property forms preserve unsafe/nested numeric tokens into stdin and refuse without writes; 0.1 and 0.5 plan normally',{skip,timeout:30000},async t=>{
  const env=await environment(t,'property-tokens'),{root,Simulate}=await mount(t),block=env.result.blocks.find(b=>b.data.id==='c'),selection={kind:'block',address:block.address}
  await act(async()=>root.render(h(ManualEditor,{sessionId:'one',opened:env.opened,result:env.result,selection,selected:[selection],frame:15,tabSignal:new AbortController().signal,call:env.call,onCommitted:async()=>{}})))
- await click('明确允许本会话向此工程及 core 历史写入');await settle(()=>document.body.textContent.includes('写授权：已明确授予'))
+ await click('启用编辑');await settle(()=>document.body.textContent.includes('已允许本会话写入工程及历史'))
  const before=await env.read(),cases=[['parameters.update','9007199254740993','opacity'],['parameters.update','0.12345678901234567890123456789','opacity'],['parameters.update','{"x":9007199254740993,"unknown":{"decimal":0.12345678901234567890123456789}}','transform'],['source.update','{"x":9007199254740993}'],['source.update','{"x":0.12345678901234567890123456789}'],['source.update','{"x":0.1,"unknown":{"integer":9007199254740993,"decimal":0.12345678901234567890123456789}}']]
  for(const [op,value,property] of cases){
   await change(Simulate,'编辑操作',op)
   if(op==='source.update'){await change(Simulate,'素材 ID','s');await change(Simulate,'更新字段','transform');await change(Simulate,'transform JSON 属性',value)}else{await change(Simulate,'白名单属性（不适用对象由内核精确拒绝）',property);await change(Simulate,'属性值（text 为文本，其余单个 JSON 值）',value)}
-  await click('加入未保存批次');const oldCount=env.wire.length
-  await click('内核预检计划（零写）');await settle(()=>env.wire.length>oldCount&&env.wire.at(-1).request.op==='plan')
-  const outcome=env.wire.at(-1);assert.equal(outcome.response.ok,false,stringifyJSON(outcome));assert(button('确认提交此冻结计划（一次 revision）') === undefined, "Expected absent DOM node: button('确认提交此冻结计划（一次 revision）')")
+  await click('加入批次');const oldCount=env.wire.length
+  await click('预检');await settle(()=>env.wire.length>oldCount&&env.wire.at(-1).request.op==='plan')
+  const outcome=env.wire.at(-1);assert.equal(outcome.response.ok,false,stringifyJSON(outcome));assert(button('保存更改') === undefined, "Expected absent DOM node")
   const data=env.specs.findLast(s=>s.argv.includes('plan')).stdio.stdin.data;assert(data.includes(value),`raw typed token changed before core: ${value} vs ${data}`);assert.equal(await env.read(),before)
-  await click('清空未保存批次')
+  await click('清空')
  }
  await change(Simulate,'编辑操作','parameters.update');await change(Simulate,'白名单属性（不适用对象由内核精确拒绝）','opacity')
  for(const value of ['0.1','0.5']){
-  await change(Simulate,'属性值（text 为文本，其余单个 JSON 值）',value);await click('加入未保存批次');await click('内核预检计划（零写）');await settle(()=>button('确认提交此冻结计划（一次 revision）'));assert.equal(env.wire.at(-1).response.ok,true);assert.equal(await env.read(),before);await click('清空未保存批次')
+  await change(Simulate,'属性值（text 为文本，其余单个 JSON 值）',value);await click('加入批次');await click('预检');await settle(()=>button('保存更改'));assert.equal(env.wire.at(-1).response.ok,true);assert.equal(await env.read(),before);await click('清空')
  }
  await env.save('property-token-wire.json',env.wire)
 })
