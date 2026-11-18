@@ -184,6 +184,81 @@ class SvgContract(unittest.TestCase):
                     self.assertRaisesRegex(ValueError, 'absolute Windows project root'):
                 cache_state.receipt_fingerprint(c)
 
+    @unittest.skipUnless(os.name == 'nt', 'native Windows impact reads')
+    def test_windows_impact_rechecks_exact_names_without_changing_report(self):
+        from vtx.inspection import impact
+
+        name = 'Assets #/Nested/Data.txt'
+        (self.root / name).parent.mkdir(parents=True)
+        (self.root / name).write_bytes(b'input')
+        self.clip['cache_dependencies'] = [name, name]
+        root = str(self.root)
+        c = SimpleNamespace(root=self.root, cache=self.root / 'cache', tl=self.timeline,
+                            fps=30, w=1920, h=1080)
+        expected = png_source(c, self.clip)
+        with mock.patch.object(gfx_svg, 'read_input', wraps=gfx_svg.read_input) as read, \
+                mock.patch.object(impact, 'file_digest', side_effect=AssertionError('legacy SVG read')):
+            snapshot = impact.capture(self.timeline, root)
+        node = snapshot['nodes']['clip:0:0']
+        files = node['inputs']['svg_sequence']['files']
+        self.assertIn(name, files)
+        self.assertEqual(node['inputs']['dependencies'], {str(self.root / n): d for n, d in files.items()})
+        self.assertEqual(node['key'], expected.directory.name)
+        self.assertEqual(node['artifact'], str(expected.directory.relative_to(self.root)))
+        final = read.call_args_list[-len(files):]
+        self.assertEqual([call.args[1] for call in final], list(files))
+        self.assertTrue(all(call.args[0].root == root for call in read.call_args_list))
+        self.assertFalse((self.root / 'cache').exists())
+
+    @unittest.skipUnless(os.name == 'nt', 'native Windows impact reads')
+    def test_windows_impact_does_not_canonicalize_the_svg_read_root(self):
+        from vtx.inspection.impact import capture
+
+        for root in ('.', str(self.root) + r'\.'):
+            with self.subTest(root=root):
+                snapshot = capture(self.timeline, root)
+                self.assertIsNone(snapshot['nodes']['clip:0:0']['key'])
+                self.assertTrue(any('absolute Windows project root' in w.get('detail', '')
+                                    for w in snapshot['warnings']))
+
+    @unittest.skipUnless(os.name == 'nt', 'native Windows impact reads')
+    def test_windows_impact_keeps_earlier_observations_after_png_identity_failure(self):
+        from vtx.inspection.impact import capture
+
+        (self.root / 'Assets').mkdir()
+        c = SimpleNamespace(root=self.root, tl=self.timeline, fps=30, w=1920, h=1080)
+        for first, second in [('Assets/Data.txt', 'Assets/Data.txt'),
+                              ('Assets/Case.txt', 'Assets/case.txt')]:
+            with self.subTest(first=first, second=second):
+                # Prepare two ordinary records before capture. No filesystem changes
+                # occur during capture; feed it the previously observed records.
+                self.clip['cache_dependencies'] = [first]
+                later = dict(self.clip, dst_in=0, cache_dependencies=[second])
+                self.timeline['video_tracks'][0]['clips'] = [self.clip, later]
+                (self.root / first).write_bytes(b'earlier')
+                before = gfx_svg.resolve(c, self.clip)
+                (self.root / first).unlink()
+                (self.root / second).write_bytes(b'current' if first == second else b'earlier')
+                current = gfx_svg.resolve(c, later)
+                failure = ValueError('PNG identity unavailable')
+                with mock.patch.object(gfx_svg, 'resolve', side_effect=[before, failure, current, current]):
+                    if first == second:
+                        with self.assertRaisesRegex(ValueError, 'input changed during impact capture'):
+                            capture(self.timeline, self.root)
+                    else:
+                        with self.assertRaises((OSError, ValueError)):
+                            capture(self.timeline, self.root)
+
+    @unittest.skipUnless(os.name == 'nt', 'native Windows impact reads')
+    def test_windows_impact_marks_conflicting_png_source_key_unknown(self):
+        from vtx.inspection.impact import capture
+
+        with mock.patch.object(gfx_svg, 'engine_identity', side_effect=[ENGINE, dict(ENGINE, version='later')]):
+            snapshot = capture(self.timeline, self.root)
+        self.assertIsNone(snapshot['nodes']['clip:0:0']['key'])
+        self.assertTrue(any('PNG source identity differs' in w.get('detail', '')
+                            for w in snapshot['warnings']))
+
     def test_dependency_read_requires_expected_resolved_member(self):
         c = self.ctx()
         with self.assertRaisesRegex(ValueError, 'dependency identity changed'):
