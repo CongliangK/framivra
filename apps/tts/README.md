@@ -20,7 +20,7 @@
 ## 依赖
 
 - **app 级（manifest requires，doctor 可探测）**：ffmpeg / ffprobe（atempo 应用器、时长实测、峰值归一、volumedetect）；CLI 面（tts_cli/spec）系统 python3 stdlib 零第三方依赖。
-- **indextts 路径**：配置解释器用于启动拒绝入口，不代表推理可用；`init.sh` / `probe` 的资产存在性结果不能解除许可阻断。
+- **indextts 路径**：`gen` 和 `probe` 先查 `tts.python` 指定的解释器（未配置或为 `null` 时查默认 Conda 环境），找不到时再查仓库 `.venv`。Windows 分别查找环境根下的 `python.exe` 和 `.venv/Scripts/python.exe`；如旧配置仍写着 POSIX `bin/python`，可将该键设为 `null` 或指定实际解释器。Windows 请用原生 Python 运行 `tts_cli.py probe`。找到解释器只意味着可启动许可拒绝入口，不代表推理可用。
 - **edge 兜底引擎**：`edge-tts` 二进制（默认 `~/miniconda3/bin/edge-tts`，`tts.edge_bin` 可改；pip 安装）。
 
 ## 健康检查
