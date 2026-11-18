@@ -622,13 +622,18 @@ class GfxCliEntryTests(unittest.TestCase):
                 fake = SimpleNamespace(available=lambda: True, render_page=renderer)
                 with mock.patch.dict(sys.modules, {"vtx.render.gfx_render": fake}), \
                      mock.patch("vtx.render.gfx_render", fake, create=True), \
-                     mock.patch.object(cli, "find_chrome", return_value=str(self._stub("writefail"))), \
+                     mock.patch.object(cli, "find_chrome", return_value="unit-fixture-chrome"), \
+                     mock.patch.object(cli.gfx_cli, "render_cli", side_effect=GfxCliError("CLI boom")) as fallback, \
                      mock.patch.dict(os.environ, {"VTX_GFX": "cdp"}):
                     with self.assertRaises(SystemExit) as cm:
                         cli.gfx(c)
                 self.assertEqual(cm.exception.code, 1)
                 self.assertEqual(renderer.call_count, 1)
-                self.assertIs(json.loads((c.out / "receipt.json").read_text())["stages"]["gfx"]["ok"], False)
+                fallback.assert_called_once()
+                self.assertEqual(fallback.call_args.args[0], [0])
+                receipt = json.loads((c.out / "receipt.json").read_text())["stages"]["gfx"]
+                self.assertIs(receipt["ok"], False)
+                self.assertIn("CLI boom", receipt["detail"])
 
     def test_cdp_split_final_gate_rejects_invalid_frames(self):
         from vtx.cli import commands as cli

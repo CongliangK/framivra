@@ -4,6 +4,7 @@ Set VTX_TEST_CHROME and/or VTX_TEST_FFMPEG to enable real integration checks.
 All fixtures are synthetic. No private footage or machine paths are required.
 """
 import base64
+import io
 import json
 import os
 from pathlib import Path
@@ -195,6 +196,37 @@ class CDPStartupMock(unittest.TestCase):
                     popen.assert_called_once()
                     start_job.assert_not_called()
                 rmtree.assert_called_once_with('private-profile')
+
+    def test_windows_close_failure_keeps_startup_diagnostics(self):
+        from vtx.runtime import windows_browser as wb
+
+        for strict in (False, True):
+            for phase in ('http', 'page'):
+                with self.subTest(strict=strict, phase=phase), tempfile.TemporaryDirectory() as d:
+                    profile = Path(d) / 'private-profile'
+                    profile.mkdir()
+                    cleanup = OSError('QueryInformationJobObject failed')
+                    job = mock.Mock(**{'proc.poll.return_value': 19, 'close.side_effect': cleanup})
+                    http_error = ConnectionRefusedError('DevTools HTTP not ready')
+                    target = io.StringIO('{"webSocketDebuggerUrl":"ws://127.0.0.1/devtools/page/1"}')
+                    responses = http_error if phase == 'http' else [None, target]
+                    record = {'policy': 'strict', 'closure': 'static-subset-v1'} if strict else None
+                    with mock.patch.object(gfx, 'sys', SimpleNamespace(platform='win32')), \
+                            mock.patch.object(wb, 'BrowserJob', return_value=job), \
+                            mock.patch.object(gfx, '_HAS_NUMPY', True), \
+                            mock.patch.object(gfx.tempfile, 'mkdtemp', return_value=str(profile)), \
+                            mock.patch.object(gfx.urllib.request, 'urlopen', side_effect=responses), \
+                            mock.patch.object(gfx, 'WSConn'), \
+                            mock.patch.object(gfx.Tab, 'call', side_effect=TimeoutError('fixture recv')):
+                        error_type, message = ((RuntimeError, r'chrome exited during startup \(exit status: 0x00000013\)')
+                                               if phase == 'http' else (TimeoutError, 'CDP Page.enable timeout'))
+                        with self.assertRaisesRegex(error_type, message) as caught:
+                            gfx.render_page('page.html', str(Path(d) / 'out'), 1, 'private-browser',
+                                            tabs=1, width=1, height=1, dependency_record=record)
+                    self.assertIsInstance(caught.exception.__cause__, wb.JobSettlementError)
+                    self.assertIs(caught.exception.__cause__.__cause__, cleanup)
+                    self.assertTrue(profile.is_dir())
+                    job.close.assert_called_once_with()
 
 
 class CDPDeadlineMock(unittest.TestCase):
