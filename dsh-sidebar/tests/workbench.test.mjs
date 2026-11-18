@@ -229,7 +229,7 @@ const snapshot = { content_version: version, coverage, diagnostics: [], document
 const tracks = [{ family: 'video', track_index: 0, address: '/t/0', data: { name: 'MAIN_TRACK' } }]
 const blocks = [{ family: 'video', track_index: 0, block_index: 0, address: '/t/0/b/0', range: [0, 20], data: { src: 's.mp4' } }]
 const full = { content_version: version, coverage, diagnostics: [], tracks, blocks }
-const opened = { grant: 'grant', snapshot, media: [] }
+const opened = { grant: 'grant', snapshot, media: [], capabilities: { capabilities: { frame: { inline_png: { flag: '--include-png' } } } } }
 
 function hostFixture() {
   const requests = [], forbidden = []

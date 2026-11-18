@@ -47,7 +47,7 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
   globalThis.fetch = async (_url, init) => {
     const request = JSON.parse(init.body); requests.push(request); order.push(request.op)
     let result
-    if (request.op === 'open') result = { grant: 'grant', snapshot, media: [] }
+    if (request.op === 'open') result = { grant: 'grant', snapshot, media: [], capabilities: { capabilities: { frame: { inline_png: { flag: '--include-png' } } } } }
     else if (request.op === 'query') result = request.query.frame === undefined ? full : { ...filtered, content_version: nextVersion }
     else if (request.op === 'proposal-list') result = { ok: true, proposals: [] }
     else if (request.op === 'reference') {

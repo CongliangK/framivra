@@ -92,7 +92,7 @@ test('host expires_in_ms deadline: banner, tool teardown, stopped proposal poll;
     const request = JSON.parse(init.body)
     requests.push(request)
     let result
-    if (request.op === 'open') result = { grant: `g${++grantCounter}`, snapshot: snapshotFor(`g${grantCounter}`), expires_in_ms: grantCounter === 1 ? 400 : 400000, media: [] }
+    if (request.op === 'open') result = { grant: `g${++grantCounter}`, snapshot: snapshotFor(`g${grantCounter}`), expires_in_ms: grantCounter === 1 ? 400 : 400000, media: [], capabilities: { capabilities: { frame: { inline_png: { flag: '--include-png' } } } } }
     else if (request.op === 'query') result = full
     else if (request.op === 'proposal-list') result = { ok: true, proposals: [] }
     else result = { ok: true }
