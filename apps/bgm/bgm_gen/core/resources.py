@@ -142,7 +142,19 @@ def mem_total_gb():
         memory = _windows_physical_memory()
         return None if memory is None else memory[0] / (1024.0 ** 3)
     kb = _read_meminfo_kb("MemTotal")
-    return None if kb is None else kb / (1024.0 * 1024.0)
+    if kb is not None:
+        return kb / (1024.0 * 1024.0)
+    # macOS has no /proc; sysconf reports native physical pages/page size.
+    # This is total memory only, NOT an available-memory estimate. Preserve
+    # unknown availability and conservative single-worker scheduling there.
+    try:
+        pages = os.sysconf("SC_PHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        if pages > 0 and page_size > 0:
+            return pages * page_size / float(1024 ** 3)
+    except (AttributeError, OSError, ValueError):
+        pass
+    return None
 
 
 def probe(refresh=False):

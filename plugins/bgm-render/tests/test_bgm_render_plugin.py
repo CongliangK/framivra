@@ -116,7 +116,10 @@ class _Base(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name)
+        # macOS tempfile may use /var -> /private/var. Choose a canonical
+        # fixture root before writing, rather than weakening cleanup's refusal
+        # of symlink ancestors (the production safety rule remains unchanged).
+        self.root = Path(self._tmp.name).resolve()
         (self.root / "music").mkdir()
         # 伪 bgm CLI + 调用日志
         self.log = self.root / "bgm_calls.log"
@@ -1023,6 +1026,15 @@ class InvariantsAndBranches(_Base):
             _scan_plugin_keys(c, errs)
         self.assertTrue(any("未安装" in e and "bgm" in e for e in errs))
 
+    def test_three_branch_disabled(self):
+        from vtx.pipeline.stages import _scan_plugin_keys
+        c = self._ctx(True)
+        errs = []
+        with mock.patch("vtx.pluginlib.registry.plugin_state", return_value="disabled"):
+            _scan_plugin_keys(c, errs)
+        self.assertTrue(any("禁用" in e and "bgm" in e for e in errs))
+        self.assertEqual(self._calls(), [])
+
     def test_bus_dispatch_probe_prepare(self):
         c = self._ctx(True)
         f = pl_hooks.run_probe_source(c, "bgm_main")
@@ -1059,9 +1071,12 @@ class RealChainIntegration(_Base):
         src = REPO / "apps/bgm/examples/synth.json"
         self.assertTrue(src.is_file(), "仓内原创 synth 示例必须存在")
         proj = self.root / "minimal.json"
-        proj.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
-        first_track = next(t["name"] for t in json.loads(
-            src.read_text(encoding="utf-8"))["tracks"] if isinstance(t, dict))
+        value = json.loads(src.read_text(encoding="utf-8"))
+        value["meta"].update(sr=48000, channels=2)
+        track = value["tracks"][0]
+        track.update(gain_db=-6, pan=-.6)
+        first_track = track["name"]
+        proj.write_text(json.dumps(value), encoding="utf-8")
         tl = {"version": 2,
               "project": {"fps": 30, "duration_frames": 120,
                           "width": 640, "height": 360},
@@ -1077,8 +1092,36 @@ class RealChainIntegration(_Base):
             self.assertEqual((w.getframerate(), w.getnchannels(),
                               w.getsampwidth()), (48000, 2, 2))
         shared = _bgm.render_cache_dir(c, "bgm_stem")
-        self.assertTrue((shared / "stems" / f"{first_track}.bus.wav").is_file(),
-                        "总线分轨须落共享渲染缓存")
+        bus = shared / "stems" / f"{first_track}.bus.wav"
+        self.assertTrue(bus.is_file(), "总线分轨须落共享渲染缓存")
+        import numpy as np
+        def decode(path, codec):
+            result = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path),
+                "-ar", "48000", "-ac", "2", "-c:a", "pcm_" + codec,
+                "-f", codec, "pipe:1"], capture_output=True, check=True)
+            return result.stdout
+        raw = np.frombuffer(decode(shared / "stems" / f"{first_track}.synth.wav", "f32le"),
+                            dtype="<f4").reshape(-1, 2)
+        mixed = np.frombuffer(decode(bus, "f32le"), dtype="<f4").reshape(-1, 2)
+        self.assertEqual(len(mixed), 4 * 48000)
+        expected = raw[:len(mixed)] * np.array([1.3, .7]) * round(10 ** (-6 / 20), 6)
+        self.assertLess(float(np.max(np.abs(mixed - expected))), 2e-6)
+        self.assertGreater(float(np.max(np.abs(mixed - raw[:len(mixed)]))), .01)
+        marker = shared / "_complete.json"
+        before = (marker.read_bytes(), marker.stat().st_mtime_ns)
+        # Bind each source ID to its actual PCM, not an unordered set of files.
+        for sid, choice, reference in (("bgm_stem", f"stem:{first_track}", bus),
+                ("bgm_master", "master", shared / "mix_master.wav"),
+                ("bgm_premaster", "premaster", shared / "mix_premaster.wav")):
+            if sid != "bgm_stem":
+                tl["sources"].append({"id": sid, "path": "minimal.json", "bgm": {"output": choice}})
+                c = _context(self.root, tl)
+            selected = _bgm.prepare_source(c, sid)
+            with wave.open(str(selected), "rb") as w:
+                self.assertEqual(w.readframes(w.getnframes()), decode(reference, "s16le"), sid)
+            self.assertEqual(_bgm.render_cache_dir(c, sid), shared)
+            self.assertEqual((marker.read_bytes(), marker.stat().st_mtime_ns), before)
+        self.assertEqual(len(list((self.root / "cache/bgm").glob("*/_complete.json"))), 1)
 
 
 if __name__ == "__main__":

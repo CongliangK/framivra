@@ -30,6 +30,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import wave
 
@@ -41,8 +42,14 @@ from . import midi_util
 
 TAIL_BLOCKS = 40          # 播放结束后补渲块数（混响尾巴；与旧脚本一致）
 
-# 三级解析的兜底 soname（③）：so.3→so.2→裸名（Windows DLL 名同形）
+# System discovery may miss Homebrew's keg-only libraries (not on dyld's
+# search path). Keep explicit runtime and find_library ahead of these fallbacks.
 _SONAME_CANDIDATES = ["libfluidsynth.so.3", "libfluidsynth.so.2", "fluidsynth"]
+_DARWIN_CANDIDATES = [
+    "libfluidsynth.3.dylib", "libfluidsynth.2.dylib", "libfluidsynth.dylib",
+    "/opt/homebrew/opt/fluid-synth/lib/libfluidsynth.dylib",
+    "/usr/local/opt/fluid-synth/lib/libfluidsynth.dylib",
+]
 
 
 def _runtime_fluidsynth_lib(runtime=None):
@@ -52,20 +59,27 @@ def _runtime_fluidsynth_lib(runtime=None):
     return (rt.get("tools") or {}).get("fluidsynth_lib") or None
 
 
-def _load_lib(runtime=None):
-    """libfluidsynth 三级解析（M-1）：
-      ① runtime.json tools.fluidsynth_lib（用户/doctor 显式指定的 so/DLL 路径）；
-      ② ctypes.util.find_library("fluidsynth")（系统探测）；
-      ③ 兜底 soname 列表逐个 CDLL 试载。
-    全部失败抛 EngineError（带 doctor 排障指引），不裸 OSError。"""
+def _fluidsynth_candidates(configured=None):
+    """Shared read-only discovery order for the renderer and doctor."""
+    # Explicit selection is authoritative: a broken path/ABI must not silently
+    # select another installation (doctor and actual rendering must agree).
+    if configured:
+        return [configured]
     names = []
-    cfg = _runtime_fluidsynth_lib(runtime)
-    if cfg:
-        names.append(cfg)
     found = ctypes.util.find_library("fluidsynth")
     if found:
         names.append(found)
-    names += [n for n in _SONAME_CANDIDATES if n not in names]
+    fallbacks = _DARWIN_CANDIDATES if sys.platform == "darwin" else _SONAME_CANDIDATES
+    return list(dict.fromkeys(names + fallbacks))
+
+
+def _load_lib(runtime=None):
+    """libfluidsynth 三级解析（M-1）：
+      ① 显式 runtime.json tools.fluidsynth_lib 只试载该值，失败不回退；
+      ② 未配置时 ctypes.util.find_library("fluidsynth")（系统探测）；
+      ③ 未配置时兜底 soname 列表逐个 CDLL 试载。
+    加载失败抛 EngineError（带 doctor 排障指引），不裸 OSError。"""
+    names = _fluidsynth_candidates(_runtime_fluidsynth_lib(runtime))
     lib, tried = None, []
     for name in names:
         try:
@@ -78,8 +92,9 @@ def _load_lib(runtime=None):
             "libfluidsynth 加载失败（三级解析均未成功）：\n  " + "\n  ".join(tried)
             + "\n排障指引：先跑 `bgm doctor`（或 python3 bgm_gen/doctor.py）看"
               " tools.fluidsynth_lib 体检项；亦可在 MUSIC_RUNTIME 指定的用户 JSON 的 "
-              "tools.fluidsynth_lib 填 so/DLL 全路径（如 "
-              "/usr/lib64/libfluidsynth.so.3；Windows 为 fluidsynth.dll 全路径）"
+              "tools.fluidsynth_lib 填动态库全路径（如 "
+              "macOS /opt/homebrew/opt/fluid-synth/lib/libfluidsynth.dylib；"
+              "Linux /usr/lib64/libfluidsynth.so.3；Windows fluidsynth.dll）"
               "后重试。")
     P = ctypes.c_void_p
     lib.new_fluid_settings.restype = P
