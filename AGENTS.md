@@ -25,7 +25,7 @@
 - 离线体检：`env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor`；联网会fetch 写入。
 - 链接预演：`python3 vt.py --fix-links --dry`；实改前核对目标/权限。
 - 渲染：`python3 vtx/vtx.py -t <timeline.json> all`（写缓存/产物）；前置见[交付链](<docs/skill/references/edit.md>)。
-- 测试：`bash scripts/run_all_tests.sh`；局部见[贡献指南](<CONTRIBUTING.md#测试入口>)。
+- 测试：本机 Linux / DSH 全量、侧栏 DOM 与真实工具回归一律用[本机限额入口](<CONTRIBUTING.md#本机-linux先隔离再运行>)；组 OOM 后停止重跑，由人工排查并确认。其他平台、局部选测见[贡献指南](<CONTRIBUTING.md#测试入口>)。
 - 文档必跑：`bash scripts/doc_gates.sh`；报告 PASS/FAIL/SKIP/UNRUN；冒烟、语法检查不等于业务或全量验证。
 
 ## 写态红线

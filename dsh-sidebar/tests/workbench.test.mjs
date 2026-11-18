@@ -1,3 +1,4 @@
+import { domTextExcerpt } from './dom-diagnostics.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import React, { act } from 'react'
@@ -26,7 +27,7 @@ async function mount(t) {
       if (predicate()) return
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)) })
     }
-    assert.fail(`DOM did not settle${label ? ` (${label})` : ''}: ${document.body.textContent.slice(0, 300)}`)
+    assert.fail(`DOM did not settle${label ? ` (${label})` : ''}: ${domTextExcerpt(document)}`)
   }
   return { root, dom, button, label, change, submit, settle, Simulate }
 }
@@ -280,7 +281,7 @@ test('PreviewBody: initial render performs no browse/open/query/write — only t
   assert(document.body.textContent.includes('从一条时间线开始'))
   assert(document.querySelector('.fv-ruler') === null)
   assert.equal(document.querySelectorAll('.fv-file-list button').length, 0)
-  assert.equal(document.querySelector('[role="alert"]'), null)
+  assert(document.querySelector('[role="alert"]') === null, "Expected absent DOM node: document.querySelector('[role=\"alert\"]')")
 })
 
 test('PreviewBody: expand/shrink drives the native dialog via public showModal/close; ruler and editor DOM nodes are retained, no reopened/read side effects', async t => {
@@ -309,9 +310,9 @@ test('PreviewBody: expand/shrink drives the native dialog via public showModal/c
   assert.equal(dialog.getAttribute('role'), 'dialog')
   assert.equal(dialog.getAttribute('aria-modal'), 'true')
   assert(document.querySelector('[aria-label="收起工作台"]'))
-  assert.strictEqual(document.querySelector('.fv-ruler'), ruler, 'SAME ruler node retained across expand')
-  assert.strictEqual(document.querySelector('[aria-label="手动语义编辑"]'), editorSummary, 'SAME ManualEditor DOM node retained')
-  assert.strictEqual(document.querySelector('.fv-monitor'), monitor)
+  assert(document.querySelector('.fv-ruler') === ruler, 'SAME ruler node retained across expand')
+  assert(document.querySelector('[aria-label="手动语义编辑"]') === editorSummary, 'SAME ManualEditor DOM node retained')
+  assert(document.querySelector('.fv-monitor') === monitor, 'SAME program monitor retained')
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
   assert.equal(host.requests.length, afterLoad, 'expand issues no reopen/query/render IO')
   await act(async () => label('收起工作台').click())
@@ -321,7 +322,7 @@ test('PreviewBody: expand/shrink drives the native dialog via public showModal/c
   assert.equal(dialog.getAttribute('aria-modal'), null)
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
   assert.equal(host.requests.length, afterLoad, 'shrink issues no IO either')
-  assert.strictEqual(document.querySelector('.fv-ruler'), ruler, 'shrink also retains the ruler node')
+  assert(document.querySelector('.fv-ruler') === ruler, 'shrink also retains the ruler node')
 })
 
 test('PreviewBody: choosing a browser file opens through the Host control response and vtx projection, not a second parser', async t => {
@@ -414,7 +415,7 @@ test('PreviewBody: topbar path disclosure closes with Escape without closing the
   await act(async () => Simulate.keyDown(menu.querySelector('input'), { key: 'Escape' }))
   assert.equal(menu.open, false)
   assert.equal(document.querySelector('.fv-workbench').open, true, 'Escape was owned by the disclosure')
-  assert.equal(document.activeElement, menu.querySelector('summary'))
+  assert(document.activeElement === menu.querySelector('summary'), "Expected focus on menu.querySelector('summary')")
   assert.equal(host.requests.length, 0, 'opening/closing the disclosure performs no IO')
   menu.open = true
   await submit(0)
@@ -422,5 +423,5 @@ test('PreviewBody: topbar path disclosure closes with Escape without closing the
   assert.equal(menu.open, false, 'submit reclaims the overlay')
   assert.equal(host.requests.filter(r => r.op === 'open').length, 1)
   assert(document.querySelector('.fv-inspector .fv-data'), 'complete raw project data stays mounted in the inspector')
-  assert.equal(document.querySelector('.fv-timeline-pane .fv-data'), null, 'data details do not consume lane height')
+  assert(document.querySelector('.fv-timeline-pane .fv-data') === null, 'data details do not consume lane height')
 })

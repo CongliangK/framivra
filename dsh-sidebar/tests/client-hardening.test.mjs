@@ -1,3 +1,4 @@
+import { domTextExcerpt } from './dom-diagnostics.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import React, { act } from 'react'
@@ -78,7 +79,7 @@ test('control responses are bounded BEFORE decode: oversized body fails closed w
   await act(async () => root.render(h(PreviewBody, { ...host, sessionId: 'one' })))
   await openViaPathForm(dom)
   await settle(() => document.body.textContent.includes('BODY_LIMIT'), 'oversized response surfaces the bound')
-  assert(document.body.textContent.includes('BODY_LIMIT'), `error mentions the bound: ${document.body.textContent.slice(0, 200)}`)
+  assert(document.body.textContent.includes('BODY_LIMIT'), `error mentions the bound: ${domTextExcerpt(document)}`)
   assert(document.querySelector('.fv-ruler') === null, 'oversized response never produces a ready timeline')
   assert.equal(document.querySelectorAll('video').length, 0)
 })

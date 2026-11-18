@@ -45,7 +45,7 @@ test('visual timeline: fixed header column grid aligns ruler with clip rows; fam
   assert(css.includes('.fv-ruler-row{') || /fv-ruler-row\{[^}]*position:sticky/.test(css))
   assert(/fv-ruler-row\{[^}]*position:sticky/.test(css))
   assert(css.includes('var(--fv-tl-surface,var(--fv-surface,#202125))'))
-  assert.equal(document.querySelector('link[rel="stylesheet"]'), null)
+  assert(document.querySelector('link[rel="stylesheet"]') === null, "Expected absent DOM node: document.querySelector('link[rel=\"stylesheet\"]')")
   const rulerRow = document.querySelector('.fv-ruler-row')
   const ruler = document.querySelector('.fv-ruler')
   assert(rulerRow, 'ruler row exists')

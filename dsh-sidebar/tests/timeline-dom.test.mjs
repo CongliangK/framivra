@@ -1,3 +1,4 @@
+import { domTextExcerpt } from './dom-diagnostics.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import React, { act } from 'react'
@@ -34,7 +35,7 @@ async function settle(predicate) {
     if (predicate()) return
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)) })
   }
-  assert.fail(`DOM did not settle: ${document.body.textContent}`)
+  assert.fail(`DOM did not settle: ${domTextExcerpt(document)}`)
 }
 
 test('actual React DOM: full projection persists, hover is local, ruler/keys set canonical input and selection references stay independent of the playhead', async t => {
@@ -170,17 +171,17 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
   assert(document.body.textContent.includes('external.srt'))
   assert(!document.body.textContent.includes('9007199254740993'), 'raw snapshot JSON is not rendered')
   assert.equal(copies[0], '{ "unsafe":9007199254740993 }', 'exact integer remains available through Clipboard')
-  assert.equal(document.querySelector('video'), null)
+  assert(document.querySelector('video') === null, 'no native video in live mode')
   await act(async () => button('成片渲染').click())
   assert(document.body.textContent.includes('暂无成片；不会自动启动整片渲染。'))
   await act(async () => button('实时真预览').click())
   nextVersion = `sha256:${'b'.repeat(64)}`
   await submit(1)
   await settle(() => document.body.textContent.includes('旧块已隐藏'))
-  assert.equal(document.querySelector('.fv-clip'), null)
-  assert.equal(button('复制 raw JSON'), undefined)
+  assert(document.querySelector('.fv-clip') === null, "Expected absent DOM node: document.querySelector('.fv-clip')")
+  assert(button('复制 raw JSON') === undefined, "Expected absent DOM node: button('复制 raw JSON')")
   await act(async () => root.render(h(PreviewBody, { useTabInfo, sessionId: 'two' })))
-  assert.equal(document.querySelector('.fv-timeline'), null)
+  assert(document.querySelector('.fv-timeline') === null, "Expected absent DOM node: document.querySelector('.fv-timeline')")
   assert.equal(requests.at(-1).op, 'close')
   assert.equal(requests.at(-1).sessionId, 'one')
   assert(requests.every(x => ['open', 'query', 'reference', 'proposal-list', 'close'].includes(x.op)))
@@ -236,7 +237,7 @@ test('actual React DOM: references abort on selection/session/unmount, not playh
   await act(async () => root.render(null))
   assert.equal(reads[4].signal.aborted, true)
   await act(async () => reads[4].finish('AFTER_UNMOUNT'))
-  assert.equal(document.body.textContent, '')
+  assert(document.body.textContent === '', 'body remains empty after unmount and a late response')
   assert.deepEqual(copies, ['CURRENT_B'], 'late unmounted copy cannot publish to Clipboard')
 })
 
@@ -245,10 +246,10 @@ test('actual React DOM: empty and unsafe displays retain diagnostics/raw; compon
   await act(async () => root.render(h(TimelineView, { snapshot, result: { ...full, tracks: [], blocks: [] } })))
   assert(document.body.textContent.includes('空项目'))
   assert(document.querySelector('.fv-timeline style').textContent.includes('.fv-timeline'))
-  assert.equal(document.querySelector('link[rel="stylesheet"]'), null)
+  assert(document.querySelector('link[rel="stylesheet"]') === null, "Expected absent DOM node: document.querySelector('link[rel=\"stylesheet\"]')")
   await act(async () => root.render(h(TimelineView, { snapshot: { ...snapshot, document: { ...snapshot.document, project: { duration_frames: JSON.rawJSON('9007199254740993') } } }, result: full })))
   assert(document.querySelector('[role="alert"]').textContent.length > 0)
   assert(document.body.textContent.includes('DISPLAY_PRECISION'))
   assert(document.body.textContent.includes('9007199254740993'))
-  assert.equal(document.querySelector('.fv-ruler'), null)
+  assert(document.querySelector('.fv-ruler') === null, "Expected absent DOM node: document.querySelector('.fv-ruler')")
 })

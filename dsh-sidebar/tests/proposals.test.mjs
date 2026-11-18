@@ -37,12 +37,12 @@ test('first poll is immediate: empty list and read failure are both visible', { 
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal: new AbortController().signal, call, writeGrant: undefined, manualBlocked: false, onCommitted: () => {}, onEditState: () => {} })))
   assert.equal(calls.length, 1, 'exactly one immediate poll, no interval wait needed')
   assert(text().includes('暂无提案'))
-  assert.equal(button('保存提案'), undefined)
+  assert(button('保存提案') === undefined, "Expected absent DOM node")
 
   const failing = []
   const failCall = async () => { failing.push(1); throw new Error('连接已断开') }
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal: new AbortController().signal, call: failCall, writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {}, onEditState: () => {} })))
-  assert.match(text(), /无法读取智能体提案：连接已断开。请检查连接。/)
+  assert(/无法读取智能体提案：连接已断开。请检查连接。/.test(text()), "DOM text did not match expected pattern")
   assert.equal(failing.length, 1)
 })
 
@@ -51,9 +51,9 @@ test('malformed proposal response is a visible protocol failure, never an invent
   for (const response of [undefined, { ok: true }, { proposals: [null] }, { proposals: [{ proposal_id: 'p1' }] }]) {
     await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal: new AbortController().signal,
       call: async () => response, writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {}, onEditState: () => {} })))
-    assert.match(text(), /无法读取智能体提案：提案响应格式不完整/)
+    assert(/无法读取智能体提案：提案响应格式不完整/.test(text()), "Body text must match /无法读取智能体提案：提案响应格式不完整/")
     assert.equal(text().includes('暂无提案'), false)
-    assert.equal(button('保存提案'), undefined)
+    assert(button('保存提案') === undefined, "Expected absent DOM node")
   }
 })
 
@@ -68,8 +68,8 @@ test('same-version pending row reviews human operations without JSON; confirm ga
   assert.equal(calls.length, 1, 'rerenders must not restart the poll')
   assert(text().includes('等待您确认 · 尚未保存'))
   assert(text().includes('预检与冻结操作'))
-  assert.equal(document.querySelector('article pre'), null, 'no rendered raw request or receipt JSON')
-  assert.match(document.querySelector('[aria-label="冻结操作"]').textContent, /工程时长.*130 帧/)
+  assert(document.querySelector('article pre') === null, 'no rendered raw request or receipt JSON')
+  assert(/工程时长.*130 帧/.test(document.querySelector('[aria-label="冻结操作"]').textContent), "DOM text did not match expected pattern")
   assert(text().includes(opId) && text().includes(version), 'transaction identifiers remain inspectable')
   assert.equal(button('保存提案').disabled, true, 'no write permit → disabled')
   assert.equal(button('拒绝提案').disabled, false)
@@ -100,11 +100,11 @@ test('frozen review exposes complete nested values and exact numeric tokens with
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal: new AbortController().signal, call: async () => ({ proposals: [row] }), writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {} })))
   const details = [...document.querySelectorAll('.fv-edit-operation-details')]
   assert.equal(details.length, 3)
-  assert.match(details[0].textContent, /0\.12345678901234567890123456789/)
+  assert(/0\.12345678901234567890123456789/.test(details[0].textContent), "DOM text did not match expected pattern")
   assert(details[0].textContent.includes('asset.svg') && details[0].textContent.includes('other.svg'))
   assert(details[1].textContent.includes('replacement.mov') && details[1].textContent.includes('0.25'))
   assert(details[2].textContent.includes('voice') && details[2].textContent.includes('right') && details[2].textContent.includes('剪切'))
-  assert.equal(document.querySelector('pre'), null)
+  assert(document.querySelector('pre') === null, "Expected absent DOM node")
   assert.equal(button('保存提案').disabled, false)
 })
 
@@ -133,7 +133,7 @@ test('confirm sends grant/writeGrant/proposalId exactly once; applied awaits onC
   await act(async () => resolveConfirm({ proposal: { ...pendingRow, state: 'applied', outcome: { op_id: opId } } }))
   assert(text().includes('内核已保存'))
   assert.equal(commits.length, 1, 'applied awaits onCommitted exactly once')
-  assert.match(text(), /已保存并刷新工程。/)
+  assert(/已保存并刷新工程。/.test(text()), "DOM text did not match expected pattern")
   assert.equal(calls.filter(c => !['proposal-list', 'proposal-confirm'].includes(c.op)).length, 0, 'no auto messages or extra ops')
   const last = states.at(-1)
   assert.deepEqual({ dirty: last.dirty, busy: last.busy, unknown: last.unknown }, { dirty: false, busy: false, unknown: false }, 'applied proposal clears dirty/busy/unknown')
@@ -171,7 +171,7 @@ test('unknown confirm outcome surfaces the original op_id and fail-closes; no au
   const states = []
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal: new AbortController().signal, call, writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {}, onEditState: s => states.push(s) })))
   await act(async () => button('保存提案').click())
-  assert.match(text(), /提交回执未取得。结果未知；原操作 ID：11111111-2222-4333-8444-555555555555。请读取状态 \/ 恢复，不要重试保存。/)
+  assert(/提交回执未取得。结果未知；原操作 ID：11111111-2222-4333-8444-555555555555。请读取状态 \/ 恢复，不要重试保存。/.test(text()), "DOM text did not match expected pattern")
   assert.equal(button('保存提案').disabled, true, 'unknown outcome fail-closes every later confirm')
   assert.equal(calls.filter(op => op !== 'proposal-list').length, 1, 'exactly one confirm; the component never calls status/recover by itself')
   assert(states.some(s => s.unknown === true), 'unknown outcome reports unknown edit state')

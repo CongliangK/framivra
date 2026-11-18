@@ -1,3 +1,4 @@
+import { domTextExcerpt } from './dom-diagnostics.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import React, { act } from 'react'
@@ -65,7 +66,7 @@ test('non-terminal failures keep the ordinary retry cadence and never lift a gra
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor('read'), tabSignal: new AbortController().signal, call, writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {}, onEditState: () => {}, onGrantDead: (...args) => deaths.push(args) })))
   await wait(3200)
   assert.ok(calls.filter(op => op === 'proposal-list').length >= 3, 'transport errors still retry on cadence')
-  assert.match(text(), /无法读取智能体提案：连接已断开。请检查连接。/)
+  assert(/无法读取智能体提案：连接已断开。请检查连接。/.test(text()), 'read failure gives a connection hint')
   assert(calls.every(op => op === 'proposal-list'), 'transport retries never submit a proposal')
   assert.deepEqual(deaths, [], 'no death lifted for a non-terminal failure')
 })
@@ -108,7 +109,7 @@ test('host expires_in_ms deadline: banner, tool teardown, stopped proposal poll;
   assert(document.querySelector('[aria-label="手动语义编辑"]') !== null, 'manual editor mounted on the live grant')
   assert(document.querySelector('[aria-label="当前合成帧与草稿"]'), 'frame tools mounted on the live grant')
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 3000)) }) // past the 400ms TTL
-  assert(document.body.textContent.includes('预览授权已失效'), 'expiry banner is visible: ' + document.body.textContent.slice(0, 200))
+  assert(document.body.textContent.includes('预览授权已失效'), 'expiry banner is visible: ' + domTextExcerpt(document))
   assert(document.body.textContent.includes('（EXPIRED）'), 'banner carries the expiry code')
   assert(document.querySelector('[aria-label="手动语义编辑"]') === null, 'manual editor (and its proposal poller) torn down')
   assert(document.querySelector('[aria-label="当前合成帧与草稿"]') === null, 'frame tools torn down — no stale verified PNG stays actionable')

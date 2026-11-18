@@ -1,3 +1,4 @@
+import { domTextExcerpt } from './dom-diagnostics.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile, mkdtemp } from 'node:fs/promises'
@@ -34,7 +35,7 @@ test('candidate ZIP SDK-materialized PreviewBody and extracted Host actually pla
  t.after(async()=>{await act(async()=>root.unmount());dom.window.close();delete globalThis.window;delete globalThis.document})
  const button=label=>[...document.querySelectorAll('button')].find(n=>n.textContent===label)
  async function click(label){assert(button(label),label);assert.equal(button(label).disabled,false);await act(async()=>button(label).click())}
- async function settle(predicate){for(let i=0;i<500;i++){if(predicate())return;await act(async()=>{await new Promise(r=>setTimeout(r,5))})}assert.fail(document.body.textContent)}
+ async function settle(predicate){for(let i=0;i<500;i++){if(predicate())return;await act(async()=>{await new Promise(r=>setTimeout(r,5))})}assert.fail(`DOM did not settle: ${domTextExcerpt(document)}`)}
  async function change(label,value){const node=[...document.querySelectorAll('label')].find(n=>n.firstChild?.textContent===label)?.querySelector('input,select');assert(node,label);await act(async()=>Simulate.change(node,{target:{value}}))}
  const signal=new AbortController().signal
  await act(async()=>root.render(React.createElement(client.PreviewBody,{sessionId:'one',useTabInfo:()=>({tab:{signal}})})))

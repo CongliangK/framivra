@@ -1,3 +1,4 @@
+import { domTextExcerpt } from './dom-diagnostics.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import React, { act } from 'react'
@@ -12,7 +13,7 @@ const h=React.createElement
 async function mount(t){const dom=new JSDOM('<div id="root"></div>',{url:'http://owner/'});globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true;const {createRoot}=await import('react-dom/client'),{Simulate}=await import('react-dom/test-utils');const root=createRoot(document.getElementById('root'));t.after(async()=>{await act(async()=>root.unmount());dom.window.close();delete globalThis.window;delete globalThis.document});return {dom,root,Simulate}}
 const button=text=>[...document.querySelectorAll('button')].find(n=>n.textContent===text)
 const input=label=>[...document.querySelectorAll('label')].find(n=>n.firstChild?.textContent===label)?.querySelector('input,select')
-async function settle(predicate){for(let i=0;i<400;i++){if(predicate())return;await act(async()=>{await new Promise(r=>setTimeout(r,5))})}assert.fail(document.body.textContent)}
+async function settle(predicate){for(let i=0;i<400;i++){if(predicate())return;await act(async()=>{await new Promise(r=>setTimeout(r,5))})}assert.fail(`DOM did not settle: ${domTextExcerpt(document)}`)}
 async function click(text){const b=button(text);assert(b,text);assert.equal(b.disabled,false,text);await act(async()=>b.click())}
 async function change(Simulate,label,value){const node=input(label);assert(node,label);await act(async()=>Simulate.change(node,{target:{value}}))}
 
@@ -50,9 +51,9 @@ test('20 typed UI forms -> Host -> frozen public provider -> installed CLI plan/
   if(op==='parameters.update')await fill('属性值（text 为文本，其余单个 JSON 值）','0.75')
   if(op==='project.resize')await fill('工程新时长帧（不改 FPS/分辨率）','130')
   if(op==='range.ripple'){const check=[...document.querySelectorAll('label')].find(n=>n.textContent==='video main v').querySelector('input');await act(async()=>Simulate.change(check,{target:{checked:true}}));await fill('shift 起点帧','60');await fill('shift 有符号整数偏移','10')}
-  const before=await env.read();await click('加入批次');assert.equal(intents[0]?.op,op,document.body.textContent);assert.equal(document.querySelector('[aria-label="手动语义编辑"] pre'),null)
+  const before=await env.read();await click('加入批次');assert.equal(intents[0]?.op,op,domTextExcerpt(document));assert(document.querySelector('[aria-label="手动语义编辑"] pre') === null, "Expected absent DOM node")
   await click('预检');await settle(()=>button('保存更改')||env.wire.findLast(w=>w.request.op==='plan')?.response.ok===false)
-  assert(button('保存更改'),`${op}: ${document.body.textContent}`);assert.equal(await env.read(),before,'planning must not write')
+  assert(button('保存更改'),`${op}: ${domTextExcerpt(document)}`);assert.equal(await env.read(),before,'planning must not write')
   const plan=env.wire.findLast(w=>w.request.op==='plan').response,opId=plan.submitted_request.op_id
   await click('保存更改');await settle(()=>refreshed===1)
   const commit=env.wire.findLast(w=>w.request.op==='commit').response;assert.equal(commit.ok,true,stringifyJSON(commit));assert.equal(commit.op_id,opId);assert.deepEqual(commit.submitted_request,plan.submitted_request)
@@ -80,10 +81,10 @@ test('actual PreviewBody gesture preview -> direct commit -> authoritative inspe
  const before=await env.read(),count=env.specs.length
  await act(async()=>Simulate.pointerDown(clip(),{pointerId:1,button:0,clientX:0,clientY:10}));await act(async()=>Simulate.pointerMove(clip(),{pointerId:1,clientX:900,clientY:10}))
  assert(document.querySelector('[aria-label="未保存拖动 ghost"]'));assert.equal(await env.read(),before);assert.equal(env.specs.length,count)
- await act(async()=>Simulate.pointerUp(clip(),{pointerId:1,clientX:900,clientY:10}));assert.equal(document.querySelector('[aria-label="未保存拖动 ghost"]'),null)
+ await act(async()=>Simulate.pointerUp(clip(),{pointerId:1,clientX:900,clientY:10}));assert(document.querySelector('[aria-label="未保存拖动 ghost"]') === null, "Expected absent DOM node")
  await settle(()=>env.wire.some(row=>row.request.op==='commit'))
  await settle(()=>document.body.textContent.includes('已保存。'))
- assert.equal(document.querySelector('[aria-label="待保存操作"]'),null)
+ assert(document.querySelector('[aria-label="待保存操作"]') === null, "Expected absent DOM node")
  assert.equal(parseJSON(await env.read()).video_tracks[0].clips.find(b=>b.id==='c').dst_in,90)
  assert.equal(env.wire.filter(row=>row.request.op==='plan').length,1)
  assert.equal(env.wire.filter(row=>row.request.op==='commit').length,1)
@@ -171,7 +172,7 @@ test('real JSON property forms preserve unsafe/nested numeric tokens into stdin 
   if(op==='source.update'){await change(Simulate,'素材 ID','s');await change(Simulate,'更新字段','transform');await change(Simulate,'transform JSON 属性',value)}else{await change(Simulate,'白名单属性（不适用对象由内核精确拒绝）',property);await change(Simulate,'属性值（text 为文本，其余单个 JSON 值）',value)}
   await click('加入批次');const oldCount=env.wire.length
   await click('预检');await settle(()=>env.wire.length>oldCount&&env.wire.at(-1).request.op==='plan')
-  const outcome=env.wire.at(-1);assert.equal(outcome.response.ok,false,stringifyJSON(outcome));assert.equal(button('保存更改'),undefined)
+  const outcome=env.wire.at(-1);assert.equal(outcome.response.ok,false,stringifyJSON(outcome));assert(button('保存更改') === undefined, "Expected absent DOM node")
   const data=env.specs.findLast(s=>s.argv.includes('plan')).stdio.stdin.data;assert(data.includes(value),`raw typed token changed before core: ${value} vs ${data}`);assert.equal(await env.read(),before)
   await click('清空')
  }

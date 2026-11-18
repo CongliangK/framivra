@@ -67,10 +67,10 @@ test('settings namespace and slot key match the Host contract', () => {
 test('loading and unavailable states are explicit', async t => {
   const { root } = await mount(t)
   await act(async () => root.render(h(BundleConfigForm, { form: fakeForm({ status: 'loading' }) })))
-  assert.match(text(), /正在读取宿主配置/)
+  assert(/正在读取宿主配置/.test(text()), "Body text must match /正在读取宿主配置/")
   const unavailable = fakeForm({ status: 'unavailable' })
   await act(async () => root.render(h(BundleConfigForm, { form: unavailable })))
-  assert.match(text(), /配置命名空间不可用/)
+  assert(/配置命名空间不可用/.test(text()), "Body text must match /配置命名空间不可用/")
 })
 
 test('ready form: prefilled values, edit, valid save submits both fields with the first-edit revision; typing clears the saved message', async t => {
@@ -86,7 +86,7 @@ test('ready form: prefilled values, edit, valid save submits both fields with th
     { op: 'set', path: ['vtxExecutable'], value: '/other/vtx' },
     { op: 'set', path: ['trustedPath'], value: '/usr/local/bin:/usr/bin:/bin' },
   ], revision: 7 }])
-  assert.match(text(), /已保存.*重新打开工程并重新授权/)
+  assert(/已保存.*重新打开工程并重新授权/.test(text()), "Body text must match /已保存.*重新打开工程并重新授权/")
   // Draft cleared: the input falls back to the mirror value.
   assert.equal(input('framivra-config-executable').value, '/opt/trusted/vtx')
   // Typing again clears the stale saved message.
@@ -102,14 +102,14 @@ test('lost-update safety: mirror advancing never swaps the draft revision; confl
   // Another administrator writes trustedPath; the mirror updates live under us.
   await act(async () => form.setSnapshot({ status: 'ready', value: { vtxExecutable: '/opt/trusted/vtx', trustedPath: '/custom' }, revision: 8, writable: true }))
   // Latest Host values are visible (native details, wrapped code).
-  assert.match(text(), /宿主配置已被其他修改更新/)
-  assert.match(text(), /trustedPath = \/custom/)
-  assert.match(text(), /revision = 8/)
+  assert(/宿主配置已被其他修改更新/.test(text()), "Body text must match /宿主配置已被其他修改更新/")
+  assert(/trustedPath = \/custom/.test(text()), "Body text must match /trustedPath = \\/custom/")
+  assert(/revision = 8/.test(text()), "Body text must match /revision = 8/")
   await submit()
   // The save still sends the revision captured at first edit — never the new one.
   assert.deepEqual(form.calls.map(call => call.revision), [7])
   assert.deepEqual(form.calls[0].ops.map(op => op.value), ['/other/vtx', '/usr/local/bin:/usr/bin:/bin'])
-  assert.match(text(), /宿主拒绝了本次写入/)
+  assert(/宿主拒绝了本次写入/.test(text()), "Body text must match /宿主拒绝了本次写入/")
   assert.equal(input('framivra-config-executable').value, '/other/vtx', 'draft kept after conflict')
   // Explicit rebase: one user click, only swaps the baseline, no submission.
   click(button('以最新版本重新校验草稿（不提交）'))
@@ -129,7 +129,7 @@ test('a thrown save keeps the draft and reports the failure', async t => {
   await act(async () => root.render(h(BundleConfigForm, { form })))
   type(input('framivra-config-trustedpath'), '/custom')
   await submit()
-  assert.match(text(), /保存失败：mirror gone。草稿保留/)
+  assert(/保存失败：mirror gone。草稿保留/.test(text()), "Body text must match /保存失败：mirror gone。草稿保留/")
   assert.equal(input('framivra-config-trustedpath').value, '/custom')
 })
 
@@ -138,7 +138,7 @@ test('invalid input is explained locally and never sent; empty fields submit the
   const form = fakeForm(ready)
   await act(async () => root.render(h(BundleConfigForm, { form })))
   type(input('framivra-config-executable'), 'bin/vtx')
-  assert.match(text(), /本地校验未通过/)
+  assert(/本地校验未通过/.test(text()), "Body text must match /本地校验未通过/")
   await submit()
   assert.equal(form.calls.length, 0)
   type(input('framivra-config-executable'), '')
@@ -151,7 +151,7 @@ test('handler guards: read-only, busy (in-flight mutate), and revision-less snap
   // Read-only mirror: visible notice, and a submit event does nothing.
   const ro = fakeForm({ ...ready, writable: false })
   await act(async () => root.render(h(BundleConfigForm, { form: ro })))
-  assert.match(text(), /当前宿主配置只读/)
+  assert(/当前宿主配置只读/.test(text()), "Body text must match /当前宿主配置只读/")
   type(input('framivra-config-executable'), '/other/vtx')
   await submit()
   assert.equal(ro.calls.length, 0)
@@ -173,7 +173,7 @@ test('handler guards: read-only, busy (in-flight mutate), and revision-less snap
   await submit()
   assert.equal(busyForm.calls.length, 1, 'second submit during an in-flight save is refused')
   await act(async () => release(true))
-  assert.match(text(), /已保存/)
+  assert(/已保存/.test(text()), "Body text must match /已保存/")
 })
 
 test('unmount leaves no store subscription behind', async t => {
@@ -250,9 +250,9 @@ test('check button posts an empty-body diagnostics request and renders the verdi
   assert.equal(calls[0].init.credentials, 'same-origin')
   assert.equal(calls[0].init.headers['Content-Type'], 'application/json')
   assert.equal(calls[0].init.body, '{}', 'no executable/config may ever be sent from the browser')
-  assert.match(text(), /检查通过/)
-  assert.match(text(), /可执行文件：\/opt\/trusted\/vtx/)
-  assert.match(text(), /语义编辑不可用/)
+  assert(/检查通过/.test(text()), "Body text must match /检查通过/")
+  assert(/可执行文件：\/opt\/trusted\/vtx/.test(text()), "Body text must match /可执行文件：\\/opt\\/trusted\\/vtx/")
+  assert(/语义编辑不可用/.test(text()), "Body text must match /语义编辑不可用/")
 })
 
 test('semantic-edit availability renders when store capabilities pass', async t => {
@@ -262,7 +262,7 @@ test('semantic-edit availability renders when store capabilities pass', async t 
   await act(async () => root.render(h(BundleConfigForm, { form })))
   click(button('检查保存的配置'))
   await act(async () => {})
-  assert.match(text(), /语义编辑（store\/v1）可用/)
+  assert(/语义编辑（store\/v1）可用/.test(text()), "Body text must match /语义编辑（store\\/v1）可用/")
 })
 
 test('failed check surfaces the wire code, message and actionable hint', async t => {
@@ -272,8 +272,8 @@ test('failed check surfaces the wire code, message and actionable hint', async t
   await act(async () => root.render(h(BundleConfigForm, { form })))
   click(button('检查保存的配置'))
   await act(async () => {})
-  assert.match(text(), /检查未通过（EXECUTABLE_NOT_FOUND）：未在受信 PATH 找到 vtx/)
-  assert.match(text(), /绝对受信路径/)
+  assert(/检查未通过（EXECUTABLE_NOT_FOUND）：未在受信 PATH 找到 vtx/.test(text()), "Body text must match /检查未通过（EXECUTABLE_NOT_FOUND）：未在受信 PATH 找到 vtx/")
+  assert(/绝对受信路径/.test(text()), "Body text must match /绝对受信路径/")
 })
 
 test('a revision change expires the previous check outcome', async t => {
@@ -283,9 +283,9 @@ test('a revision change expires the previous check outcome', async t => {
   await act(async () => root.render(h(BundleConfigForm, { form })))
   click(button('检查保存的配置'))
   await act(async () => {})
-  assert.match(text(), /检查通过/)
+  assert(/检查通过/.test(text()), "Body text must match /检查通过/")
   await act(async () => form.setSnapshot({ status: 'ready', value: { vtxExecutable: '/other/vtx', trustedPath: '/usr/local/bin:/usr/bin:/bin' }, revision: 8, writable: true }))
-  assert.match(text(), /检查结果已过期/)
+  assert(/检查结果已过期/.test(text()), "Body text must match /检查结果已过期/")
   assert.equal(text().includes('检查通过'), false, 'a stale verdict must never look valid')
 })
 
@@ -297,7 +297,7 @@ test('a visible draft explains that the check reads only the saved configuration
   click(button('检查保存的配置'))
   await act(async () => {})
   type(input('framivra-config-executable'), '/other/vtx')
-  assert.match(text(), /检查只针对保存的配置：请先保存草稿，再检查。/)
+  assert(/检查只针对保存的配置：请先保存草稿，再检查。/.test(text()), "Body text must match /检查只针对保存的配置：请先保存草稿，再检查。/")
   assert.equal(text().includes('检查通过'), false)
 })
 
@@ -308,8 +308,8 @@ test('a failing fetch surfaces a network outcome', async t => {
   await act(async () => root.render(h(BundleConfigForm, { form })))
   click(button('检查保存的配置'))
   await act(async () => {})
-  assert.match(text(), /检查未通过（NETWORK）/)
-  assert.match(text(), /boom/)
+  assert(/检查未通过（NETWORK）/.test(text()), "Body text must match /检查未通过（NETWORK）/")
+  assert(/boom/.test(text()), "Body text must match /boom/")
 })
 
 test('an in-flight check refuses a second click', async t => {
@@ -321,10 +321,10 @@ test('an in-flight check refuses a second click', async t => {
   await act(async () => root.render(h(BundleConfigForm, { form })))
   click(button('检查保存的配置'))
   await act(async () => {})
-  assert.match(text(), /检查中…/)
+  assert(/检查中…/.test(text()), "Body text must match /检查中…/")
   click(button('检查中…'))
   await act(async () => {})
   assert.equal(calls.length, 1, 'second click during an in-flight check is refused')
   await act(async () => { release(); await gate })
-  assert.match(text(), /检查通过/)
+  assert(/检查通过/.test(text()), "Body text must match /检查通过/")
 })
