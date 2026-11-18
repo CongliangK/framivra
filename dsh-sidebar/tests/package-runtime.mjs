@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, readFile, realpath, symlink } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import React, { act } from 'react'
@@ -21,7 +21,7 @@ const require = createRequire(import.meta.url)
 {
   const resolved = await realpath(require.resolve('@deepseek-ai/schemastery/package.json'))
   await mkdir(join(release, 'node_modules/@deepseek-ai'), { recursive: true })
-  await symlink(dirname(resolved), join(release, 'node_modules/@deepseek-ai/schemastery'), 'dir').catch(error => {
+  await symlink(dirname(resolved), join(release, 'node_modules/@deepseek-ai/schemastery'), process.platform === 'win32' ? 'junction' : 'dir').catch(error => {
     if (error.code !== 'EEXIST') throw error
   })
 }
@@ -63,7 +63,9 @@ const types = new Map(), routes = new Map(), requests = [], tools = new Set()
 const configSubscribers = new Set()
 // A read-only settings carrier adapter, not a replacement for Host persistence.
 // The actual settings write/volatile update is exercised through the real GUI.
-const configSnapshot = { status: 'ready', value: { vtxExecutable: '/opt/trusted/vtx', trustedPath: '/usr/local/bin:/usr/bin:/bin' }, revision: 1, writable: false }
+const workspace = resolve('/workspace')
+const executable = resolve('/opt/trusted/vtx')
+const configSnapshot = { status: 'ready', value: { vtxExecutable: executable, trustedPath: '/usr/local/bin:/usr/bin:/bin' }, revision: 1, writable: false }
 // This-sensitive methods on purpose: the native ConfigForm reads this.store,
 // so this adapter must fail the same way if the client ever detaches a method
 // from its receiver when materializing the real ZIP bundle's config UI.
@@ -73,7 +75,17 @@ const configForm = {
   async mutate() { if (this !== configForm) throw new TypeError('lost receiver on mutate'); throw new Error('Read-only settings adapter cannot write') },
 }
 let configServing = 0
-const fs = new MemoryFs(), subprocess = fixtureSubprocess()
+const fs = new MemoryFs(), subprocess = fixtureSubprocess({ cwd: release, executable })
+if (process.platform === 'win32') {
+  // Keep the in-memory provider's slash-separated keys but use drive-absolute
+  // paths, like the native provider that the packaged Host can receive.
+  const key = path => resolve(path).replaceAll('\\', '/')
+  fs.files = new Map([...fs.files].map(([path, info]) => [key(path), info]))
+  fs.resolve = async (path, { cwd = workspace } = {}) => {
+    const targetKey = key(resolve(cwd, path))
+    return { targetKey, displayPath: targetKey }
+  }
+}
 const services = {
   configForms: {
     get: namespace => { assert.equal(namespace, 'framivra-readonly'); return configForm },
@@ -109,7 +121,7 @@ const services = {
   // conversation controller, no navigation snapshot, no extra control requests).
   conversation: {},
   uiSession: { adapter: { current: null } },
-  workingDirectory: { get: () => '/workspace', ensure: async () => '/workspace' }, fs, subprocess,
+  workingDirectory: { get: () => workspace, ensure: async () => workspace }, fs, subprocess,
   tools: { register: definition => { tools.add(definition.name); return () => tools.delete(definition.name) } },
 }
 const disposers = Object.entries(services).map(([name, service]) => ctx.reflect.provide(name, service))
@@ -120,7 +132,7 @@ const disposers = Object.entries(services).map(([name, service]) => ctx.reflect.
   await assert.rejects(invalid.await(), error => /vtxExecutable/.test(String(error?.message)))
   await invalid.dispose().catch(() => {})
 }
-const hostFiber = ctx.plugin(hostPlugin, { vtxExecutable: '/opt/trusted/vtx' })
+const hostFiber = ctx.plugin(hostPlugin, { vtxExecutable: executable })
 const clientFiber = ctx.plugin(client)
 await hostFiber.await()
 await clientFiber.await()
@@ -167,7 +179,7 @@ const configuration = core.entries('plugins.bundle.config')[0]
 assert.equal(configuration.options.key, manifest.name)
 assert.equal(configServing, 1)
 await act(async () => root.render(React.createElement(configuration.component, { view: 'page' })))
-assert.equal(document.getElementById('framivra-config-executable').value, '/opt/trusted/vtx')
+assert.equal(document.getElementById('framivra-config-executable').value, executable)
 assert.equal(document.getElementById('framivra-config-executable').disabled, true)
 assert(document.body.textContent.includes('当前宿主配置只读'))
 assert.equal(configSubscribers.size, 1)
@@ -191,7 +203,10 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 10))
 async function until(predicate) {
   const deadline = Date.now() + 10000
   while (!predicate()) {
-    assert(Date.now() < deadline, `Preview did not settle: ${document.body.textContent}`)
+    if (Date.now() >= deadline) {
+      const alerts = [...document.querySelectorAll('[role="alert"]')].map(node => node.textContent)
+      assert.fail(`Preview did not settle (requests: ${requests.map(row => row.op).join(', ')}; alerts: ${alerts.join('; ')})`)
+    }
     await act(tick)
   }
 }
@@ -199,20 +214,28 @@ try {
   // Hook state/effects run under the exact same React instance supplied to the loader.
   await act(async () => submit(form()))
   await until(() => document.body.textContent.includes('Complete query envelope'))
-  assert.deepEqual(requests.filter(x => x.op !== 'proposal-list').map(x => x.op), ['open', 'query'])
-  assert.equal(requests.filter(x => x.op === 'proposal-list').length, 1)
+  // On a Windows Host the store is unavailable before any opt-in/UI probe.
+  // On supported Hosts the authorization panel still mounts and polls as before.
+  if (process.platform === 'win32') {
+    assert.deepEqual(requests.map(x => x.op), ['open', 'query'])
+    assert(document.body.textContent.includes('当前宿主仅支持只读时间线'))
+  } else {
+    assert.deepEqual(requests.filter(x => x.op !== 'proposal-list').map(x => x.op), ['open', 'query'])
+    assert.equal(requests.filter(x => x.op === 'proposal-list').length, 1)
+  }
   assert.deepEqual([...tools], ['framivra_timeline_read', 'framivra_timeline_propose', 'framivra_proposal_status'])
   assert(requests.every(x => x.sessionId === 'one'))
   assert(document.body.textContent.includes('Read-only ·'))
   assert(document.body.textContent.includes('9007199254740993'))
   assert(!document.body.textContent.includes('9007199254740992'))
-  assert.equal(document.querySelector('video'), null, 'live mode does not mount a second output player')
-  const renderedMode = [...document.querySelectorAll('button')].find(node => node.textContent === '成片渲染')
-  await act(async () => renderedMode.click())
+  const button = label => [...document.querySelectorAll('button')].find(node => node.getAttribute('aria-label') === label || node.textContent === label)
+  // This read-only kernel fixture cannot render live frames, so the packaged
+  // UI must offer the existing output directly, without a live-render control.
+  assert.equal(Boolean(button('实时真预览')), false)
+  assert.equal(button('成片渲染').getAttribute('aria-pressed'), 'true')
   assert(document.body.textContent.includes('来源 UNKNOWN'))
+  assert.equal(document.querySelectorAll('video').length, 1)
   assert(document.querySelector('video').getAttribute('src').startsWith('/api/framivra/media?sessionId=one&grant='))
-  await act(async () => [...document.querySelectorAll('button')].find(node => node.textContent === '实时真预览').click())
-  const button = label => [...document.querySelectorAll('button')].find(node => node.textContent === label)
   await act(async () => button('选择块 /fixture/0/blocks/0').click())
   await until(() => document.body.textContent.includes('引用就绪。'))
   assert.equal(requests.at(-1).op, 'reference')
@@ -225,21 +248,22 @@ try {
   await act(async () => button('加入当前会话草稿（不发送）').click())
   assert(document.body.textContent.includes('DRAFT_UNAVAILABLE'))
   assert.equal(requests.length, beforeUnavailable)
-  const field = document.querySelector('input[inputmode="numeric"]')
+  const field = document.querySelector('input[name="framivra-frame"]')
+  const queryForm = field.form
   const setValue = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set
   // ReactDOM was imported before jsdom, so use its public test event adapter.
   const { Simulate } = await import('react-dom/test-utils')
   await act(async () => { setValue.call(field, '1.0'); Simulate.change(field, { target: { value: '1.0' } }) })
   const before = requests.length
-  await act(async () => submit(document.querySelectorAll('form')[1]))
+  await act(async () => submit(queryForm))
   assert.equal(requests.length, before)
-  assert(document.querySelector('[role="alert"]').textContent.includes('BAD_QUERY'))
+  assert([...document.querySelectorAll('[role="alert"]')].some(alert => alert.textContent.includes('BAD_QUERY')))
   await act(async () => { setValue.call(field, '29'); Simulate.change(field, { target: { value: '29' } }) })
-  await act(async () => submit(document.querySelectorAll('form')[1]))
-  await until(() => document.body.textContent.includes('Complete query envelope'))
+  await act(async () => submit(queryForm))
+  await until(() => requests.at(-1)?.op === 'query' && requests.at(-1)?.query.frame === 29)
   assert.equal(requests.at(-1).op, 'query')
   assert.equal(requests.at(-1).query.frame, 29)
-  assert(subprocess.calls.filter(x => x.argv).every(x => x.argv[0] === '/opt/trusted/vtx'))
+  assert(subprocess.calls.filter(x => x.argv).every(x => x.argv[0] === executable))
   await act(async () => root.unmount())
   await until(() => requests.at(-1)?.op === 'close')
   await clientFiber.dispose()

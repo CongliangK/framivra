@@ -134,7 +134,9 @@ export async function validateKernelConfigSelection(ctx, snapshot, signal, { all
   if (snapshot.vtxExecutable !== 'vtx') {
     const executablePaths = pathAPI(snapshot.vtxExecutable)
     const bin = executablePaths.dirname(snapshot.vtxExecutable)
-    const install = ['bin', 'Scripts'].includes(executablePaths.basename(bin)) ? executablePaths.dirname(bin) : bin
+    const binName = executablePaths.basename(bin)
+    const isBin = executablePaths === win32 ? ['bin', 'scripts'].includes(binName.toLowerCase()) : ['bin', 'Scripts'].includes(binName)
+    const install = isBin ? executablePaths.dirname(bin) : bin
     // The managed Git installer deliberately keeps config.json beside source/,
     // not inside it. Only this exact fixed pair is exempt from the legacy rule.
     const managed = managedInstallationPaths()
@@ -142,7 +144,10 @@ export async function validateKernelConfigSelection(ctx, snapshot, signal, { all
     const independentManagedConfig = managedExecutable && path === managed.configFile
     // On Windows the launcher lives under venv/Scripts, so the legacy venv
     // boundary alone would not exclude a JSON file inside sibling source/.
-    const boundaries = managedExecutable ? [install, managed.sourceRoot] : [install]
+    // Windows aliases may broaden a refusal, but never qualify for the
+    // exact fixed-pair exception above. Inspect the source boundary regardless
+    // of the executable spelling on this platform (including lookup aliases).
+    const boundaries = managedExecutable || process.platform === 'win32' ? [install, managed.sourceRoot] : [install]
     if (!independentManagedConfig) for (const boundary of boundaries) {
       if (boundary !== executablePaths.parse(boundary).root && ctx.fs.contains(await localTarget(ctx, boundary, signal), target)) reject('INSTALL_CONFIG_PATH', '请使用源码和安装环境目录外的独立 VTX_CONFIG 文件', 403)
     }
@@ -268,17 +273,63 @@ export function createKernelManagement(ctx, config = {}) {
       return { ok: true, path: current.path, hash: intendedHash, backupPath, validation, selectionToken, needsReload: !selectionToken }
     } finally { saving = false }
   }
+  // Never follow manifest-selected commands, roots or tool entries. Only the
+  // fixed installer layout is eligible; even a valid receipt is not capability
+  // evidence or permission to execute, save a setting, or change an old install.
+  async function managedReceipt(signal) {
+    try {
+      await noLinks(installation.manifest, signal)
+    } catch (error) {
+      signal.throwIfAborted()
+      // Only the initial no-follow check can establish absence. A missing
+      // receipt or referenced file after that check is a validation failure.
+      if (['FS_NOT_FOUND', 'NOT_FOUND'].includes(error?.code)) return { state: 'missing' }
+      throw error
+    }
+    const manifest = await local(installation.manifest, signal)
+    if (ctx.fs.processPath(manifest) !== installation.manifest) reject('UNSAFE_PATH', '受管登记路径不符合固定安装布局')
+    const info = await ctx.fs.stat(manifest, signal)
+    if (!info) reject('INSTALLATION_CHANGED', '扫描期间受管登记发生变化')
+    await outsideWorkspaces(manifest, signal)
+    if (info.type !== 'file') reject('NOT_REGULAR', '受管登记必须是普通 JSON 文件')
+    if (info.size > INSTALLATION_LIMIT) reject('FILE_TOO_LARGE', '受管登记超过 64 KiB')
+    const content = await bytes(manifest, signal, INSTALLATION_LIMIT)
+    const value = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(content))
+    const text = item => typeof item === 'string' && item.length > 0 && item.length <= 512 && !/[\x00-\x1f\x7f]/.test(item)
+    if (!object(value) || value.schema !== 'framivra.installation/v1' || typeof value.commit !== 'string' || value.commit.length !== 40 || !/^[a-f0-9]{40}$/.test(value.commit) || !text(value.version) || !text(value.installedAt) || value.profile !== 'non-ai' || value.renderer !== 'cdp' || value.status !== 'ready') reject('BAD_INSTALLATION', '受管登记格式或就绪状态无效')
+    for (const field of ['sourceRoot', 'vtxExecutable', 'pythonExecutable', 'configFile']) {
+      if (absolute(value[field]) !== installation[field]) reject('BAD_INSTALLATION', '受管登记路径不符合固定安装布局')
+      await noLinks(value[field], signal)
+      const target = await local(value[field], signal)
+      await outsideWorkspaces(target, signal)
+      if (ctx.fs.processPath(target) !== value[field] || (await ctx.fs.stat(target, signal))?.type !== (field === 'sourceRoot' ? 'directory' : 'file')) reject('BAD_INSTALLATION', '受管登记目标不存在或不是预期的真实文件/目录')
+    }
+    await noLinks(installation.manifest, signal)
+    const after = await ctx.fs.stat(manifest, signal)
+    if (!after || after.version !== info.version) reject('INSTALLATION_CHANGED', '扫描期间受管登记发生变化')
+    return { state: 'ready', metadata: { commit: value.commit, version: value.version, renderer: value.renderer, profile: value.profile, configFile: value.configFile } }
+  }
   async function scan(signal) {
     const snapshot = readConfiguration(config)
     const candidates = [], warnings = [], seen = new Set()
-    let probes = 0
+    let probes = 0, receipt = { state: 'unusable' }
+    try {
+      receipt = await managedReceipt(signal)
+    } catch (error) {
+      signal.throwIfAborted()
+      warnings.push(`受管安装登记未通过验证（${error.code ?? 'BAD_INSTALLATION'}）；未推荐受管启动器，未执行登记内容。`)
+    }
+    const paths = pathAPI(installation.vtxExecutable)
+    // The bare launcher is only a fallback for an absent receipt. Neither an
+    // alternate spelling nor a resolved alias should bring it back if unusable.
+    const blocked = path => receipt.state === 'unusable' && paths.isAbsolute(path) && paths.relative(installation.vtxExecutable, path) === ''
     async function candidate(path, source, metadata, strict = false) {
-      if (++probes > 180 || seen.has(path)) return
+      if (++probes > 180 || seen.has(path) || blocked(path)) return
       seen.add(path)
       try {
         if (strict) await noLinks(path, signal)
         const target = await local(path, signal)
-        if ((await ctx.fs.stat(target, signal))?.type !== 'file') return
+        if (blocked(ctx.fs.processPath(target)) || (await ctx.fs.stat(target, signal))?.type !== 'file') return
         await outsideWorkspaces(target, signal)
         candidates.push({ path, kind: 'executable', source, ...(metadata ? { installation: metadata } : {}) })
       } catch (error) {
@@ -288,39 +339,7 @@ export function createKernelManagement(ctx, config = {}) {
         else if (!['FS_NOT_FOUND', 'NOT_FOUND'].includes(error?.code)) throw error
       }
     }
-    // Never follow manifest-selected commands, roots or tool entries. Only the
-    // fixed installer layout is eligible; even a valid receipt is not capability
-    // evidence or permission to execute, save a setting, or change an old install.
-    let metadata
-    try {
-      await noLinks(installation.manifest, signal)
-      const manifest = await local(installation.manifest, signal)
-      const info = await ctx.fs.stat(manifest, signal)
-      if (info) {
-        await outsideWorkspaces(manifest, signal)
-        if (info.type !== 'file') reject('NOT_REGULAR', '受管登记必须是普通 JSON 文件')
-        if (info.size > INSTALLATION_LIMIT) reject('FILE_TOO_LARGE', '受管登记超过 64 KiB')
-        const content = await bytes(manifest, signal, INSTALLATION_LIMIT)
-        const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(content))
-        const text = item => typeof item === 'string' && item.length > 0 && item.length <= 512 && !/[\x00-\x1f\x7f]/.test(item)
-        if (!object(value) || value.schema !== 'framivra.installation/v1' || typeof value.commit !== 'string' || value.commit.length !== 40 || !/^[a-fA-F0-9]{40}$/.test(value.commit) || !text(value.version) || !text(value.installedAt) || value.profile !== 'non-ai' || value.renderer !== 'cdp' || value.status !== 'ready') reject('BAD_INSTALLATION', '受管登记格式或就绪状态无效')
-        for (const field of ['sourceRoot', 'vtxExecutable', 'pythonExecutable', 'configFile']) {
-          if (absolute(value[field]) !== installation[field]) reject('BAD_INSTALLATION', '受管登记路径不符合固定安装布局')
-          await noLinks(value[field], signal)
-          const target = await local(value[field], signal)
-          await outsideWorkspaces(target, signal)
-          if (ctx.fs.processPath(target) !== value[field] || (await ctx.fs.stat(target, signal))?.type !== (field === 'sourceRoot' ? 'directory' : 'file')) reject('BAD_INSTALLATION', '受管登记目标不存在或不是预期的真实文件/目录')
-        }
-        await noLinks(installation.manifest, signal)
-        const after = await ctx.fs.stat(manifest, signal)
-        if (after?.version !== info.version) reject('INSTALLATION_CHANGED', '扫描期间受管登记发生变化')
-        metadata = { commit: value.commit, version: value.version, renderer: value.renderer, profile: value.profile, configFile: value.configFile }
-      }
-    } catch (error) {
-      signal.throwIfAborted()
-      if (!['FS_NOT_FOUND', 'NOT_FOUND'].includes(error?.code)) warnings.push(`受管安装登记未通过验证（${error.code ?? 'BAD_INSTALLATION'}）；未执行登记内容。`)
-    }
-    await candidate(installation.vtxExecutable, metadata ? 'managed-git' : 'managed-default', metadata, true)
+    if (receipt.state !== 'unusable') await candidate(installation.vtxExecutable, receipt.state === 'ready' ? 'managed-git' : 'managed-default', receipt.metadata, true)
     if (snapshot.vtxExecutable !== 'vtx') await candidate(snapshot.vtxExecutable, 'current-setting', undefined, snapshot.vtxExecutable === installation.vtxExecutable)
     const windows = process.platform === 'win32'
     // trustedPath remains colon-separated POSIX paths per the Host contract;

@@ -49,15 +49,15 @@ export class MemoryFs {
 }
 
 /** Test adapter only: real Node child running a fixed JSON fixture, not installed vtx/DSH. */
-export function fixtureSubprocess() {
+export function fixtureSubprocess({ cwd = '/tmp', executable = '/opt/trusted/vtx' } = {}) {
   const calls = []
   return {
     calls,
-    async resolveExecutable(command, env) { calls.push({ command, env }); return '/opt/trusted/vtx' },
+    async resolveExecutable(command, env) { calls.push({ command, env }); return executable },
     spawn(spec) {
       calls.push(spec)
       const child = spawn(process.execPath, [fileURLToPath(new URL('./fixture-vtx.mjs', import.meta.url)), ...spec.argv.slice(1)], {
-        cwd: '/tmp', env: { PATH: process.env.PATH }, stdio: ['ignore', 'pipe', 'pipe'],
+        cwd, env: { PATH: process.env.PATH }, stdio: ['ignore', 'pipe', 'pipe'],
       })
       let stdout = '', stderr = ''
       child.stdout.on('data', chunk => { stdout += chunk })

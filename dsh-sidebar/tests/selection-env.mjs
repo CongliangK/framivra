@@ -4,7 +4,7 @@ import { readFile, writeFile, mkdir, mkdtemp } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
-import { spawnSync } from 'node:child_process'
+import { commandFailure, spawnArchivePython } from '../scripts/archive-python.mjs'
 import { runInNewContext } from 'node:vm'
 import React, { act } from 'react'
 import { JSDOM } from 'jsdom'
@@ -31,8 +31,8 @@ export async function selectionEnvironment(t, kind) {
   let client, createPreviewHost, sandbox
   if (kind === 'zip') {
     const extracted = join(dir, 'extracted')
-    const extraction = spawnSync('python3', ['-I', '-B', '-c', 'import zipfile,sys;zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])', process.env.SIDEBAR_MANUAL_ZIP, extracted], { encoding: 'utf8' })
-    assert.equal(extraction.status, 0, extraction.stderr)
+    const extraction = spawnArchivePython('import zipfile,sys;zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])', [process.env.SIDEBAR_MANUAL_ZIP, extracted])
+    assert.equal(extraction.status, 0, commandFailure(extraction))
     ;({ createPreviewHost } = await import(pathToFileURL(join(extracted, 'lib/host.js'))))
     const queue = [], target = { mode: 'queue', pendingQueue: queue, load: row => queue.push(row) }
     sandbox = { window: { __ModuleLoader__: target }, TextEncoder, TextDecoder, DOMException, AbortController, AbortSignal, URLSearchParams, crypto: globalThis.crypto, setTimeout, clearTimeout, console }

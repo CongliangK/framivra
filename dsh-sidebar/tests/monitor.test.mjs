@@ -41,7 +41,8 @@ async function fixture(t, Component = RenderedPlayer, initial = {}, { quantizeTo
   const { createRoot } = await import('react-dom/client'), { Simulate } = await import('react-dom/test-utils')
   const root = createRoot(document.getElementById('root')), owner = new FrameEpoch(), tab = new AbortController()
   let props = {
-    owner, opened: { grant: 'grant-a', media: [output('final')], snapshot: { content_version: version } },
+    owner, opened: { grant: 'grant-a', media: [output('final')], snapshot: { content_version: version },
+      capabilities: { capabilities: { frame: { inline_png: { flag: '--include-png' } } } } },
     sessionId: 'session', frame: 0, fps: 30, duration: 300,
     tabSignal: tab.signal, call: () => assert.fail('No control request expected'), ...initial,
   }, refresh

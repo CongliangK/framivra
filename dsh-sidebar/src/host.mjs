@@ -63,6 +63,28 @@ export function relativeBrowsePath(path) {
 }
 const json = (value, status = 200) => new Response(stringifyJSON(value), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } })
 const inlineCapable = value => value?.capabilities?.frame?.schema === 'framivra.timeline.frame/v1' && value.capabilities.frame.explicit_render_required === true && value.capabilities.frame.inline_png?.flag === '--include-png' && value.capabilities.frame.inline_png.encoding === 'base64' && value.capabilities.frame.inline_png.wire_limit_bytes === FRAME_WIRE_LIMIT
+const platformAllowsWrites = () => ['linux', 'darwin'].includes(process.platform)
+// The kernel validates its own macOS Python/FFmpeg architecture and closure;
+// the architecture of the DSH Node process is not a proxy for either.
+const platformAllowsFrame = () => ['linux', 'darwin'].includes(process.platform)
+const writePlatformMessage = '当前宿主不支持内核语义写入；仍可读取时间线、复制或引用。'
+const framePlatformMessage = '当前宿主不支持生成完整合成帧；可继续查看时间线与播放已有成片。'
+const writeUnavailable = message => ({ ok: false, error: 'WRITE_UNSUPPORTED', message })
+
+function previewCapabilities(value) {
+  // The core's static frame declaration describes the wire format, not local
+  // render support. Do not forward it as a runnable feature on other hosts.
+  if (platformAllowsFrame() && inlineCapable(value)) return value
+  const { frame: _frame, ...capabilities } = value.capabilities
+  return { ...value, capabilities }
+}
+
+function writeCapabilityRefusal(capabilities) {
+  if (process.platform === 'darwin' && capabilities.platform_support?.darwin !== true) return 'Installed vtx lacks macOS-safe timeline locking and path identity; update the core before authorizing writes.'
+  if (!capabilities.ok || !Array.isArray(capabilities.operations) || !capabilities.operations.includes('edit') || !Array.isArray(capabilities.edit?.operations) || !capabilities.edit.operations.length) return 'Installed vtx does not advertise semantic edit/plan'
+  const transport = capabilities.request_transport?.stdin
+  if (transport?.flag !== '--request-stdin' || transport.max_bytes !== 8388608) return 'Installed vtx lacks the official bounded --request-stdin transport; read/copy remain available. Reopening /dev/stdin is not a supported fallback.'
+}
 
 export function createPreviewHost(ctx, config = {}) {
   const reader = new TimelineReader(ctx.subprocess, config, async (snapshot, signal) => {
@@ -283,14 +305,8 @@ export function createPreviewHost(ctx, config = {}) {
       }
       // Static probes: `capabilities` never opens the timeline or project.
       const placeholder = 'framivra-diagnostics-no-timeline.json'
-      const capabilities = await reader.read(executable, placeholder, 'capabilities', undefined, hold.signal, config, 'diagnostics')
-      let storeCapabilities
-      try { storeCapabilities = await reader.store(executable, placeholder, 'capabilities', undefined, hold.signal, config, 'diagnostics') }
-      catch (error) {
-        if (error instanceof PreviewError && error.code === 'CLI_UNSUPPORTED') {
-          storeCapabilities = { ok: false, error: 'CLI_UNSUPPORTED', message: 'Installed vtx does not advertise the semantic store; reads remain usable' }
-        } else throw error
-      }
+      const capabilities = previewCapabilities(await reader.read(executable, placeholder, 'capabilities', undefined, hold.signal, config, 'diagnostics'))
+      const storeCapabilities = await probeStore(executable, placeholder, hold.signal, config, 'diagnostics')
       hold.signal.throwIfAborted()
       if (snapshotConfig().fingerprint !== config.fingerprint) fail('CONFIG_CHANGED', 'Host plugin configuration changed during the check; run the check again', 409)
       return json({ ok: true, schema: 'framivra.diagnostics/v1',
@@ -334,7 +350,7 @@ export function createPreviewHost(ctx, config = {}) {
         const executable = await reader.executable(hold.signal, config)
         const executableTarget = await localTarget(executable, undefined, hold.signal)
         if (ctx.fs.contains(root, executableTarget)) fail('UNTRUSTED_EXECUTABLE', 'Do not execute vtx from the project workspace', 403)
-        const capabilities = await reader.read(executable, ctx.fs.processPath(timeline), 'capabilities', undefined, hold.signal, config, grantId)
+        const capabilities = previewCapabilities(await reader.read(executable, ctx.fs.processPath(timeline), 'capabilities', undefined, hold.signal, config, grantId))
         const snapshot = await reader.read(executable, ctx.fs.processPath(timeline), 'inspect', undefined, hold.signal, config, grantId)
         const media = new Map()
         for (const path of MEDIA) {
@@ -356,6 +372,7 @@ export function createPreviewHost(ctx, config = {}) {
         for (const previous of grants.values()) if (previous.session === session && previous.timeline.targetKey === timeline.targetKey) { previous.storagePlan = undefined; previous.storageEpoch = (previous.storageEpoch ?? 0) + 1 }
         grants.set(grantId, { id: grantId, session, cwd, root, relative, timeline, project, projectPath, executable, executableTarget, executableVersion, capabilities, media, contentVersion: snapshot.content_version, expiresAt: clock() + ttlMs, configFingerprint: config.fingerprint, configSnapshot: config })
         return json({ grant: grantId, snapshot, capabilities, expires_in_ms: ttlMs, host: hostIdentity(),
+          ...(!platformAllowsWrites() ? { storeCapabilities: writeUnavailable(writePlatformMessage) } : {}),
           media: [...media].map(([mediaId, item]) => ({ mediaId, label: item.path, provenance: 'unknown', warning: 'Existing output; correspondence to this timeline content_version is NOT verified' })) })
         } catch (error) {
           // A failed open must not strand probe children: one scoped reap retry
@@ -502,13 +519,24 @@ export function createPreviewHost(ctx, config = {}) {
       settled()
     }
   }
+  async function probeStore(executable, timeline, signal, config, owner) {
+    if (!platformAllowsWrites()) return writeUnavailable(writePlatformMessage)
+    try {
+      const capabilities = await reader.store(executable, timeline, 'capabilities', undefined, signal, config, owner)
+      const refusal = writeCapabilityRefusal(capabilities)
+      return refusal ? writeUnavailable(refusal) : capabilities
+    } catch (error) {
+      // Only unsupported protocol/CLI degrades to an advisory. Never hide
+      // cancellation, truncation, timeout or failed cleanup behind read-only.
+      if (error instanceof PreviewError && ['CLI_UNSUPPORTED', 'PROTOCOL_MISMATCH'].includes(error.code)) {
+        return { ok: false, error: error.code, message: 'Installed vtx does not advertise the semantic store; reads remain usable' }
+      }
+      throw error
+    }
+  }
   async function writeCapabilities(grant, signal) {
-    if (!['linux', 'darwin'].includes(process.platform)) fail('WRITE_UNSUPPORTED', 'Semantic writes require a supported local Linux or macOS backend', 422)
-    const capabilities = await reader.store(grant.executable, ctx.fs.processPath(grant.timeline), 'capabilities', undefined, signal, grant.configSnapshot, grant.id)
-    if (process.platform === 'darwin' && capabilities.platform_support?.darwin !== true) fail('WRITE_UNSUPPORTED', 'Installed vtx lacks macOS-safe timeline locking and path identity; update the core before authorizing writes.', 422)
-    if (!capabilities.ok || !capabilities.operations?.includes('edit') || !capabilities.edit?.operations?.length) fail('WRITE_UNSUPPORTED', 'Installed vtx does not advertise semantic edit/plan', 422)
-    const transport = capabilities.request_transport?.stdin
-    if (transport?.flag !== '--request-stdin' || transport.max_bytes !== 8388608) fail('WRITE_UNSUPPORTED', 'Installed vtx lacks the official bounded --request-stdin transport; read/copy remain available. Reopening /dev/stdin is not a supported fallback.', 422)
+    const capabilities = await probeStore(grant.executable, ctx.fs.processPath(grant.timeline), signal, grant.configSnapshot, grant.id)
+    if (!capabilities.ok) fail('WRITE_UNSUPPORTED', capabilities.message, 422)
     return capabilities
   }
   // readOnlyPlan is private host authority, never a browser/model input field.
@@ -648,6 +676,7 @@ export function createPreviewHost(ctx, config = {}) {
       if (!Number.isSafeInteger(data.frame) || data.frame < 0 || data.contentVersion !== grant.contentVersion || !/^sha256:[a-f0-9]{64}$/.test(data.contentVersion)) fail('STALE_FRAME', 'Use an exact saved version and pinned integer frame', 409)
       const options = Object.hasOwn(data, 'prepareGfx') || Object.hasOwn(data, 'htmlTrust') ? Object.fromEntries(['prepareGfx', 'htmlTrust'].filter(key => Object.hasOwn(data, key)).map(key => [key, data[key]])) : undefined
       prepareGfxArgs(options) // Validate exact types/combinations before admission or spawning.
+      if (!platformAllowsFrame()) fail('FRAME_UNSUPPORTED', framePlatformMessage, 422)
       if (!inlineCapable(grant.capabilities)) fail('FRAME_UNSUPPORTED', 'Installed core must actually advertise --include-png; no path fallback', 422)
       if (options?.prepareGfx === true && !prepareGfxCapable(grant.capabilities)) fail('FRAME_UNSUPPORTED', 'Installed core must advertise current-composite preview-only graphics preparation', 422)
       if (semanticAdmission || grant.running || grant.outcomeUnknown || grant.plan || agent.hasLive(grant)) fail('WRITE_BUSY', 'Resolve the active/unknown write or pending plan and refresh before a frame', 409)
@@ -809,14 +838,7 @@ export function createPreviewHost(ctx, config = {}) {
     const hold = lease({ signal })
     try {
       await validateTimeline(grant, hold.signal)
-      return await reader.store(grant.executable, ctx.fs.processPath(grant.timeline), 'capabilities', undefined, hold.signal, grant.configSnapshot, grant.id)
-    } catch (error) {
-      // Only admission/protocol mismatches degrade to an advisory: reads stay usable.
-      // Cleanup, cancellation, timeout and truncation failures must propagate.
-      if (error instanceof PreviewError && (error.code === 'CLI_UNSUPPORTED' || error.code === 'PROTOCOL_MISMATCH')) {
-        return { ok: false, error: error.code, message: 'Installed vtx does not advertise the semantic store; reads remain usable' }
-      }
-      throw error
+      return await probeStore(grant.executable, ctx.fs.processPath(grant.timeline), hold.signal, grant.configSnapshot, grant.id)
     } finally { hold.release() }
   }
   async function decodeControl(response) {

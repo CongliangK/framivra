@@ -2,14 +2,16 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, realpath, stat, symlink } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { commandFailure, spawnArchivePython } from '../scripts/archive-python.mjs'
 
 const script = fileURLToPath(new URL('../scripts/package.mjs', import.meta.url))
 const runtime = fileURLToPath(new URL('./package-runtime.mjs', import.meta.url))
-const evidence = process.env.SIDEBAR_EVIDENCE_DIR ?? '/tmp/framivra-sidebar-tests'
+const evidence = resolve(process.env.SIDEBAR_EVIDENCE_DIR ?? join(tmpdir(), 'framivra-sidebar-tests'))
 const run = (args, options = {}) => spawnSync(process.execPath, args, { encoding: 'utf8', timeout: 30000, ...options })
 
 /**
@@ -23,7 +25,7 @@ async function linkHostPeers(extracted) {
   const require = createRequire(fileURLToPath(new URL('../package.json', import.meta.url)))
   const resolved = await realpath(require.resolve('@deepseek-ai/schemastery/package.json'))
   await mkdir(join(extracted, 'node_modules/@deepseek-ai'), { recursive: true })
-  await symlink(dirname(resolved), join(extracted, 'node_modules/@deepseek-ai/schemastery'), 'dir')
+  await symlink(dirname(resolved), join(extracted, 'node_modules/@deepseek-ai/schemastery'), process.platform === 'win32' ? 'junction' : 'dir')
 }
 
 // Build and exercise an actual SDK factory, never a dummy or a source-view substitute.
@@ -33,12 +35,12 @@ test('SDK ZIP executes its Host closure and materializes a shared-React sidebar 
   const output = join(dir, 'candidate.zip'), extracted = join(dir, 'extracted')
   const result = run([script, '--out', output])
   assert.equal(result.status, 0, result.stderr + result.stdout)
-  const inspect = spawnSync('python3', ['-c', `import json, sys, zipfile
+  const inspect = spawnArchivePython(`import json, sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as archive:
     print(json.dumps({'names': archive.namelist(), 'manifest': json.loads(archive.read('package.json')), 'patch': archive.read('cordis.patch.yml').decode()}))
     archive.extractall(sys.argv[2])
-`, output, extracted], { encoding: 'utf8' })
-  assert.equal(inspect.status, 0, inspect.stderr)
+`, [output, extracted])
+  assert.equal(inspect.status, 0, commandFailure(inspect))
   const data = JSON.parse(inspect.stdout)
   assert.deepEqual(data.names, ['LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md', 'cordis.patch.yml', 'icon.svg', 'lib/agent.js', 'lib/bounded.js', 'lib/client.js', 'lib/configuration.js', 'lib/host.js', 'lib/index.js', 'lib/json.js', 'lib/kernel-config.js', 'lib/kernel-management.js', 'lib/media.js', 'lib/protocol.js', 'lib/tools.js', 'locale/en.json', 'locale/zh.json', 'package.json'])
   for (const key of ['scripts', 'dependencies', 'devDependencies']) assert.equal(Object.hasOwn(data.manifest, key), false)
@@ -114,8 +116,9 @@ test('packaging cannot inject arbitrary Client input or publish an incomplete ZI
   assert(arbitrary.stderr.includes('Usage: node scripts/package.mjs --out'))
   await assert.rejects(stat(output), { code: 'ENOENT' })
   // Late failure after SDK compilation must still leave the final pathname absent.
-  const failed = run([script, '--out', output], { env: { ...process.env, PATH: '' } })
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== 'PATH'))
+  const failed = run([script, '--out', output], { env: { ...env, PATH: dir } })
   assert.notEqual(failed.status, 0)
-  assert(failed.stderr.includes('ZIP creation failed: spawnSync python3 ENOENT'), failed.stderr)
+  assert.match(failed.stderr, /ZIP creation failed: (?:no working Python 3 launcher|spawnSync python3 ENOENT)/)
   await assert.rejects(stat(output), { code: 'ENOENT' })
 })
