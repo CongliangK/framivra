@@ -99,10 +99,39 @@ class SvgContract(unittest.TestCase):
         (self.root / 'assets').mkdir()
         member = self.root / 'assets' / 'dependency.txt'
         member.write_text('one')
-        c.tl['project']['cache_dependencies'] = [member.as_posix()]
-        for local in ([], ['assets/dependency.txt']):
-            with self.subTest(local=local), self.assertRaisesRegex(ValueError, 'project-relative'):
-                gfx_svg.resolve(c, dict(self.clip, cache_dependencies=local))
+        for invalid in (member.as_posix(), 'assets/./dependency.txt', 'assets//dependency.txt', 'aux.txt'):
+            c.tl['project']['cache_dependencies'] = [invalid]
+            for local in ([], ['assets/dependency.txt']):
+                with self.subTest(invalid=invalid, local=local), self.assertRaisesRegex(ValueError, 'project-relative'):
+                    gfx_svg.resolve(c, dict(self.clip, cache_dependencies=local))
+
+    @unittest.skipUnless(os.name == 'nt', 'native Windows handle reads')
+    def test_windows_nested_project_input_names_and_read_failure(self):
+        from vtx.render import gfx_svg_win_input as reader
+
+        name = '嵌套 #/帧🖼.txt'
+        root = self.root.resolve()
+        target = root / name
+        target.parent.mkdir()
+        target.write_bytes(b'abc')
+        (root / 'empty.txt').write_bytes(b'')
+        c = SimpleNamespace(root=root, tl={'project': {'cache_dependencies': [name]}})
+        self.assertEqual(list(gfx_svg._dependency_members(c, {'cache_dependencies': [name]})), [(name, target)])
+        self.assertEqual(gfx_svg.read_input(c, name, expected_path=target, limit=3), b'abc')
+        self.assertEqual(gfx_svg.read_input(c, 'empty.txt', limit=0), b'')
+        with self.assertRaisesRegex(ValueError, 'dependency identity changed'):
+            gfx_svg.read_input(c, name, expected_path=target.with_suffix('.TXT'))
+        with self.assertRaisesRegex(ValueError, 'regular file'):
+            gfx_svg.read_input(c, target.parent.name)
+
+        def read_error(*args):
+            reader.C.set_last_error(30)  # ERROR_READ_FAULT (no filesystem fault fixture)
+            return False
+
+        kernel, _ = reader._api()
+        with mock.patch.object(kernel, 'ReadFile', side_effect=read_error), self.assertRaises(OSError) as error:
+            gfx_svg.read_input(c, name)
+        self.assertEqual(error.exception.winerror, 30)
 
     def test_dependency_read_requires_expected_resolved_member(self):
         c = self.ctx()
@@ -469,12 +498,29 @@ class SvgContract(unittest.TestCase):
         item=self.root/'ordinary.txt'; item.write_bytes(b'a'*65)
         with self.assertRaisesRegex(ValueError,'byte budget'):
             gfx_svg.read_input(SimpleNamespace(root=self.root),'ordinary.txt',limit=32)
-        original_read=gfx_svg.os.read
-        with mock.patch.object(gfx_svg.os,'fstat',return_value=SimpleNamespace(st_mode=stat.S_IFREG,st_size=4)), \
-             mock.patch.object(gfx_svg.os,'read',wraps=original_read) as reads:
-            with self.assertRaisesRegex(ValueError,'byte budget'):
-                gfx_svg.read_input(SimpleNamespace(root=self.root),'ordinary.txt',limit=32)
-            self.assertEqual(reads.call_args.args[1],33)
+        if os.name == 'nt':
+            from vtx.render import gfx_svg_win_input as reader
+            kernel, _ = reader._api()
+            native_info = reader._info
+
+            def underreported_size(kernel, handle, *, directory):
+                info = native_info(kernel, handle, directory=directory)
+                if not directory:
+                    info.size = 4
+                return info
+
+            with mock.patch.object(reader, '_info', side_effect=underreported_size), \
+                 mock.patch.object(kernel, 'ReadFile', wraps=kernel.ReadFile) as reads:
+                with self.assertRaisesRegex(ValueError, 'byte budget'):
+                    gfx_svg.read_input(SimpleNamespace(root=self.root), 'ordinary.txt', limit=32)
+                self.assertEqual(reads.call_args.args[2], 33)
+        else:
+            original_read=gfx_svg.os.read
+            with mock.patch.object(gfx_svg.os,'fstat',return_value=SimpleNamespace(st_mode=stat.S_IFREG,st_size=4)), \
+                 mock.patch.object(gfx_svg.os,'read',wraps=original_read) as reads:
+                with self.assertRaisesRegex(ValueError,'byte budget'):
+                    gfx_svg.read_input(SimpleNamespace(root=self.root),'ordinary.txt',limit=32)
+                self.assertEqual(reads.call_args.args[1],33)
         with mock.patch.object(gfx_svg,'MAX_MANIFEST_BYTES',32), self.assertRaises(ValueError): self.ctx()
         with mock.patch.object(gfx_svg,'MAX_SVG_BYTES',32), self.assertRaises(ValueError): self.ctx()
 
