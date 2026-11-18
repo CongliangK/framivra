@@ -7,18 +7,19 @@ composite(a=窗口裁剪段, b=…)（段内相对时间红线见 composite.comp
 字幕沿用段级 ass 机制；音频复用 build_audio 的同一 filtergraph（含 duck
 sidechain）在窗口 ±margin 事件集上混音、边界 atrim，最后与画面 mux 成一个 mp4。
 
-命名空间纪律：全部产物只落 cache/preview/（独立命名空间，键 = 段内容键），不写
-cache 正式键产物、不写 out/、不更新 receipt/manifest/VERSIONS——预览渲染对正式
-产物链零干扰。产物 = cache/preview/range_<A标签>_<B标签>.mp4。
+CLI draft 写 cache/preview/range_<A标签>_<B标签>.mp4，可冷填充同键 seg/抽音缓存。
+内部原尺寸窗口把所有写入隔离在调用方的独占预览工作区；两者均不发布正式阶段回执。
 """
+from copy import copy
 import json, os, re, subprocess, sys, time
 from pathlib import Path
 
-from .composite import RenderPlan, choose_cutpoints, prepare_layers, _concat_manifest
+from .composite import DEFAULT_SEGMENTS, RenderPlan, choose_cutpoints, prepare_layers, _concat_manifest
+from .infra import ensure_inside_project
 from ..media.encoders import pick_vcodec
 from ..cache.recovery import media_cache_valid
 from .stages import mix_audio_wav
-from ..runtime import fstxn
+from ..runtime import events, fstxn
 
 # 音频窗口事件纳入外延（帧）：兜住 sidechaincompress release（1500ms）与淡出尾巴
 AUDIO_MARGIN_FRAMES = 60
@@ -154,19 +155,79 @@ def run_range(c, fa: int, fb: int):
         print('✗ 缓存模式 off 不复用 gfx，区间预览也不启动图形渲染器；'
               '请切换 core/aggressive 并运行 gfx，或使用完整 all 渲染。')
         sys.exit(1)
+    return _render_range(c, fa, fb, draft=True)
+
+
+def _intersects(clip, a, b):
+    return clip['dst_in'] < b and clip['dst_in'] + clip['dur'] > a
+
+
+def render_1080p_window(c, fa: int, fb: int, *, workspace: Path) -> Path:
+    """Internal producer, not a DSH authorization boundary or public API.
+
+    Caller supplies a trusted, validated Ctx (including trusted methods and
+    plugin/environment preflight), a stable project root, and an empty, private,
+    exclusively owned physical directory below project/cache/preview. The
+    workspace isolates kernel output paths; this function is not a sandbox for
+    arbitrary Ctx implementations. Caller handles cleanup and may consume the
+    result only on success. Caller event sinks are not inherited. No resize,
+    timeline rewrite, graphics preparation, or formal gain/receipt access.
+    """
+    if any(os.environ.get(name) for name in ('FFREPORT', 'LD_PRELOAD', 'LD_AUDIT')):
+        raise ValueError('1080p window refuses FFREPORT and loader injection overrides')
+    if c.dry or (c.w, c.h) != (1920, 1080):
+        raise ValueError('1080p window requires an executing 1920x1080 project context')
+    if type(fa) is not int or type(fb) is not int or not 0 <= fa < fb <= c.dur:
+        raise ValueError('1080p window requires an in-project half-open integer frame interval')
+    if any(_intersects(clip, fa, fb) for track in c.tl['video_tracks']
+           if track.get('kind') == 'gfx' for clip in track['clips']):
+        raise ValueError('1080p window overlaps gfx; this producer has no scoped graphics qualification')
+
+    workspace = Path(workspace)
+    physical = ensure_inside_project(workspace, c.root, what='1080p workspace')
+    if (workspace != physical or c.root.resolve() / 'cache' / 'preview' not in physical.parents
+            or not physical.is_dir() or any(physical.iterdir())):
+        raise ValueError('1080p window requires an empty physical workspace below project/cache/preview')
+
+    # Keep the full timeline and input pin. Rebind writes only on this operation's
+    # context, not on the caller. Disallow hooks (including audio/BGM providers);
+    # the caller must apply the same preflight before constructing its context.
+    ctx = copy(c)
+    ctx._core_only_preview = True
+    ctx._visual_bgm = None
+    ctx._visual_bgm_source_ids = frozenset()
+    ctx.range_window = (fa, fb)  # prepare_layers must not write a receipt on failure
+    ctx.draft = ctx.gpu = False
+    ctx.cache = ctx.gfx_cache = ctx.cache_store = physical / 'work'
+    ctx.out = ctx.cache / 'out'
+    ctx.preview_cache = physical
+    ctx.cache_session = None
+    ctx._svg_consumer_sources = None
+    ctx.probes = c.probes.copy()
+    ctx.execution = events.ExecutionContext()
+    ctx.diagnostics = None
+    ctx.verify_inputs(None)
+    return _render_range(ctx, fa, fb, draft=False)
+
+
+def _render_range(c, fa, fb, *, draft):
     t0 = time.monotonic()
-    draft = True
-    f = 0.5
-    W, H = (c.w // 2) // 2 * 2, (c.h // 2) // 2 * 2
+    f = 0.5 if draft else 1.0
+    W, H = ((c.w // 2) // 2 * 2, (c.h // 2) // 2 * 2) if draft else (c.w, c.h)
     la, lb = range_label(fa, c.fps), range_label(fb, c.fps)
-    print(f"== range [{fa},{fb})（{la}s–{lb}s，{fb - fa} 帧，draft {W}x{H}）==")
+    stem = f'{"range" if draft else "native_range"}_{la}_{lb}'
+    print(f"== range [{fa},{fb})（{la}s–{lb}s，{fb - fa} 帧，{'draft' if draft else 'native'} {W}x{H}）==")
     print("  ℹ 预览渲染：不写 out/ 与 receipt，产物在 cache/preview/")
 
     t = time.monotonic()
     layers = prepare_layers(c, native_window=(fa, fb))
+    if not draft:
+        layers = [layer for layer in layers if _intersects(layer['cl'], fa, fb)]
+        if any(layer['gfx'] for layer in layers):
+            raise ValueError('1080p window overlaps gfx; this producer has no scoped graphics qualification')
     print(f"[timing] gfx/seg 复用检查（{len(layers)} 层）: {time.monotonic() - t:.1f}s")
-    # gfx 冷缓存门（P1-B）：区间渲染复用 gfx 阶段产物但不自动渲 gfx——缺帧时让
-    # ffmpeg 报 PNG 读不到的原始错误毫无指向性，故此处显式拦截并指路 `vtx gfx`。
+    # Draft keeps its full-project gfx readiness gate. The native profile above
+    # never selects or reads gfx frames, even if an unrelated page is cold.
     missing_gfx = []
     for L in layers:
         if not L["gfx"]: continue
@@ -182,7 +243,7 @@ def run_range(c, fa: int, fb: int):
         sys.exit(1)
 
     plan = RenderPlan(c=c, draft=draft, f=f, W=W, H=H, layers=layers,
-                      nseg=int(os.environ.get("VTX_VIDEO_SEGMENTS", "8")))
+                      nseg=int(os.environ.get('VTX_VIDEO_SEGMENTS', str(DEFAULT_SEGMENTS))))
     # B03（issue #27 / F-05）：布局延迟创建——cli 不再无条件 mkdir cache/，
     # preview 目录自建（parents 兜底零音频事件、prepare_layers 未先建 cache 的边角）。
     vdir = c.cache / "preview"; fstxn.mkdir(vdir, root=c.root)
@@ -202,7 +263,7 @@ def run_range(c, fa: int, fb: int):
         t = time.monotonic()
         sfile = vdir / f"subs_{a:06d}_{b:06d}.ass"
         plan.write_seg_ass(sfile, a, b)             # 段级字幕（段内相对时间，同整片机制）
-        sl = [L for L in layers if L["cl"]["dst_in"] < b and L["cl"]["dst_in"] + L["cl"]["dur"] > a]
+        sl = [L for L in layers if _intersects(L['cl'], a, b)]
         key = plan._seg_content_key(a, b, sl, True, sfile)
         segp = vdir / f"rseg_{a:06d}_{b:06d}_{key}.mp4"
         if media_cache_valid(segp, frames=b - a):
@@ -213,10 +274,10 @@ def run_range(c, fa: int, fb: int):
         print(f"[timing] 段合成 [{a},{b})（{b - a} 帧，{len(sl)} 层）: "
               f"{time.monotonic() - t:.1f}s")
         segs.append(segp)
-    vcodec, enc = pick_vcodec(c, draft)
+    _, enc = pick_vcodec(c, draft)
     # 画面拼接（-c copy，各子段同编码参数）→ 临时视频；随后与窗口音频 mux
-    tmpv = vdir / f"range_{la}_{lb}.video.mp4"
-    lst = vdir / f"range_{la}_{lb}.list.txt"
+    tmpv = vdir / f'{stem}.video.mp4'
+    lst = vdir / f'{stem}.list.txt'
     # Share both path escaping and frame-derived timing with formal rendering.
     fstxn.atomic_write(lst, _concat_manifest(
         ((path, a, b) for path, (a, b) in zip(segs, parts)), c.fps), root=c.root)
@@ -226,11 +287,11 @@ def run_range(c, fa: int, fb: int):
     print(f"[timing] 画面 concat（{len(segs)} 段 -c copy）: {time.monotonic() - t:.1f}s")
 
     t = time.monotonic()
-    wav = vdir / f"range_{la}_{lb}.wav"
+    wav = vdir / f'{stem}.wav'
     _ensure_audio_wavs(c, fa, fb)                   # prepare 抽音频冷填充（键与 prepare 一致）
-    # The current full-build gain is a quality reference in the formal receipt,
-    # not reusable media. Re-measuring a quiet window would change its loudness.
-    g = _receipt_audio_gain(c)
+    # Draft retains its formal gain lookup. The isolated producer must not read
+    # delivery receipts; its result is explicitly window-local loudness only.
+    g = _receipt_audio_gain(c) if draft else None
     mix_audio_wav(c, wav, win=(fa, fb), gain_override=g)  # 同一 filtergraph（含 duck），边界 atrim
     print(f"[timing] 窗口音频混音（±{AUDIO_MARGIN_FRAMES}f 事件外延，"
           f"增益{'复用整片回执' if g is not None else '窗口自测'}）: {time.monotonic() - t:.1f}s")
@@ -238,7 +299,7 @@ def run_range(c, fa: int, fb: int):
     t = time.monotonic()
     delivery_dir = getattr(c, 'preview_cache', vdir)
     fstxn.mkdir(delivery_dir, root=c.root)
-    out = delivery_dir / f"range_{la}_{lb}.mp4"
+    out = delivery_dir / f'{stem}.mp4'
     c.run(["ffmpeg", "-v", "error", "-y", "-i", str(tmpv), "-i", str(wav),
            # Both inputs are already bounded to the exact frame/sample window.
            # -shortest can discard trailing copied video packets when rounded
@@ -258,6 +319,13 @@ def run_range(c, fa: int, fb: int):
                         encoding="utf-8", errors="replace").stdout.strip()
     if not (fr.isdigit() and int(fr) == fb - fa):
         print(f"✗ 区间渲染自检失败：总帧数 {fr or '?'} ≠ {fb - fa}"); sys.exit(1)
+    if not draft:
+        # The container count isn't proof of decoding. Require the mux
+        # transaction's completion record (full decode, exact count, digest),
+        # then recheck the full pinned inputs after all artifact reads.
+        if not media_cache_valid(out, frames=fb - fa):
+            raise RuntimeError('1080p window lacks a valid media completion record')
+        c.verify_inputs(None)
     print(f"[timing] 音视频 mux + 自检（{fr} 帧）: {time.monotonic() - t:.1f}s")
     print(f"✓ 区间预览：{out}（{enc}，总计 [timing] {time.monotonic() - t0:.1f}s）")
     return out

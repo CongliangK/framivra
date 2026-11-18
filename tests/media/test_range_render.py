@@ -257,13 +257,17 @@ class TestCliGuards(unittest.TestCase):
             p.write_text(json.dumps(self._min_tl(video_tracks=[
                 {"name": "g", "kind": "gfx",
                  "clips": [{"src": "gfx/page.html", "dst_in": 0, "dur": 60}]}])), encoding="utf-8")
-            r = subprocess.run(
-                ["env", "python3", "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
-                 "-t", str(p), "video", "--draft", "--range", "0", "6"],
-                capture_output=True, text=True, cwd=str(REPO))
-            self.assertNotEqual(r.returncode, 0)
-            self.assertIn("先运行", r.stdout)
-            self.assertIn("gfx/page.html", r.stdout)
+            for start, end in [('0', '6'), ('2', '3')]:
+                # Draft must still qualify a cold page even when it ends
+                # exactly at the requested start (no active overlap).
+                with self.subTest(start=start):
+                    r = subprocess.run(
+                        ["env", "python3", "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
+                         "-t", str(p), "video", "--draft", "--range", start, end],
+                        capture_output=True, text=True, cwd=str(REPO))
+                    self.assertNotEqual(r.returncode, 0)
+                    self.assertIn("先运行", r.stdout)
+                    self.assertIn("gfx/page.html", r.stdout)
 
     @staticmethod
     def _min_tl(video_tracks=()):
@@ -372,6 +376,30 @@ class TestRangeCachePolicy(unittest.TestCase):
             self.assertIn(guidance, message)
         self.assertFalse(self.c.cache.exists())
         self.assertFalse(self.c.out.exists())
+
+    def test_native_window_rejects_unqualified_graphics_and_nonisolated_workspace(self):
+        from vtx.pipeline import range as ranges
+        self.c.w, self.c.h, self.c.dry = 1920, 1080, False
+        self.c.tl['video_tracks'] = [{'kind': 'gfx', 'clips': [{'dst_in': 6, 'dur': 4}]}]
+        workspace = self.c.cache / 'preview' / 'request'
+        workspace.mkdir(parents=True)
+        (workspace / 'foreign').touch()
+        with mock.patch.object(ranges, 'prepare_layers') as prepare:
+            with mock.patch.dict(os.environ, {'FFREPORT': 'file=unexpected.log'}), \
+                    self.assertRaisesRegex(ValueError, 'refuses FFREPORT'):
+                ranges.render_1080p_window(self.c, 0, 6, workspace=workspace)
+            with self.assertRaisesRegex(ValueError, 'overlaps gfx'):
+                ranges.render_1080p_window(self.c, 5, 7, workspace=workspace)
+            with self.assertRaisesRegex(ValueError, 'integer frame interval'):
+                ranges.render_1080p_window(self.c, False, 6, workspace=workspace)
+            with self.assertRaisesRegex(ValueError, 'empty physical workspace'):
+                ranges.render_1080p_window(self.c, 0, 6, workspace=workspace)
+            self.c.out.mkdir()
+            with self.assertRaisesRegex(ValueError, 'empty physical workspace'):
+                ranges.render_1080p_window(self.c, 0, 6, workspace=self.c.out)
+        prepare.assert_not_called()
+        self.c.run.assert_not_called()
+        self.assertEqual(list(self.c.out.iterdir()), [])
 
 
 @unittest.skipUnless(os.environ.get("VTX_RANGE_INTEG") == "1",
@@ -518,6 +546,101 @@ class TestRangeIntegration(unittest.TestCase):
                              [frame / rate for frame in range(7)])
             self.assertEqual(int(video['duration_ts']) * Fraction(video['time_base']), 7 / rate)
             self.assertFalse((root / 'out').exists(), 'range must not publish formal outputs')
+
+    def test_1080p_window_uses_isolated_workspace_with_cold_inactive_gfx(self):
+        import wave
+        from vtx.cache.recovery import completion_marker
+        from vtx.pipeline.infra import Ctx
+        from vtx.pipeline.range import render_1080p_window
+        from vtx.pipeline.stages import validate_core
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            clip = root / 'screen.mp4'
+            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                            'color=red:s=320x180:r=30:d=1', '-f', 'lavfi', '-i',
+                            'sine=frequency=440:sample_rate=48000:duration=1',
+                            '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', str(clip)],
+                           check=True, capture_output=True, timeout=60)
+            (root / 'page.html').write_text('<html></html>', encoding='utf-8')
+            timeline = root / 'timeline.json'
+            timeline.write_text(json.dumps({
+                **TestCliGuards._min_tl(video_tracks=[
+                    {'name': 'screen', 'kind': 'screen', 'clips': [
+                        {'src': 'screen', 'src_in': 0, 'src_out': 12, 'dst_in': 0, 'dur': 12}]},
+                    {'name': 'gfx', 'kind': 'gfx', 'clips': [
+                        {'src': 'page.html', 'dst_in': 12, 'dur': 12}]}]),
+                'project': {'fps': 30, 'width': 1920, 'height': 1080, 'duration_frames': 300},
+                'sources': [{'id': 'screen', 'path': clip.name}],
+                'subtitles': [{'in': 0, 'out': 12, 'text': 'window'}],
+                'audio_tracks': [{'name': 'voice', 'events': [
+                    {'src': 'screen', 'in': 0, 'out': 12, 'volume': 1}]}],
+            }), encoding='utf-8')
+            c = Ctx(timeline)
+            self.assertEqual(validate_core(c), [])
+            observation = io.StringIO()
+            c.execution.activate(observation)
+            before = observation.getvalue()
+            self.assertTrue(before)
+            workspace = c.cache / 'preview' / 'owned'
+            workspace.mkdir(parents=True)
+            draft = workspace.parent / 'range_0.000_0.400.mp4'
+            draft.write_bytes(b'keep draft')
+            with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}), \
+                    mock.patch('vtx.pipeline.range._receipt_audio_gain', side_effect=AssertionError):
+                output = render_1080p_window(c, 0, 12, workspace=workspace)
+
+            self.assertEqual(output, workspace / 'native_range_0.000_0.400.mp4')
+            self.assertEqual(c.cache, root / 'cache')
+            self.assertFalse(hasattr(c, 'range_window'))
+            self.assertFalse(c.out.exists())
+            self.assertEqual(list(c.cache.iterdir()), [workspace.parent])
+            self.assertEqual(draft.read_bytes(), b'keep draft')
+            self.assertFalse((workspace / 'work' / 'gfx').exists())
+            probe = subprocess.run(['ffprobe', '-v', 'error', '-show_streams', '-show_frames',
+                                    '-of', 'json', str(output)], check=True, capture_output=True, timeout=60)
+            info = json.loads(probe.stdout)
+            video, audio = info['streams']
+            self.assertEqual((video['width'], video['height'], video['avg_frame_rate']), (1920, 1080, '30/1'))
+            self.assertEqual([frame['pts'] * Fraction(video['time_base']) for frame in info['frames']
+                              if frame['media_type'] == 'video'], [Fraction(i, 30) for i in range(12)])
+            self.assertEqual((audio['codec_name'], audio['sample_rate'], audio['channels']), ('aac', '48000', 2))
+            with wave.open(str(workspace / 'work' / 'preview' / output.with_suffix('.wav').name)) as pcm:
+                self.assertEqual(pcm.getnframes(), 12 * 1600)
+                self.assertTrue(any(pcm.readframes(pcm.getnframes())))
+
+            run = subprocess.run
+            for fault in ('certificate', 'input'):
+                with self.subTest(fault=fault):
+                    late = workspace.with_name(fault)
+                    late.mkdir()
+                    target = late / output.name
+                    changed = []
+
+                    def mutate_at_readback(argv, *args, **kwargs):
+                        result = run(argv, *args, **kwargs)
+                        if (argv[0] == 'ffprobe' and 'stream=nb_frames' in argv
+                                and argv[-1] == str(target)):
+                            self.assertEqual(result.returncode, 0)
+                            if fault == 'certificate':
+                                completion_marker(target).unlink()
+                            else:
+                                timeline.write_bytes(timeline.read_bytes() + b'\n')
+                            changed.append(True)
+                        return result
+
+                    # A successful final ffprobe isn't sufficient: inject a
+                    # change after it has read the atomically published MP4.
+                    expected = (self.assertRaisesRegex(RuntimeError, 'media completion record')
+                                if fault == 'certificate' else self.assertRaises(SystemExit))
+                    with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}), \
+                            mock.patch.object(subprocess, 'run', side_effect=mutate_at_readback), expected:
+                        render_1080p_window(c, 0, 12, workspace=late)
+                    if fault == 'input':
+                        self.assertEqual(expected.exception.code, 1)
+                    self.assertEqual(changed, [True])
+                    self.assertFalse(c.out.exists())
+            self.assertEqual(observation.getvalue(), before)
 
     def test_range_render(self):
         self._assert_short_ntsc_range_keeps_all_video_frames_when_audio_rounds_down()
