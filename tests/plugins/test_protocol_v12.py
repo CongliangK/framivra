@@ -149,6 +149,82 @@ print(json.dumps({'duration_s': duration}, indent=2))
                 validate(c)
 
 
+class UnavailableSourceDeclarations(unittest.TestCase):
+    def test_extraction_rejects_before_raw_cache_or_hooks(self):
+        from vtx.pipeline.infra import Ctx
+        from vtx.pipeline import stages
+        import wave
+        for key in ('bgm', 'denoise'):
+            for state in ('disabled', 'not_installed'):
+                for warm in (False, True):
+                    with self.subTest(key=key, state=state, warm=warm), tempfile.TemporaryDirectory() as d:
+                        root = Path(d)
+                        with wave.open(str(root / 'source.wav'), 'wb') as wav:
+                            wav.setparams((2, 2, 48000, 0, 'NONE', 'not compressed'))
+                            wav.writeframes(b'\x00' * 1920)
+                        tl = _tl(sources=[{'id': 'plain', 'path': 'source.wav'},
+                                          {'id': 's', 'path': 'source.wav', key: False}])
+                        with mock.patch.object(pl_registry, 'plugin_state', return_value=state):
+                            c = Ctx(_write(root, tl))
+                            c.diagnostics = []
+                            with mock.patch.object(stages, 'audio_key') as raw_key, \
+                                 mock.patch('vtx.cache.recovery.media_cache_valid', return_value=warm) as cache, \
+                                 mock.patch.object(pl_hooks, 'run_prepare_source') as hook:
+                                with self.assertRaises(ValueError) as raised:
+                                    stages.source_audio_extraction(c, 's')
+                            raw_key.assert_not_called()
+                            cache.assert_not_called()
+                            hook.assert_not_called()
+                        self.assertTrue(getattr(raised.exception, '_vtx_diagnostic_handled', False))
+                        self.assertEqual(len(c.diagnostics), 1)
+                        record = c.diagnostics[0]
+                        self.assertEqual(record['rule_id'], 'validate.plugin_state')
+                        self.assertEqual(record['json_path'], f'$.sources[1]["{key}"]')
+                        self.assertEqual(record['measured']['state'], state)
+
+    def test_validate_json_reports_registry_before_probe(self):
+        from vtx.pipeline.infra import Ctx
+        for state in ('disabled', 'not_installed'):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                (root / 'score.json').write_text('{}', encoding='utf-8')
+                tl = _tl(sources=[{'id': 's', 'path': 'score.json', 'bgm': True}])
+                with mock.patch.object(pl_registry, 'plugin_state', return_value=state):
+                    c = Ctx(_write(root, tl))
+                    c.diagnostics = []
+                    with mock.patch.object(c, 'probe') as probe, \
+                         mock.patch.object(pl_hooks, 'run_probe_source') as hook, \
+                         mock.patch.object(pl_hooks, 'run_validate') as validate_hook, \
+                         mock.patch.object(c, 'receipt') as receipt, \
+                         contextlib.redirect_stdout(io.StringIO()):
+                        with self.assertRaises(SystemExit) as raised:
+                            validate(c)
+                    self.assertEqual(raised.exception.code, 1)
+                    self.assertTrue(getattr(raised.exception, '_vtx_diagnostic_handled', False))
+                    probe.assert_not_called()
+                    hook.assert_not_called()
+                    validate_hook.assert_not_called()
+                    receipt.assert_called_once_with('validate', False, '1 errors')
+                    self.assertEqual([r['rule_id'] for r in c.diagnostics], ['validate.plugin_state'])
+
+    def test_plain_and_unrecognized_source_keys_keep_raw_extraction(self):
+        from vtx.pipeline.infra import Ctx
+        from vtx.pipeline import stages
+        for extra in ({}, {'mystery': True}, {'blender_bridge': True}, {'_meta': {'bgm': True}}):
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                (root / 'source.wav').write_bytes(b'ordinary source')
+                c = Ctx(_write(root, _tl(sources=[{'id': 's', 'path': 'source.wav', **extra}])))
+                c.diagnostics = []
+                with mock.patch('vtx.cache.recovery.media_cache_valid', return_value=False), \
+                     mock.patch.object(pl_hooks, 'run_prepare_source', return_value=None), \
+                     mock.patch.object(pl_registry, 'plugin_state', return_value='disabled'):
+                    wav, cmd = stages.source_audio_extraction(c, 's')
+                self.assertEqual(wav, c.cache / 'audio' / f'{hygiene.audio_key(c, "s")}.wav')
+                self.assertEqual(cmd[cmd.index('-i') + 1], str(root / 'source.wav'))
+                self.assertEqual(c.diagnostics, [])
+
+
 class RegistryHooksFallback(unittest.TestCase):
     def test_empty_hooks_falls_back_to_manifest(self):
         entry_dir = REPO / "plugins" / "duck-static"

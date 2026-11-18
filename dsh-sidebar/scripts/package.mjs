@@ -1,11 +1,32 @@
 #!/usr/bin/env node
 /** Build the official client factory and atomically emit a release ZIP or npm tarball. */
-import { readFile, mkdir, writeFile, mkdtemp, copyFile, link, lstat } from 'node:fs/promises'
-import { dirname, isAbsolute, join } from 'node:path'
+import { readFile, mkdir, writeFile, mkdtemp, copyFile, link, lstat, stat } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { buildClient, packageDir } from './build.mjs'
+import { commandFailure, spawnArchivePython } from './archive-python.mjs'
+
+async function npmPackCommand() {
+  if (process.platform !== 'win32') return ['npm']
+  // npm.cmd is a batch file, not a native executable. Use the CLI from the
+  // invoking npm (npm run package), or the one bundled alongside node.exe
+  // (node scripts/package.mjs). Never pass archive paths through cmd.exe.
+  const invokingCli = process.env.npm_execpath
+  const candidates = [
+    ...(invokingCli && isAbsolute(invokingCli) && basename(invokingCli).toLowerCase() === 'npm-cli.js' ? [invokingCli] : []),
+    join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ]
+  for (const cli of candidates) {
+    try {
+      if ((await stat(cli)).isFile()) return [process.execPath, cli]
+    } catch (error) {
+      if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error
+    }
+  }
+  throw new Error('npm pack failed: npm-cli.js not found; install npm alongside Node.js or run through npm run package')
+}
 
 const args = process.argv.slice(2)
 if (args.length !== 2 || args[0] !== '--out' || !isAbsolute(args[1]) || !/\.(zip|tgz)$/.test(args[1])) {
@@ -83,21 +104,22 @@ for (const language of ['en', 'zh']) await copyFile(join(packageDir, 'locale', `
 let archive
 if (format === 'zip') {
   archive = join(work, 'candidate.zip')
-  const zip = spawnSync('python3', ['-c', `import pathlib, sys, zipfile
+  const zip = spawnArchivePython(`import pathlib, sys, zipfile
 root = pathlib.Path(sys.argv[1])
 with zipfile.ZipFile(sys.argv[2], 'x', compression=zipfile.ZIP_DEFLATED) as archive:
-    for path in sorted(root.rglob('*')):
+    for path in sorted(root.rglob('*'), key=lambda path: path.relative_to(root).as_posix()):
         if path.is_file():
             archive.write(path, path.relative_to(root).as_posix())
-`, stage, archive], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
-  if (zip.error || zip.status !== 0) throw new Error(`ZIP creation failed: ${zip.error?.message ?? zip.stderr}`)
+`, [stage, archive])
+  if (zip.error || zip.status !== 0) throw new Error(`ZIP creation failed: ${commandFailure(zip)}`)
 } else {
   // npm owns the standard package/ tar layout and integrity metadata. Never
   // pack the source directory or execute source/install lifecycle scripts.
-  const packed = spawnSync('npm', ['pack', '--ignore-scripts', '--offline', '--json', '--pack-destination', work], {
+  const [command, ...prefix] = await npmPackCommand()
+  const packed = spawnSync(command, [...prefix, 'pack', '--ignore-scripts', '--offline', '--json', '--pack-destination', work], {
     cwd: stage, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000,
   })
-  if (packed.error || packed.status !== 0) throw new Error(`npm pack failed: ${packed.error?.message ?? packed.stderr}`)
+  if (packed.error || packed.status !== 0) throw new Error(`npm pack failed: ${commandFailure(packed)}`)
   const results = JSON.parse(packed.stdout)
   const filename = `${manifest.name.replace(/^@/, '').replace('/', '-')}-${manifest.version}.tgz`
   if (results.length !== 1 || results[0].filename !== filename || /[/\\]/.test(filename)) {

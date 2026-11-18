@@ -47,7 +47,8 @@ else:
         data = ("if __name__ == '__main__':\\n"
                 " import json,runpy,sys\\n"
                 " ns=runpy.run_path(__file__,run_name='installer_probe')\\n"
-                " print(json.dumps(dict(argv=sys.argv[1:],bundle=ns['BUNDLE'])))\\n"
+                " import shutil\\n"
+                " print(json.dumps(dict(argv=sys.argv[1:],bundle=ns['BUNDLE'],brew=shutil.which('brew'))))\\n"
                 " raise SystemExit(0)\\n") + data
     destination = pathlib.Path(sys.argv[sys.argv.index('-o') + 1])
     destination.write_text(data, encoding='utf-8')
@@ -90,6 +91,13 @@ else:
                 self.assertEqual(report['argv'], expected)
                 self.assertFalse(self.root.exists())
                 self.assertEqual(list(self.scratch.iterdir()), [])
+
+    def test_mac_respects_homebrew_already_on_path(self):
+        self.env['FRAMIVRA_TEST_SYSTEM'] = 'Darwin'
+        self.executable('brew', '#!/bin/sh\nexit 99\n')
+        result = self.run_bootstrap('--yes', '--no-system')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['brew'], str(self.bin / 'brew'))
 
     def test_new_brew_preserves_yes_and_distinguishes_trust_from_transport_failure(self):
         if shutil.which('brew') or any(Path(p).is_file() for p in ('/opt/homebrew/bin/brew', '/usr/local/bin/brew')):

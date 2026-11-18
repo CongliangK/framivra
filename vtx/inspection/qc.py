@@ -38,7 +38,7 @@ TARGET_LUFS = -14            # 项目目标响度（EBU R128，与 stages.build_
 QC_TP_MAX = -1.0             # 解码域真峰阈（dBFS，v2 §1.3：G3 的 -1.0 为唯一权威）
 
 # ---- QC 命中段免检记录（方案三阶段1，2026-09-13）----
-# 记录 cache/qc_pass_segs.json：{"version":6,"final":{size,mtime_ns,frames},
+# 记录 cache/qc_pass_segs.json：{"version":7,"final":{size,mtime_ns,frames},
 # "probe_filter":采样表达式,"segs":[{name,a,b,key,size,mtime_ns}],
 # "checks":{检查名:上轮是否 pass}}。
 # 免检判定（非 --strict，见 qc() 内）：final (size,mtime_ns) 与记录一致 + 检查项
@@ -70,14 +70,24 @@ _QC_SEG_RECORD = "qc_pass_segs.json"
 # before normalization. Native Y from different matrices is not comparable,
 # even when RGB agrees. Untagged inputs retain FFmpeg's auto-matrix fallback;
 # unknown metadata is not a proof of the author's intended colorimetry.
-# Both revisions invalidate cached exemption records; old QC reports/receipts
-# are not retroactively certified and need an actual fresh QC invocation.
-_QC_RECORD_VERSION = 6
+# v7 maps both references and outputs into bounded RGB before downsampling.
+# An RGBA compositor can clip YUV outside the RGB gamut; comparing native Y
+# to its clipped counterpart can mistake the conversion for a visible layer.
+# Keep clipping at 16-bit RGB precision. Convert to full-range BT.709 Y at
+# native size before resizing the extracted luma: fusing RGB16 -> YUV8 with a
+# resize makes near-black rounding depend on input size. This is a luma probe,
+# not a render transform or HDR/transfer-function color management.
+# Old exemption records must re-probe; existing reports/receipts are not
+# retroactively certified.
+_QC_RECORD_VERSION = 7
 _QC_GRAY_WIDTH, _QC_GRAY_HEIGHT = 48, 27
-_QC_GRAY_FILTER = (f"scale={_QC_GRAY_WIDTH}:{_QC_GRAY_HEIGHT}"
-                   f":in_color_matrix=auto:out_color_matrix=bt709"
-                   f":in_range=auto:out_range=full:flags=bicubic+accurate_rnd,"
-                   f"format=yuv420p,extractplanes=y,format=gray")
+_QC_GRAY_FILTER = (
+    "scale=iw:ih:in_color_matrix=auto:in_range=auto:out_range=full:"
+    "flags=bicubic+accurate_rnd,format=gbrp16le,"
+    "scale=iw:ih:out_color_matrix=bt709:in_range=full:out_range=full:"
+    "flags=bicubic+accurate_rnd,format=yuv444p,extractplanes=y,"
+    f"scale={_QC_GRAY_WIDTH}:{_QC_GRAY_HEIGHT}:"
+    "in_range=full:out_range=full:flags=bicubic+accurate_rnd,format=gray")
 _VSEG_NAME = re.compile(r"^seg(\d+)_(\d{6})_([0-9a-f]{12})\.mp4$")
 
 

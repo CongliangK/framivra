@@ -46,6 +46,7 @@ PYTHON_PACKAGES = ('setuptools>=68,<81', 'wheel>=0.42,<1', 'numpy>=1.26,<3',
                    'scipy>=1.11,<2', 'soundfile>=0.12,<1', 'soxr>=0.3,<1',
                    'Pillow>=10,<13')
 TOOL_NAMES = ('git', 'ffmpeg', 'ffprobe', 'sox')
+MAC_FFMPEG_FULL_BIN = Path('/opt/homebrew/opt/ffmpeg-full/bin')
 REQUIRED_SOURCE = ('pyproject.toml', 'vtx/cli/commands.py', 'plugins/registry.json',
                    'scripts/install_source.py', 'scripts/install_runtime_fonts.py',
                    'scripts/demo_fonts.py', 'vtx/runtime/managed.py')
@@ -239,6 +240,19 @@ def refresh_windows_path():
 def prepare_tools(no_system, root=None, network='cn', yes=False):
     found = tools(root)
     incompatible = posix.missing_ffmpeg(found, run=command)
+    if sys.platform == 'darwin' and (incompatible or 'ffprobe' not in found):
+        # A linked, reduced FFmpeg can shadow an already installed full keg.
+        # Resolve the two executables together without asking brew to install/update.
+        pair = posix.ffmpeg_pair(MAC_FFMPEG_FULL_BIN)
+        if pair and any(found.get(name) != path for name, path in pair.items()):
+            if not posix.missing_ffmpeg(pair, run=command):
+                try:
+                    command([pair['ffprobe'], '-version'], capture=True, timeout=60)
+                except (InstallError, OSError, subprocess.SubprocessError):
+                    pass  # Leave the pair unselected; native preparation is still required.
+                else:
+                    found.update(pair)
+                    incompatible = []
     if incompatible:
         print('[install] native FFmpeg needs preparation: ' + ', '.join(incompatible), flush=True)
         found.pop('ffmpeg', None)
@@ -442,7 +456,12 @@ def runtime_env(root, found):
     for key in ('PYTHONPATH', 'PYTHONHOME', 'VTX_CONFIG', 'VTX_GFX', 'VTX_CEF_WORKER', 'VTX_GFX_BACKEND'):
         env.pop(key, None)
     binary = root / 'venv' / ('Scripts' if sys.platform == 'win32' else 'bin')
-    env.update(PATH=os.pathsep.join(dict.fromkeys([str(binary), *(str(Path(x).parent) for x in found.values()), env.get('PATH', '')])),
+    tool_paths = list(found.values())
+    if sys.platform == 'darwin':
+        # A shared bin directory (e.g. Git or SoX's) can also contain the
+        # linked, unqualified FFmpeg. Put the verified pair ahead of it.
+        tool_paths[:0] = [found[name] for name in ('ffmpeg', 'ffprobe') if name in found]
+    env.update(PATH=os.pathsep.join(dict.fromkeys([str(binary), *(str(Path(x).parent) for x in tool_paths), env.get('PATH', '')])),
                VTX_CHROME=found['chrome'], VTX_GFX='cdp', VTX_NO_NVENC='1',
                VTX_CONFIG=str(root / 'config.json'), FRAMIVRA_VERIFY_ROOT=str(root),
                PYTHONUTF8='1', PYTHONIOENCODING='utf-8')
@@ -462,7 +481,8 @@ def prepare_python(root, source, found, *, network='cn', update=False):
     if repair:
         try:
             # Idempotent repair of our partial venv; never clear/delete it.
-            venv.EnvBuilder(with_pip=True, symlinks=False).create(target)
+            # Apple's Xcode/CLT framework Python requires a symlinked interpreter.
+            venv.EnvBuilder(with_pip=True, symlinks=(sys.platform == 'darwin')).create(target)
         except (OSError, subprocess.SubprocessError) as error:
             raise InstallError('Python venv/ensurepip unavailable. Install python3-venv (Debian/Ubuntu) or a complete Python distribution and rerun: ' + str(error)) from error
     python_packages.install(python, root, env, PYTHON_PACKAGES, network=network, update=update, run=command)
@@ -490,6 +510,26 @@ def prepare_configuration(root, source, python):
         value[key] = {'enabled': False}
     value['bgm'] = {'enabled': True, 'python': str(python), 'runtime': None}
     atomic_json(target, value)
+
+
+def verify_macos_tool_paths(root, python, env, tools):
+    # A retry can reuse an older owned source; check its post-ready PATH order,
+    # not this installer's explicit probe environment, before publishing ready.
+    code = '''import json, os, shutil, sys
+from pathlib import Path
+from vtx.runtime import managed
+root, tools = Path(sys.argv[1]), json.loads(sys.argv[2])
+legacy = ('git', 'ffmpeg', 'ffprobe', 'sox', 'chrome')
+order = getattr(managed, 'tool_search_order', lambda: legacy)()
+path = os.pathsep.join([str(root / 'venv/bin'), *(str(Path(tools[name]).parent) for name in order)])
+print(json.dumps([name for name in ('ffmpeg', 'ffprobe')
+                  if not (exe := shutil.which(name, path=path)) or Path(exe).resolve() != Path(tools[name])]))
+'''
+    shadowed = json.loads(command([python, '-I', '-c', code, root, json.dumps(tools)],
+                                  env=env, cwd=root, capture=True, timeout=60))
+    if shadowed:
+        raise InstallError('Managed runtime PATH shadows selected tools: ' + ', '.join(shadowed) +
+                           '. Remove the conflicting PATH tools or rerun with --update for an older owned source.')
 
 
 def verify(root, source, python, env):
@@ -610,6 +650,8 @@ def install(args):
         if font_environment != expected:
             raise InstallError('Font installer returned an unexpected runtime environment')
         env.update(font_environment)
+        if sys.platform == 'darwin':
+            verify_macos_tool_paths(root, python, env, found)
         capabilities, evidence = verify(root, source, python, env)
         vtx = root / 'venv' / ('Scripts/vtx.exe' if sys.platform == 'win32' else 'bin/vtx')
         executable = vtx

@@ -1,4 +1,6 @@
-# JSON 时间线 Demo：主宣传与性能源输入
+# JSON 时间线 Demo：锁定 SVG 性能源输入
+
+[可编辑主 Demo](../demo-workbench/README.md)复用本片创作源，提供多后端和完整时间线练习；本页的 portable-v2 输入和验收契约不变。
 
 这是一支 30 秒中文概念动效：JSON 编排画面、文字和同一个短声，再修改落点，承接到成片与品牌。`timeline.json` 是正式 v2 工程；`motion-plan.json` 是离线创作计划，不能交给 vtx 执行。产品以 `clip.format = svg-sequence` 读取静态 SVG，不执行生成器 JavaScript。
 

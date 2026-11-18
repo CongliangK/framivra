@@ -3,14 +3,15 @@
 ## 项目与入口
 
 - timeline.json/素材→帧精确视频/混音/QC/缓存；[内核](<vtx/>)永不可关
-- [应用](<apps/>)产素材/辅助结果；[插件](<plugins/>)扩时间线，启用不忽略依赖/失败。
+- [应用](<apps/>)产素材/辅助结果；[插件](<plugins/>)扩时间线，启用不忽略依赖/失败；已知不可用声明先于 probe 拒绝，源声明在 prepare/range 裸缓存前同拒。
 - [侧栏](<dsh-sidebar/README.md>)独立发行：完整合成非单页，预览共用整数播放头、成片联动非合成证书；单行工具栏，帧步进与轨道高度在时间线；轨高/专注视图只改显示；宽屏文件列表独立滚动；生效插件在身份/钩子前拒绝；HTML信任≠沙箱；写态走内核事务，帧率/预览限制不变。
+- 侧栏按宿主与内核能力分开报告读、整帧与事务；Windows 不把静态协议声明或成片播放当成内核帧合成、写入资格。
 - [空间管理](<docs/reference/storage-api.md>)删除权归内核；清理须独立确认停写，不向模型开放。
 - macOS授权见接口；目录fd≠proc-fd Path；单帧须全输入前后复核；环境文件批查仅复用本次目录前缀并前后核验，仍重枚举/哈希/查链接；Linux缺RECORD只认元数据所属RPM清单。
 - 制作读[技能](<docs/skill/SKILL.md>)；范本[工作流](<templates/README.md>)、组件[目录](<docs/catalog.md>)。
 - 开发读[架构](<docs/ARCHITECTURE.md>)/[开发](<docs/DEV.md>)；API/事务见[接口](<docs/reference/timeline-api.md>)。
 - 环境见[依赖](<README.md#依赖矩阵>)：Python≥3.9，工具按路径配置；模型默认关；空依赖≠仅需标准库。
-- [安装](<docs/guides/installation.md>)：独立venv/固定身份缓存/内核锁，验收后ready；Win主进程不提权，厂商包UAC；DSH显式连接；登记≠验收。
+- [安装](<docs/guides/installation.md>)：独立venv/固定身份缓存/内核锁，验收后ready；macOS venv 链接解释器、先核验已装完整 FFmpeg keg；Win主进程不提权，厂商包UAC；DSH显式连接；登记≠验收。
 - 安装验收：BGM发现不可依赖POSIX，目录发布对部分Windows绝对路径兼容混合斜杠、不改运行数据；GPU用原生锁；Windows并发内存门须实测且探测失败时拒派；hue素材先规范RGB色域，不松QC。
 - BGM v2 轨 `$ref` 装载/merge 仅接受工程内相对路径：Windows 根相对、带盘符及设备路径先拒绝，仍须 realpath 越界检查；POSIX 反斜杠为普通文件名字符。插件签名与 asset_dependencies 共用标准库筛选及静态路径检查，仅展开 v2 直接纯非空字符串引用；以工程词法父目录为基准拒绝越界及非普通文件，按 loader 先 normpath 后 realpath 取文件，缺失记 MISSING；沿用 loader 根目录 base 的严格前缀限制；不证明原始文本逐组件不越界，检查与打开非原子，不能防 TOCTOU 或工程内硬链接指向外部内容。
 - 侧栏沿用[宿主主题](<dsh-sidebar/DESIGN.md>)，切换不重建输入或触发写态；保留黑舞台/轨道语义色，失效不留可用成功提示；高级定位浮层展开时工具栏暂停吸顶，折叠恢复。
@@ -39,7 +40,7 @@
 
 ## 编辑纪律
 
-- 代码 PR 须同步本指南，记录结构、入口或跨目录约束；QC 采样须统一矩阵与范围，变更后重新验证证书。
+- 代码 PR 须同步本指南，记录结构、入口或跨目录约束；[QC](<vtx/inspection/qc.py>) 先统一可表示 RGB 色域，再按统一矩阵/范围采样，变更后重验 QC。
 - 仅留跨目录常驻要点，一点一行；无流水账/平行指南。
 - PR 只提交必要业务改动及少量高价值回归，优先扩展已有测试；避免重复 mock、机械源码字符串断言或为数量/覆盖率堆测试。
 - 一次性复现/诊断脚本、截图、原始日志及大体积验收产物默认放仓外，PR 用简短结果与引用说明；仅有明确长期消费者、且经维护者同意的最小夹具或证据可入仓，不借精简删除有效回归、冻结证据或许可证。
@@ -54,7 +55,8 @@
 - [Windows Fontconfig 检查](<vtx/render/gfx_svg_win_fontconfig.py>)只在独立进程用固定官方 DLL 快照查询单个已知字体 face；仅供内部验证，不证明闭包、渲染或产物资格。
 - [Windows SVG 快照](<vtx/render/gfx_svg_win_snapshot.py>)创建独占 ASCII scratch 操作目录前，持有两侧目录链句柄，查重解析标记并按卷和文件 ID 拒绝重叠；固定官方包树、控制台映像与 cwd 仅供内部输入核验，不启动进程，不证明加载域、缓存或发布资格。
 - [SVG shell](<vtx/render/gfx_svg_stage.py>) 即使退出成功也拒收明确的 Fontconfig error / Pango-CRITICAL，不发布完成凭据；该诊断只报告固定短错误，不回显日志，普通警告不拒收。
-- 准备/核验仅用 `scripts/demo.py prepare/verify`；portable-v2 锁字体与标准库音频，禁混旧输入；预检不授渲染资格，准备目录拒绝链接/reparse，见[Demo](<templates/demo-timeline-svg/README.md>)。
+- portable-v2 基线仅用 `scripts/demo.py prepare/verify`；锁字体与标准库音频，禁混旧输入；预检不授渲染资格，见[SVG 基线](<templates/demo-timeline-svg/README.md>)。
+- [可编辑主 Demo](<templates/demo-workbench/README.md>)同源生成 SVG/HTML；CDP、CEF 与 Inkscape 验收按实际后端留证，不代替安装、冻结与性能基线。
 - [portable-v2 锁定运行时源](<templates/demo-timeline-svg/benchmark/portable-v2.json>)须以 LF 检出（含 Windows）；[属性规则](<.gitattributes>)仅补齐既有 Python 规则未覆盖的锁成员，核验仍按原始字节。
 - 同输入/质量/环境/后端/配置分冷暖测全链；留身份/哈希/证据；未测UNRUN，探针非整体提速；SVG有界调度/串行回退见[缓存](<docs/cache-provenance.md#产物身份>)。
 - [事件](<docs/reference/execution-events.md>)跨阶段回执绑定实际嵌套任务，区间不相加冒充墙钟。

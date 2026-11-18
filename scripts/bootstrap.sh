@@ -49,9 +49,11 @@ bootstrap() {
       --connect-timeout 15 --speed-limit 1000 --speed-time 60 "$@"
   }
   if [ "$(uname -s)" = Darwin ]; then
-    for dir in /opt/homebrew/bin /usr/local/bin; do
-      if [ -x "$dir/brew" ]; then PATH="$dir:$PATH"; export PATH; break; fi
-    done
+    if ! command -v brew >/dev/null 2>&1; then
+      for dir in /opt/homebrew/bin /usr/local/bin; do
+        if [ -x "$dir/brew" ]; then PATH="$dir:$PATH"; export PATH; break; fi
+      done
+    fi
     if ! command -v brew >/dev/null 2>&1 && [ "$SYSTEM_ALLOWED" = 1 ]; then
       confirm 'Prepare official Homebrew (may request administrator approval)? [y/N]'
       BREW_SCRIPT="$(mktemp "${TMPDIR:-/tmp}/framivra-brew.XXXXXXXX")"

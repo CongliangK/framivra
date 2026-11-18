@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { join, posix, win32 } from 'node:path'
 import { createKernelManagement, validateKernelConfigSelection, INSTALL_SCRIPT, KERNEL_CONFIG_LIMIT, KERNEL_WHEEL_LIMIT, INSTALLATION_LIMIT, managedInstallationPaths } from '../src/kernel-management.mjs'
 import { readConfiguration, validateVtxConfigFile, isVolatileConfig } from '../src/configuration.mjs'
 import { updateKernelConfigField } from '../src/kernel-config.mjs'
@@ -11,16 +11,24 @@ import { createPreviewHost } from '../src/host.mjs'
 import { MemoryFs as TimelineFs, fixtureSubprocess } from './helpers.mjs'
 
 const digest = data => `sha256:${createHash('sha256').update(data).digest('hex')}`
+// The fixture contains both POSIX paths and the host's native managed layout.
+const fixturePaths = path => path.startsWith('/') ? posix : win32
 class Fs {
   constructor() { this.entries = new Map(); this.links = new Map(); this.reads = []; this.writes = []; this.version = 0; this.add('/', null, 'directory'); this.add(homedir(), null, 'directory'); this.add('/usr/bin/python3', 'system'); this.add('/opt/trusted/bin/vtx', 'kernel') }
   add(path, content, type = 'file') {
-    if (path !== '/' && !this.entries.has(dirname(path))) this.add(dirname(path), null, 'directory')
+    const parent = fixturePaths(path).dirname(path)
+    if (parent !== path && !this.entries.has(parent)) this.add(parent, null, 'directory')
     this.entries.set(path, { type, content: content === null ? null : Buffer.from(content), version: `v${++this.version}` })
   }
-  async resolve(path) { const key = this.links.get(path) ?? resolve(path); return { targetKey: key, displayPath: key } }
+  async resolve(path) { const key = this.links.get(path) ?? fixturePaths(path).normalize(path); return { targetKey: key, displayPath: key } }
   processPath(target) { return target.targetKey }
   processPathFromHostPath(path) { return path }
-  contains(a, b) { return a.targetKey === b.targetKey || b.targetKey.startsWith(a.targetKey === '/' ? '/' : `${a.targetKey}/`) }
+  contains(a, b) {
+    const paths = fixturePaths(a.targetKey)
+    if (paths !== fixturePaths(b.targetKey)) return false
+    const rel = paths.relative(a.targetKey, b.targetKey)
+    return rel !== '..' && !rel.startsWith(`..${paths.sep}`) && !paths.isAbsolute(rel)
+  }
   async stat(target) { const info = this.entries.get(target.targetKey); return info && { type: info.type, version: info.version, size: info.content?.byteLength } }
   async lstat(path) { return this.links.has(path) ? { type: 'symlink', version: 'link' } : this.stat({ targetKey: path }) }
   async readBytes(target, signal, max) { signal?.throwIfAborted(); this.reads.push({ path: target.targetKey, max }); const data = this.entries.get(target.targetKey).content; if (data.byteLength > max) throw Object.assign(new Error('large'), { code: 'FS_TOO_LARGE' }); return data }
@@ -33,7 +41,7 @@ class Fs {
     return { version: this.entries.get(target.targetKey).version, after: text, before: current?.content?.toString() ?? null }
   }
   async listDir(target) {
-    return [...this.entries].filter(([path]) => path !== target.targetKey && dirname(path) === target.targetKey).map(([path, info]) => ({ name: path.slice(path.lastIndexOf('/') + 1), type: info.type, target: { targetKey: path } }))
+    return [...this.entries].filter(([path]) => path !== target.targetKey && fixturePaths(path).dirname(path) === target.targetKey).map(([path, info]) => ({ name: fixturePaths(path).basename(path), type: info.type, target: { targetKey: path } }))
   }
 }
 function setup(options = {}) {
@@ -220,10 +228,39 @@ test('managed manifest is bounded, first, metadata-only and never executes, migr
   assert(!JSON.stringify(result).includes('/evil/'))
 })
 
-test('invalid or oversized manifests cannot redirect discovery or hide fixed/legacy candidates', async t => {
+test('an absent receipt still allows strict discovery of the bare managed launcher', async t => {
+  const env = setup(); t.after(() => env.service.dispose())
+  const paths = managedInstallationPaths()
+  env.fs.add(paths.vtxExecutable, 'bare launcher')
+  const result = await env.request({ op: 'scan' })
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.candidates[0], { path: paths.vtxExecutable, kind: 'executable', source: 'managed-default' })
+  assert.deepEqual(result.warnings, [])
+  assert.equal(env.fs.reads.length + env.calls.length + env.fs.writes.length, 0)
+})
+
+test('preparing receipt suppresses the fixed launcher from current settings and resolved aliases', async t => {
+  const env = setup(); t.after(() => env.service.dispose())
+  const { paths } = managedInstall(env, { status: 'preparing' })
+  const windows = process.platform === 'win32'
+  const alias = join(homedir(), '.local', 'bin', windows ? 'vtx.exe' : 'vtx')
+  const alternate = windows ? paths.vtxExecutable.toLowerCase().replaceAll('\\', '/') : join(paths.root, 'bin') + '/./vtx'
+  env.fs.links.set(alias, paths.vtxExecutable)
+  for (const configured of [paths.vtxExecutable, alternate]) {
+    env.config.vtxExecutable = configured
+    const result = await env.request({ op: 'scan' })
+    assert.equal(result.ok, true)
+    assert(!result.candidates.some(item => [configured, paths.vtxExecutable, alias].includes(item.path)))
+    assert(result.warnings.some(item => item.includes('BAD_INSTALLATION')))
+    assert.equal(env.config.vtxExecutable, configured)
+  }
+  assert.equal(env.calls.length + env.fs.writes.length, 0)
+})
+
+test('invalid or oversized manifests cannot offer the managed launcher or hide independent candidates', async t => {
   for (const overrides of [
     { schema: 'other' }, { status: 'installing' }, { renderer: 'cef' }, { profile: 'ai' },
-    { commit: 'abcd' }, { commit: 'a'.repeat(40) + '\n' }, { commit: ['a'.repeat(40)] }, { version: null },
+    { commit: 'abcd' }, { commit: 'A'.repeat(40) }, { commit: 'a'.repeat(40) + '\n' }, { commit: ['a'.repeat(40)] }, { version: null },
     { vtxExecutable: '/evil/vtx' }, { sourceRoot: '/workspace/source' },
     { pythonExecutable: '/evil/python' }, { configFile: '/workspace/config.json' },
     { configFile: '$(touch injected).json' },
@@ -232,25 +269,44 @@ test('invalid or oversized manifests cannot redirect discovery or hide fixed/leg
     const { paths } = managedInstall(env, overrides)
     const result = await env.request({ op: 'scan' })
     assert.equal(result.ok, true)
-    assert.equal(result.candidates[0].path, paths.vtxExecutable)
-    assert.equal(result.candidates[0].source, 'managed-default')
-    assert(!result.candidates.some(item => item.installation || item.path.includes('/evil/')))
+    assert(!result.candidates.some(item => item.path === paths.vtxExecutable || item.installation || item.path.includes('/evil/')))
     assert(result.candidates.some(item => item.path === '/opt/trusted/bin/vtx'))
     assert(result.warnings.length)
     assert.equal(env.calls.length + env.fs.writes.length, 0)
     assert.deepEqual(env.fs.reads.map(item => item.path), [paths.manifest])
   }
-  for (const content of [Buffer.alloc(INSTALLATION_LIMIT + 1, 32), Buffer.from('{"schema":'), Buffer.from([0xff])]) {
+  for (const encode of [() => Buffer.alloc(INSTALLATION_LIMIT + 1, 32), () => Buffer.from('{"schema":'), () => Buffer.from([0xff]), manifest => `\uFEFF${JSON.stringify(manifest)}`]) {
     const env = setup(); t.after(() => env.service.dispose())
-    const { paths } = managedInstall(env)
-    env.fs.add(paths.manifest, content)
+    const { paths, manifest } = managedInstall(env)
+    env.fs.add(paths.manifest, encode(manifest))
     const result = await env.request({ op: 'scan' })
     assert.equal(result.ok, true)
-    assert(!result.candidates.some(item => item.installation))
+    assert(!result.candidates.some(item => item.path === paths.vtxExecutable))
     assert(result.warnings.length)
     assert(env.fs.reads.every(item => item.max === INSTALLATION_LIMIT))
     assert.equal(env.calls.length + env.fs.writes.length, 0)
   }
+})
+
+test('an inaccessible receipt or a missing referenced file is not an absent receipt', async t => {
+  const env = setup(); t.after(() => env.service.dispose())
+  const { paths } = managedInstall(env)
+  env.fs.entries.delete(paths.pythonExecutable)
+  let result = await env.request({ op: 'scan' })
+  assert.equal(result.ok, true)
+  assert(!result.candidates.some(item => item.path === paths.vtxExecutable))
+  assert(result.warnings.some(item => item.includes('NOT_FOUND')))
+  const original = env.fs.lstat.bind(env.fs)
+  env.fs.lstat = async path => {
+    if (path === paths.manifest) throw Object.assign(new Error('denied'), { code: 'FS_PERMISSION_DENIED' })
+    return original(path)
+  }
+  result = await env.request({ op: 'scan' })
+  assert.equal(result.ok, true)
+  assert(!result.candidates.some(item => item.path === paths.vtxExecutable))
+  assert(result.warnings.some(item => item.includes('FS_PERMISSION_DENIED')))
+  assert.equal(env.fs.reads.length, 1)
+  assert.equal(env.calls.length + env.fs.writes.length, 0)
 })
 
 test('managed receipt, ancestors, launcher, source, python and config reject symlinks and workspace trust', async t => {
@@ -260,8 +316,7 @@ test('managed receipt, ancestors, launcher, source, python and config reject sym
     env.fs.links.set(paths[field], '/untrusted/redirect')
     const result = await env.request({ op: 'scan' })
     assert.equal(result.ok, true)
-    assert(!result.candidates.some(item => item.installation), field)
-    if (['root', 'vtxExecutable'].includes(field)) assert(!result.candidates.some(item => item.path === paths.vtxExecutable), field)
+    assert(!result.candidates.some(item => item.path === paths.vtxExecutable), field)
     if (['root', 'manifest'].includes(field)) assert.equal(env.fs.reads.length, 0)
     assert(result.warnings.length)
     assert.equal(env.calls.length + env.fs.writes.length, 0)
@@ -283,7 +338,8 @@ test('manifest change during read discards receipt and config selection stays so
   const original = env.fs.readBytes.bind(env.fs)
   env.fs.readBytes = async (...args) => { const data = await original(...args); if (args[0].targetKey === paths.manifest) env.fs.add(paths.manifest, data); return data }
   const result = await env.request({ op: 'scan' })
-  assert(!result.candidates.some(item => item.installation))
+  assert.equal(result.ok, true)
+  assert(!result.candidates.some(item => item.path === paths.vtxExecutable))
   assert(result.warnings.some(item => item.includes('INSTALLATION_CHANGED')))
   env.config.vtxExecutable = paths.vtxExecutable
   env.config.vtxConfigFile = paths.configFile

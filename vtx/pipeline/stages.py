@@ -50,7 +50,7 @@ KERNEL_KEYS = {
 }
 
 
-def _scan_plugin_keys(c: Ctx, errs: list) -> list:
+def _scan_plugin_keys(c: Ctx, errs: list, *, source=None) -> list:
     """sources[] / audio_tracks[]（含 events[]）/ project 的未知键与插件键扫描。
 
     三分支（§2.1 不变量 3）：键在 registry 声明且插件 installed+enabled = 合法
@@ -59,6 +59,7 @@ def _scan_plugin_keys(c: Ctx, errs: list) -> list:
     阻断**（新行为；对现有 timeline 零影响——现有键全部已知或已声明）。声明键
     的 path 须与出现位置一致（denoise 声明于 sources[] 却写在音轨上 → 按未知键
     警告处理）。返回警告行列表（调用方打印，不进 errs）。
+    source=(index, item) 仅检查该源的不可用声明，不产生未知键警告。
     """
     warns = []
 
@@ -86,6 +87,8 @@ def _scan_plugin_keys(c: Ctx, errs: list) -> list:
                     else:
                         errs.append(f"{label}: 键 {k!r} 声明于 plugins/{name}，"
                                     f"但插件安装态异常（{state}）")
+                elif source is not None:
+                    continue  # Standalone extraction adds no unknown-key warnings.
                 elif name is not None:
                     warns.append(f"{label}: 键 {k!r} 声明于 {ki.get('path')}（plugins/{name}），"
                                  f"写在 {scope_path} 位置不符——按未知键处理")
@@ -100,6 +103,14 @@ def _scan_plugin_keys(c: Ctx, errs: list) -> list:
                     emit(c, message, json_path=path, rule_id='validate.unknown_key',
                          measured={'key': k, 'scope': scope_path}, threshold={'known_key': True},
                          severity='warning', suggested_actions=[{'op': 'review_key', 'params': {'json_path': path}}])
+
+    # Extraction checks only this source's declarations, not the whole timeline.
+    # Unknown/misplaced keys retain validate's warning-only contract.
+    if source is not None:
+        si, item = source
+        scan("sources[]", KERNEL_KEYS["sources[]"], [item],
+             f"sources[{si}]", lambda i: f"$.sources[{si}]")
+        return warns
 
     # root scope（协议 v1.2，P6 接线）：顶层键纳入扫描——KERNEL_KEYS["root"]
     # 自 v2 起即备而未扫（死键集），blender_bridge 类顶层插件键需此 scope 走
@@ -234,6 +245,19 @@ def _validate(c: Ctx, *, plugin_hooks=True, reporting=True):
         if not getattr(error, '_vtx_diagnostic_handled', False):
             emit(c, str(error), rule_id='load.cache_dependency', status='unknown',
                  measured={'exception_type': type(error).__name__})
+    # Reject unavailable declarations before virtual/raw probing can mask the
+    # registry diagnostic (notably JSON music projects). No plugin hooks here.
+    plugin_errs = []
+    _plugin_warns = _scan_plugin_keys(c, plugin_errs)
+    errs.extend(plugin_errs)
+    if plugin_errs:
+        if not reporting:
+            return errs
+        print(f"校验失败（{len(errs)} 项）："); [print("  ✗", e) for e in errs]
+        c.receipt("validate", False, f"{len(errs)} errors")
+        failure = SystemExit(1)
+        mark_handled(failure)
+        raise failure
     sources = field(c.tl, "sources", "$")
     source_indices = {}
     srcs = {}
@@ -361,10 +385,6 @@ def _validate(c: Ctx, *, plugin_hooks=True, reporting=True):
                 err(f"""音频源不足: {name}@{field(e, 'in', ep)} 需 {need} 帧 > {operation(c, lambda: observe("i['nb_frames']", i['nb_frames']), path=ep, rule='probe.metadata_operation', operands={'operation': "i['nb_frames']"}, source={'provider': 'source facts', 'provider_path': "'nb_frames'"}, status='unknown')}（或声明 loop）""", ep, 'validate.audio_source_bounds', {'value': need, 'unit': 'frames'}, {'max': observed.get("i['nb_frames']", {'status': 'not_observed'}), 'unit': 'frames'})
         for a, b in zip(evs, evs[1:]):
             if native(ap + '.events', lambda: field(a, 'out', f'{ap}.events[{event_indices[id(a)]}]') > field(b, 'in', f'{ap}.events[{event_indices[id(b)]}]'), 'comparison', paths=[key_path(f'{ap}.events[{event_indices[id(a)]}]', 'out'), key_path(f'{ap}.events[{event_indices[id(b)]}]', 'in')]): err(f'音频轨内事件重叠: {name}', f'{ap}.events[{event_indices[id(b)]}].in', 'validate.audio_overlap', {'previous_end': observed.get(key_path(f'{ap}.events[{event_indices[id(a)]}]', 'out'), {'status': 'not_observed'}), 'start': observed.get(key_path(f'{ap}.events[{event_indices[id(b)]}]', 'in'), {'status': 'not_observed'}), 'unit': 'frames'}, {'max_previous_end': observed.get(key_path(f'{ap}.events[{event_indices[id(b)]}]', 'in'), {'status': 'not_observed'}), 'unit': 'frames'})
-    # v2 §2.1 不变量 ③：插件键三分支 + 未知键警告（扫描范围 sources[]/audio_tracks[]
-    # （含 events[]）/project；`_meta` 永久白名单）。已声明未装/被禁用进 errs FAIL；
-    # 未知键只警告不阻断——现有 timeline（键全部已知或已声明）零新输出。
-    _plugin_warns = _scan_plugin_keys(c, errs)
     # v2 §2.2 validate 钩子（协议 v1.1 增补）：插件级契约早失败（互斥/_meta 双施/
     # 键值形状），错误行并入 errs 阻断——仅对三分支放行后的生效插件调用。
     if plugin_hooks:
@@ -579,6 +599,15 @@ def source_audio_extraction(c: Ctx, sid: str):
     实现并在此生效，§2.2）。插件产物**串行内联产出**（conda 推理链非单条 ffmpeg
     命令，不入 run_parallel 任务表；降噪是瓶颈本身，串行可接受）。
     """
+    # Standalone prepare and range cold-fill do not run validate. A recognized
+    # unavailable source plugin must never fall through to raw audio, even warm.
+    si, source = next((i, s) for i, s in enumerate(c.tl["sources"]) if s["id"] == sid)
+    errs = []
+    _scan_plugin_keys(c, errs, source=(si, source))
+    if errs:
+        failure = ValueError("; ".join(errs))
+        mark_handled(failure)
+        raise failure
     wav = c.cache / "audio" / f"{audio_key(c, sid)}.wav"
     from ..cache.recovery import media_cache_valid
     if media_cache_valid(wav):
