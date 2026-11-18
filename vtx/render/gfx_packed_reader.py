@@ -1,4 +1,4 @@
-"""Read an authenticated packed gfx frame without rendering or unpacking.
+"""Read authenticated gfx PNGs without rendering or restoring a page.
 
 Storage integrity is not cache eligibility. Reuse the directory consumers'
 proof gates with independently resolved CURRENT inputs/backend/environment.
@@ -16,52 +16,96 @@ from .gfx_pack import PagePack, inspect_pack
 from ..runtime import fstxn
 
 
+# One second at any allowed rate; cap actual logical output independently of
+# compression and frame count. This is a per-call, not a multi-layer, budget.
+_MAX_FRAMES = 120
+_MAX_BYTES = 256 << 20
+
+
+def _bare_hashes(source, start, stop):
+    return (source.interval_check(start, stop) if source.interval_check is not None
+            else source.environment_check())
+
+
+def _bare_png(c, source, index, *, max_bytes):
+    from .png_artifact import read_png
+    return read_png(source.frame_path(index), root=c.root, width=c.w, height=c.h,
+                    limit=min(max_bytes, c.w * c.h * 8 + 65536))
+
+
 def _bare_bytes(c, source, index):
     """Authenticate immutable PNG bytes; caller owns the full input boundaries."""
-    from .png_artifact import read_png
     source.require_ready(index, index + 1)
-    facts, data = read_png(source.frame_path(index), root=c.root, width=c.w, height=c.h,
-                         limit=c.w * c.h * 8 + 65536)
-    # Bind THESE immutable returned bytes, not only the path previously checked.
-    expected = (source.interval_check(index, index + 1) if source.interval_check is not None
-                else source.environment_check())
-    if facts['sha256'] != expected[index]:
+    facts, data = _bare_png(c, source, index, max_bytes=_MAX_BYTES)
+    if facts['sha256'] != _bare_hashes(source, index, index + 1)[index]:
         raise GfxCacheError('PNG bytes changed after source authentication')
     return data
 
 
-def _bare_frame(c, clip, index, directory):
+def _bare_frames(c, clip, start, stop, directory, archive, check_cancel):
     from .frame_source import png_source
     source = png_source(c, clip)
     if source.directory != directory:
         raise GfxCacheError('PNG source does not match canonical page')
-    data = _bare_bytes(c, source, index)
+    # The same completion gates as require_ready(), but parse/hash each PNG
+    # from its anchored immutable snapshot rather than first reopening by path.
+    expected = _bare_hashes(source, start, stop)
+    data, hashes, remaining = [], [], _MAX_BYTES
+    for i in range(start, stop):
+        if check_cancel is not None:
+            check_cancel()
+        facts, frame = _bare_png(c, source, i, max_bytes=remaining)
+        if facts['sha256'] != expected[i]:
+            raise GfxCacheError('PNG bytes changed after source authentication')
+        data.append(frame)
+        hashes.append(facts['sha256'])
+        remaining -= len(frame)
+    if check_cancel is not None:
+        check_cancel()
+    current = _bare_hashes(source, start, stop)
+    if any(current[i] != digest for i, digest in enumerate(hashes, start)):
+        raise GfxCacheError('PNG completion changed during read')
     verify_input_identity(c)
     if gfx_dir(c, clip) != directory:
         raise GfxCacheError('PNG inputs/backend changed during read')
-    return data
+    if fstxn.cleanup_identity(archive) is not None:
+        raise GfxCacheError('packed gfx appeared during bare read; retry against the pack')
+    if check_cancel is not None:
+        check_cancel()
+    return tuple(data)
 
 
 def read_frame(c, clip, index):
-    """Return original PNG bytes; no directory creation or certificate adoption.
+    """Return original PNG bytes using the same gates as an interval read."""
+    return read_frames(c, clip, index, index + 1 if type(index) is int else None)[0]
+
+
+def read_frames(c, clip, start, stop, *, check_cancel=None):
+    """Return a tuple of original PNGs in clip-local [start, stop) order.
 
     ``c`` retains the full normal input pin for read-only verify_input_identity;
     no dry shortcut, formal receipt write or SystemExit adapter is used. Only
     the current canonical pack is considered. If it is entirely absent, existing
     authenticated bare PNGs may supply bytes; corrupt/present packs never fall
-    back. Like the existing preview artifact reader, this API requires Linux/macOS
-    directory-anchored reads. Native toolchain restrictions still apply; off mode
-    is a hard refusal.
+    back. Linux/macOS anchored reads only; off mode is a hard refusal.
+    Requests must be nonempty, at most 120 frames and 256 MiB of returned logical
+    PNG bytes (not a peak-memory bound for decompression or producer proofs).
+    Optional ``check_cancel()`` raises KeyboardInterrupt to abort cooperatively.
+    Nothing is returned until all requested bytes and final checks pass.
     """
     if not policy_for(c).reuse_graphics:
         raise GfxCacheError('packed gfx reuse is disabled by cache.mode=off')
-    if type(index) is not int or not 0 <= index < clip['dur']:
-        raise GfxCacheError('packed gfx frame index outside clip')
+    if type(start) is not int or type(stop) is not int or not 0 <= start < stop <= clip['dur']:
+        raise GfxCacheError('packed gfx frame interval outside clip')
+    if stop - start > _MAX_FRAMES:
+        raise GfxCacheError('packed gfx interval exceeds frame limit')
+    if check_cancel is not None:
+        check_cancel()
     verify_input_identity(c)
     directory = gfx_dir(c, clip)
     archive = pack_path(c, clip)
     if fstxn.cleanup_identity(archive) is None:
-        return _bare_frame(c, clip, index, directory)
+        return _bare_frames(c, clip, start, stop, directory, archive, check_cancel)
     record = inspect_pack(archive, root=c.root)['record']
     svg = gfx_svg.is_svg(clip)
     environment = inputs = backend = namespace = settings = None
@@ -89,10 +133,14 @@ def read_frame(c, clip, index):
             gfx_cli.verify_page_record(record, clip['dur'], directory.name, c.w, c.h,
                 backend_ns=namespace, environment=environment,
                 dependency_digest=digest(resolve(c, clip)) if strict else None)
+    if check_cancel is not None:
+        check_cancel()
     with PagePack(archive, expected_record=record, root=c.root) as page:
         if backend == 'electron':
             from .gfx_electron_stage import cached_record
             def artifact(name):
+                if check_cancel is not None:
+                    check_cancel()
                 if name in page.metadata_names:
                     return page.read_metadata(name)
                 match = re.fullmatch(r'f([0-9]{4,})\.png', name)
@@ -103,7 +151,9 @@ def read_frame(c, clip, index):
                     settings[0], namespace, expected_html=c.root / clip['src'],
                     expected_config=settings[1], read_artifact=artifact) is None:
                 raise GfxCacheError('packed Electron producer/completion proof invalid; rerun vtx gfx')
-        data = page.read_frame(index)
+        data = page.read_frames(start, stop, max_bytes=_MAX_BYTES, check_cancel=check_cancel)
+        if check_cancel is not None:
+            check_cancel()
         verify_input_identity(c)
         if gfx_dir(c, clip) != directory:
             raise GfxCacheError('packed gfx inputs/backend changed during read')
@@ -116,4 +166,6 @@ def read_frame(c, clip, index):
                     or gfx_environment.certificate(c) != environment
                     or (backend == 'electron' and (identity(), electron_config()) != settings)):
                 raise GfxCacheError('packed gfx backend/environment changed during read')
-        return data
+    if check_cancel is not None:
+        check_cancel()
+    return data

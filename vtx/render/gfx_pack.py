@@ -381,6 +381,10 @@ class PagePack:
                     or type(blob['block']) is not int or not 0 <= blob['block'] < len(positions)
                     or type(blob['offset']) is not int or blob['offset'] != positions[blob['block']]):
                 raise GfxPackError('invalid/nonunique blob index')
+            if blob['offset'] and self._blocks[blob['block']]['raw_bytes'] > _BLOCK_BYTES:
+                # The producer only exceeds the normal block size for a single
+                # large member. Never inflate a giant coalesced set of frames.
+                raise GfxPackError('multiple blobs in oversized compression block')
             positions[blob['block']] += blob['bytes']
             hashes.add(blob['sha256'])
         if positions != [b['raw_bytes'] for b in self._blocks]:
@@ -410,6 +414,7 @@ class PagePack:
         blob = self._blobs[index]
         block_index = blob['block']
         if self._cached is None or self._cached[0] != block_index:
+            self._cached = None
             block = self._blocks[block_index]
             self._stream.seek(block['offset'])
             compressed = self._stream.read(block['bytes'])
@@ -447,6 +452,38 @@ class PagePack:
         dimensions = self.record['input'] if self.record.get('format') == 'framivra-svg-completion/v1' else self.record
         _png(data, dimensions['width'], dimensions['height'])
         return data
+
+    def read_frames(self, start, stop, *, max_bytes, check_cancel=None):
+        """Read a bounded interval; decode each requested block at most once."""
+        if self._context is None:
+            raise GfxPackError('use an open PagePack context')
+        if (type(start) is not int or type(stop) is not int
+                or not 0 <= start < stop <= self.frame_count or not _positive(max_bytes)):
+            raise GfxPackError('invalid packed frame interval/byte limit')
+        # Charge each returned frame, even if its immutable bytes are shared.
+        # Group deduplicated references without retaining multiple raw blocks.
+        by_block = {}
+        for i in range(start, stop):
+            blob = self._blobs[self._frames[i]]
+            max_bytes -= blob['bytes']
+            if max_bytes < 0:
+                raise GfxPackError('packed gfx interval exceeds byte limit')
+            by_block.setdefault(blob['block'], {}).setdefault(self._frames[i], []).append(i)
+        frames = [None] * (stop - start)
+        if self._cached is not None:
+            # Complete.json (or a producer proof) may already have loaded a block.
+            cached = self._cached[0]
+            groups = (by_block.pop(cached, {}), *by_block.values())
+        else:
+            groups = by_block.values()
+        for group in groups:
+            for indices in group.values():
+                if check_cancel is not None:
+                    check_cancel()
+                data = self.read_frame(indices[0])
+                for i in indices:
+                    frames[i - start] = data
+        return tuple(frames)
 
     def read_metadata(self, name):
         """Read only a fixed carried sidecar; names are never extraction authority."""

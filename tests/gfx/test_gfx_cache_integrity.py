@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import shutil
 import struct
+import sys
 import tempfile
 import threading
 import unittest
@@ -487,19 +488,19 @@ class RealBrowserIntegrity(unittest.TestCase):
     def test_real_cdp_repair_and_zero_browser_warm_hit(self):
         import numpy as np
         with tempfile.TemporaryDirectory(prefix='vtx_issue33_chrome_') as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             (root / 'page.html').write_text('''<!doctype html><style>html,body{margin:0;background:transparent}
                 div{width:120px;height:100px;background:rgba(255,0,30,.5)}</style><div></div>''')
             p = root / 'timeline.json'
             p.write_text(json.dumps(dict(project=dict(fps=30, width=320, height=240, duration_frames=3),
                                         sources=[], subtitles=[], audio_tracks=[], video_tracks=[
                                             dict(kind='gfx', clips=[dict(src='page.html', dst_in=0, dur=3)])])))
-            c = Ctx(p)
-            cl = c.tl['video_tracks'][0]['clips'][0]
-            d = hygiene.gfx_dir(c, cl)
-            key = hygiene.gfx_key(c, cl)
             with mock.patch.dict(os.environ, VTX_CHROME=os.environ['VTX_TEST_CHROME'], VTX_GFX='cdp',
-                                 VTX_GFX_PAGES='1', VTX_GFX_TABS='1', VTX_GFX_SPLIT_FRAMES='0'):
+                                 VTX_GFX_CACHE_NS='', VTX_GFX_PAGES='1', VTX_GFX_TABS='1', VTX_GFX_SPLIT_FRAMES='0'):
+                c = Ctx(p)
+                cl = c.tl['video_tracks'][0]['clips'][0]
+                d = hygiene.gfx_dir(c, cl)
+                key = hygiene.gfx_key(c, cl)
                 cli.gfx(c)
                 pixels = [gfx_render.png_decode_rgba((d / f'f{i:04d}.png').read_bytes()) for i in range(3)]
                 (d / 'f0001.png').write_bytes(png(320, 240)[:-1])
@@ -509,6 +510,23 @@ class RealBrowserIntegrity(unittest.TestCase):
                 self.assertEqual(gfx_cli.inspect_page(d, 3, key, 320, 240), ([], False))
                 with mock.patch.object(gfx_render, 'Browser', side_effect=AssertionError('warm Chrome')):
                     cli.gfx(Ctx(p))
+                    from vtx.runtime import fstxn
+                    if sys.platform in ('linux', 'darwin') and fstxn.directory_write_capability():
+                        from vtx.cache.policy import CachePolicy
+                        from vtx.cache.session import compact_graphics, pack_path
+                        from vtx.render.gfx_packed_reader import read_frames
+                        c.cache_policy = CachePolicy('core')
+                        expected = tuple((d / f'f{i:04d}.png').read_bytes() for i in (1, 2))
+                        compact_graphics(c)
+                        archive = pack_path(c, cl)
+                        packed = archive.read_bytes()
+                        self.assertFalse((d / gfx_cli.COMPLETE_FILE).exists())
+                        self.assertFalse(list(d.glob('f*.png')))
+                        with mock.patch.object(gfx_cli, 'render_cli', side_effect=AssertionError('warm CLI')):
+                            self.assertEqual(read_frames(c, cl, 1, 3), expected)
+                        self.assertEqual(archive.read_bytes(), packed)
+                        self.assertFalse((d / gfx_cli.COMPLETE_FILE).exists())
+                        self.assertFalse(list(d.glob('f*.png')))
 
 
 
