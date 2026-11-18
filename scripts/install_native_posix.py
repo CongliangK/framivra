@@ -490,6 +490,16 @@ def _brew_environment(network):
     return env
 
 
+def ffmpeg_pair(bin_dir):
+    paths = {}
+    for name in ('ffmpeg', 'ffprobe'):
+        executable = bin_dir / name
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            return {}
+        paths[name] = str(executable.resolve())
+    return paths
+
+
 def _brew(root, found, needs_venv, network, yes, run, metadata):
     if not shutil.which('brew'):
         raise NativeInstallError('Homebrew is required; rerun the bootstrap to prepare it first')
@@ -522,11 +532,10 @@ def _brew(root, found, needs_venv, network, yes, run, metadata):
             run(['brew', 'install', '--force-bottle', *targets], env=env, timeout=None)
         if full:
             prefix = run(['brew', '--prefix', 'ffmpeg-full'], env=env, capture=True, timeout=30)
-            for name in ('ffmpeg', 'ffprobe'):
-                executable = Path(prefix) / 'bin' / name
-                if not executable.is_file() or not os.access(executable, os.X_OK):
-                    raise NativeInstallError('Homebrew ffmpeg-full did not provide executable ' + name)
-                result[name] = str(executable.resolve())
+            pair = ffmpeg_pair(Path(prefix) / 'bin')
+            if not pair:
+                raise NativeInstallError('Homebrew ffmpeg-full did not provide executable ffmpeg and ffprobe')
+            result.update(pair)
         if 'chrome' not in found:
             run(['brew', 'install', '--cask', 'google-chrome'], env=env, timeout=None)
     metadata['transactions'].append('brew bottles: ' + ', '.join(packages))

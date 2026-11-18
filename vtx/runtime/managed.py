@@ -11,6 +11,13 @@ import re
 import sys
 
 
+def tool_search_order():
+    # Keep shared bins (e.g. Git or SoX's) from shadowing the macOS full keg.
+    if sys.platform == 'darwin':
+        return ('ffmpeg', 'ffprobe', 'git', 'sox', 'chrome')
+    return ('git', 'ffmpeg', 'ffprobe', 'sox', 'chrome')
+
+
 def configure_environment(prefix=None, source=None, environment=None):
     prefix = Path(prefix if prefix is not None else sys.prefix)
     source = Path(source if source is not None else Path(__file__).resolve().parents[2])
@@ -37,7 +44,7 @@ def configure_environment(prefix=None, source=None, environment=None):
         raise RuntimeError('Managed environment is incomplete or belongs to another source; rerun the installer')
     paths = [str(prefix / ('Scripts' if sys.platform == 'win32' else 'bin'))]
     tools = data.get('tools', {})
-    for name in ('git', 'ffmpeg', 'ffprobe', 'sox', 'chrome'):
+    for name in tool_search_order():
         value = tools.get(name)
         if not isinstance(value, str) or not Path(value).is_absolute() or not Path(value).is_file():
             raise RuntimeError('Managed tool unavailable: ' + name)
