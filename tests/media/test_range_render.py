@@ -325,8 +325,10 @@ class TestRangeCachePolicy(unittest.TestCase):
         from vtx.pipeline import range as ranges
         plan = mock.Mock(nseg=3)
         plan._seg_content_key.return_value = 'fixture-key'
+        # An unprepared clip beyond the window still participates in cut selection.
+        self.c.tl['video_tracks'] = [{'clips': [{'dst_in': 230, 'dur': 60}]}]
         with mock.patch.object(ranges, 'RenderPlan', return_value=plan), \
-                mock.patch.object(ranges, 'choose_cutpoints', return_value=[112, 225]), \
+                mock.patch.object(ranges, 'choose_cutpoints', return_value=[112, 225]) as cuts, \
                 mock.patch.object(ranges, 'prepare_layers', return_value=[]), \
                 mock.patch.object(ranges, 'media_cache_valid', return_value=False), \
                 mock.patch.object(ranges, 'pick_vcodec', return_value=([], 'fixture')), \
@@ -336,6 +338,7 @@ class TestRangeCachePolicy(unittest.TestCase):
                 mock.patch.object(ranges.subprocess, 'run') as probe, \
                 contextlib.redirect_stdout(io.StringIO()):
             ranges.run_range(self.c, 110, 230)
+        cuts.assert_called_once_with([(230, 290)], self.c.dur, plan.nseg)
         write.assert_called_once()
         path, manifest = write.call_args.args
         self.assertEqual(path.parent, self.c.cache / 'preview')
@@ -558,6 +561,9 @@ class TestRangeIntegration(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             out = proj / "cache" / "preview" / "range_2.000_5.000.mp4"
             self.assertTrue(out.exists(), "产物应落在 cache/preview/")
+            # [60,150) uses base a and pip b. The next base clip starts at
+            # exactly 150: do not produce its full-screen intermediate.
+            self.assertEqual(len(list((proj / 'cache' / 'seg').glob('*.mp4'))), 2)
             # 不写 out/ 与 receipt
             self.assertFalse((proj / "out" / "receipt.json").exists())
             self.assertFalse((proj / "out" / "draft.mp4").exists())

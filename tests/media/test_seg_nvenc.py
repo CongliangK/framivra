@@ -825,8 +825,8 @@ class TestPrepareProducerDedup(unittest.TestCase):
             setattr(self, name, patch.start())
             self.addCleanup(patch.stop)
 
-    def prepare(self):
-        layers = self.composite.prepare_layers(self.c)
+    def prepare(self, **kwargs):
+        layers = self.composite.prepare_layers(self.c, **kwargs)
         return layers, self.runner.call_args.args[1]
 
     def test_twelve_cold_consumers_share_exactly_one_producer(self):
@@ -916,10 +916,13 @@ class TestPrepareProducerDedup(unittest.TestCase):
 
     def test_actual_filter_difference_conflicts_even_when_key_is_equal(self):
         self.c.tl['video_tracks'][0]['clips'] = self.clips[:2]
-        self.c.crop169.side_effect = ['crop=64:36:0:6', 'crop=62:34:0:6']
-        with self.assertRaisesRegex(ValueError, 'conflicting seg producer'):
-            self.composite.prepare_layers(self.c)
-        self.runner.assert_not_called()
+        for window in (None, (0, 6)):
+            # Even when the second clip starts exactly at the exclusive end,
+            # its incompatible specification must not alias the selected seg.
+            self.c.crop169.side_effect = ['crop=64:36:0:6', 'crop=62:34:0:6']
+            with self.subTest(window=window), self.assertRaisesRegex(ValueError, 'conflicting seg producer'):
+                self.composite.prepare_layers(self.c, native_window=window)
+            self.runner.assert_not_called()
 
     def test_different_keys_are_not_merged_by_equivalent_commands(self):
         self.c.tl['video_tracks'][0]['clips'] = self.clips[:2]
@@ -948,16 +951,20 @@ class TestPrepareProducerDedup(unittest.TestCase):
         self.assertEqual(first, second)
 
     def test_draft_and_range_keep_same_key_and_verification_stage(self):
-        reference, _ = self.prepare()
+        # Distinct producers let us check the exact commands, not only how many
+        # intermediate files survived. Window cuts must not trim source ranges.
+        for i, clip in enumerate(self.clips):
+            clip.update(src_in=i, src_out=i + clip['dur'])
+        reference, producers = self.prepare()
         for draft, window, expected in ((True, None, 'video_draft'),
-                                        (False, (2, 5), None),
-                                        (True, (2, 5), None)):
+                                        (False, (6, 17), None),
+                                        (True, (7, 18), None)):
             with self.subTest(draft=draft, window=window):
                 self.c.draft, self.c.range_window = draft, window
                 self.c.verify_inputs.reset_mock()
-                layers, tasks = self.prepare()
-                self.assertEqual(layers, reference)
-                self.assertEqual(len(tasks), 1)
+                layers, tasks = self.prepare(native_window=window)
+                self.assertEqual(layers, reference[1:3] if window else reference)
+                self.assertEqual(tasks, producers[1:3] if window else producers)
                 self.c.verify_inputs.assert_called_once_with(expected)
 
     def test_empty_tracks_still_verify_inputs_without_producers(self):
