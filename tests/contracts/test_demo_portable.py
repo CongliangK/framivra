@@ -71,8 +71,9 @@ class PortableEntryTests(unittest.TestCase):
     def test_failed_public_acquisition_retains_failure_not_success(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp).resolve() / 'project'
-            with patch.object(demo, 'dependency_identity', return_value={}), patch.object(
-                    demo_fonts, 'fetch_fonts', side_effect=demo_fonts.FontError('offline fixture')), \
+            with patch.object(demo, 'unsupported_prepare_platform', return_value=None), \
+                    patch.object(demo, 'dependency_identity', return_value={}), \
+                    patch.object(demo_fonts, 'fetch_fonts', side_effect=demo_fonts.FontError('offline fixture')), \
                     contextlib.redirect_stdout(io.StringIO()):
                 code = demo.main(['prepare', '--output', str(project), '--fetch-fonts'])
             self.assertEqual(code, 1)
