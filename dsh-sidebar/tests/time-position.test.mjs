@@ -131,6 +131,6 @@ test('timecode input shares canonical frame text, retains invalid corrections an
   await act(async () => root.render(React.createElement(Transport, { frame: 30, frameText: '30', duration: 600, onText: () => assert.fail('unknown clock must not convert'), onFrame: () => {}, onQuery: () => {} })))
   assert(document.querySelector('[name="framivra-timecode"]').disabled, 'unknown FPS cannot invent a displayed timecode')
   assert(document.body.textContent.includes('时长不可显示'))
-  assert.equal(document.querySelector('[name="framivra-seconds"]'), null, 'unknown FPS must not silently enable the 30-fps seconds helper')
+  assert(document.querySelector('[name="framivra-seconds"]') === null, 'unknown FPS must not silently enable the 30-fps seconds helper')
   assert.equal(document.querySelector('[name="framivra-frame"]').value, '30', 'exact integer pin remains available')
 })

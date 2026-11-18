@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import React, { act } from 'react'
 import { JSDOM } from 'jsdom'
 import { AgentProposals } from '../src/client/proposals.mjs'
+import { parseJSON } from '../src/json.mjs'
 const h = React.createElement
 // Real AgentProposals component under jsdom; `call` is an in-test transport
 // double only — every state transition, gating and payload below is the
@@ -36,12 +37,12 @@ test('first poll is immediate: empty list and read failure are both visible', { 
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal: new AbortController().signal, call, writeGrant: undefined, manualBlocked: false, onCommitted: () => {}, onEditState: () => {} })))
   assert.equal(calls.length, 1, 'exactly one immediate poll, no interval wait needed')
   assert(text().includes('暂无提案'))
-  assert.equal(button('确认提交此智能体冻结提案'), undefined)
+  assert(button('保存提案') === undefined, "Expected absent DOM node")
 
   const failing = []
   const failCall = async () => { failing.push(1); throw new Error('连接已断开') }
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal: new AbortController().signal, call: failCall, writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {}, onEditState: () => {} })))
-  assert.match(text(), /无法读取智能体提案：连接已断开。请检查连接；不会自动提交。/)
+  assert(/无法读取智能体提案：连接已断开。请检查连接。/.test(text()), "DOM text did not match expected pattern")
   assert.equal(failing.length, 1)
 })
 
@@ -50,13 +51,13 @@ test('malformed proposal response is a visible protocol failure, never an invent
   for (const response of [undefined, { ok: true }, { proposals: [null] }, { proposals: [{ proposal_id: 'p1' }] }]) {
     await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal: new AbortController().signal,
       call: async () => response, writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {}, onEditState: () => {} })))
-    assert.match(text(), /无法读取智能体提案：提案响应格式不完整/)
+    assert(/无法读取智能体提案：提案响应格式不完整/.test(text()), "Body text must match /无法读取智能体提案：提案响应格式不完整/")
     assert.equal(text().includes('暂无提案'), false)
-    assert.equal(button('确认提交此智能体冻结提案'), undefined)
+    assert(button('保存提案') === undefined, "Expected absent DOM node")
   }
 })
 
-test('same-version pending row shows the exact raw plan; confirm gated by writeGrant, manualBlocked and stale base', { timeout: 10000 }, async t => {
+test('same-version pending row reviews human operations without JSON; confirm gated by permit, manual draft and stale base', { timeout: 10000 }, async t => {
   const root = await mount(t)
   const calls = []
   const call = async (_session, payload) => { calls.push(payload.op); return { proposals: [{ ...pendingRow }] } }
@@ -66,26 +67,45 @@ test('same-version pending row shows the exact raw plan; confirm gated by writeG
   await act(async () => render({ writeGrant: undefined, manualBlocked: false }))
   assert.equal(calls.length, 1, 'rerenders must not restart the poll')
   assert(text().includes('等待您确认 · 尚未保存'))
-  assert(text().includes(`冻结计划 / 回执 · p1`))
-  const raw = document.querySelector('article pre').textContent
-  assert(raw.includes(`"op_id": "${opId}"`) && raw.includes('"duration_frames": 130') && raw.includes(`"base_revision": "${version}"`),
-    'details show the exact frozen plan bytes')
-  assert.equal(button('确认提交此智能体冻结提案').disabled, true, 'no write permit → disabled')
-  assert.equal(button('拒绝此提案（不保存）').disabled, false)
-  assert(text().includes('确认前，先在上方明确授予本会话 / 工程写许可'))
+  assert(text().includes('预检与冻结操作'))
+  assert(document.querySelector('article pre') === null, 'no rendered raw request or receipt JSON')
+  assert(/工程时长.*130 帧/.test(document.querySelector('[aria-label="冻结操作"]').textContent), "DOM text did not match expected pattern")
+  assert(text().includes(opId) && text().includes(version), 'transaction identifiers remain inspectable')
+  assert.equal(button('保存提案').disabled, true, 'no write permit → disabled')
+  assert.equal(button('拒绝提案').disabled, false)
+  assert(text().includes('请先启用编辑'))
   assert(states.some(s => s.dirty === true), 'pending row reports dirty edit state')
 
   await act(async () => render({ writeGrant: 'explicit', manualBlocked: true }))
-  assert.equal(button('确认提交此智能体冻结提案').disabled, true, 'manual unsaved batch blocks the confirm')
-  assert(text().includes('请先清空手动未保存批次 / 草稿并等待当前命令结束，或拒绝此提案。'))
+  assert.equal(button('保存提案').disabled, true, 'manual unsaved batch blocks the confirm')
+  assert(text().includes('先清空手动草稿并等待当前操作结束，或拒绝提案。'))
 
   await act(async () => render({ writeGrant: 'explicit', manualBlocked: false, opened: openedFor(`sha256:${'b'.repeat(64)}`) }))
-  assert.equal(button('确认提交此智能体冻结提案').disabled, true, 'stale base can never be rebased by the UI')
-  assert(text().includes('基线已变化：此提案不能自动重定基。请拒绝后让智能体重新读取。'))
+  assert.equal(button('保存提案').disabled, true, 'stale base can never be rebased by the UI')
+  assert(text().includes('基线已变化，请拒绝提案并重新读取。'))
 
   await act(async () => render({ writeGrant: 'explicit', manualBlocked: false }))
-  assert.equal(button('确认提交此智能体冻结提案').disabled, false, 'same version + permit + no manual batch → enabled')
+  assert.equal(button('保存提案').disabled, false, 'same version + permit + no manual batch → enabled')
   assert.equal(calls.filter(op => op === 'proposal-list').length, 1)
+})
+
+test('frozen review exposes complete nested values and exact numeric tokens without raw request JSON', { timeout: 10000 }, async t => {
+  const root = await mount(t)
+  const operations = [
+    { op: 'parameters.update', id: 'clip', path: ['transform'], value: parseJSON('{"x":0.12345678901234567890123456789,"nested":{"paths":["asset.svg","other.svg"]}}') },
+    { op: 'source.update', id: 'source', set: { path: 'replacement.mov', transform: { x: 3, opacity: 0.25 } } },
+    { op: 'range.ripple', scope: { track_ids: ['voice'], subtitles: true }, mode: 'delete', start: 20, end: 40, crossing: 'cut', resize: true, split_ids: { old: 'right' }, fade_policy: 'preserve-content' }
+  ]
+  const row = { ...pendingRow, plan: { submitted_request: { ...pendingRow.plan.submitted_request, operations } } }
+  await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal: new AbortController().signal, call: async () => ({ proposals: [row] }), writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {} })))
+  const details = [...document.querySelectorAll('.fv-edit-operation-details')]
+  assert.equal(details.length, 3)
+  assert(/0\.12345678901234567890123456789/.test(details[0].textContent), "DOM text did not match expected pattern")
+  assert(details[0].textContent.includes('asset.svg') && details[0].textContent.includes('other.svg'))
+  assert(details[1].textContent.includes('replacement.mov') && details[1].textContent.includes('0.25'))
+  assert(details[2].textContent.includes('voice') && details[2].textContent.includes('right') && details[2].textContent.includes('剪切'))
+  assert(document.querySelector('pre') === null, "Expected absent DOM node")
+  assert.equal(button('保存提案').disabled, false)
 })
 
 test('confirm sends grant/writeGrant/proposalId exactly once; applied awaits onCommitted and clears dirty/busy', { timeout: 10000 }, async t => {
@@ -100,11 +120,11 @@ test('confirm sends grant/writeGrant/proposalId exactly once; applied awaits onC
   }
   const tabSignal = new AbortController().signal
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal, call, writeGrant: 'explicit', manualBlocked: false, onCommitted: async () => { commits.push(1) }, onEditState: s => states.push(s) })))
-  await act(async () => button('确认提交此智能体冻结提案').click())
+  await act(async () => button('保存提案').click())
   assert(text().includes('正在等待宿主与内核回执…'))
-  assert.equal(button('确认提交此智能体冻结提案').disabled, true, 'busy blocks a second submit')
-  assert.equal(button('确认提交此智能体冻结提案').disabled, true, 'busy blocks a second submit')
-  await act(async () => { const confirm = button('确认提交此智能体冻结提案'); if (confirm && !confirm.disabled) confirm.click() })
+  assert.equal(button('保存提案').disabled, true, 'busy blocks a second submit')
+  assert.equal(button('保存提案').disabled, true, 'busy blocks a second submit')
+  await act(async () => { const confirm = button('保存提案'); if (confirm && !confirm.disabled) confirm.click() })
   assert.equal(calls.filter(c => c.op === 'proposal-confirm').length, 1)
   assert.deepEqual(calls.find(c => c.op === 'proposal-confirm'),
     { op: 'proposal-confirm', grant: 'read', proposalId: 'p1', writeGrant: 'explicit' },
@@ -113,7 +133,7 @@ test('confirm sends grant/writeGrant/proposalId exactly once; applied awaits onC
   await act(async () => resolveConfirm({ proposal: { ...pendingRow, state: 'applied', outcome: { op_id: opId } } }))
   assert(text().includes('内核已保存'))
   assert.equal(commits.length, 1, 'applied awaits onCommitted exactly once')
-  assert.match(text(), /已保存并重新读取权威时间线。智能体可用 proposal_status 读取此回执；不会自动发送消息。/)
+  assert(/已保存并刷新工程。/.test(text()), "DOM text did not match expected pattern")
   assert.equal(calls.filter(c => !['proposal-list', 'proposal-confirm'].includes(c.op)).length, 0, 'no auto messages or extra ops')
   const last = states.at(-1)
   assert.deepEqual({ dirty: last.dirty, busy: last.busy, unknown: last.unknown }, { dirty: false, busy: false, unknown: false }, 'applied proposal clears dirty/busy/unknown')
@@ -129,14 +149,14 @@ test('reject needs no write permit, sends no writeGrant, and never commits', { t
     throw new Error(`unexpected op ${payload.op}`)
   }
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal: new AbortController().signal, call, writeGrant: undefined, manualBlocked: false, onCommitted: async () => { commits.push(1) }, onEditState: () => {} })))
-  assert.equal(button('拒绝此提案（不保存）').disabled, false)
-  await act(async () => button('拒绝此提案（不保存）').click())
+  assert.equal(button('拒绝提案').disabled, false)
+  await act(async () => button('拒绝提案').click())
   assert.deepEqual(calls.find(c => c.op === 'proposal-reject'), { op: 'proposal-reject', grant: 'read', proposalId: 'p1' })
   assert.equal('writeGrant' in calls.find(c => c.op === 'proposal-reject'), false)
   assert.equal(calls.filter(c => c.op === 'proposal-confirm').length, 0)
   assert.equal(commits.length, 0)
   assert(text().includes('您已拒绝 · 未提交'))
-  assert(text().includes('已拒绝此提案，没有提交。'))
+  assert(text().includes('已拒绝提案。'))
 })
 
 test('unknown confirm outcome surfaces the original op_id and fail-closes; no automatic status/recover/retry', { timeout: 10000 }, async t => {
@@ -150,9 +170,9 @@ test('unknown confirm outcome surfaces the original op_id and fail-closes; no au
   }
   const states = []
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal: new AbortController().signal, call, writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {}, onEditState: s => states.push(s) })))
-  await act(async () => button('确认提交此智能体冻结提案').click())
-  assert.match(text(), /提交回执未取得。提交回执未取得不代表失败；保留原 op_id 11111111-2222-4333-8444-555555555555，读取提案回执及 core status \/ recover，不自动重试。/)
-  assert.equal(button('确认提交此智能体冻结提案').disabled, true, 'unknown outcome fail-closes every later confirm')
+  await act(async () => button('保存提案').click())
+  assert(/提交回执未取得。结果未知；原操作 ID：11111111-2222-4333-8444-555555555555。请读取状态 \/ 恢复，不要重试保存。/.test(text()), "DOM text did not match expected pattern")
+  assert.equal(button('保存提案').disabled, true, 'unknown outcome fail-closes every later confirm')
   assert.equal(calls.filter(op => op !== 'proposal-list').length, 1, 'exactly one confirm; the component never calls status/recover by itself')
   assert(states.some(s => s.unknown === true), 'unknown outcome reports unknown edit state')
 })

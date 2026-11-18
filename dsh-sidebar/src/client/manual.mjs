@@ -1,11 +1,11 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { parseJSON, stringifyJSON } from '../json.mjs'
+import { OperationList, PlanReview, StatusReview, operationNames, editError, receiptMessage } from './edit-review.mjs'
 import { AgentProposals } from './proposals.mjs'
 import { TimelineSettings } from './timeline-settings.mjs'
 const h = React.createElement
 const id = () => crypto.randomUUID()
 export const EDIT_OPERATIONS = ['source.add','source.remove','source.update','track.add','track.remove','track.copy','track.reorder','track.rename','track.references','block.insert','block.remove','block.copy','block.move','block.relink','block.trim','block.split','parameters.update','parameters.unset','project.resize','range.ripple']
-const names = ['添加素材','移除素材（显式 cascade）','更新素材路径/变换','新建轨道（含首块）','删除轨道','复制轨道','排列轨道','重命名轨道','音轨引用','插入块','删除选中块','复制选中块','移动选中块','重新链接块','向内裁剪','播放头分割','更新属性','恢复缺省属性','工程时长','显式轨道集合 ripple']
 export function integerToken(text, signed = false) {
   if (typeof text !== 'string' || !(signed ? /^-?(0|[1-9][0-9]*)$/ : /^(0|[1-9][0-9]*)$/).test(text) || text === '-0' || !Number.isSafeInteger(Number(text))) throw new Error('不可编辑：需要精确安全整数帧/位置，不接受舍入、空白、小数或指数')
   return Number(text)
@@ -58,13 +58,13 @@ export function compileIntent(op, v, { result, blocks, track, frame, makeId = id
   }
 }
 
-export function ManualEditor({ sessionId, opened, result, selection, selected, frame, tabSignal, call, onCommitted, onGestureReady, onEditState, onQuickReady, onGrantDead }) {
+export function ManualEditor({ sessionId, opened, result, selection, selected, frame, tabSignal, call, onCommitted, onGestureReady, onQueueChange, onEditState, onQuickReady, onUndoReady, onGrantDead }) {
   const [write, setWrite] = useState()
   const [op, setOp] = useState('block.move')
   const [v, setV] = useState({ family: 'video', kind: 'aroll', source_field: 'path', property: 'opacity', property_target: 'block', reference_field: 'duck_by', fade_policy: 'preserve-content', text_policy: 'duplicate-text', mode: 'shift', crossing: 'reject', scope: [], split_ids: [], order: [], start: '0', end: '10', duration: '10', src_in: '0', src_out: '10', volume: '1', at: '0', delta: '1', index: '0', value: '1' })
   const [queue, setQueue] = useState([]), [plan, setPlan] = useState(), [status, setStatus] = useState(), [busy, setBusy] = useState(false), [message, setMessage] = useState('')
-  const [settingsEpoch, setSettingsEpoch] = useState(0)
-  const request = useRef(), generation = useRef(0), live = useRef(true), invalidations = useRef(Promise.resolve())
+  const [settingsEpoch, setSettingsEpoch] = useState(0), [, refreshDraft] = useState(0)
+  const request = useRef(), generation = useRef(0), live = useRef(true), invalidations = useRef(Promise.resolve()), directTransaction = useRef(false)
   const frameSafety = useRef({ dirty: false, busy: false, unknown: false })
   const proposalSafety = useRef({ dirty: false, busy: false, unknown: false })
   const [proposalBlocked, setProposalBlocked] = useState(false)
@@ -95,9 +95,9 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
     generation.current++; setPlan(undefined)
     // A delayed invalidation must not overtake the next plan. Keep every
     // acknowledgement, fail closed on transport loss, and await this barrier.
-    if (write) invalidations.current = Promise.all([invalidations.current, call(sessionId, payload('invalidate-plan'), tabSignal).then(() => undefined, error => error)]).then(outcomes => outcomes.find(Boolean))
+    if (write && !directTransaction.current) invalidations.current = Promise.all([invalidations.current, call(sessionId, payload('invalidate-plan'), tabSignal).then(() => undefined, error => error)]).then(outcomes => outcomes.find(Boolean))
   }
-  useEffect(() => { invalidate() }, [selection, selected, frame, base])
+  useLayoutEffect(() => { invalidate() }, [selection, selected, frame, base])
   useEffect(() => {
     // These checkboxes are selection-derived draft input, not queued intent.
     // Never submit a now-hidden former selection as the next ripple split target.
@@ -107,10 +107,82 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
     })
   }, [selection, selected, base])
   useEffect(() => { live.current = true; return () => { live.current = false; request.current?.abort() } }, [])
-  useEffect(() => {
-    onGestureReady?.(write && managed && !busy && !proposalBlocked && !staleLock ? operations => { draftDirty.current = true; safety({ dirty: true }); invalidate(); setQueue(previous => previous.concat(operations)); setMessage('拖动仅生成未保存 intent；请检查批次并计划。') } : undefined)
-    return () => onGestureReady?.(undefined)
-  }, [write, managed, busy, base, selected, proposalBlocked, staleLock])
+  const queueObserver = useRef(onQueueChange), publishedQueue = useRef(queue)
+  queueObserver.current = onQueueChange
+  useLayoutEffect(() => {
+    if (publishedQueue.current !== queue) { publishedQueue.current = queue; queueObserver.current?.(queue) }
+  }, [queue])
+  const gestureOwner = useRef()
+  const gestureReason = staleLock ? '请刷新工程' : frameSafety.current.unknown || proposalSafety.current.unknown ? '先读取状态 / 恢复' : busy ? '正在处理中' : proposalBlocked ? '先处理智能体提案' : !write ? '请先启用编辑' : !managed ? '请先接管旧工程' : frameSafety.current.dirty || queue.length || plan ? '先清空待保存操作' : ''
+  useLayoutEffect(() => {
+    const token = {}; gestureOwner.current = token
+    const gesture = async (operations, options = {}) => {
+      if (gestureOwner.current !== token || !live.current || tabSignal.aborted || gestureReason || frameSafety.current.dirty || frameSafety.current.busy || frameSafety.current.unknown || proposalSafety.current.dirty || proposalSafety.current.busy || proposalSafety.current.unknown) throw new Error('编辑状态已变化，请重新操作。')
+      if (!Array.isArray(operations) || operations.some(operation => !operation || !['block.move', 'block.trim', 'range.ripple'].includes(operation.op) || operation.op === 'range.ripple' && (operation.mode !== 'delete' || operation.crossing !== 'reject' || operation.resize !== false))) throw new Error('此入口仅支持移动、向内裁剪或闭合空隙。')
+      if (!operations.length) return { ok: true, noop: true }
+      return saveGesture(parseJSON(stringifyJSON(operations)), options)
+    }
+    onGestureReady?.(gestureReason ? undefined : gesture, gestureReason)
+    return () => { if (gestureOwner.current === token) gestureOwner.current = undefined; onGestureReady?.(undefined, '编辑已关闭') }
+  }, [write, managed, busy, base, selected, selection, frame, result, sessionId, opened.grant, proposalBlocked, staleLock, gestureReason])
+  async function saveGesture(operations, { focusId } = {}) {
+    const epoch = generation.current
+    const controller = new AbortController(); request.current = controller
+    const signal = AbortSignal.any([tabSignal, controller.signal])
+    directTransaction.current = true; safety({ busy: true }); setBusy(true); setMessage('正在保存…')
+    let committing = false, applied = false, operationId
+    try {
+      const failure = await invalidations.current
+      signal.throwIfAborted()
+      if (failure) throw new Error('PLAN_INVALIDATION_FAILED: 旧计划撤销未确认')
+      if (epoch !== generation.current) throw new Error('编辑状态已变化，请重新操作。')
+      const prepared = await call(sessionId, payload('plan', { base_revision: base, operations }), signal)
+      signal.throwIfAborted()
+      if (!prepared.ok) throw Object.assign(new Error(prepared.message ?? editError(prepared)), { code: prepared.code })
+      operationId = prepared.submitted_request?.op_id
+      // Selection/frame changes can cancel preparation, but never invalidate an
+      // owned token after commit dispatch or interrupt its definitive receipt.
+      if (epoch !== generation.current || proposalSafety.current.dirty || proposalSafety.current.busy || proposalSafety.current.unknown || !live.current) {
+        await call(sessionId, payload('invalidate-plan'), signal)
+        throw new Error('编辑状态已变化，请重新操作。')
+      }
+      committing = true
+      const answer = await call(sessionId, payload('commit', { planToken: prepared.planToken }), signal)
+      applied = answer.ok === true
+      if (!applied) {
+        committing = answer.code === 'outcome_unknown' || answer.outcome === 'unknown'
+        throw Object.assign(new Error(answer.message ?? editError(answer)), { code: answer.code, op_id: answer.op_id ?? operationId })
+      }
+      await onCommitted({ focusId })
+      safety({ dirty: false, unknown: false }); setStaleLock(false); staleOwnedDirty.current = false; draftDirty.current = false
+      if (live.current) setMessage('已保存。')
+      return { ok: true, op_id: operationId, answer }
+    } catch (cause) {
+      const error = Object.assign(new Error(editError(cause)), { code: cause.code, op_id: cause.op_id ?? operationId })
+      if (applied) {
+        setStaleLock(true); staleOwnedDirty.current = true; draftDirty.current = false; safety({ dirty: true, unknown: false })
+        error.applied = true; error.message = '内核已保存，但工程刷新失败。旧视图已锁定，请刷新或重开工程。'
+      } else if (committing) {
+        safety({ unknown: true }); error.outcomeUnknown = true
+        error.message = `结果未知；原操作 ID：${operationId ?? '见内核历史'}。请读取状态 / 恢复，不要重试保存。`
+      } else if (cause.code === 'recovery_required') { safety({ unknown: true }); error.recoveryRequired = true }
+      if (live.current) setMessage(error.message)
+      throw error
+    } finally {
+      directTransaction.current = false; safety({ busy: false }); if (live.current) setBusy(false)
+    }
+  }
+  const undoOwner = useRef()
+  const [undoneRevision, setUndoneRevision] = useState()
+  useLayoutEffect(() => {
+    const token = {}; undoOwner.current = token
+    const available = !gestureReason && base !== undoneRevision && Boolean(opened.snapshot.document?._vtx?.head)
+    onUndoReady?.(available ? () => {
+      if (undoOwner.current !== token || !live.current || tabSignal.aborted || frameSafety.current.busy || frameSafety.current.dirty || frameSafety.current.unknown || proposalSafety.current.dirty || proposalSafety.current.busy || proposalSafety.current.unknown) return Promise.reject(new Error('编辑状态已变化，请重新操作。'))
+      return run('undo', { base_revision: base, head: opened.snapshot.document._vtx.head })
+    } : undefined)
+    return () => { if (undoOwner.current === token) undoOwner.current = undefined; onUndoReady?.(undefined) }
+  }, [gestureReason, opened.snapshot.document?._vtx?.head, base, write, sessionId, opened.grant, undoneRevision])
   const quickOwner = useRef()
   useLayoutEffect(() => {
     const token = {}
@@ -125,7 +197,7 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
       const operations = compileIntent(operation, v, { result, blocks, track, frame })
       if (!operations.length) throw new Error('请选择可编辑片段。')
       draftDirty.current = true; safety({ dirty: true }); invalidate(); setQueue(previous => previous.concat(operations))
-      setMessage('已加入未保存批次；仍需内核预检与明确确认提交，没有改写工程。')
+      setMessage('已加入待保存操作。')
     }
     onQuickReady?.(available ? quick : undefined)
     return () => { if (quickOwner.current === token) quickOwner.current = undefined; onQuickReady?.(undefined) }
@@ -133,16 +205,17 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
   const settingsDisabled = !write || !managed || busy || proposalBlocked || staleLock || frameSafety.current.unknown
   const settingsChanged = () => {
     if (settingsDisabled || tabSignal.aborted || !live.current) return false
-    draftDirty.current = true; safety({ dirty: true }); invalidate()
+    draftDirty.current = true; safety({ dirty: true }); invalidate(); refreshDraft(previous => previous + 1)
     return true
   }
   const settingsQueued = operations => {
     if (!settingsChanged()) return
     setQueue(previous => previous.concat(operations))
-    setMessage('配置已加入未保存批次；仍需内核预检与冻结确认，没有写入或渲染。')
+    setMessage('配置已加入待保存操作。')
   }
   const set = (key, value) => { draftDirty.current = true; safety({ dirty: true }); invalidate(); setV(previous => ({ ...previous, [key]: value })) }
   async function run(action, extra = {}) {
+    if (frameSafety.current.busy || (['plan','commit','undo','adopt'].includes(action) && (staleLock || frameSafety.current.unknown || proposalSafety.current.dirty || proposalSafety.current.busy || proposalSafety.current.unknown))) return
     safety({ busy: true })
     request.current?.abort()
     const controller = new AbortController(); request.current = controller
@@ -168,9 +241,12 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
       if (action === 'authorize-write') { invalidations.current = Promise.resolve(); setWrite(answer.writeGrant) }
       else if (action === 'revoke-write') { setWrite(undefined); invalidate() }
       else if (action === 'plan' && answer.ok && epoch === generation.current) setPlan(answer)
-      else if (action === 'status' || action === 'recover') { setStatus(answer); invalidate(); if (answer.ok) { receiptOnly = true; await onCommitted(); safety({ unknown: false }); setStaleLock(false); if (staleOwnedDirty.current) { staleOwnedDirty.current = false; if (!draftDirty.current) safety({ dirty: false }) } } }
-      else if (['commit','undo','adopt'].includes(action)) { setPlan(undefined); if (answer.ok) { confirmedWrite = true; setQueue([]); await onCommitted(); safety({ dirty: false, unknown: false }); setStaleLock(false); staleOwnedDirty.current = false; draftDirty.current = false } else if (answer.code === 'outcome_unknown' || answer.outcome === 'unknown') safety({ unknown: true }) }
-      setMessage(stringifyJSON(answer, 2))
+      else if (action === 'status' || action === 'recover') { setStatus(answer); invalidate(); if (answer.ok) { receiptOnly = true; await onCommitted(); if (answer.pending === false) safety({ unknown: false }); setStaleLock(false); if (staleOwnedDirty.current) { staleOwnedDirty.current = false; if (!draftDirty.current) safety({ dirty: false }) } } }
+      else if (['commit','undo','adopt'].includes(action)) { setPlan(undefined); if (answer.ok) { confirmedWrite = true; setQueue(previous => previous.length ? [] : previous); await onCommitted(); safety({ dirty: false, unknown: false }); setStaleLock(false); staleOwnedDirty.current = false; draftDirty.current = false } else if (answer.code === 'outcome_unknown' || answer.outcome === 'unknown') safety({ unknown: true }) }
+      if (answer.code === 'recovery_required' || answer.code === 'outcome_unknown' || answer.outcome === 'unknown') safety({ unknown: true })
+      if (action === 'undo' && answer.ok) setUndoneRevision(answer.revision)
+      setMessage(receiptMessage(action, answer) + (answer.code === 'outcome_unknown' ? ` 原操作 ID：${answer.op_id ?? operationId ?? '见内核历史'}` : ''))
+      return answer
     } catch (error) {
       if (confirmedWrite || receiptOnly) {
         // The kernel receipt itself settled ok; ONLY the authoritative-view
@@ -184,25 +260,36 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
         if (confirmedWrite) { safety({ dirty: true, unknown: false }); draftDirty.current = false }
         else safety({ dirty: true })
         if (live.current) setMessage(confirmedWrite
-          ? `${error.message}\n内核已确认本次写入（回执 ok/applied）；仅权威视图刷新失败。旧视图已锁定（禁止再写与导帧）：请显式刷新或关闭后重开预览；不会自动重试写操作。`
-          : `${error.message}\n本次 ${action === 'recover' ? 'recover' : 'status'} 回执 ok，仅权威视图刷新失败；这不证明此前未知写已应用。旧视图已锁定（禁止再写与导帧）：请显式刷新或关闭后重开预览；原未知结果判定保持不变。`)
+          ? '内核已确认本次写入（ok/applied）；权威视图刷新失败。旧视图已锁定，请刷新或重开工程。'
+          : '状态回执已取得，但权威视图刷新失败。旧视图已锁定，请刷新；原未知结果判定保持不变。')
       } else {
         if (['commit','adopt','undo','recover'].includes(action)) safety({ unknown: true })
-        if (live.current) setMessage(`${error.message}\n${['commit','adopt','undo','recover'].includes(action) ? `结果可能未知；原 op_id：${operationId ?? '请读 core status/history'}。不要新建操作重试，显式 status/recover。` : ''}`)
+        if (live.current) setMessage(`${editError(error)}${['commit','adopt','undo','recover'].includes(action) ? ` 结果未知；原操作 ID：${operationId ?? '见内核历史'}。请读取状态 / 恢复，不要重试保存。` : ''}`)
       }
     } finally { safety({ busy: false }); if (live.current) setBusy(false) }
   }
+  function clear() {
+    invalidate(); setQueue(previous => previous.length ? [] : previous); setSettingsEpoch(previous => previous + 1)
+    if (!staleOwnedDirty.current) { draftDirty.current = false; safety({ dirty: false }) }
+    setMessage('已清空待保存操作。')
+  }
+  function remove(index) {
+    if (busy || staleLock) return
+    if (queue.length === 1) { clear(); return }
+    invalidate(); setQueue(previous => previous.filter((_, position) => position !== index))
+  }
   function add() {
+    if (settingsDisabled) return
     draftDirty.current = true
     safety({ dirty: true })
-    try { const operations = compileIntent(op, v, { result, blocks, track, frame }); if (!operations.length) throw new Error('请选择操作对象'); invalidate(); setQueue(previous => previous.concat(operations)); setMessage('已加入未保存批次；没有写工程。') } catch (error) { setMessage(error.message) }
+    try { const operations = compileIntent(op, v, { result, blocks, track, frame }); if (!operations.length) throw new Error('请选择操作对象'); invalidate(); setQueue(previous => previous.concat(operations)); setMessage('已加入待保存操作。') } catch (error) { setMessage(editError(error)) }
   }
   const field = (key, title, type = 'text') => h('label', { key, style: { display: 'block' } }, title, h('input', { type, value: v[key] ?? '', onChange: e => set(key, e.target.value), style: { display: 'block', width: '100%', boxSizing: 'border-box' } }))
   const select = (key, title, items) => h('label', { key, style: { display: 'block' } }, title, h('select', { value: v[key] ?? '', onChange: e => set(key, e.target.value), style: { width: '100%' } }, items.map(([value, label]) => h('option', { key: value, value }, label))))
   const check = (key, title) => h('label', { key, style: { display: 'block' } }, h('input', { type: 'checkbox', checked: Boolean(v[key]), onChange: e => set(key, e.target.checked) }), title)
   const sources = opened.snapshot.document.sources ?? []
-  const sourceSelect = () => select('source_id', '素材 ID', [['','请选择素材'], ...sources.map(s => [s.id, `${s.id} · ${s.path}`])])
-  const trackSelect = () => select('track_id', '目标轨（空=原轨）', [['','保留原轨'], ...result.tracks.map(t => [t.family === 'subtitles' ? 'subtitles' : t.data.id, `${t.family} · ${t.data.name ?? t.address}`])])
+  const sourceSelect = () => select('source_id', '素材 ID', [['','请选择素材'], ...sources.filter(s => typeof s.id === 'string').map(s => [s.id, `${s.id} · ${s.path}`])])
+  const trackSelect = () => select('track_id', '目标轨（空=原轨）', [['','保留原轨'], ...result.tracks.filter(t => t.family === 'subtitles' || typeof t.data?.id === 'string').map(t => [t.family === 'subtitles' ? 'subtitles' : t.data.id, `${t.family} · ${t.data.name ?? t.address}`])])
   const fade = () => select('fade_policy', '淡入淡出策略（显式）', [['preserve-content','保留内容曲线（无法精确保留则拒绝）'], ['reapply-edge-fades','重新应用边缘 fade（行为变化）']])
   const family = () => select('family', '对象族', [['video','视频 / gfx'],['audio','音频'],['subtitles','内联字幕']])
   const newBlock = () => [family(), v.family === 'video' ? select('kind','视频轨类型', [['aroll','aroll'],['broll','broll'],['gfx','gfx']]) : null, field('src','源 ID / gfx 文件路径（明确引用，不探素材）'), field('start','全局起点帧'), v.family === 'video' ? field('duration','时长帧') : field('end','全局终点帧'), v.family !== 'subtitles' ? field('src_in','源起点帧（显式）') : field('text','字幕文本'), v.family === 'video' && v.kind !== 'gfx' ? field('src_out','源终点帧（显式）') : null, v.family === 'audio' ? field('volume','音量（JSON 数值）') : null]
@@ -224,25 +311,31 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
   if (op.startsWith('parameters.')) form = [select('property_target','属性目标', [['block','选中块'],['track','选中轨'],['source','素材'],['project','工程']]),sourceSelect(), select('property','白名单属性（不适用对象由内核精确拒绝）',knownProperties.map(p=>[p,p])),op === 'parameters.update' ? field('value','属性值（text 为文本，其余单个 JSON 值）') : null]
   if (op === 'project.resize') form = [field('duration','工程新时长帧（不改 FPS/分辨率）')]
   if (op === 'range.ripple') form = [select('mode','ripple 模式',[['shift','平移'],['delete','删除区间']]),select('crossing','跨界策略',[['reject','跨界拒绝'],['cut','明确剪切（仅 delete）']]),check('resize','同时调整画布时长'),check('subtitles','明确包含内联字幕'),h('fieldset',{key:'scope'},h('legend',null,'显式轨集合（不隐式联动 AV）'), result.tracks.filter(t=>t.data?.id).map(t=>h('label',{key:t.data.id,style:{display:'block'}},h('input',{type:'checkbox',checked:v.scope.includes(t.data.id),onChange:e=>set('scope', e.target.checked?v.scope.concat(t.data.id):v.scope.filter(k=>k!==t.data.id))}),`${t.family} ${t.data.name} ${t.data.id}`))),field('at','shift 起点帧'),field('delta','shift 有符号整数偏移'),field('start','delete 起点帧'),field('end','delete 终点帧'),fade(), h('fieldset',{key:'splits'},h('legend',null,'确认为跨两端块提供右侧新 ID（内核要求恰好枚举）'),blocks.map(b=>h('label',{key:b.data.id,style:{display:'block'}},h('input',{type:'checkbox',checked:v.split_ids.includes(b.data.id),onChange:e=>set('split_ids',e.target.checked?v.split_ids.concat(b.data.id):v.split_ids.filter(k=>k!==b.data.id))}),b.data.id)))]
-  return h('section',{'aria-label':'手动语义编辑',style:{border:'1px solid currentColor',padding:8,minWidth:0}},
-    h('h3',null,'手动编辑 · 内核计划 / 单批提交'),
-    h('p',null,'只编辑受管工程；不渲染、不暗存、不自动 adopt。取消/断线可能结果未知。trim 仅向内；gfx 仅移动/复制/删除，trim/split/crossing ripple 后端不支持；外字幕只读。没有隐式 AV 联动。'),
-    h('button',{type:'button',disabled:busy,onClick:()=>void run(write?'revoke-write':'authorize-write')},write?'撤销本会话/工程写许可':'明确允许本会话向此工程及 core 历史写入'),
-    h('p',null,`写授权：${write?'已明确授予（非 read grant）':'未授予，保留 read / copy / noDraft 降级'}；选择 ${blocks.length} 个块 / ${track?.data?.id ?? '无真实轨'}`),
-    staleLock ? h('p',{role:'alert'},'权威视图刷新失败：此旧视图已锁定，禁止再写、快捷编辑、拖动与导帧。请刷新或关闭后重开预览；不会自动重试；结果判定以内核回执为准。') : null,
-    !managed ? h('div',null,h('p',null,'Legacy：只读。显式接管会分配稳定 ID 并创建持久历史；现有未知 ID/不兼容素材 ID 将被内核拒绝，绝不自动改名或迁移。'), h('button',{type:'button',disabled:!write||busy||staleLock,onClick:()=>void run('adopt',{base_revision:base,confirmation:'stable-ids-and-history'})},'确认稳定 ID / 历史影响并接管 legacy')) : null,
-    h(TimelineSettings, { key: `${opened.grant}:${base}:${settingsEpoch}`, document: opened.snapshot.document, tracks: result.tracks, disabled: settingsDisabled, onChange: settingsChanged, onQueue: settingsQueued }),
-    h('fieldset',{disabled:!write||!managed||busy||staleLock,style:{minWidth:0}},h('legend',null,'专用操作表单（不是整段 JSON 请求）'),selectOperation(),...form,
-      h('button',{type:'button',disabled:busy||staleLock,onClick:add},'加入未保存批次'), h('button',{type:'button',disabled:busy||staleLock,onClick:()=>{invalidate();setQueue([]);setSettingsEpoch(previous=>previous+1);if(!staleOwnedDirty.current){draftDirty.current=false;safety({dirty:false})}}},'清空未保存批次')),
-    h('pre',{'aria-label':'未保存 typed intents',style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(queue,2)),
-    h('button',{type:'button',disabled:!write||busy||proposalBlocked||staleLock||!queue.length,onClick:()=>void run('plan',{base_revision:base,operations:queue})},'内核预检计划（零写）'),
-    plan ? h('div',null,h('strong',null,`未保存计划 · op_id ${plan.submitted_request.op_id}`),h('pre',{style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(plan,2)),h('button',{type:'button',disabled:busy||staleLock,onClick:()=>void run('commit',{planToken:plan.planToken})},'确认提交此冻结计划（一次 revision）')) : null,
-    h('button',{type:'button',disabled:!write||busy,onClick:()=>void run('status')},'读取 core status / history（可能初始化历史）'),
-    h('button',{type:'button',disabled:!write||busy,onClick:()=>void run('recover')},'显式 core recover（不另建操作）'),
-    h('button',{type:'button',disabled:!write||busy||staleLock||!opened.snapshot.document?._vtx?.head,onClick:()=>void run('undo',{base_revision:base,head:opened.snapshot.document._vtx.head})},'撤销当前 core head（新 CAS 事务）'),
-    h('p',null,'Redo：内核未支持，不伪造浏览器逆操作。status/recover 结果是唯一恢复依据；没有浏览器持久 timeline/history。'),
-    busy ? h('button',{type:'button',onClick:()=>{request.current?.abort();void call(sessionId,payload('cancel-write'),tabSignal).catch(()=>{})}},'取消并等待子进程回收（写结果可能未知）') : null,
-    h(AgentProposals,{sessionId,opened,tabSignal,call,writeGrant:write,manualBlocked:frameSafety.current.dirty||busy||Boolean(plan)||queue.length>0,onCommitted,onEditState:proposalState,onGrantDead}),
-    h('pre',{role:'status',style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},message),status?h('details',null,h('summary',null,'最近 core status / recover'),h('pre',{style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(status,2))):null)
-  function selectOperation() { return h('label',{key:'operation'},'编辑操作',h('select',{value:op,onChange:e=>{draftDirty.current=true;safety({dirty:true});invalidate();setOp(e.target.value)},style:{width:'100%'}}, EDIT_OPERATIONS.map((value,i)=>h('option',{key:value,value},`${names[i]} · ${value}`)))) }
+  const context = { tracks: result.tracks, blocks: result.blocks, sources }
+  const locked = staleLock || frameSafety.current.unknown || proposalBlocked
+  return h('section', { 'aria-label': '手动语义编辑', className: 'fv-edit-panel' },
+    h('div', { className: 'fv-edit-header' }, h('h3', null, '待保存'), h('span', { className: 'fv-edit-meta' }, `${queue.length} 项`),
+      h('button', { type: 'button', disabled: busy, title: '明确允许本会话向此工程及内核历史写入；拖动松手即预检并保存，高级批次仍需单独确认。', onClick: () => void run(write ? 'revoke-write' : 'authorize-write') }, write ? '撤销许可' : '启用编辑')),
+    h('p', { className: 'fv-edit-meta' }, write ? '已允许本会话写入工程及历史 · 拖动松手即保存' : '启用后拖动松手即保存；允许本会话写入工程及历史'),
+    staleLock ? h('p', { role: 'alert', className: 'fv-edit-status' }, '权威视图刷新失败；旧视图已锁定，请刷新或重开工程。') : null,
+    frameSafety.current.unknown ? h('p', { role: 'alert', className: 'fv-edit-status' }, '结果未知或历史待恢复：保留原操作 ID，先读取状态 / 恢复。') : null,
+    !managed ? h('div', { className: 'fv-edit-status' }, h('p', null, '旧工程只读。接管将分配稳定 ID 并建立持久历史。'), h('button', { type: 'button', disabled: !write || busy || locked, onClick: () => void run('adopt', { base_revision: base, confirmation: 'stable-ids-and-history' }) }, '确认接管旧工程')) : null,
+    queue.length ? h(OperationList, { operations: queue, context, onRemove: remove, disabled: busy || staleLock }) : h('p', { className: 'fv-edit-meta' }, '高级表单与选区动作的修改会列在这里。'),
+    h('div', { className: 'fv-edit-actions' },
+      h('button', { type: 'button', disabled: !write || busy || locked || !queue.length, title: '内核零写预检', onClick: () => void run('plan', { base_revision: base, operations: queue }) }, '预检'),
+      h('button', { type: 'button', disabled: busy || staleLock || (!queue.length && !draftDirty.current), onClick: clear }, '清空')),
+    plan ? h('div', { className: 'fv-edit-plan' }, h(PlanReview, { plan, context, showOperations: false }), h('button', { type: 'button', disabled: !write || busy || locked, title: '明确提交此冻结计划，一次版本事务', onClick: () => void run('commit', { planToken: plan.planToken }) }, '保存更改')) : null,
+    busy ? h('button', { type: 'button', title: '取消并等待子进程回收，写入结果可能未知', onClick: () => { request.current?.abort(); void call(sessionId, payload('cancel-write'), tabSignal).catch(() => {}) } }, '取消') : null,
+    message ? h('p', { role: 'status', 'aria-live': 'polite', className: 'fv-edit-status' }, message) : null,
+    h('details', { className: 'fv-edit-advanced' }, h('summary', null, '高级编辑'),
+      h('fieldset', { disabled: settingsDisabled, className: 'fv-edit-form' }, h('legend', null, '操作表单'), selectOperation(), ...form, h('button', { type: 'button', onClick: add }, '加入批次')),
+      h(TimelineSettings, { key: `${opened.grant}:${base}:${settingsEpoch}`, document: opened.snapshot.document, tracks: result.tracks, disabled: settingsDisabled, onChange: settingsChanged, onQueue: settingsQueued })),
+    h('details', { className: 'fv-edit-advanced', open: frameSafety.current.unknown || staleLock || undefined }, h('summary', null, '历史与恢复'),
+      h('div', { className: 'fv-edit-actions' },
+        h('button', { type: 'button', disabled: !write || busy, title: '读取内核状态 / 历史，可能初始化历史', onClick: () => void run('status') }, '读取状态'),
+        h('button', { type: 'button', disabled: !write || busy, title: '显式内核恢复，不另建操作', onClick: () => void run('recover') }, '恢复'),
+        h('button', { type: 'button', disabled: !write || busy || locked || !opened.snapshot.document?._vtx?.head, title: '撤销当前内核版本，创建新的事务', onClick: () => void run('undo', { base_revision: base, head: opened.snapshot.document._vtx.head }) }, '撤销当前版本')),
+      status ? h(StatusReview, { status }) : null),
+    h(AgentProposals, { sessionId, opened, result, tabSignal, call, writeGrant: write, manualBlocked: frameSafety.current.dirty || frameSafety.current.unknown || busy || staleLock || Boolean(plan) || queue.length > 0, onCommitted, onEditState: proposalState, onGrantDead }))
+  function selectOperation() { return h('label', { key: 'operation' }, '编辑操作', h('select', { value: op, onChange: e => { draftDirty.current = true; safety({ dirty: true }); invalidate(); setOp(e.target.value) } }, EDIT_OPERATIONS.map(value => h('option', { key: value, value }, operationNames[value])))) }
 }

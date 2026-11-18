@@ -1,3 +1,4 @@
+import { domTextExcerpt } from './dom-diagnostics.mjs'
 /** Native React DOM events + actual public local fs/subprocess; JSDOM, not Chrome. */
 import assert from 'node:assert/strict'
 import { readFile, writeFile, mkdir, mkdtemp } from 'node:fs/promises'
@@ -70,8 +71,8 @@ export async function selectionEnvironment(t, kind) {
     sandbox.fetch = globalThis.fetch; sandbox.navigator = dom.window.navigator
   }
   const { createRoot } = require('react-dom/client'), reactRoot = createRoot(document.getElementById('root')), tab = new AbortController()
-  const button = text => [...document.querySelectorAll('button')].find(node => node.textContent === text)
-  async function settle(predicate) { for (let i = 0; i < 1000; i++) { if (predicate()) return; await act(async () => { await new Promise(r => setTimeout(r, 5)) }) } assert.fail(document.body.textContent) }
+  const button = text => [...document.querySelectorAll('button')].find(node => node.textContent === text || node.getAttribute('aria-label') === text)
+  async function settle(predicate) { for (let i = 0; i < 1000; i++) { if (predicate()) return; await act(async () => { await new Promise(r => setTimeout(r, 5)) }) } assert.fail(`DOM did not settle: ${domTextExcerpt(document)}`) }
   async function flush() { for (let i = 0; i < 12; i++) { await act(async () => { if (pending.size && !faults.hold) await Promise.allSettled([...pending]); await new Promise(r => setImmediate(r)) }); if (!pending.size && i > 1) break } }
   async function click(node, init = {}) { if (typeof node === 'string') node = button(node); assert(node, 'missing click target'); assert(!node.disabled, node.textContent); await act(async () => node.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true, ...init }))); if (!faults.hold) await flush() }
   async function change(title, value) { const node = [...document.querySelectorAll('label')].find(n => n.firstChild?.textContent === title)?.querySelector('input,select'); assert(node, title); await act(async () => { Object.getOwnPropertyDescriptor(node.tagName === 'SELECT' ? dom.window.HTMLSelectElement.prototype : dom.window.HTMLInputElement.prototype, 'value').set.call(node, value); node.dispatchEvent(new dom.window.Event('input', { bubbles: true })); node.dispatchEvent(new dom.window.Event('change', { bubbles: true })) }); await flush() }
@@ -79,12 +80,28 @@ export async function selectionEnvironment(t, kind) {
   t.after(async () => { faults.hold = undefined; held.splice(0).forEach(resolve => resolve()); tab.abort(); await flush(); await act(async () => reactRoot.unmount()); await flush(); await host.dispose(); for (const child of children) await child.waitForExit(AbortSignal.timeout(5000)); await sf.dispose(); await ff.dispose(); await writeFile(join(dir, 'wire.json'), stringifyJSON({ wire, processes: children.length, allReaped: true, nativeEvents: true, fs: 'actual public LocalFileSystem', provider: 'actual public LocalSubprocessRuntime', layout: 'JSDOM; not Chrome' }, 2)); dom.window.close(); delete globalThis.window; delete globalThis.document; globalThis.fetch = oldFetch; if (oldNavigator) Object.defineProperty(globalThis, 'navigator', oldNavigator) })
   await act(async () => reactRoot.render(React.createElement(client.PreviewBody, { sessionId: 'one', useTabInfo: () => ({ tab: { signal: tab.signal } }), getDraftServices: () => ({}) })))
   await click('打开 / 刷新'); await settle(() => document.querySelector('.fv-ruler'))
-  await click('明确允许本会话向此工程及 core 历史写入'); await settle(() => document.body.textContent.includes('写授权：已明确授予'))
+  await click('启用编辑'); await settle(() => button('撤销许可'))
   return { dir, path, button, click, change, event, settle, flush, wire, specs, copies, faults, held,
-    queue: () => JSON.parse(document.querySelector('[aria-label="未保存 typed intents"]').textContent),
+    async queue() {
+      const list = document.querySelector('[aria-label="待保存操作"]')
+      if (!list) { assert(button('预检').disabled, 'empty structured queue cannot be planned'); return [] }
+      const before = wire.filter(item => item.request.op === 'plan').length
+      await click('预检')
+      const plans = wire.filter(item => item.request.op === 'plan')
+      assert.equal(plans.length, before + 1, 'read exact queued operations through an explicit zero-write plan')
+      assert.equal(plans.at(-1).request.operations.length, list.children.length, 'structured list covers every queued intent')
+      return plans.at(-1).request.operations
+    },
+    async referenceRaw() {
+      const before = copies.length
+      await click('复制 raw JSON')
+      await settle(() => copies.length === before + 1)
+      assert.equal(document.querySelector('[aria-label="选中对象 raw JSON"]'), null, 'raw is not rendered')
+      return copies.at(-1)
+    },
     clip: index => document.querySelectorAll('.fv-clip')[index],
     read: () => readFile(path, 'utf8'), save: (name, data) => writeFile(join(dir, name), typeof data === 'string' ? data : stringifyJSON(data, 2)),
-    async planCommit() { await click('内核预检计划（零写）'); await settle(() => button('确认提交此冻结计划（一次 revision）')); await click('确认提交此冻结计划（一次 revision）'); await settle(() => !button('确认提交此冻结计划（一次 revision）') && !document.querySelector('[aria-label="手动语义编辑"] fieldset').disabled); await flush() },
-    async undo() { await click('撤销当前 core head（新 CAS 事务）'); await settle(() => !document.querySelector('[aria-label="手动语义编辑"] fieldset').disabled); await flush() },
+    async planCommit() { await click('预检'); await settle(() => button('保存更改')); await click('保存更改'); await settle(() => !button('保存更改') && !document.querySelector('[aria-label="手动语义编辑"] fieldset').disabled); await flush() },
+    async undo() { await click('撤销当前版本'); await settle(() => !document.querySelector('[aria-label="手动语义编辑"] fieldset').disabled); await flush() },
   }
 }
