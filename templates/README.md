@@ -9,7 +9,8 @@
 | `hello-app/` | 最小应用（app）范本：产出独立素材、不进 timeline 管线 | 第三方 app |
 | `hello-plugin/` | 音频插件完整纪律范本：缝 A prepare_source + 三不变量 + 三分支 | 第三方音频插件 |
 | `skill-demo/` | 虚拟歌手搞笑视频工作流包骨架：零依赖纯内核出片 + 验收门 4 道具 | 第三方工作流包 |
-| `demo-timeline-svg/` | 主宣传 Demo 与主性能源输入；静态 SVG 作品，新性能实测与视听仍 UNRUN；无 SKILL.md，不入 workflow 扫描 | [源基线、运行与依赖](demo-timeline-svg/README.md#主性能基线) |
+| `demo-workbench/` | 可编辑主 Demo：普通媒体、字幕、混音、SVG 与浏览器两种 gfx 入口 | [使用与验收](demo-workbench/README.md) |
+| `demo-timeline-svg/` | 锁定 portable-v2 SVG 作品与性能输入，不入 workflow 扫描 | [源基线、运行与依赖](demo-timeline-svg/README.md#主性能基线) |
 
 `vt templates list|check` 从 `skill.json` / `SKILL.md` 识别并检查 tech-talk 与 skill-demo；doctor JSON 的工作流检查字段为 `skills`。发现不会执行工作流。hello-app / hello-plugin 由各自组件 manifest 区分，不作为 workflow 检查。
 
@@ -17,7 +18,7 @@
 
 tech-talk 的内部 `templates/` 保存四份工程文档，不展开到集合根。此布局不构成 #91 的干净安装、交互与成片质量验收证据。
 
-消费面公告（2026-10-22，落笔前独立预审）：当前只保留 JSON 时间线作品作为主 Demo/性能源，操作统一在其 README；浏览器、字幕、普通媒体等功能迁入独立机制探针，发布门能力、严格标准与挂载路径不减。不宣称新全片实测或用户机器 live 挂载已验；[先前公告](https://github.com/CongliangK/framivra/blob/c063185756f6cdcfc6e366ce0b0229ea43106b87/templates/README.md)保留于固定版本。
+可编辑主 Demo 不注册 workflow、不改变技能挂载，保留已有独立机制探针和发行门。[旧基线迁移公告](https://github.com/CongliangK/framivra/blob/641b647/templates/README.md)可从固定版本追溯。
 
 ## 第三方接入
 
