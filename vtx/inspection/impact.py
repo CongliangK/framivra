@@ -9,6 +9,7 @@ import contextlib
 import io
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,10 +37,13 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
     has_alpha. Windowed media additionally require supplied dimensions. Missing
     evidence becomes unknown, never an invented opaque identity.
     Current source-media identity remains Fast (stat + head/tail samples).
+    On Windows, the caller must authorize a stable, absolute project root
+    in its original spelling for SVG input reads. Rechecks are not atomic.
     """
     if encoder not in ('x264', 'nvenc') or not isinstance(nseg, int) or nseg < 1:
         raise ValueError('invalid impact execution contract')
     tl = copy.deepcopy(timeline)
+    input_root = root
     root = Path(root).resolve()
     p = tl['project']
     from ..pipeline.constraints import fps_error, parse_fps, fps_expression
@@ -58,6 +62,8 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
         raise ValueError('; '.join(c.subtitles_errors))
     nodes, layers, warnings = {}, [], []
     observed_files = {}
+    observed_svg_files = {}
+    svg_context = None
     source_probes = {}
     def source_info(path):
         if path not in source_probes:
@@ -93,8 +99,21 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
                     raise ValueError('clip.cache_dependencies is only valid on gfx tracks')
                 if gfx:
                     from ..render import gfx_svg
-                    if gfx_svg.is_svg(clip):
-                        svg_record = gfx_svg.resolve(c, clip)
+                    svg = gfx_svg.is_svg(clip)
+                    gfx_context = c
+                    windows_svg = svg and os.name == 'nt'
+                    if windows_svg:
+                        if svg_context is None:
+                            # The resolved Path remains for labels and unrelated inputs;
+                            # it cannot authorize an anchored Windows SVG read.
+                            svg_context = copy.copy(c)
+                            svg_context.root = os.fspath(input_root)
+                        gfx_context = svg_context
+                    if svg:
+                        svg_record = gfx_svg.resolve(gfx_context, clip)
+                        if windows_svg:
+                            for name, digest in svg_record['files'].items():
+                                observed_svg_files.setdefault(name, set()).add(digest)
                         dependencies = {str(root / path): value for path, value in svg_record['files'].items()}
                         dependency_record = {'closure': 'static-svg-explicit'}
                         inputs.update(svg_sequence=svg_record, dependencies=dependencies)
@@ -107,11 +126,14 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
                                       dependencies=dependencies,
                                       dependency_record=dependency_record)
                         observed_files[root / clip['src']] = inputs['html']
-                    for path, value in dependencies.items():
-                        observed_files[Path(path)] = value
+                    if not windows_svg:
+                        for path, value in dependencies.items():
+                            observed_files[Path(path)] = value
                     from ..render.frame_source import png_source
-                    source = png_source(c, clip)
+                    source = png_source(gfx_context, clip)
                     key = source.directory.name
+                    if windows_svg and key != gfx_svg.record_key(svg_record):
+                        raise ValueError('SVG PNG source identity differs from the observed input record')
                     artifact = str(source.directory.relative_to(root))
                     upstream = source.identity
                     # Declared closure is not runtime proof of dynamic JS/network.
@@ -200,6 +222,9 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
     for path, digest in observed_files.items():
         if file_digest(path) != digest:
             raise ValueError(f'input changed during impact capture: {path}')
+    for name, digests in observed_svg_files.items():
+        if len(digests) != 1 or gfx_svg.digest(gfx_svg.read_input(svg_context, name)) not in digests:
+            raise ValueError(f'input changed during impact capture: {root / name}')
     for sid, digest in source_ids.items():
         if digest is not None and media_stat_digest(c.src_path(sid)) != digest:
             raise ValueError(f'source changed during impact capture: {sid}')
