@@ -11,7 +11,7 @@ import hashlib
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 import stat
 import subprocess
@@ -23,7 +23,8 @@ from ..runtime import windows_browser as native
 from . import gfx_svg_win_input as win_input
 from .gfx_cli import _png_stream_invalid_reason
 from .gfx_svg_stage import _FONT_ERROR
-from .gfx_svg_win_snapshot import _local_path, _pin_dir, _pin_dirs, _pin_entry, _snapshot_operation, _windows_api
+from .gfx_svg_win_snapshot import (_local_path, _ordinary, _pin_dir, _pin_dirs, _pin_entry,
+                                   _snapshot_operation, _windows_api)
 
 
 _WIDTH, _HEIGHT = 64, 48
@@ -54,6 +55,8 @@ _RASTER_PNG_LIMIT = 72 * 1024  # reference max 73,707 bytes; f0135 retains its o
 _RASTER_CAPTURE_LIMIT = 1024 * 1024  # combined streams, including the full shell transcript
 _RASTER_TIMEOUT, _RASTER_VERIFY_RESERVE = 360, 75  # staging through verification; Job reserve is separate
 _FACTS_TIMEOUT, _FACTS_CAPTURE_LIMIT = 15, 1024  # shared subdeadline; combined stdout/stderr per query
+_IMAGE_TIMEOUT, _IMAGE_PUMP_SLICE = 15, .025  # inside the shell's existing pump deadline
+_IMAGE_MODULE_LIMIT, _IMAGE_NAME_LIMIT = 512, 1024
 _INKSCAPE_VERSION = 'Inkscape 1.4.4 (dcaf3e7, 2026-05-05)'  # observed from the archive-pinned .com
 _RASTER_SVG_SHA256 = '70ddd6d89d21e9051c4479364cc69003c6612c9da3b3c7caaaa11f25b77c79bc'
 _RASTER_PNG_SHA256 = '30cad9d17b086500d6a15ed285bad63449dc5816806bb3744b68f941b1f0db4b'
@@ -82,12 +85,16 @@ def _dos_path(handle):
     return _local_path(path[4:])
 
 
-def _environment(cwd, bin_dir):
+def _system_windows_path():
     getter = _windows_api('GetSystemWindowsDirectoryW', W.UINT, W.LPWSTR, W.UINT)
     buffer = C.create_unicode_buffer(512)
     if not 0 < getter(buffer, len(buffer)) < len(buffer):
         raise OSError('Windows SVG cannot locate the system Windows directory')
-    with _pin_dir(_local_path(buffer.value)) as (handle, _):
+    return _local_path(buffer.value)
+
+
+def _environment(cwd, bin_dir):
+    with _pin_dir(_system_windows_path()) as (handle, _):
         system = _dos_path(handle)
     private = {'TEMP': 'temp', 'TMP': 'temp', 'HOME': 'home', 'USERPROFILE': 'home',
                'APPDATA': 'config', 'LOCALAPPDATA': 'data', 'XDG_CONFIG_HOME': 'config',
@@ -167,7 +174,110 @@ def _settle(operation, job, deadline):
     operation.keep = False
 
 
-def _run_owned(operation, argv, cwd, environment, stdin, *, deadline, capture_limit, phase):
+class _ImageOrigins(NamedTuple):
+    root: str  # relative to the verified package; do not expose host paths
+    package_bin: int
+    system32: int
+    winsxs: int
+
+
+def _raster_image_roots(executable, pins):
+    windows = _system_windows_path()
+    for ancestor in reversed(windows.parents):
+        pins.enter_context(_pin_dir(ancestor))
+    handle, _ = pins.enter_context(_pin_dir(windows))
+    windows = _dos_path(handle)
+    roots = (executable.parent, windows / 'System32', windows / 'WinSxS')
+    for expected in roots[1:]:
+        handle, _ = pins.enter_context(_pin_dir(expected))
+        if _dos_path(handle) != expected:
+            raise ValueError('Windows SVG system image root mismatch')
+    return roots
+
+
+def _observed_dos_name(buffer, size):
+    name = buffer.value
+    path = PureWindowsPath(name)
+    # Refuse the ambiguous PSAPI truncation boundary even with a final NUL.
+    # Compare ASCII Win32 names without resolving them through the filesystem.
+    if (not 0 < size == len(name) < len(buffer) - 1 or not name.isascii()
+            or not re.fullmatch(r'[A-Za-z]:', path.drive) or not path.is_absolute()
+            or str(path) != name or len(path.parts) < 2 or not all(map(_ordinary, path.parts[1:]))):
+        raise ValueError('Windows SVG image sample returned an invalid DOS name')
+    return path
+
+
+def _image_sample_time(deadline):
+    if time.monotonic() >= deadline:
+        raise TimeoutError('Windows SVG image sample deadline expired')
+
+
+def _query_image_origins(job, executable, roots, deadline):
+    # The original CreateProcessW HANDLE stays owned until _settle. No PID reopen.
+    process = job._info.process
+    if not process or job.proc.poll() is not None:
+        raise ValueError('Windows SVG image sample requires a live shell root')
+    query = _windows_api('QueryFullProcessImageNameW', W.BOOL, W.HANDLE, W.DWORD,
+                         W.LPWSTR, C.POINTER(W.DWORD))
+    enum = _windows_api('K32EnumProcessModulesEx', W.BOOL, W.HANDLE, C.POINTER(W.HMODULE),
+                        W.DWORD, C.POINTER(W.DWORD), W.DWORD)
+    get_name = _windows_api('K32GetModuleFileNameExW', W.DWORD, W.HANDLE, W.HMODULE, W.LPWSTR, W.DWORD)
+    name = C.create_unicode_buffer(_IMAGE_NAME_LIMIT)
+    size = W.DWORD(len(name))
+    _image_sample_time(deadline)
+    native._check(query(process, 0, name, C.byref(size)), 'QueryFullProcessImageNameW')
+    root = _observed_dos_name(name, size.value)
+    if root != executable:
+        raise ValueError('Windows SVG observed root image differs from the pinned entry')
+
+    # PSAPI is not atomic. One non-full list, one name query per entry, no retries.
+    modules, needed = (W.HMODULE * _IMAGE_MODULE_LIMIT)(), W.DWORD()
+    _image_sample_time(deadline)
+    native._check(enum(process, modules, C.sizeof(modules), C.byref(needed), 3), 'K32EnumProcessModulesEx')
+    count, partial = divmod(needed.value, C.sizeof(W.HMODULE))
+    if not 0 < count < len(modules) or partial:
+        raise ValueError('Windows SVG image sample returned an invalid module count')
+    counts, seen = [0, 0, 0], set()
+    package, system32, winsxs = roots
+    for module in modules[:count]:
+        _image_sample_time(deadline)
+        if not module:
+            raise ValueError('Windows SVG image sample returned an empty module handle')
+        size = native._check(get_name(process, module, name, len(name)), 'K32GetModuleFileNameExW')
+        path = _observed_dos_name(name, size)
+        if path in seen:
+            raise ValueError('Windows SVG image sample returned a duplicate module name')
+        seen.add(path)
+        if path.parent == package:
+            counts[0] += 1
+        elif path.parent == system32:
+            counts[1] += 1
+        elif path.parent.parent == winsxs:
+            counts[2] += 1
+        else:
+            raise ValueError('Windows SVG observed a module outside the allowed image roots')
+    if root not in seen:
+        raise ValueError('Windows SVG root image missing from module sample')
+    if job.proc.poll() is not None:
+        raise ValueError('Windows SVG shell root exited during image sample')
+    _image_sample_time(deadline)
+    return _ImageOrigins(root.relative_to(package.parent).as_posix(), *counts)
+
+
+def _sample_raster_images(job, executable, roots, pump_deadline):
+    deadline = min(pump_deadline, time.monotonic() + _IMAGE_TIMEOUT)
+    # Re-enter the same dual-stream pump and aggregate capture, without a new
+    # buffer, an action/pipe handshake, or any wait for a specific log message.
+    stdout = job._captures[0].data
+    while b'\n' not in stdout:
+        _image_sample_time(deadline)
+        if job._pump(min(deadline, time.monotonic() + _IMAGE_PUMP_SLICE)):
+            raise ValueError('Windows SVG shell exited before a live image sample')
+    _image_sample_time(deadline)
+    return _query_image_origins(job, executable, roots, deadline)
+
+
+def _run_owned(operation, argv, cwd, environment, stdin, *, deadline, capture_limit, phase, image_roots=None):
     job = native._OwnedJob(argv, capture_limit=capture_limit)
     if deadline is None:
         deadline = time.monotonic() + _TIMEOUT
@@ -175,7 +285,9 @@ def _run_owned(operation, argv, cwd, environment, stdin, *, deadline, capture_li
     try:
         job._launch(argv, subprocess.PIPE, subprocess.PIPE, stdin=stdin,
                     cwd=str(cwd), environment=environment)
-        if not job._pump(deadline - _SETTLE_RESERVE):
+        pump_deadline = deadline - _SETTLE_RESERVE
+        sample = None if image_roots is None else _sample_raster_images(job, Path(argv[0]), image_roots, pump_deadline)
+        if not job._pump(pump_deadline):
             raise TimeoutError(f'Windows SVG {phase} did not exit and close both outputs in time')
     except BaseException as primary:
         try:
@@ -188,21 +300,22 @@ def _run_owned(operation, argv, cwd, environment, stdin, *, deadline, capture_li
             raise
         raise
     _settle(operation, job, deadline)
-    return job
+    return job, sample
 
 
-def _run(operation, executable, cwd, environment, stdin, *, deadline=None, capture_limit=None):
+def _run(operation, executable, cwd, environment, stdin, *, deadline=None, capture_limit=None, image_roots=None):
     if deadline is not None and time.monotonic() >= deadline - _SETTLE_RESERVE:
         raise TimeoutError('Windows SVG sequence did not stage in time')
     if capture_limit is None:
         capture_limit = _LIMIT if deadline is None else _SEQUENCE_CAPTURE_LIMIT
-    job = _run_owned(operation, [str(executable), '--shell'], cwd, environment, stdin,
-                     deadline=deadline, capture_limit=capture_limit, phase='shell')
+    job, sample = _run_owned(operation, [str(executable), '--shell'], cwd, environment, stdin,
+                             deadline=deadline, capture_limit=capture_limit, phase='shell', image_roots=image_roots)
     if job.proc.returncode != 0:
         raise ValueError(f'Windows SVG shell failed ({job.proc.returncode})')
     _, stderr = job._output()
     if _FONT_ERROR.search(stderr.decode('utf-8', 'replace')):
         raise ValueError('Windows SVG export failed: severe Fontconfig or Pango diagnostic')
+    return sample
 
 
 def _require_runtime_facts(operation, executable, cwd, environment, pins, launch_deadline):
@@ -218,8 +331,8 @@ def _require_runtime_facts(operation, executable, cwd, environment, pins, launch
                            ('--user-data-directory', str(_dos_path(profile)))):
         if time.monotonic() >= deadline - _SETTLE_RESERVE:
             raise TimeoutError('Windows SVG runtime facts deadline expired before launch')
-        job = _run_owned(operation, [str(executable), flag], cwd, environment, None,
-                         deadline=deadline, capture_limit=_FACTS_CAPTURE_LIMIT, phase='runtime query')
+        job, _ = _run_owned(operation, [str(executable), flag], cwd, environment, None,
+                            deadline=deadline, capture_limit=_FACTS_CAPTURE_LIMIT, phase='runtime query')
         if time.monotonic() >= deadline:
             raise TimeoutError('Windows SVG runtime facts deadline expired')
         if job.proc.returncode != 0:
@@ -364,6 +477,7 @@ class _StandardRasterEvidence(NamedTuple):
     svg_sha256: str
     png_sha256: str
     rgba_sha256: str
+    image_origins: _ImageOrigins
 
 
 def _raster_fold(kind):
@@ -436,9 +550,10 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
                 if _read_pinned(handle, info, directory, len(data)) != data:
                     raise ValueError('Windows SVG staged canonical raster source changed')
             _require_runtime_facts(operation, executable, cwd, environment, pins, launch_deadline)
+            image_roots = _raster_image_roots(executable, pins)
             with _fixed_stdin(cwd, actions) as stdin:
-                _run(operation, executable, cwd, environment, stdin, deadline=launch_deadline,
-                     capture_limit=_RASTER_CAPTURE_LIMIT)
+                image_origins = _run(operation, executable, cwd, environment, stdin, deadline=launch_deadline,
+                                     capture_limit=_RASTER_CAPTURE_LIMIT, image_roots=image_roots)
 
             # _run can return only after confirmed Job settlement. No directory
             # enumeration or PNG reads occur on its failure path.
@@ -456,7 +571,8 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
             if png.hexdigest() != _RASTER_PNG_SHA256:
                 raise ValueError('Windows SVG canonical raster ordered PNG bytes differ')
     _raster_time(deadline)
-    return _StandardRasterEvidence(len(outputs), _STANDARD_SIZE, svg.hexdigest(), png.hexdigest(), rgba.hexdigest())
+    return _StandardRasterEvidence(len(outputs), _STANDARD_SIZE, svg.hexdigest(), png.hexdigest(), rgba.hexdigest(),
+                                   image_origins)
 
 
 def _require_outputs(frames, outputs):

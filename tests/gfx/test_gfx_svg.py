@@ -1363,9 +1363,14 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                 'facts-timeout': (system, 'did not exit', None),
                 'facts-settlement': (user, 'settlement unconfirmed', None),
             }
+            image_failures = {'image-eof': 'exited before a live image sample',
+                              'image-rejected': 'injected image rejection',
+                              'image-unconfirmed': 'injected image rejection'}
             raster_failures = {None: None, 'missing': 'missing output frames', 'extra': 'unexpected output entry',
                                'reordered': 'ordered pixels differ', 'later': 'ordered pixels differ',
-                               'encoding': 'ordered PNG bytes differ', 'settlement': 'settlement unconfirmed'}
+                               'encoding': 'ordered PNG bytes differ', 'settlement': 'settlement unconfirmed',
+                               **image_failures}
+            origins = shell._ImageOrigins('bin/inkscape.com', 2, 1, 1)
             for i, failure in enumerate((*raster_failures, *fact_failures)):
                 with self.subTest(failure=failure):
                     case_scratch = root / f'case-{i}'
@@ -1386,7 +1391,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                         job._pump.return_value = True
                         job.proc.returncode = 0
                         if flag == stop:
-                            if failure in ('settlement', 'facts-settlement'):
+                            if failure in ('settlement', 'facts-settlement', 'image-unconfirmed'):
                                 job._close.side_effect = OSError('injected accounting failure')
                             elif failure == 'facts-timeout':
                                 job._pump.return_value = False
@@ -1423,6 +1428,21 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                                 job._output.side_effect = read_fact
                                 return
                             job._output.return_value = (b'', b'')
+                            captured = bytearray()
+                            job._captures = [SimpleNamespace(data=captured)]
+
+                            def pump(deadline):
+                                if failure == 'image-eof':
+                                    return True
+                                if not captured:
+                                    captured.extend(b'ready')
+                                elif b'\n' not in captured:
+                                    captured.extend(b'\n')
+                                else:
+                                    return True
+                                return False
+
+                            job._pump.side_effect = pump
                             actions = plan.read_bytes().splitlines()
                             self.assertEqual(len(actions), len(stems) + 1)
                             self.assertEqual(actions[-1], b'quit')
@@ -1445,16 +1465,32 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                         job._launch.side_effect = launch
                         return job
 
+                    def query(job, executable, roots, deadline):
+                        self.assertIs(job, jobs[3])
+                        self.assertEqual(job._captures[0].data, b'ready\n')
+                        self.assertEqual(job._pump.call_count, 2)
+                        job._close.assert_not_called()
+                        self.assertEqual(executable, Path(settings[0]))
+                        self.assertEqual(roots[0], executable.parent)
+                        self.assertEqual([path.name for path in roots[1:]], ['System32', 'WinSxS'])
+                        if failure in ('image-rejected', 'image-unconfirmed'):
+                            raise ValueError('injected image rejection')
+                        return origins
+
                     own.side_effect = job_for
                     with mock.patch.object(shell, '_require_outputs', wraps=shell._require_outputs) as check_names, \
-                            mock.patch.object(shell, '_read_png', wraps=shell._read_png) as read_png:
+                            mock.patch.object(shell, '_read_png', wraps=shell._read_png) as read_png, \
+                            mock.patch.object(shell, '_query_image_origins', side_effect=query) as observe:
                         if rejection is None:
-                            self.assertEqual(accept(case_scratch), (4, (6, 4), svg_sha, png_sha, rgba_sha))
+                            self.assertEqual(accept(case_scratch), (4, (6, 4), svg_sha, png_sha, rgba_sha, origins))
                         else:
                             with self.assertRaisesRegex((ValueError, OSError), rejection) as rejected:
                                 accept(case_scratch)
                             self.assertNotIn('private diagnostic', str(rejected.exception))
-                        unchecked = failure in fact_failures or failure == 'settlement'
+                            if failure == 'image-unconfirmed':
+                                self.assertTrue(shell.native.job_cleanup_unconfirmed(rejected.exception))
+                        self.assertEqual(observe.call_count, int(failure not in fact_failures and failure != 'image-eof'))
+                        unchecked = failure in fact_failures or failure in image_failures or failure == 'settlement'
                         self.assertEqual(check_names.call_count, 0 if unchecked else 1)
                         self.assertEqual(read_png.call_count, 0 if unchecked or failure in ('missing', 'extra') else 4)
                     flags = (version, system, user, '--shell')
@@ -1463,12 +1499,81 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                     for job in jobs:
                         job._launch.assert_called_once()
                         job._close.assert_called_once()
-                        self.assertEqual(job._close.call_args.args[0] - job._pump.call_args.args[0], 5)
+                        settle = job._close.call_args.args[0]
+                        if job is jobs[-1] and failure in image_failures:
+                            self.assertLess(job._pump.call_args.args[0], settle - 5)
+                        else:
+                            self.assertEqual(settle - job._pump.call_args.args[0], 5)
                     query_jobs = jobs[:3]
                     self.assertEqual(len({job._close.call_args.args[0] for job in query_jobs}), 1)
-                    if failure in ('facts-settlement', 'capture', 'facts-timeout', 'nonzero'):
+                    if failure in image_failures or failure in ('facts-settlement', 'capture', 'facts-timeout', 'nonzero'):
                         jobs[-1]._output.assert_not_called()
-                    self.assertEqual(bool(list(case_scratch.iterdir())), failure in ('facts-settlement', 'settlement'))
+                    self.assertEqual(bool(list(case_scratch.iterdir())),
+                                     failure in ('facts-settlement', 'settlement', 'image-unconfirmed'))
+
+    def test_image_sample_uses_only_live_owned_handle_and_bounded_exact_names(self):
+        import ctypes as C
+        from ctypes import wintypes as W
+        import time
+        from vtx.render import gfx_svg_win_shell as shell
+
+        exe = Path(r'C:\private\inkscape\bin\inkscape.com')
+        roots = (exe.parent, Path(r'C:\Windows\System32'), Path(r'C:\Windows\WinSxS'))
+        good_names = [str(exe), r'c:\WINDOWS\SYSTEM32\ntdll.dll', r'C:\Windows\WinSxS\assembly\gdiplus.dll']
+        for case, message in ((None, None), ('dead', 'requires a live shell root'),
+                              ('exited', 'exited during image sample'), ('timeout', 'sample deadline expired'),
+                              ('root', 'differs from the pinned entry'), ('empty', 'invalid module count'),
+                              ('full', 'invalid module count'), ('partial', 'invalid module count'),
+                              ('outside', 'outside the allowed'), ('alias', 'invalid DOS name'),
+                              ('truncated', 'invalid DOS name'), ('nul-boundary', 'invalid DOS name'),
+                              ('unavailable', 'K32GetModuleFileNameExW'),
+                              ('no-root-module', 'missing from module sample')):
+            with self.subTest(case=case):
+                process = object()  # sentinel; no API receives a real process or PID
+                poll = mock.Mock(side_effect=[0 if case == 'dead' else None, 0 if case == 'exited' else None])
+                job = SimpleNamespace(_info=SimpleNamespace(process=process), proc=SimpleNamespace(poll=poll))
+                names = list(good_names)
+                names[1] = {'outside': r'C:\Windows\System32-extra\ntdll.dll',
+                            'alias': r'C:\Windows\System32\..\System32\ntdll.dll'}.get(case, names[1])
+                if case == 'no-root-module':
+                    names[0] = str(exe.with_name('other.dll'))
+
+                def root(handle, flags, output, count):
+                    self.assertIs(handle, process)
+                    self.assertEqual(flags, 0)
+                    output.value = str(exe.with_name('inkscape.exe') if case == 'root' else exe)
+                    C.cast(count, C.POINTER(W.DWORD)).contents.value = len(output.value)
+                    return 1
+
+                def enum(handle, modules, capacity, needed, flags):
+                    self.assertIs(handle, process)
+                    self.assertEqual((capacity, flags), (C.sizeof(W.HMODULE) * shell._IMAGE_MODULE_LIMIT, 3))
+                    modules[:3] = [11, 12, 13]
+                    count = {'empty': 0, 'full': capacity, 'partial': 1}.get(case, C.sizeof(W.HMODULE) * 3)
+                    C.cast(needed, C.POINTER(W.DWORD)).contents.value = count
+                    return 1
+
+                def name(handle, module, output, capacity):
+                    self.assertIs(handle, process)
+                    self.assertEqual(capacity, shell._IMAGE_NAME_LIMIT)
+                    output.value = names[module - 11]
+                    if case == 'nul-boundary' and module == 12:
+                        prefix = str(roots[1]) + '\\'
+                        output.value = prefix + 'a' * (capacity - 1 - len(prefix))
+                        self.assertEqual(output[capacity - 1], '\0')
+                    return {'truncated': capacity, 'unavailable': 0}.get(case, len(output.value))
+
+                functions = {'QueryFullProcessImageNameW': root, 'K32EnumProcessModulesEx': enum,
+                             'K32GetModuleFileNameExW': name}
+                with mock.patch.object(shell, '_IMAGE_NAME_LIMIT', 128), \
+                        mock.patch.object(shell, '_windows_api', side_effect=lambda name, *_: functions[name]):
+                    deadline = time.monotonic() + (-1 if case == 'timeout' else 10)
+                    if message is None:
+                        self.assertEqual(shell._query_image_origins(job, exe, roots, deadline),
+                                         ('bin/inkscape.com', 1, 1, 1))
+                    else:
+                        with self.assertRaisesRegex((OSError, ValueError), message):
+                            shell._query_image_origins(job, exe, roots, deadline)
 
     def test_fixed_sequence_exact_outputs_and_index_pixels(self):
         from PIL import Image, ImageDraw
