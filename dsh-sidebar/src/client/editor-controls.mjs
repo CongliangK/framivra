@@ -120,10 +120,10 @@ export function SelectionSummary({ selection, selected = [], result, frame, fps,
     item ? h('div', { className: 'fv-selection-description', title: `${clipName(item.data, item.address)} · ${description}` },
       h('span', { className: 'fv-selection-kind', 'data-family': family }, h(Icon, { name: family === 'audio' ? 'audio' : family === 'subtitles' ? 'text' : 'clip', size: 14 })),
       h('strong', null, clipName(item.data, item.address)), h('span', { className: 'fv-sr-only' }, description)) : null,
-    h('div', { className: 'fv-selection-actions', role: 'group', 'aria-label': '片段操作（仅加入待预检批次）' },
+    h('div', { className: 'fv-selection-actions', role: 'group', 'aria-label': '片段操作' },
       h(ToolButton, { icon: 'pin', label: '定位选中片段起点', tooltip: '定位片段起点，不生成画面', disabled: !range, onClick: () => onFrame(String(range[0])) }),
-      h(ToolButton, { icon: 'split', label: '在播放头分割选中片段', tooltip: quick ? '分割选中块，加入未保存批次 · S' : '请先在属性面板明确授予工程写许可；不自动接管 legacy', disabled: !quick || blocks.length !== 1 || !range || family === 'gfx' || !safeFrame(frame) || frame <= range[0] || frame >= range[1], onClick: () => quick('block.split') }),
-      h(ToolButton, { icon: 'remove', label: '将移除选中片段加入批次', tooltip: quick ? '移除选中块，加入未保存批次 · Delete' : '请先在属性面板明确授予工程写许可', variant: 'danger', disabled: !quick || !blocks.length, onClick: () => quick('block.remove') }),
+      h(ToolButton, { icon: 'split', label: '在播放头分割选中片段', tooltip: quick ? '在播放头分割并保存 · S' : '请先启用编辑', disabled: !quick || blocks.length !== 1 || !range || family === 'gfx' || !safeFrame(frame) || frame <= range[0] || frame >= range[1], onClick: () => quick('block.split') }),
+      h(ToolButton, { icon: 'remove', label: '移除选中片段', tooltip: quick ? '确认后移除并保存 · Delete' : '请先启用编辑', variant: 'danger', disabled: !quick || !blocks.length, onClick: () => quick('block.remove') }),
       h(ToolButton, { icon: 'settings', label: '查看选区属性与编辑', onClick: onProperties }),
       h(ToolButton, { icon: 'close', label: '清除时间线选区', tooltip: '清除选区，不改片段', disabled: !selected.length, onClick: onClear })))
 }

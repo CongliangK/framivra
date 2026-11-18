@@ -76,15 +76,15 @@ test('FileBrowser: folder navigation and up re-browse with exact relative paths;
   assert.equal(label('上一级文件夹').title, '上一级文件夹 · 当前目录：sub')
   assert.equal(document.querySelector('.fv-file-search').title, '筛选当前文件夹 · sub')
   const toolbar = document.querySelector('.fv-file-toolbar')
-  assert(toolbar.contains(label('刷新文件列表')) && toolbar.contains(label('收起项目文件')))
-  assert(label('上一级文件夹').getAttribute('aria-describedby')) // keyboard-focus help retains cwd
+  assert.equal(Boolean(toolbar.contains(label('刷新文件列表')) && toolbar.contains(label('收起项目文件'))), true)
+  assert.equal(Boolean(label('上一级文件夹').getAttribute('aria-describedby')), true) // keyboard-focus help retains cwd
   // filter is client-side only: no new browse call
   const before = calls.length
   await change(document.querySelector('.fv-file-search'), 'inner')
   assert.deepEqual([...document.querySelectorAll('.fv-file-list span')].map(n => n.textContent), ['inner project.json'])
-  assert(document.body.textContent.includes('没有匹配') === false)
+  assert.equal(Boolean(document.body.textContent.includes('没有匹配') === false), true)
   await change(document.querySelector('.fv-file-search'), 'zzz')
-  assert(document.body.textContent.includes('没有匹配的文件。'))
+  assert.equal(Boolean(document.body.textContent.includes('没有匹配的文件。')), true)
   assert.equal(calls.length, before)
   await change(document.querySelector('.fv-file-search'), '')
   await act(async () => label('打开时间线 inner project.json').click())
@@ -149,8 +149,8 @@ test('FileBrowser: loading status, empty folder, truncated and escaped notices c
   assert.equal(document.querySelectorAll('.fv-file-list button').length, 0)
   await act(async () => document.querySelector('[aria-label="刷新文件列表"]').click())
   await settle(() => document.body.textContent.includes('目录过大'))
-  assert(document.body.textContent.includes('仅显示前 500 项'))
-  assert(document.body.textContent.includes('已隐藏指向工作区外的链接。'))
+  assert.equal(Boolean(document.body.textContent.includes('仅显示前 500 项')), true)
+  assert.equal(Boolean(document.body.textContent.includes('已隐藏指向工作区外的链接。')), true)
   assert.equal(document.querySelectorAll('.fv-file-list span').length, 1)
 })
 
@@ -165,7 +165,7 @@ test('FileBrowser: transport failure shows the message with retry; retry re-brow
   }
   await act(async () => root.render(h(FileBrowser, { sessionId: 'one', tabSignal: new AbortController().signal, call, onChoose: () => {}, onClose: () => {} })))
   await settle(() => document.querySelector('[role="alert"]'))
-  assert(document.body.textContent.includes('HOST_DOWN'))
+  assert.equal(Boolean(document.body.textContent.includes('HOST_DOWN')), true)
   assert.equal(document.querySelectorAll('.fv-file-list button').length, 0)
   await act(async () => button('重试读取文件夹').click())
   await settle(() => document.querySelector('.fv-file-list'))
@@ -196,7 +196,7 @@ test('FileBrowser: malformed Host responses fail closed with BROWSE_INVALID and 
   // every queued malformation consumed; the next retry receives a valid document
   await act(async () => button('重试读取文件夹').click())
   await settle(() => document.querySelector('.fv-file-list'))
-  assert(document.body.textContent.includes('good.json'))
+  assert.equal(Boolean(document.body.textContent.includes('good.json')), true)
 })
 
 test('FileBrowser: switching session aborts the pending browse and its late response can never publish; a new root load starts clean', async t => {
@@ -218,8 +218,8 @@ test('FileBrowser: switching session aborts the pending browse and its late resp
   assert.equal(pending[0].signal.aborted, true, 'old browse aborted on session switch')
   await act(async () => pending[0].resolve(browseOK('', [file('', 'STALE_ENTRY.json')])))
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
-  assert(!document.body.textContent.includes('STALE_ENTRY'), 'aborted late response did not publish')
-  assert(document.body.textContent.includes('new.json'))
+  assert.equal(Boolean(!document.body.textContent.includes('STALE_ENTRY')), true, 'aborted late response did not publish')
+  assert.equal(Boolean(document.body.textContent.includes('new.json')), true)
 })
 
 // ---------- PreviewBody integrated shell ----------
@@ -249,7 +249,6 @@ function hostFixture() {
     if (request.op === 'open') result = opened
     else if (request.op === 'query') result = full
     else if (request.op === 'browse') result = browseOK(request.path, request.path === '' ? [dir('', 'sub'), file('', 'timeline.json'), file('', 'proj.json')] : [file(request.path, 'nested.json')])
-    else if (request.op === 'proposal-list') result = { ok: true, proposals: [] }
     else result = { ok: true }
     return new Response(stringifyJSON(result))
   }
@@ -278,10 +277,10 @@ test('PreviewBody: initial render performs no browse/open/query/write — only t
   await settle(() => document.querySelector('.fv-empty'))
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
   assert.deepEqual(requests, [], 'no auto browse/render/write on mount')
-  assert(document.body.textContent.includes('从一条时间线开始'))
-  assert(document.querySelector('.fv-ruler') === null)
+  assert.equal(Boolean(document.body.textContent.includes('从一条时间线开始')), true)
+  assert.equal(Boolean(document.querySelector('.fv-ruler') === null), true)
   assert.equal(document.querySelectorAll('.fv-file-list button').length, 0)
-  assert(document.querySelector('[role="alert"]') === null, "Expected absent DOM node: document.querySelector('[role=\"alert\"]')")
+  assert.equal(Boolean(document.querySelector('[role="alert"]') === null), true, "Expected absent DOM node: document.querySelector('[role=\"alert\"]')")
 })
 
 test('PreviewBody: expand/shrink drives the native dialog via public showModal/close; ruler and editor DOM nodes are retained, no reopened/read side effects', async t => {
@@ -293,36 +292,35 @@ test('PreviewBody: expand/shrink drives the native dialog via public showModal/c
   await act(async () => root.render(h(PreviewBody, { ...host, sessionId: 'one', inputActions: {}, useAccess: () => true })))
   await act(async () => document.querySelectorAll('form')[0].dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true })))
   await settle(() => document.querySelector('.fv-ruler'))
-  await settle(() => host.requests.some(r => r.op === 'proposal-list'))
   const afterLoad = host.requests.length
   const dialog = document.querySelector('dialog.fv-workbench')
   assert.equal(dialog.open, false)
   assert.equal(dialog.getAttribute('role'), 'region')
   assert.equal(label('展开工作台').getAttribute('aria-expanded'), null)
   const ruler = document.querySelector('.fv-ruler')
-  const editorSummary = document.querySelector('[aria-label="手动语义编辑"]')
+  const editorSummary = document.querySelector('[aria-label="时间线编辑"]')
   const monitor = document.querySelector('.fv-monitor')
   assert.equal(document.querySelector('.fv-frame-tools').closest('fieldset').style.display, 'contents', 'storage exclusion must not insert a flex box that shrinks the expanded monitor')
-  assert(editorSummary, 'ManualEditor section rendered')
+  assert.equal(Boolean(editorSummary), true, 'ManualEditor section rendered')
   await act(async () => label('展开工作台').click())
   assert.deepEqual(dialogCalls, ['showModal'])
   assert.equal(dialog.open, true)
   assert.equal(dialog.getAttribute('role'), 'dialog')
   assert.equal(dialog.getAttribute('aria-modal'), 'true')
-  assert(document.querySelector('[aria-label="收起工作台"]'))
-  assert(document.querySelector('.fv-ruler') === ruler, 'SAME ruler node retained across expand')
-  assert(document.querySelector('[aria-label="手动语义编辑"]') === editorSummary, 'SAME ManualEditor DOM node retained')
-  assert(document.querySelector('.fv-monitor') === monitor, 'SAME program monitor retained')
+  assert.equal(Boolean(document.querySelector('[aria-label="收起工作台"]')), true)
+  assert.equal(Boolean(document.querySelector('.fv-ruler') === ruler), true, 'SAME ruler node retained across expand')
+  assert.equal(Boolean(document.querySelector('[aria-label="时间线编辑"]') === editorSummary), true, 'SAME ManualEditor DOM node retained')
+  assert.equal(Boolean(document.querySelector('.fv-monitor') === monitor), true, 'SAME program monitor retained')
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
   assert.equal(host.requests.length, afterLoad, 'expand issues no reopen/query/render IO')
   await act(async () => label('收起工作台').click())
   assert.deepEqual(dialogCalls, ['showModal', 'close'])
   assert.equal(dialog.open, false)
-  assert(document.querySelector('[aria-label="展开工作台"]'))
+  assert.equal(Boolean(document.querySelector('[aria-label="展开工作台"]')), true)
   assert.equal(dialog.getAttribute('aria-modal'), null)
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
   assert.equal(host.requests.length, afterLoad, 'shrink issues no IO either')
-  assert(document.querySelector('.fv-ruler') === ruler, 'shrink also retains the ruler node')
+  assert.equal(Boolean(document.querySelector('.fv-ruler') === ruler), true, 'shrink also retains the ruler node')
 })
 
 test('PreviewBody: choosing a browser file opens through the Host control response and vtx projection, not a second parser', async t => {
@@ -339,14 +337,14 @@ test('PreviewBody: choosing a browser file opens through the Host control respon
   await act(async () => label('打开时间线 proj.json').click())
   await settle(() => document.querySelector('.fv-ruler'))
   const ops = host.requests.map(r => r.op)
-  assert.deepEqual(ops.slice(-3), ['open', 'query', 'proposal-list'])
-  assert.equal(host.requests.at(-3).timeline, 'proj.json')
-  assert.equal(host.requests.at(-3).sessionId, 'one')
+  assert.deepEqual(ops.slice(-2), ['open', 'query'])
+  assert.equal(host.requests.at(-2).timeline, 'proj.json')
+  assert.equal(host.requests.at(-2).sessionId, 'one')
   assert.equal(document.querySelector('.fv-title h2').textContent, 'proj.json')
   const savedView = document.querySelector('.fv-title .fv-subtitle')
   assert.equal(savedView.textContent, '已保存视图')
   assert.equal(savedView.title, '已保存视图 · 精确帧定位')
-  assert(document.body.textContent.includes('MAIN_TRACK'), 'projection content comes from the vtx query envelope')
+  assert.equal(Boolean(document.body.textContent.includes('MAIN_TRACK')), true, 'projection content comes from the vtx query envelope')
   assert.equal(label('打开时间线 proj.json').getAttribute('aria-current'), 'true')
   assert.deepEqual(dialogCalls, [], 'file choice itself never toggles the dialog')
 })
@@ -363,7 +361,7 @@ test('PreviewBody: editing the draft path input never relabels the loaded file u
   await change(document.querySelector('input[name="framivra-timeline"]'), 'zzz-typo.json')
   assert.equal(document.querySelector('.fv-title h2').textContent, 'timeline.json', 'title keeps the LOADED file, not the draft input')
   assert.equal(document.querySelector('.fv-title h2').getAttribute('title'), 'timeline.json')
-  assert(document.body.textContent.includes('已保存视图'))
+  assert.equal(Boolean(document.body.textContent.includes('已保存视图')), true)
   assert.equal(host.requests.length, afterLoad, 'typing issues no IO')
 })
 
@@ -383,11 +381,11 @@ test('PreviewBody: session switch closes the grant and clears the shell; a cwd s
   host.store.cwd = { one: '/moved' }
   await act(async () => host.notify())
   await settle(() => document.querySelector('.fv-empty'))
-  assert(document.body.textContent.includes('会话或工作区已切换'))
-  assert(document.querySelector('.fv-ruler') === null)
-  assert(host.requests.slice(loaded).some(r => r.op === 'close' && r.sessionId === 'one'), 'grant closed on cwd switch')
+  assert.equal(Boolean(document.body.textContent.includes('会话或工作区已切换')), true)
+  assert.equal(Boolean(document.querySelector('.fv-ruler') === null), true)
+  assert.equal(Boolean(host.requests.slice(loaded).some(r => r.op === 'close' && r.sessionId === 'one')), true, 'grant closed on cwd switch')
   const browseAfterCwd = host.requests.filter(r => r.op === 'browse').length
-  assert(browseAfterCwd >= 2, 'browser remounted for the new workspace epoch and re-browsed root')
+  assert.equal(Boolean(browseAfterCwd >= 2), true, 'browser remounted for the new workspace epoch and re-browsed root')
   assert.equal(host.requests.filter(r => r.op === 'browse').at(-1).path, '')
   // session switch
   host.store.cwd = { one: '/moved', two: '/other' }
@@ -396,9 +394,9 @@ test('PreviewBody: session switch closes the grant and clears the shell; a cwd s
   // the grant was already closed by the cwd observer; the session switch must not
   // reopen anything on its own — only the idle shell for the new session remains
   await settle(() => document.querySelector('.fv-empty'))
-  assert(document.querySelector('.fv-ruler') === null)
-  assert(document.querySelector('.fv-timeline-pane') === null)
-  assert(!host.requests.slice(beforeSwitch).some(r => r.op === 'open' || r.op === 'query' || r.op === 'read'), 'no auto load on session switch')
+  assert.equal(Boolean(document.querySelector('.fv-ruler') === null), true)
+  assert.equal(Boolean(document.querySelector('.fv-timeline-pane') === null), true)
+  assert.equal(Boolean(!host.requests.slice(beforeSwitch).some(r => r.op === 'open' || r.op === 'query' || r.op === 'read')), true, 'no auto load on session switch')
 })
 
 test('PreviewBody: topbar path disclosure closes with Escape without closing the workbench; submit preserves the ordinary open contract', async t => {
@@ -409,19 +407,23 @@ test('PreviewBody: topbar path disclosure closes with Escape without closing the
   installDialogAdapter(dom)
   await act(async () => root.render(h(PreviewBody, { ...host, sessionId: 'one' })))
   const menu = document.querySelector('.fv-topbar > .fv-path')
-  assert(menu, 'rare path form belongs to the toolbar, not a permanent monitor row')
+  assert.equal(Boolean(menu), true, 'rare path form belongs to the toolbar, not a permanent monitor row')
   await act(async () => label('展开工作台').click())
   menu.open = true
   await act(async () => Simulate.keyDown(menu.querySelector('input'), { key: 'Escape' }))
   assert.equal(menu.open, false)
   assert.equal(document.querySelector('.fv-workbench').open, true, 'Escape was owned by the disclosure')
-  assert(document.activeElement === menu.querySelector('summary'), "Expected focus on menu.querySelector('summary')")
+  assert.equal(Boolean(document.activeElement === menu.querySelector('summary')), true, "Expected focus on menu.querySelector('summary')")
   assert.equal(host.requests.length, 0, 'opening/closing the disclosure performs no IO')
   menu.open = true
   await submit(0)
   await settle(() => document.querySelector('.fv-ruler'))
   assert.equal(menu.open, false, 'submit reclaims the overlay')
   assert.equal(host.requests.filter(r => r.op === 'open').length, 1)
-  assert(document.querySelector('.fv-inspector .fv-data'), 'complete raw project data stays mounted in the inspector')
-  assert(document.querySelector('.fv-timeline-pane .fv-data') === null, 'data details do not consume lane height')
+  await act(async () => label('属性与编辑').click())
+  const overview = [...document.querySelectorAll('.fv-inspector details')].find(node => node.querySelector('summary')?.textContent === '工程概览')
+  assert.equal(overview !== undefined, true, 'explicit properties opens the saved project overview')
+  assert.equal(overview.querySelector('.fv-inspector-overview').textContent.includes('轨道 / 片段1 / 1'), true)
+  assert.equal(document.querySelector('.fv-inspector pre') === null, true, 'the compact inspector does not render a raw project dump; exact copy is covered separately')
+  assert.equal(Boolean(document.querySelector('.fv-timeline-pane .fv-data') === null), true, 'data details do not consume lane height')
 })

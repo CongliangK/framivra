@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { parseJSON, stringifyJSON } from '../json.mjs'
 import { boundedText, FRAME_WIRE_LIMIT } from '../bounded.mjs'
 import { captureCurrentDraft, referenceQuery, selectedReference } from './reference.mjs'
+import { draftSummary } from './draft-summary.mjs'
 import { draftResultMessage } from './draft-services.mjs'
 import { Icon } from './icons.mjs'
 import { ToolButton, ToolSummary, iconControlCSS } from './icon-controls.mjs'
@@ -82,8 +83,7 @@ export class FrameEpoch {
     this.assertReady()
     if (operation.epoch !== this.epoch) throw new Error('FRAME_STALE: selection/pin/edit/session changed or write unresolved')
   }
-  // Semantically idempotent: read-only polls re-report identical edit flags,
-  // and only a real dirty/busy/unknown transition may abort in-flight renders
+  // Only a real dirty/busy/unknown transition may abort in-flight renders
   // or drop a verified PNG. Ghost and other owners are untouched here.
   editChanged(next) {
     const merged = { ...this.edit, ...next }
@@ -152,7 +152,7 @@ export async function verifyFrame(envelope, { frame, contentVersion, signal, lim
   const certificate = Object.fromEntries(['state','kind','approximate','mime_type','width','height','frame','fps','content_version','input_fingerprint','identity_semantics','render_key','cache_hit','bytes','sha256'].map(key => [key, image[key]]))
   return { file, certificate, reference }
 }
-export function frameDraftText(generated, selection, positionOnly = false) {
+function frameSelection(generated, selection, positionOnly) {
   const reference = generated.reference
   if (generated.certificate.kind !== 'current-composite' || Object.hasOwn(generated.certificate, 'layer')) bad('Only full current-composite frames may enter a draft')
   let selected
@@ -161,14 +161,15 @@ export function frameDraftText(generated, selection, positionOnly = false) {
     selected = list.find(item => item.address === selection.address)
     if (!selected) throw new Error('FRAME_NOT_HIT: 选中对象不在该帧命中集合；明确选择仅位置引用或重新固定帧')
   }
-  const payload = { certificate: generated.certificate, association: positionOnly || !selection ? 'position-only; no association to non-hit selection' : 'selected core frame hit', selected: selected ?? null, reference }
-  const description = 'Framivra 当前完整合成帧 + core 原文引用（不是 final/音频 QC 证书）。Fast 媒体 stat 身份；证书仅对渲染时输入成立，加入草稿时不保证素材 live-atomic。'
-  const text = `\n${description}全局整数帧由 core 给出；无自动发送。\n\`\`\`json\n${stringifyJSON(payload, 2)}\n\`\`\`\n`
-  if (new TextEncoder().encode(text).byteLength > FRAME_WIRE_LIMIT) throw new Error('FRAME_REFERENCE_LIMIT: 引用超限，不截断、不加入草稿')
-  return text
+  return selected
 }
 
-export function FrameTools({ owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call, disclosureGroup, active = true, suspended = false }) {
+export function frameDraftText(generated, selection, positionOnly = false, timeline, selectionDisplay) {
+  const item = frameSelection(generated, selection, positionOnly)
+  return draftSummary({ timeline, contentVersion: generated.certificate.content_version, selection, item, reference: generated.reference, frame: generated.certificate.frame, attached: true, positionOnly: positionOnly || !selection, selectionDisplay })
+}
+
+export function FrameTools({ owner, opened, sessionId, frame, selection, selectionDisplay, tabSignal, getDraftServices, call, disclosureGroup, active = true, suspended = false }) {
   const scheduling = useRef({ suspended, revision: 0, intent: 0 })
   if (scheduling.current.suspended !== suspended) scheduling.current.revision++
   scheduling.current.suspended = suspended
@@ -208,8 +209,9 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       setState({ busy: true, message: '正在验证 PNG / 原文 / 哈希 / 引用…' })
       const verified = await verifyFrame(envelope, { frame, contentVersion: version, signal: operation.signal, limits: imageLimits() })
       owner.check(operation)
-      // Validate association before making either stage/copy available.
-      if (!automatic) frameDraftText(verified, selection, positionOnly)
+      // Check frame association, not composer text size. Long locators must
+      // not prevent verified preview or image copy.
+      if (!automatic) frameSelection(verified, selection, positionOnly)
       owner.generated = verified
       setState({ previewEpoch: owner.epoch, message: '已验证 PNG，未发送。复制与入稿请展开图片工具。' })
     } catch (error) {
@@ -243,7 +245,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       if (fresh.ok !== true || fresh.content_version !== version || fresh.selection?.global_frame !== frame) throw new Error('STALE_REFERENCE: 保存文档已变化')
       if (selection && !positionOnly) selectedReference(fresh, selection, version)
       owner.check(operation)
-      const text = frameDraftText(current, selection, positionOnly)
+      const text = frameDraftText(current, selection, positionOnly, opened.timeline, selectionDisplay)
       const result = await captured.conversation.stageDraft({ target: captured.target, text, files: [current.file], signal: operation.signal })
       // Do not turn an already-observed append/partial result into a false
       // "unchanged" claim when a subscriber invalidates the view afterwards.
@@ -346,6 +348,6 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       )),
       imageTools,
       cancelButton(),
-      blocked ? h('span', { className: 'fv-monitor-status', role: 'alert', title: '当前未固定帧，或编辑/队列/计划/写结果未解决；拒绝生成和加入草稿。', 'aria-label': '当前未固定帧，或编辑/队列/计划/写结果未解决；拒绝生成和加入草稿。' }, whole(frame) ? '编辑或写结果未解决；拒绝生成和加入草稿。' : '拒绝生成和加入草稿；请固定帧。') : null,
+      blocked ? h('span', { className: 'fv-monitor-status', role: 'alert', title: '当前未固定帧，或编辑进行中或写结果未解决；拒绝生成和加入草稿。', 'aria-label': '当前未固定帧，或编辑进行中或写结果未解决；拒绝生成和加入草稿。' }, whole(frame) ? '编辑或写结果未解决；拒绝生成和加入草稿。' : '拒绝生成和加入草稿；请固定帧。') : null,
       message ? h('span', { className: 'fv-monitor-status', role: 'status', title: message, 'aria-label': message }, message) : null))
 }

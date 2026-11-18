@@ -10,9 +10,10 @@ import { emptySelection } from '../src/client/selection.mjs'
 // below are explicit adapters, not native browser or applied-draft evidence.
 const track = { family: 'video', track_index: 0, address: '/video_tracks/0', data: { id: 'v' } }
 const block = { family: 'video', track_index: 0, address: '/video_tracks/0/clips/0', range: [0, 30], data: { id: 'a' } }
-const snapshot = { content_version: 'old', document: { project: { duration_frames: 100 } } }
+const version = `sha256:${'a'.repeat(64)}`
+const snapshot = { content_version: version, document: { project: { duration_frames: 100 } } }
 const result = { tracks: [track], blocks: [block] }
-const cleanResult = () => ({ file: new File(['png'], 'frame.png', { type: 'image/png' }), certificate: { kind: 'current-composite', frame: 0, content_version: 'old' }, reference: { selection: { tracks: [], blocks: [] } } })
+const cleanResult = () => ({ file: new File(['png'], 'frame.png', { type: 'image/png' }), certificate: { kind: 'current-composite', frame: 0, content_version: version }, reference: { selection: { tracks: [], blocks: [] } } })
 const handler = node => node[Object.keys(node).find(key => key.startsWith('__reactProps$'))].onClick
 
 async function fixture(t) {
@@ -29,7 +30,7 @@ async function fixture(t) {
     captureDraftTarget(value) { assert.equal(value, binding); events.push('capture'); return { target: events.length } },
     async stageDraft(args) { events.push('stage'); faults.stageSignal = args.signal; if (faults.holdStage) await new Promise(resolve => { stageResolve = resolve }); return { status: 'rejected', reason: 'test-adapter-no-mutation' } },
   } }
-  const call = async (_id, _body, signal) => { events.push('reference'); faults.referenceSignal = signal; if (faults.holdReference) await new Promise(resolve => { referenceResolve = resolve }); return { ok: true, content_version: 'old', selection: { global_frame: 0 } } }
+  const call = async (_id, _body, signal) => { events.push('reference'); faults.referenceSignal = signal; if (faults.holdReference) await new Promise(resolve => { referenceResolve = resolve }); return { ok: true, content_version: version, selection: { global_frame: 0 } } }
   globalThis.fetch = async (_url, init) => {
     if (JSON.parse(init.body).op === 'cancel') { faults.cancelled = true; return new Response('{"ok":true}') }
     events.push('render'); faults.renderSignal = init.signal

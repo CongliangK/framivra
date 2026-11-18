@@ -1,9 +1,8 @@
 // REAL Loader/agent-loop acceptance over the shipped headless profile:
 // bootProductionProfile composes the actual profile bundles through the Loader,
 // a deterministic fixture model (registered as provider "mock") drives real
-// agent turns that call the plugin's three native tools, and the human side
-// confirms the proposal through the same connection Fetch routes the sidebar
-// registers. No external LLM API, no credentials, no real model bill.
+// agent turns that call the plugin's read-only native tool. Direct user editing
+// stays on the connection Fetch routes the sidebar registers. No external LLM API, no credentials, no real model bill.
 //
 // Boundaries (deliberate, documented): the plugin entry is mounted from its
 // source path (src/index.mjs) through the real Loader — the extracted-ZIP
@@ -88,37 +87,14 @@ function mockLlmSource(dshLlmUrl) {
     `      { type: 'usage', usage: { inputTokens: 7, outputTokens: 5 } },`,
     `      { type: 'finish', reason: { kind: 'stop' } },`,
     `    ]`,
-    `    if (!turnTwo) {`,
-    `      if (results.length === 0) {`,
-    `        yield* call('profile-read', 'framivra_timeline_read', { timeline: 'timeline.json', view: 'inspect' })`,
-    `        yield { type: 'finish', reason: { kind: 'tool-calls' } }`,
-    `        return`,
-    `      }`,
-    `      if (results.length === 1) {`,
-    `        const version = /"content_version"\\s*:\\s*"(sha256:[0-9a-f]{64})"/.exec(textOf(results[0]))?.[1]`,
-    `        if (version === undefined) { yield* finish('READ_FAILED no content version'); return }`,
-    `        yield* call('profile-propose', 'framivra_timeline_propose', {`,
-    `          timeline: 'timeline.json', expected_content_version: version,`,
-    `          operations_json: '[{"op":"project.resize","duration_frames":130}]',`,
-    `        })`,
-    `        yield { type: 'finish', reason: { kind: 'tool-calls' } }`,
-    `        return`,
-    `      }`,
-    `      const proposed = textOf(results.at(-1))`,
-    `      const proposalId = /"proposal_id"\\s*:\\s*"([^"]+)"/.exec(proposed)?.[1]`,
-    `      const opId = /"op_id"\\s*:\\s*"([^"]+)"/.exec(proposed)?.[1]`,
-    `      yield* finish(proposalId && opId ? \`PROPOSAL \${proposalId} \${opId}\` : 'PROPOSE_FAILED')`,
-    `      return`,
-    `    }`,
-    `    if (results.length < 3) {`,
-    `      yield* call('profile-status', 'framivra_proposal_status', { timeline: 'timeline.json' })`,
+    `    const expected = turnTwo ? 2 : 1`,
+    `    if (results.length < expected) {`,
+    `      yield* call(turnTwo ? 'profile-reread' : 'profile-read', 'framivra_timeline_read', { timeline: 'timeline.json', view: 'inspect' })`,
     `      yield { type: 'finish', reason: { kind: 'tool-calls' } }`,
     `      return`,
     `    }`,
-    `    const status = textOf(results.at(-1))`,
-    `    const state = /"state"\\s*:\\s*"([^"]+)"/.exec(status)?.[1]`,
-    `    const opId = /"op_id"\\s*:\\s*"([^"]+)"/.exec(status)?.[1]`,
-    `    yield* finish(state ? \`STATUS \${state} \${opId ?? 'none'}\` : 'STATUS_FAILED')`,
+    `    const version = /"content_version"\\s*:\\s*"(sha256:[0-9a-f]{64})"/.exec(textOf(results.at(-1)))?.[1]`,
+    `    yield* finish(version ? \`READ \${version}\` : 'READ_FAILED')`,
     `  }`,
     `}`,
     ``,
@@ -285,65 +261,29 @@ test('real Loader composition: deterministic model turns drive the native timeli
   await ok({ sessionId, op: 'close', grant: opened.grant })
   const bytesBeforeTurn = await readFile(timelinePath, 'utf8')
 
-  // Turn one: real agent turn; the model reads, then proposes (zero write).
+  // Real agent turns keep the read-only result in durable conversation context.
   const events = []
   const remember = (_sid, event) => { events.push(event) }
-  const first = await runFixtureTurn(ctx, { task: 'TURN-ONE inspect the timeline and propose the resize', onEvent: remember }, harnessAnchor ? root : undefined)
-  t.diagnostic(`turn one output: ${first.output}`)
-  const proposalMatch = /^PROPOSAL ([0-9a-f-]+) ([0-9a-f-]+)$/.exec(first.output ?? '')
-  assert.ok(proposalMatch, `turn one must report the parked proposal, got: ${first.output}`)
-  const [, proposalId, modelOpId] = proposalMatch
-  assert.equal(await readFile(timelinePath, 'utf8'), bytesBeforeTurn, 'propose is zero-write: bytes unchanged')
+  const first = await runFixtureTurn(ctx, { task: 'TURN-ONE inspect the timeline', onEvent: remember }, harnessAnchor ? root : undefined)
+  assert.match(first.output ?? '', /^READ sha256:[a-f0-9]{64}$/)
+  assert.equal(await readFile(timelinePath, 'utf8'), bytesBeforeTurn, 'model read leaves timeline unchanged')
+  const second = await runFixtureTurn(ctx, { task: 'TURN-TWO inspect again', onEvent: remember }, harnessAnchor ? root : undefined)
+  assert.equal(second.output, first.output)
+  assert.equal(await readFile(timelinePath, 'utf8'), bytesBeforeTurn)
 
-  // Human confirmation through the sidebar-host control API.
-  const reopened = await ok({ sessionId, op: 'open', timeline: 'timeline.json' })
-  const reauthorized = await ok({ sessionId, op: 'authorize-write', grant: reopened.grant })
-  const confirmed = await ok({
-    sessionId, op: 'proposal-confirm', grant: reopened.grant, writeGrant: reauthorized.writeGrant, proposalId,
-  })
-  assert.equal(confirmed.ok !== false, true, `confirm failed: ${stringifyJSON(confirmed)}`)
-  const confirmedOpId = confirmed.proposal?.confirmation?.op_id ?? confirmed.proposal?.outcome?.op_id
-  assert.equal(confirmedOpId, modelOpId, `confirmed op id matches the frozen model plan; envelope: ${stringifyJSON(confirmed)}`)
-  await ok({ sessionId, op: 'close', grant: reopened.grant })
-
-  const disk = parseJSON(await readFile(timelinePath, 'utf8'))
-  assert.equal(disk.project.duration_frames, 130, 'vtx really applied the resize')
-  assert.equal(disk._vtx.head, modelOpId, 'kernel head is the confirmed op id')
-
-  // Turn two: same session, real context; the model asks for status itself.
-  const second = await runFixtureTurn(ctx, { task: 'TURN-TWO check what the user confirmed', onEvent: remember }, harnessAnchor ? root : undefined)
-  t.diagnostic(`turn two output: ${second.output}`)
-  assert.match(second.output ?? '', /^STATUS applied [0-9a-f-]+$/)
-  const statusOpId = /^STATUS applied ([0-9a-f-]+)$/.exec(second.output)[1]
-  assert.equal(statusOpId, modelOpId, 'status reports the same frozen op id')
-
-  // Model-context persistence: turn two saw turn one's tool results verbatim.
   const requests = (await readFile(contextLog, 'utf8')).trim().split('\n').map(parseJSON)
-  assert.equal(requests.length >= 3, true, 'at least read/propose/status model requests')
-  // Tool projection: every agent-loop model request (marked by toolHistory;
-  // side requests like the session titler legitimately carry no tools)
-  // advertised exactly the plugin's three framivra tools — no
-  // commit/adopt/authorize escape hatch. Other host tools (bash, fs, …) are
-  // legal and not asserted here.
   const loopRequests = requests.filter(r => r.loop)
-  assert.equal(loopRequests.length >= 3, true, 'at least read/propose/status agent-loop model requests')
+  assert.ok(loopRequests.length >= 4, 'each turn calls the read tool and consumes its result')
   for (const request of loopRequests) {
-    const framivraTools = request.tools.filter(name => name.startsWith('framivra_')).sort()
-    assert.deepEqual(framivraTools, ['framivra_proposal_status', 'framivra_timeline_propose', 'framivra_timeline_read'],
-      `agent-loop request advertised the plugin tools exactly; all tools: ${request.tools.join(', ')}`)
+    assert.deepEqual(request.tools.filter(name => name.startsWith('framivra_')), ['framivra_timeline_read'])
   }
   const turnTwoRequests = requests.filter(r => r.turn === 2)
-  assert.equal(turnTwoRequests.length >= 2, true)
-  assert.equal(turnTwoRequests[0].toolResults.some(text => text.includes('framivra') && text.includes(proposalId)), true,
-    'turn two context carried the parked proposal result')
-  assert.equal(requests.some(r => r.toolResults.some(text => text.includes('130'))), true)
-
-  // Durable session log: tool calls and results are persisted projections.
+  assert.ok(turnTwoRequests.length >= 2)
+  assert.ok(turnTwoRequests[0].toolResults.some(text => text.includes('framivra.timeline.agent/v1')),
+    'turn two context retains the first read result')
   const sessionText = await readSessionLog(join(evidence, 'sessions'), first.sessionId)
-  for (const token of ['framivra_timeline_read', 'framivra_timeline_propose', 'framivra_proposal_status', modelOpId, proposalId]) {
-    assert.equal(sessionText.includes(token), true, `session log must persist ${token}`)
-  }
-  assert.equal(events.some(e => JSON.stringify(e).includes('framivra_timeline_propose')), true)
+  assert.ok(sessionText.includes('framivra_timeline_read'))
+  assert.ok(events.some(e => JSON.stringify(e).includes('framivra_timeline_read')))
 
   // Teardown: the Loader disposal unregisters the routes and the plugin host
   // reaps every managed vtx child.

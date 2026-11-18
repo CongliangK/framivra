@@ -1,88 +1,44 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-/** Composition regression: a read-only proposal poll must not abort an
- * in-flight frame render. Real PreviewBody (which wires ManualEditor's
- * AgentProposals mirror through the shared FrameEpoch), real React 18 DOM
- * rendering, fetch stubbed at the transport seam, poll timers captured at
- * 1500ms so the test never sleeps. */
-const version = `sha256:${'a'.repeat(64)}`
-const snapshot = { content_version: version, coverage: { complete: true }, document: { project: { duration_frames: 120 }, _vtx: { protocol: 1 } } }
-const result = { content_version: version, coverage: { complete: true }, tracks: [], blocks: [] }
-
-test('empty proposal-list polls never abort an in-flight frame render; a real dirty transition still does', { timeout: 20000 }, async t => {
-  const { JSDOM } = await import('jsdom')
-  const React = (await import('react')).default, { act } = await import('react')
-  const dom = new JSDOM('<div id="root"></div>', { url: 'http://owner/' })
-  globalThis.window = dom.window; globalThis.document = dom.window.document
-  globalThis.IS_REACT_ACT_ENVIRONMENT = true
-  const { createRoot } = await import('react-dom/client'), { Simulate } = await import('react-dom/test-utils')
-  const { PreviewBody } = await import('../src/client/index.mjs')
-  const root = createRoot(document.getElementById('root'))
-
-  const polls = [], originalSetTimeout = globalThis.setTimeout
-  let proposals = [], renderSignal
-  // Exercise the actual Fetch stream seam: control responses are byte-bounded
-  // before decode, so a text-only mock would bypass the contract under test.
-  const respond = payload => new Response(JSON.stringify(payload), { headers: { 'Content-Type': 'application/json' } })
-  const originalFetch = globalThis.fetch
-  globalThis.fetch = async (url, init = {}) => {
-    if (url === '/api/framivra/frame') { renderSignal = init.signal; return new Promise(() => {}) }
-    const body = JSON.parse(init.body ?? '{}')
-    if (body.op === 'open') return respond({ grant: 'read', snapshot, media: [], capabilities: { capabilities: { frame: { inline_png: { flag: '--include-png' } } } } })
-    if (body.op === 'query') return respond(result)
-    if (body.op === 'proposal-list') return respond({ ok: true, proposals })
-    return respond({ ok: true })
-  }
-  // Capture only the 1500ms proposal polls; everything else keeps real timers.
-  globalThis.setTimeout = (fn, delay, ...rest) => {
-    if (delay === 1500) { polls.push(fn); return polls.length }
-    return originalSetTimeout(fn, delay, ...rest)
-  }
-  t.after(async () => {
-    globalThis.setTimeout = originalSetTimeout; globalThis.fetch = originalFetch
-    await act(async () => root.unmount())
-    dom.window.close(); delete globalThis.window; delete globalThis.document
-  })
-
-  const tab = new AbortController()
-  const flush = () => act(async () => { await Promise.resolve() })
-  const settle = async () => { for (let i = 0; i < 20; i++) await flush() }
-
-  await act(async () => root.render(React.createElement(PreviewBody, { useTabInfo: () => ({ tab: { signal: tab.signal, actions: {} } }) })))
-  await act(async () => document.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })))
-  await settle()
-  assert(document.querySelector('fieldset'), 'ready state must mount the editor')
-  assert.equal(polls.length, 1, 'first 1500ms poll scheduled after the immediate read-only poll')
-
-  // Pin an integer frame and grant cache/preview consent for this render.
-  const frameInput = document.querySelector('input[name="framivra-frame"]')
-  assert(frameInput, 'canonical frame field must remain available after localization')
-  await act(async () => Simulate.change(frameInput, { target: { value: '9' } }))
-  const consent = document.querySelector('input[type=checkbox]')
-  await act(async () => Simulate.change(consent, { target: { checked: true } }))
-  const generate = [...document.querySelectorAll('button')].find(node => node.textContent === '显式生成并验证固定帧 PNG')
-  assert.equal(generate.disabled, false)
-  await act(async () => generate.click())
-  await settle()
-  assert(renderSignal, 'frame render fetch started')
-  assert.equal(renderSignal.aborted, false)
-
-  // Two more read-only proposal polls answer empty lists (fresh array each
-  // time). Neither may abort the render or show the stale/cancelled message.
-  for (let round = 0; round < 2; round++) {
-    assert(polls.length >= round + 1, `poll ${round + 1} scheduled`)
-    await act(async () => { await polls[round]() })
-    await settle()
-    assert.equal(renderSignal.aborted, false, `read-only poll ${round + 1} must not abort the in-flight render`)
-    assert.equal([...document.querySelectorAll('p')].some(node => node.textContent === '操作已失效/取消；未加入草稿。'), false)
-  }
-
-  // A genuinely dirty proposal is a real transition: abort, clear, block.
-  proposals = [{ proposal_id: 'p1', state: 'pending' }]
-  await act(async () => { await polls[2]() })
-  await settle()
-  assert.equal(renderSignal.aborted, true, 'dirty proposal must abort the in-flight render')
-  assert(document.querySelector('button[aria-label="显式生成并验证固定帧 PNG"]').disabled, 'frame tools must be blocked while a proposal is pending')
-  assert([...document.querySelectorAll('[role=alert]')].some(node => node.getAttribute('aria-label')?.includes('编辑/队列/计划/写结果未解决')), 'blocked state must explain why generation is unavailable')
+// Actual PreviewBody and frame epoch; transport stub only. There is no
+// proposal poll, and read/display controls do not imply write authorization.
+const version=`sha256:${'a'.repeat(64)}`
+const snapshot={content_version:version,coverage:{complete:true},document:{project:{duration_frames:120},_vtx:{protocol:1}}}
+const result={content_version:version,coverage:{complete:true},tracks:[{family:'video',track_index:0,address:'/t/0',data:{id:'v',name:'main'}}],blocks:[{family:'video',track_index:0,address:'/t/0/b/0',range:[0,30],data:{id:'c'}}]}
+test('idle controls never poll or authorize; an actual direct transaction aborts an in-flight frame render',{timeout:20000},async t=>{
+ const {JSDOM}=await import('jsdom'),React=(await import('react')).default,{act}=await import('react')
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://owner/'})
+ globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+ const {createRoot}=await import('react-dom/client'),{Simulate}=await import('react-dom/test-utils'),{PreviewBody}=await import('../src/client/index.mjs')
+ const root=createRoot(document.getElementById('root')),requests=[];let renderSignal,resolvePlan
+ const respond=payload=>new Response(JSON.stringify(payload)),oldFetch=globalThis.fetch
+ globalThis.fetch=async(url,init={})=>{
+  if(url==='/api/framivra/frame'){renderSignal=init.signal;return new Promise(()=>{})}
+  const body=JSON.parse(init.body??'{}');requests.push(body.op)
+  if(body.op==='open')return respond({grant:'read',snapshot,media:[],capabilities:{capabilities:{frame:{inline_png:{flag:'--include-png'}}}}})
+  if(body.op==='query')return respond(result)
+   if(body.op==='reference')return respond({ok:true,content_version:version,selection:{blocks:[{address:'/t/0/b/0',stable_id:'c'}]}})
+  if(body.op==='authorize-write')return respond({ok:true,writeGrant:'explicit'})
+  if(body.op==='plan')return new Promise(resolve=>{resolvePlan=answer=>resolve(respond(answer))})
+  return respond({ok:true})
+ }
+ t.after(async()=>{globalThis.fetch=oldFetch;await act(async()=>root.unmount());dom.window.close();delete globalThis.window;delete globalThis.document})
+ const tab=new AbortController(),flush=async()=>{for(let i=0;i<20;i++)await act(async()=>{await Promise.resolve()})}
+ const button=text=>[...document.querySelectorAll('button')].find(node=>node.textContent===text)
+ await act(async()=>root.render(React.createElement(PreviewBody,{sessionId:'one',useTabInfo:()=>({tab:{signal:tab.signal}})})))
+ await act(async()=>document.querySelector('form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true})));await flush()
+ assert.equal(document.querySelector('[aria-label="时间线编辑"]')!==null,true);assert.equal(requests.includes('authorize-write'),false);assert.equal(requests.some(op=>op.startsWith('proposal-')),false)
+ const clip=document.querySelector('.fv-clip');await act(async()=>clip.click());await flush()
+ await act(async()=>button('启用编辑').click());await flush()
+ await act(async()=>Simulate.change(document.querySelector('input[name="framivra-frame"]'),{target:{value:'9'}}))
+ const consent=[...document.querySelectorAll('label')].find(node=>node.textContent==='允许写入预览缓存（不改时间线）')?.querySelector('input[type=checkbox]')
+ assert.equal(consent!==undefined&&consent!==null,true,'select preview-cache consent, not position-only or live-follow input')
+ await act(async()=>Simulate.change(consent,{target:{checked:true}}))
+ await act(async()=>button('显式生成并验证固定帧 PNG').click());await flush();assert.equal(renderSignal!==undefined,true);assert.equal(renderSignal.aborted,false)
+ document.querySelector('.fv-ruler').getBoundingClientRect=()=>({left:0,width:1200});document.querySelector('.fv-track').getBoundingClientRect=()=>({top:0,bottom:100})
+ await act(async()=>Simulate.pointerDown(clip,{pointerId:1,button:0,clientX:0,clientY:10}));await act(async()=>Simulate.pointerUp(clip,{pointerId:1,clientX:10,clientY:10}));await flush()
+ assert.equal(typeof resolvePlan,'function');assert.equal(renderSignal.aborted,true,'owned direct transaction invalidates frame export')
+ await act(async()=>resolvePlan({ok:false,code:'edit.operation',message:'rejected'}));await flush()
+ assert.equal(requests.filter(op=>op==='authorize-write').length,1);assert.equal(requests.filter(op=>op==='plan').length,1);assert.equal(requests.includes('commit'),false);assert.equal(requests.some(op=>op.startsWith('proposal-')),false)
 })

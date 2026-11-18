@@ -5,68 +5,57 @@ import React, { act } from 'react'
 import { JSDOM } from 'jsdom'
 import { writeFile, symlink, rename } from 'node:fs/promises'
 import { join } from 'node:path'
-import { ManualEditor, EDIT_OPERATIONS, compileIntent, integerToken } from '../src/client/manual.mjs'
 import { PreviewBody } from '../src/client/index.mjs'
 import { parseJSON, stringifyJSON } from '../src/json.mjs'
 import { environment, fixture, realProvider, skip } from './manual-env.mjs'
 const h=React.createElement
 async function mount(t){const dom=new JSDOM('<div id="root"></div>',{url:'http://owner/'});globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true;const {createRoot}=await import('react-dom/client'),{Simulate}=await import('react-dom/test-utils');const root=createRoot(document.getElementById('root'));t.after(async()=>{await act(async()=>root.unmount());dom.window.close();delete globalThis.window;delete globalThis.document});return {dom,root,Simulate}}
 const button=text=>[...document.querySelectorAll('button')].find(n=>n.textContent===text)
-const input=label=>[...document.querySelectorAll('label')].find(n=>n.firstChild?.textContent===label)?.querySelector('input,select')
 async function settle(predicate){for(let i=0;i<400;i++){if(predicate())return;await act(async()=>{await new Promise(r=>setTimeout(r,5))})}assert.fail(`DOM did not settle: ${domTextExcerpt(document)}`)}
-async function click(text){const b=button(text);assert(b,text);assert.equal(b.disabled,false,text);await act(async()=>b.click())}
-async function change(Simulate,label,value){const node=input(label);assert(node,label);await act(async()=>Simulate.change(node,{target:{value}}))}
-
-test('manual compiler exact integer tokens, typed props and no arbitrary JSON request authority',()=>{
- for(const token of ['9007199254740993','1.0','1e2',' 1','+1','-0','NaN',''])assert.throws(()=>integerToken(token),/不可编辑/)
- assert.equal(integerToken('-2',true),-2)
- const b={data:{id:'c'},range:[0,30],family:'video',track_index:0};const context={result:{tracks:[{data:{id:'v'},family:'video',track_index:0}]},blocks:[b],frame:15,makeId:()=> 'fixed-new'}
- assert.deepEqual(compileIntent('block.split',{fade_policy:'preserve-content'},context),[{op:'block.split',id:'c',at:15,new_id:'fixed-new',fade_policy:'preserve-content'}])
- assert.throws(()=>compileIntent('parameters.update',{property:'_vtx',value:'{}'},context),/白名单/)
- assert.match(stringifyJSON(compileIntent('parameters.update',{property:'opacity',value:'1.0000000000000001'},context)),/1\.0000000000000001/)
-})
-
-test('20 typed UI forms -> Host -> frozen public provider -> installed CLI plan/commit -> core head undo',{skip,timeout:120000},async t=>{
- const {root,Simulate}=await mount(t);const coverage=[]
- for(const op of EDIT_OPERATIONS){
+async function click(text){const b=button(text);assert.equal(Boolean(b), true,text);assert.equal(b.disabled,false,text);await act(async()=>b.click())}
+// Deleted human forms are not an authority surface. Preserve all semantic
+// operation coverage through the actual Host and installed core contracts.
+const operationCases = [
+ {op:'source.add',data:{id:'new-source',path:'new.mov'}},
+ {op:'source.remove',id:'spare'},
+ {op:'source.update',id:'s',set:{path:'changed.mov'}},
+ {op:'track.add',family:'video',index:0,data:{id:'new-track',name:'new',kind:'aroll',clips:[{id:'new-clip',src:'s',dst_in:0,dur:10,src_in:0,src_out:10}]}},
+ {op:'track.remove',id:'v'},
+ {op:'track.copy',id:'v',ids:{v:'copy-v',c:'copy-c',c2:'copy-c2'},name:'copy-main',index:0},
+ {op:'track.reorder',family:'video',ids:['g','v']},
+ {op:'track.rename',id:'v',name:'renamed'},
+ {op:'track.references',id:'bed',set:{duck_by:['voice']}},
+ {op:'block.insert',track_id:'v',data:{id:'inserted',src:'s',dst_in:30,dur:10,src_in:0,src_out:10}},
+ {op:'block.remove',id:'c'},
+ {op:'block.copy',id:'c',track_id:'v',at:90,new_id:'copy-c'},
+ {op:'block.move',id:'c',track_id:'v',at:30},
+ {op:'block.relink',id:'c',src:'spare'},
+ {op:'block.trim',id:'c',start:2,end:28,fade_policy:'preserve-content'},
+ {op:'block.split',id:'c',at:15,new_id:'split-c',fade_policy:'preserve-content'},
+ {op:'parameters.update',id:'c',path:['opacity'],value:0.75},
+ {op:'parameters.unset',id:'c',path:['opacity']},
+ {op:'project.resize',duration_frames:130},
+ {op:'range.ripple',scope:{track_ids:['v'],subtitles:false},mode:'shift',at:60,delta:10,crossing:'reject',resize:false},
+]
+test('20 semantic operations -> real Host -> frozen public provider -> installed CLI plan/commit -> core head undo',{skip,timeout:120000},async t=>{
+ const coverage=[]
+ for(const operation of operationCases){
   const doc=fixture();doc.sources.push({id:'spare',path:'unused.wav'});doc.video_tracks[0].clips[0].opacity=0.5
-  const env=await environment(t,`ui-${op}`,doc);let refreshed=0,intents=[]
-  const block=env.result.blocks.find(b=>b.data.id==='c'),track=env.result.tracks.find(t=>t.data.id===(op==='track.references'?'bed':'v'))
-  const selection=op.startsWith('track.')?{kind:'track',address:track.address}:{kind:'block',address:block.address}
-  await act(async()=>root.render(h(ManualEditor,{key:env.dir,sessionId:'one',opened:env.opened,result:env.result,selection,selected:[selection],frame:15,tabSignal:new AbortController().signal,call:env.call,onQueueChange:queue=>{intents=queue},onCommitted:async()=>{refreshed++}})))
-  await click('启用编辑');await settle(()=>document.body.textContent.includes('已允许本会话写入工程及历史'))
-  await change(Simulate,'编辑操作',op);const fill=async(k,v)=>change(Simulate,k,v)
-  if(op==='source.add')await fill('素材路径（不复制媒体）','new.mov')
-  if(op==='source.remove')await fill('素材 ID','spare')
-  if(op==='source.update'){await fill('素材 ID','s');await fill('素材路径（不复制媒体）','changed.mov')}
-  if(op==='track.add'){await fill('轨道名称','new-track');await fill('源 ID / gfx 文件路径（明确引用，不探素材）','s')}
-  if(op==='track.copy')await fill('副本名称','copy-main')
-  if(op==='track.rename')await fill('轨道新名称','renamed')
-  if(op==='track.reorder'){await act(async()=>[...document.querySelectorAll('button')].filter(b=>b.textContent==='下移')[0].click());await click('采用此完整轨序')}
-  if(op==='track.references')await fill('引用值（duck_by 为 JSON 字符串数组，如 ["voice"]）','["voice"]')
-  if(op==='block.insert'){await fill('目标轨（空=原轨）','v');await fill('源 ID / gfx 文件路径（明确引用，不探素材）','s');await fill('全局起点帧','30')}
-  if(op==='block.move'||op==='block.copy')await fill('首选块新起点帧（多选保持相对位置）',op==='block.copy'?'90':'30')
-  if(op==='block.relink')await fill('新 source ID / gfx 文件路径','spare')
-  if(op==='block.trim'){await fill('新的全局起点帧（仅 inward）','2');await fill('新的全局终点帧（仅 inward）','28')}
-  if(op==='parameters.update')await fill('属性值（text 为文本，其余单个 JSON 值）','0.75')
-  if(op==='project.resize')await fill('工程新时长帧（不改 FPS/分辨率）','130')
-  if(op==='range.ripple'){const check=[...document.querySelectorAll('label')].find(n=>n.textContent==='video main v').querySelector('input');await act(async()=>Simulate.change(check,{target:{checked:true}}));await fill('shift 起点帧','60');await fill('shift 有符号整数偏移','10')}
-  const before=await env.read();await click('加入批次');assert.equal(intents[0]?.op,op,domTextExcerpt(document));assert(document.querySelector('[aria-label="手动语义编辑"] pre') === null, "Expected absent DOM node")
-  await click('预检');await settle(()=>button('保存更改')||env.wire.findLast(w=>w.request.op==='plan')?.response.ok===false)
-  assert(button('保存更改'),`${op}: ${domTextExcerpt(document)}`);assert.equal(await env.read(),before,'planning must not write')
-  const plan=env.wire.findLast(w=>w.request.op==='plan').response,opId=plan.submitted_request.op_id
-  await click('保存更改');await settle(()=>refreshed===1)
-  const commit=env.wire.findLast(w=>w.request.op==='commit').response;assert.equal(commit.ok,true,stringifyJSON(commit));assert.equal(commit.op_id,opId);assert.deepEqual(commit.submitted_request,plan.submitted_request)
+  const env=await environment(t,`contract-${operation.op}`,doc),grant=env.opened.grant
+  const {writeGrant}=await env.call('one',{op:'authorize-write',grant}),before=await env.read()
+  const plan=await env.call('one',{op:'plan',grant,writeGrant,base_revision:env.opened.snapshot.content_version,operations:[operation]})
+  assert.equal(plan.ok,true,stringifyJSON(plan));assert.equal(await env.read(),before,'planning is zero-write')
+  const opId=plan.submitted_request.op_id,commit=await env.call('one',{op:'commit',grant,writeGrant,planToken:plan.planToken})
+  assert.equal(commit.ok,true,stringifyJSON(commit));assert.equal(commit.op_id,opId);assert.deepEqual(commit.submitted_request,plan.submitted_request)
   const after=parseJSON(await env.read());assert.deepEqual(after.unknown_root,doc.unknown_root);assert.equal(after._vtx.head,opId)
-  const writeGrant=env.wire.find(w=>w.request.op==='authorize-write').response.writeGrant
-  assert.equal((await env.call('one',{op:'status',grant:env.opened.grant,writeGrant})).ok,true)
-  const snapshot=await env.call('one',{op:'inspect',grant:env.opened.grant});const undo=await env.call('one',{op:'undo',grant:env.opened.grant,writeGrant,base_revision:snapshot.content_version,head:after._vtx.head});assert.equal(undo.ok,true,stringifyJSON(undo))
-  const undone=parseJSON(await env.read());delete undone._vtx;assert.deepEqual(JSON.parse(stringifyJSON(undone)),doc)
+  assert.equal((await env.call('one',{op:'status',grant,writeGrant})).ok,true)
+  const snapshot=await env.call('one',{op:'inspect',grant}),undo=await env.call('one',{op:'undo',grant,writeGrant,base_revision:snapshot.content_version,head:after._vtx.head})
+  assert.equal(undo.ok,true,stringifyJSON(undo));const undone=parseJSON(await env.read());delete undone._vtx;assert.deepEqual(JSON.parse(stringifyJSON(undone)),doc)
   for(const child of env.handles)assert.equal(await child.waitForExit(AbortSignal.timeout(5000)),true)
-  await env.save('ui-wire.json',env.wire);coverage.push({op,op_id:opId,core_commit:true,core_undo:true,processes_reaped:env.handles.length})
-  await act(async()=>root.render(null));await env.host.dispose()
+  await env.save('contract-wire.json',env.wire);coverage.push({op:operation.op,op_id:opId,core_commit:true,core_undo:true,processes_reaped:env.handles.length});await env.host.dispose()
  }
- await writeFile(join(process.env.SIDEBAR_EVIDENCE_DIR,'manual-20ops.json'),stringifyJSON({adapter:'React18/jsdom29; real public LocalSubprocessRuntime + installed vtx; not browser layout',coverage},2))
+ assert.equal(coverage.length,20)
+ await writeFile(join(process.env.SIDEBAR_EVIDENCE_DIR,'manual-20ops.json'),stringifyJSON({adapter:'real public LocalSubprocessRuntime + installed vtx; direct Host contracts, not deleted UI forms',coverage},2))
 })
 
 test('actual PreviewBody gesture preview -> direct commit -> authoritative inspect/query and exact raw',{skip,timeout:30000},async t=>{
@@ -74,26 +63,38 @@ test('actual PreviewBody gesture preview -> direct commit -> authoritative inspe
  globalThis.fetch=async(_url,init)=>{const answer=await env.host.control(new Request('http://owner/api/framivra/control',{method:'POST',body:init.body,signal:init.signal}));env.wire.push({request:parseJSON(init.body),status:answer.status,response:parseJSON(await answer.clone().text())});return answer}
  const controller=new AbortController();await act(async()=>root.render(h(PreviewBody,{sessionId:'one',useTabInfo:()=>({tab:{signal:controller.signal}})})))
  await act(async()=>document.querySelector('form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true})));await settle(()=>document.querySelector('.fv-ruler'))
- await click('启用编辑');await settle(()=>document.body.textContent.includes('已允许本会话写入工程及历史'))
  const ruler=document.querySelector('.fv-ruler');ruler.getBoundingClientRect=()=>({left:0,width:1200})
-  document.querySelectorAll('.fv-track').forEach((track,i)=>{track.getBoundingClientRect=()=>({top:i*100,bottom:(i+1)*100})})
+ document.querySelectorAll('.fv-track').forEach((track,i)=>{track.getBoundingClientRect=()=>({top:i*100,bottom:(i+1)*100})})
  const clip=()=>document.querySelector('[aria-label^="选择块 /video_tracks/0/clips/0"]');await act(async()=>clip().click());await settle(()=>document.body.textContent.includes('引用就绪。'))
+ const disabledBefore=await env.read(),disabledCalls=env.wire.length
+ await act(async()=>Simulate.pointerDown(clip(),{pointerId:7,button:0,clientX:0,clientY:10}))
+ await act(async()=>Simulate.pointerUp(clip(),{pointerId:7,clientX:900,clientY:10}))
+ assert.equal(await env.read(),disabledBefore)
+ assert.equal(env.wire.slice(disabledCalls).some(row=>['authorize-write','plan','commit'].includes(row.request.op)),false,'disabled drag cannot authorize or write')
+ const bottomEnable=document.querySelector('.fv-drag-feedback button')
+ assert.equal(bottomEnable?.textContent,'启用编辑')
+ await act(async()=>bottomEnable.click());await settle(()=>button('退出编辑')?.disabled===false)
+ assert.equal(env.wire.filter(row=>row.request.op==='authorize-write').length,1,'bottom enable uses the actual edit authorization')
+ const history=document.querySelector('.fv-topbar .fv-history')
+ assert.equal(history!==null,true);assert.equal(history.querySelector('summary').getAttribute('aria-label'),'历史与恢复')
  const before=await env.read(),count=env.specs.length
  await act(async()=>Simulate.pointerDown(clip(),{pointerId:1,button:0,clientX:0,clientY:10}));await act(async()=>Simulate.pointerMove(clip(),{pointerId:1,clientX:900,clientY:10}))
- assert(document.querySelector('[aria-label="未保存拖动 ghost"]'));assert.equal(await env.read(),before);assert.equal(env.specs.length,count)
- await act(async()=>Simulate.pointerUp(clip(),{pointerId:1,clientX:900,clientY:10}));assert(document.querySelector('[aria-label="未保存拖动 ghost"]') === null, "Expected absent DOM node")
+ assert.equal(Boolean(document.querySelector('[aria-label="未保存拖动 ghost"]')), true);assert.equal(await env.read(),before);assert.equal(env.specs.length,count)
+ await act(async()=>Simulate.pointerUp(clip(),{pointerId:1,clientX:900,clientY:10}));assert.equal(Boolean(document.querySelector('[aria-label="未保存拖动 ghost"]') === null), true, "Expected absent DOM node")
  await settle(()=>env.wire.some(row=>row.request.op==='commit'))
  await settle(()=>document.body.textContent.includes('已保存。'))
- assert(document.querySelector('[aria-label="待保存操作"]') === null, "Expected absent DOM node")
+ assert.equal(Boolean(document.querySelector('[aria-label="待保存操作"]') === null), true, "Expected absent DOM node")
  assert.equal(parseJSON(await env.read()).video_tracks[0].clips.find(b=>b.id==='c').dst_in,90)
  assert.equal(env.wire.filter(row=>row.request.op==='plan').length,1)
  assert.equal(env.wire.filter(row=>row.request.op==='commit').length,1)
+ assert.equal(document.querySelector('.fv-topbar .fv-history')===history,true,'same topbar history survives authoritative refresh')
+ assert.equal(env.wire.some(row=>row.request.op.startsWith('proposal-')),false)
  // Core move may reorder its array; refresh must preserve the stable ID, not
  // accidentally retain the old address now occupied by another clip.
  await settle(()=>document.querySelector('[aria-label="活动引用"]')?.textContent.includes('/video_tracks/0/clips/1'))
  const snapshot=await env.call('one',{op:'inspect',grant:env.opened.grant}),raw=await env.call('one',{op:'reference',grant:env.opened.grant,query:{block_ids:['c'],expected_content_version:snapshot.content_version}})
  assert.match(raw.selection.blocks[0].raw,/"dst_in":\s*90\b/)
- assert((await env.read()).includes(raw.selection.blocks[0].raw),'reference must be an exact saved-source substring, not presentation serialization')
+ assert.equal(Boolean((await env.read()).includes(raw.selection.blocks[0].raw)), true,'reference must be an exact saved-source substring, not presentation serialization')
  await env.save('gesture-result.json',{before,after:await env.read(),raw:raw.selection.blocks[0].raw,adapter:'owned local geometry stub; real pointer handlers; not browser layout claim'})
 })
 
@@ -148,7 +149,7 @@ test('legacy requires explicit adopt; incompatible existing IDs remain byte-iden
   assert.equal(env.opened.snapshot.document._vtx,undefined)
   await assert.rejects(()=>env.call('one',{op:'adopt',grant,writeGrant,base_revision:env.opened.snapshot.content_version}),/ADOPT_CONFIRMATION/);assert.equal(await env.read(),before)
   const outcome=await env.call('one',{op:'adopt',grant,writeGrant,base_revision:env.opened.snapshot.content_version,confirmation:'stable-ids-and-history'})
-  assert.equal(outcome.ok,compatible,stringifyJSON(outcome));if(compatible){const saved=parseJSON(await env.read());assert(saved._vtx);assert.deepEqual(saved.unknown_root,doc.unknown_root);assert.equal(saved.sources[0].id,'s')}else assert.equal(await env.read(),before)
+  assert.equal(outcome.ok,compatible,stringifyJSON(outcome));if(compatible){const saved=parseJSON(await env.read());assert.equal(Boolean(saved._vtx), true);assert.deepEqual(saved.unknown_root,doc.unknown_root);assert.equal(saved.sources[0].id,'s')}else assert.equal(await env.read(),before)
   await env.save('legacy-wire.json',env.wire)
  }
 })
@@ -156,29 +157,24 @@ test('legacy requires explicit adopt; incompatible existing IDs remain byte-iden
 test('old installed core lacking required write capabilities keeps read/copy usable and refuses write authorization',{skip:skip||(!process.env.SIDEBAR_OLD_VTX&&'Set SIDEBAR_OLD_VTX for real old-core negative'),timeout:30000},async t=>{
  const current=process.env.SIDEBAR_REAL_VTX;let env
  try{process.env.SIDEBAR_REAL_VTX=process.env.SIDEBAR_OLD_VTX;env=await environment(t,'old-core-readonly',fixture(),{legacy:true})}finally{process.env.SIDEBAR_REAL_VTX=current}
- const grant=env.opened.grant,before=await env.read();assert(env.result.blocks.length)
+ const grant=env.opened.grant,before=await env.read();assert.equal(Boolean(env.result.blocks.length), true)
  await assert.rejects(()=>env.call('one',{op:'authorize-write',grant}),/WRITE_UNSUPPORTED/);assert.equal(await env.read(),before)
  const raw=await env.call('one',{op:'reference',grant,query:{block_addresses:['/video_tracks/0/clips/0'],expected_content_version:env.opened.snapshot.content_version}});assert.match(raw.selection.blocks[0].raw,/"id":"c"/)
  await env.save('old-core-wire.json',env.wire)
 })
 
-test('real JSON property forms preserve unsafe/nested numeric tokens into stdin and refuse without writes; 0.1 and 0.5 plan normally',{skip,timeout:30000},async t=>{
- const env=await environment(t,'property-tokens'),{root,Simulate}=await mount(t),block=env.result.blocks.find(b=>b.data.id==='c'),selection={kind:'block',address:block.address}
- await act(async()=>root.render(h(ManualEditor,{sessionId:'one',opened:env.opened,result:env.result,selection,selected:[selection],frame:15,tabSignal:new AbortController().signal,call:env.call,onCommitted:async()=>{}})))
- await click('启用编辑');await settle(()=>document.body.textContent.includes('已允许本会话写入工程及历史'))
- const before=await env.read(),cases=[['parameters.update','9007199254740993','opacity'],['parameters.update','0.12345678901234567890123456789','opacity'],['parameters.update','{"x":9007199254740993,"unknown":{"decimal":0.12345678901234567890123456789}}','transform'],['source.update','{"x":9007199254740993}'],['source.update','{"x":0.12345678901234567890123456789}'],['source.update','{"x":0.1,"unknown":{"integer":9007199254740993,"decimal":0.12345678901234567890123456789}}']]
+test('real property contract preserves unsafe/nested numeric tokens into stdin and refuses without writes; 0.1 and 0.5 plan normally',{skip,timeout:30000},async t=>{
+ const env=await environment(t,'property-tokens'),grant=env.opened.grant,{writeGrant}=await env.call('one',{op:'authorize-write',grant}),before=await env.read()
+ const cases=[['parameters.update','9007199254740993','opacity'],['parameters.update','0.12345678901234567890123456789','opacity'],['parameters.update','{"x":9007199254740993,"unknown":{"decimal":0.12345678901234567890123456789}}','transform'],['source.update','{"x":9007199254740993}'],['source.update','{"x":0.12345678901234567890123456789}'],['source.update','{"x":0.1,"unknown":{"integer":9007199254740993,"decimal":0.12345678901234567890123456789}}']]
  for(const [op,value,property] of cases){
-  await change(Simulate,'编辑操作',op)
-  if(op==='source.update'){await change(Simulate,'素材 ID','s');await change(Simulate,'更新字段','transform');await change(Simulate,'transform JSON 属性',value)}else{await change(Simulate,'白名单属性（不适用对象由内核精确拒绝）',property);await change(Simulate,'属性值（text 为文本，其余单个 JSON 值）',value)}
-  await click('加入批次');const oldCount=env.wire.length
-  await click('预检');await settle(()=>env.wire.length>oldCount&&env.wire.at(-1).request.op==='plan')
-  const outcome=env.wire.at(-1);assert.equal(outcome.response.ok,false,stringifyJSON(outcome));assert(button('保存更改') === undefined, "Expected absent DOM node")
-  const data=env.specs.findLast(s=>s.argv.includes('plan')).stdio.stdin.data;assert(data.includes(value),`raw typed token changed before core: ${value} vs ${data}`);assert.equal(await env.read(),before)
-  await click('清空')
+  const operations=[op==='source.update'?{op,id:'s',set:{transform:parseJSON(value)}}:{op,id:'c',path:[property],value:parseJSON(value)}]
+  const outcome=await env.call('one',{op:'plan',grant,writeGrant,base_revision:env.opened.snapshot.content_version,operations})
+  assert.equal(outcome.ok,false,stringifyJSON(outcome));const data=env.specs.findLast(s=>s.argv.includes('plan')).stdio.stdin.data
+  assert.equal(data.includes(value),true,'raw token survives the real Host stdin');assert.equal(await env.read(),before)
  }
- await change(Simulate,'编辑操作','parameters.update');await change(Simulate,'白名单属性（不适用对象由内核精确拒绝）','opacity')
- for(const value of ['0.1','0.5']){
-  await change(Simulate,'属性值（text 为文本，其余单个 JSON 值）',value);await click('加入批次');await click('预检');await settle(()=>button('保存更改'));assert.equal(env.wire.at(-1).response.ok,true);assert.equal(await env.read(),before);await click('清空')
+ for(const value of [0.1,0.5]){
+  const outcome=await env.call('one',{op:'plan',grant,writeGrant,base_revision:env.opened.snapshot.content_version,operations:[{op:'parameters.update',id:'c',path:['opacity'],value}]})
+  assert.equal(outcome.ok,true,stringifyJSON(outcome));assert.equal(await env.read(),before);await env.call('one',{op:'invalidate-plan',grant,writeGrant})
  }
- await env.save('property-token-wire.json',env.wire)
+ assert.equal(env.wire.some(row=>row.request.op==='commit'),false);await env.save('property-token-wire.json',env.wire)
 })

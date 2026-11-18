@@ -91,8 +91,7 @@ export const workbenchCSS = `
 .fv-inspector-section{border-bottom:1px solid var(--fv-line);padding:0 0 10px;margin-bottom:8px}
 .fv-inspector-section>summary{color:var(--fv-text);font-weight:600}
 .fv-inspector :is(p,dd,li){font-size:12px;text-wrap:pretty}
-.fv-inspector :is(.fv-inspector-metrics,.fv-inspector-overview,.fv-edit-meta){font-variant-numeric:tabular-nums}
-.fv-inspector .fv-inspector-editor{border:0;padding:0;margin:10px 0;min-width:0}
+.fv-inspector :is(.fv-inspector-metrics,.fv-inspector-overview){font-variant-numeric:tabular-nums}
 .fv-inspector :is(.fv-selection-card,.fv-inspector-empty){border:1px solid var(--fv-line);border-radius:6px;padding:10px;background:var(--fv-bg)}
 .fv-inspector-empty,.fv-inspector-item,.fv-inspector-tools,.fv-reference-actions,.fv-reference-extra{display:flex;gap:8px;align-items:center;min-width:0}
 .fv-inspector-empty,.fv-inspector-item p,.fv-inspector-metrics dt,.fv-inspector-overview dt{color:var(--fv-muted)}
@@ -106,22 +105,16 @@ export const workbenchCSS = `
 .fv-inspector-tools,.fv-reference-actions{gap:4px;flex-wrap:wrap}
 .fv-reference-more{display:flex;position:relative}
 .fv-reference-extra{position:absolute;top:100%;right:0;padding:4px;z-index:4;border:1px solid var(--fv-line);border-radius:5px;background:var(--fv-raised)}
-.fv-edit-panel,.fv-edit-advanced{min-width:0}
-.fv-edit-panel>*+*{margin-top:8px}
-.fv-edit-header,.fv-edit-actions,.fv-edit-item{display:flex;align-items:center;gap:6px;min-width:0}
-.fv-edit-actions{flex-wrap:wrap}
-.fv-edit-header{justify-content:space-between}
-.fv-edit-operation-details summary{font-size:12px;min-height:0;padding:2px 0}
-.fv-edit-values{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 8px;margin:3px 0;border-left:1px solid var(--fv-line);padding-left:6px}
-.fv-edit-values dd{min-width:0;overflow-wrap:anywhere}
-.fv-edit-list{display:grid;gap:5px;list-style:none;margin:6px 0;padding:0}
-.fv-edit-item,.fv-edit-plan,.fv-edit-receipt{padding:7px 8px;border:1px solid var(--fv-line);border-radius:5px;background:var(--fv-bg)}
-.fv-edit-item-body{flex:1;min-width:0}
-.fv-edit-name{font-weight:600}
-.fv-edit-meta,.fv-edit-status{color:var(--fv-muted);font-size:12px}
-.fv-edit-status{margin-block:5px!important}
-.fv-edit-advanced,.fv-edit-proposal{border-top:1px solid var(--fv-line)}
-.fv-inspector fieldset:not(.fv-inspector-editor){border:1px solid var(--fv-line);border-radius:4px;padding:8px;margin:4px 0 8px;min-width:0}
+.fv-edit-top,.fv-history-actions{display:flex;gap:5px;align-items:center}
+.fv-edit-top{flex:none}
+.fv-edit-toggle{white-space:nowrap}
+.fv-history>summary{border:1px solid var(--fv-line);border-radius:5px}
+.fv-history[open]>summary{border-color:var(--fv-accent)}
+.fv-history-menu{position:absolute;top:calc(100% + 4px);right:12px;width:min(340px,calc(100% - 24px));max-height:50dvh;overflow:auto;overscroll-behavior:contain;background:var(--fv-raised);border:1px solid var(--fv-line);border-radius:6px;padding:10px 12px;font-size:12px}
+.fv-history-menu>*+*{margin-top:7px}
+.fv-history-actions{flex-wrap:wrap}
+.fv-edit-status{font-size:12px;overflow-wrap:anywhere}
+.fv-inspector fieldset{border:1px solid var(--fv-line);border-radius:4px;padding:8px;margin:4px 0 8px;min-width:0}
 .fv-inspector fieldset label{display:block;margin:5px 0;font-size:12px;color:var(--fv-muted)}
 .fv-inspector fieldset :is(input:not([type=checkbox]),select){display:block;width:100%;margin-top:3px}
 .fv-inspector legend{font-size:12px;color:var(--fv-muted)}
@@ -200,7 +193,7 @@ export const workbenchCSS = `
  .fv-workbench[data-view=start] .fv-files{flex:1;max-height:none}
  .fv-workbench[data-view=start][data-files=true] .fv-monitor{display:none}
 }
-@container fv-workbench (max-width:420px){.fv-topbar{gap:7px;padding:6px 10px}.fv-subtitle{display:none}.fv-topbar .fv-open-label{display:none}.fv-monitor{padding:10px}.fv-empty h3{font-size:22px}.fv-timeline-pane{padding:4px 6px 6px}}
+@container fv-workbench (max-width:420px){.fv-topbar{gap:3px;padding:5px 6px}.fv-topbar .fv-icon-button{width:30px;padding:4px}.fv-topbar .fv-edit-toggle{font-size:12px;padding:4px 6px}.fv-subtitle{display:none}.fv-topbar .fv-open-label{display:none}.fv-monitor{padding:10px}.fv-empty h3{font-size:22px}.fv-timeline-pane{padding:4px 6px 6px}}
 @media(prefers-reduced-motion:reduce){.fv-workbench *,.fv-guide{transition:none!important}}
 .fv-reference-actions{display:flex;align-items:center;flex-wrap:wrap;gap:4px}
 ${iconControlCSS}

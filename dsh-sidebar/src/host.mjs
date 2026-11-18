@@ -401,18 +401,10 @@ export function createPreviewHost(ctx, config = {}) {
         return json({ ok: true })
       }
       if (['storage-inspect', 'storage-plan', 'storage-clean', 'storage-cancel'].includes(data.op)) return await storageControl(data, grant, hold.signal)
-      if (['proposal-list', 'proposal-reject', 'proposal-confirm'].includes(data.op)) {
-        if (data.op === 'proposal-confirm' && storageOwners.size) fail('STORAGE_BUSY', 'Wait for storage process cleanup before confirming', 409)
-        if (data.op === 'proposal-confirm' && frameOwners.size) fail('FRAME_BUSY', 'Cancel the frame and wait for actual cleanup before confirming', 409)
-        semanticAdmission++
-        try { return json(await agent.handle(data, grant, hold.signal)) }
-        finally { semanticAdmission-- }
-      }
       if (['authorize-write', 'revoke-write', 'invalidate-plan', 'cancel-write', 'plan', 'commit', 'status', 'recover', 'adopt', 'undo'].includes(data.op)) {
-        if (['plan', 'commit', 'adopt', 'undo'].includes(data.op) && agent.hasLive(grant)) fail('PROPOSAL_PENDING', 'Resolve the pending agent proposal before starting a different semantic operation', 409)
         if (!['revoke-write', 'invalidate-plan'].includes(data.op) && frameOwners.size) fail('FRAME_BUSY', 'Cancel the frame and confirm actual process reaping before semantic operations', 409)
         semanticAdmission++
-        try { return await editControl(data, grant, hold.signal, false, cleanup) }
+        try { return await editControl(data, grant, hold.signal, cleanup) }
         finally { semanticAdmission-- }
       }
       if (!['inspect', 'query', 'reference'].includes(data.op)) fail('BAD_OPERATION', 'Unknown operation')
@@ -424,9 +416,6 @@ export function createPreviewHost(ctx, config = {}) {
         if (grant.contentVersion !== result.content_version) { grant.storagePlan = undefined; grant.storageEpoch = (grant.storageEpoch ?? 0) + 1; grant.plan = undefined; grant.planEpoch = (grant.planEpoch ?? 0) + 1 }
         grant.contentVersion = result.content_version
         if (grant.recoveryObserved) { grant.outcomeUnknown = false; grant.recoveryObserved = false }
-        // Every successful inspect reports the observed version; agent.observed()
-        // itself still requires row.outcome_unknown && row.recovered to reconcile.
-        agent.observed(grant, result)
       }
       return json(result)
     } finally { hold.release() }
@@ -446,7 +435,7 @@ export function createPreviewHost(ctx, config = {}) {
     const capability = grant.capabilities?.capabilities?.storage
     if (capability?.schema !== 'framivra.storage/v1' || capability.request_stdin !== true || !['inspect', 'plan', 'clean'].every(op => capability.operations?.includes(op))) fail('STORAGE_UNSUPPORTED', 'Installed core lacks storage/v1; ordinary timeline reads remain available', 422)
     if (grant.storage || storageOwners.has(grant)) fail('STORAGE_BUSY', 'Wait for this project storage scan and managed cleanup', 409)
-    if (semanticAdmission || frameOwners.size || reader.semanticBusy || grant.running || grant.plan || grant.outcomeUnknown || agent.hasLive(grant)) fail('WRITE_BUSY', 'Resolve local rendering, semantic writes and proposals before storage operations. External writers must be manually stopped.', 409)
+    if (semanticAdmission || frameOwners.size || reader.semanticBusy || grant.running || grant.plan || grant.outcomeUnknown) fail('WRITE_BUSY', 'Resolve local rendering, semantic writes before storage operations. External writers must be manually stopped.', 409)
     const operation = data.op.slice('storage-'.length)
     let frozen
     if (operation === 'clean') {
@@ -539,11 +528,9 @@ export function createPreviewHost(ctx, config = {}) {
     if (!capabilities.ok) fail('WRITE_UNSUPPORTED', capabilities.message, 422)
     return capabilities
   }
-  // readOnlyPlan is private host authority, never a browser/model input field.
-  async function editControl(data, grant, signal, readOnlyPlan = false, cleanup = false) {
+  async function editControl(data, grant, signal, cleanup = false) {
     if (['plan', 'commit', 'adopt', 'undo', 'recover'].includes(data.op)) grant.storagePlan = undefined
     if (storageOwners.size && !['revoke-write', 'invalidate-plan', 'cancel-write'].includes(data.op)) fail('STORAGE_BUSY', 'Wait for storage process cleanup before semantic operations', 409)
-    if (readOnlyPlan && data.op !== 'plan') fail('WRITE_DENIED', 'Model authority is restricted to zero-write planning', 403)
     await validateTimeline(grant, signal, cleanup)
     grantFor(data.sessionId, data.grant, cleanup)
     if (data.op === 'revoke-write') { revoke(grant); await Promise.all([grant.runningDone, grant.frameDone, grant.storageDone]); return json({ ok: true }) }
@@ -562,8 +549,7 @@ export function createPreviewHost(ctx, config = {}) {
       grant.writeKey = randomUUID()
       return json({ ok: true, writeGrant: grant.writeKey, capabilities })
     }
-    if (!readOnlyPlan && (!grant.write || grant.write.signal.aborted || data.writeGrant !== grant.writeKey)) fail('WRITE_DENIED', 'Read access is not write permission; explicitly authorize this Session/project first', 403)
-    if (readOnlyPlan) { await writeCapabilities(grant, signal); grantFor(data.sessionId, data.grant) }
+    if (!grant.write || grant.write.signal.aborted || data.writeGrant !== grant.writeKey) fail('WRITE_DENIED', 'Read access is not write permission; explicitly authorize this Session/project first', 403)
     if (data.op === 'cancel-write') {
       grant.running?.abort()
       await grant.runningDone
@@ -579,7 +565,7 @@ export function createPreviewHost(ctx, config = {}) {
     grant.running = controller
     let settled
     grant.runningDone = new Promise(resolve => { settled = resolve })
-    const combined = AbortSignal.any([signal, ...(readOnlyPlan ? [] : [grant.write.signal]), controller.signal])
+    const combined = AbortSignal.any([signal, grant.write.signal, controller.signal])
     // Observe changes during a child too; get() is the public Session/cwd contract.
     const monitor = setInterval(() => {
       // A throwing provider inside a timer would kill the whole Host process;
@@ -600,7 +586,6 @@ export function createPreviewHost(ctx, config = {}) {
         // A successful status can still report unresolved intents. Only an explicit
         // settled core result plus a later authoritative read may release unknown state.
         grant.recoveryObserved = result.ok === true && result.pending === false
-        agent.recovered(grant, result)
         return json(result)
       }
       if (data.op === 'commit') {
@@ -679,7 +664,7 @@ export function createPreviewHost(ctx, config = {}) {
       if (!platformAllowsFrame()) fail('FRAME_UNSUPPORTED', framePlatformMessage, 422)
       if (!inlineCapable(grant.capabilities)) fail('FRAME_UNSUPPORTED', 'Installed core must actually advertise --include-png; no path fallback', 422)
       if (options?.prepareGfx === true && !prepareGfxCapable(grant.capabilities)) fail('FRAME_UNSUPPORTED', 'Installed core must advertise current-composite preview-only graphics preparation', 422)
-      if (semanticAdmission || grant.running || grant.outcomeUnknown || grant.plan || agent.hasLive(grant)) fail('WRITE_BUSY', 'Resolve the active/unknown write or pending plan and refresh before a frame', 409)
+      if (semanticAdmission || grant.running || grant.outcomeUnknown || grant.plan) fail('WRITE_BUSY', 'Resolve the active/unknown write or pending plan and refresh before a frame', 409)
       if (grant.frame || (!frameQueue.length && (frameOwners.size || reader.active.size))) fail('FRAME_BUSY', 'Previous process ownership has not been reaped; cancel it explicitly', 409)
       if (frameQueue.length >= 5) fail('FRAME_QUEUE_FULL', 'At most four explicit frame clicks may wait; no automatic retry', 429)
       grant.frameNonces ??= new Set()
@@ -820,7 +805,7 @@ export function createPreviewHost(ctx, config = {}) {
     }
   }
   async function internalControl(session, data, signal) {
-    if (typeof data.op === 'string' && data.op.startsWith('storage-')) fail('STORAGE_DENIED', 'Storage authority is owner-only, never model tools', 403)
+    if (!['open', 'inspect', 'query', 'reference', 'close'].includes(data.op)) fail('WRITE_DENIED', 'Model timeline access is read-only', 403)
     if (data.op === 'close') {
       // Private cleanup authority is the exact Session object that opened this grant.
       // It must still release its own resources after the Session/cwd has disappeared.
@@ -846,21 +831,7 @@ export function createPreviewHost(ctx, config = {}) {
     if (!response.ok) throw new PreviewError(value.error ?? 'PREVIEW_FAILED', value.message ?? 'Timeline operation failed', response.status)
     return value
   }
-  async function planProposal(grant, data, signal) {
-    const hold = lease({ signal })
-    if (frameOwners.size) { hold.release(); fail('FRAME_BUSY', 'Cancel the frame and wait for actual cleanup before planning', 409) }
-    semanticAdmission++
-    try {
-      const result = await decodeControl(await editControl(data, grant, hold.signal, true))
-      return { result, frozen: grant.plan }
-    } finally { semanticAdmission--; hold.release() }
-  }
-  async function commitProposal(grant, data, frozen, signal) {
-    grant.plan = frozen
-    return decodeControl(await editControl({ ...data, op: 'commit', planToken: frozen.token }, grant, signal))
-  }
-  const agent = createTimelineAgent({ ctx, clock, ttlMs, call: internalControl, grantFor,
-    plan: planProposal, commit: commitProposal, validate: validateTimeline, editCapabilities: readEditCapabilities })
+  const agent = createTimelineAgent({ ctx, call: internalControl, grantFor, editCapabilities: readEditCapabilities })
   function trackTool(method) {
     return (...args) => {
       const operation = method(...args)
@@ -872,7 +843,7 @@ export function createPreviewHost(ctx, config = {}) {
   }
   return {
     control: safe(control), frame: safe(frame), media: safe(media), diagnostics: safe(diagnostics),
-    agent: { read: trackTool(agent.read), propose: trackTool(agent.propose), status: trackTool(agent.status) },
+    agent: { read: trackTool(agent.read) },
     async dispose() {
       agent.dispose()
       lifecycle.abort()

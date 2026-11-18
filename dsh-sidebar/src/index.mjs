@@ -50,6 +50,7 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/framivra/kernel-management', methods: ['POST'], requestBody: 'buffered', fetch: management.fetch,
   }))
+  // Model authority is read-only; semantic writes remain owner control actions.
   registerTimelineTools(ctx, host.agent)
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/framivra/control', methods: ['POST'], requestBody: 'buffered', fetch: host.control,

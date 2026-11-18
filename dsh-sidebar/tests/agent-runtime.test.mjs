@@ -1,5 +1,5 @@
 /**
- * Real-DSH ToolRuntime acceptance for the three Framivra model tools.
+ * Real-DSH ToolRuntime acceptance for the read-only Framivra model tool.
  *
  * Unlike tools.test.mjs (direct tool.execute with a synthetic exec) and
  * manual-real.test.mjs (UI control ops only), this file mounts the actual
@@ -141,41 +141,15 @@ async function runtime(t, label) {
     assert.equal(result.isError, true, `expected failure, got: ${result.value}`)
     assert.match(JSON.stringify(result.error), pattern)
   }
-  async function control(sessionId, data) {
-    const response = await host.control(new Request('http://owner/api/framivra/control', {
-      method: 'POST', body: stringifyJSON({ sessionId, ...data }), signal: new AbortController().signal,
-    }))
-    const answer = parseJSON(await response.text())
-    transcript.push({ kind: 'control', sessionId, data, status: response.status, response: answer })
-    return { status: response.status, answer }
-  }
-  const controlOk = async (sessionId, data) => {
-    const { status, answer } = await control(sessionId, data)
-    assert.equal(status, 200, `control ${data.op} failed: ${stringifyJSON(answer)}`)
-    return answer
-  }
   const readRaw = () => readFile(path, 'utf8')
   return {
     t, host, ctx, tools, disposers, handles, transcript, dir, path, dirTwo, cwds,
-    call, ok, fails, control, controlOk, readRaw, sessionOne, sessionTwo,
+    call, ok, fails, readRaw, sessionOne, sessionTwo,
     async save() { await writeFile(join(dir, 'transcript.json'), stringifyJSON(transcript, 2)) },
   }
 }
 
-// Test-side UI helpers mirroring the sidebar's own control sequence.
-async function adopt(env, sessionId = 'one') {
-  const opened = await env.controlOk(sessionId, { op: 'open', timeline: 'timeline.json' })
-  const write = await env.controlOk(sessionId, { op: 'authorize-write', grant: opened.grant })
-  const adopted = await env.controlOk(sessionId, {
-    op: 'adopt', grant: opened.grant, writeGrant: write.writeGrant,
-    base_revision: opened.snapshot.content_version, confirmation: 'stable-ids-and-history',
-  })
-  assert.equal(adopted.ok, true, `adopt failed: ${stringifyJSON(adopted)}`)
-  await env.controlOk(sessionId, { op: 'close', grant: opened.grant })
-  return adopted
-}
-
-test('real ToolRuntime: read lossless, legacy rejection, adopt→propose→UI confirm→applied, CAS/dedupe/reject/stale', { skip, timeout: 240_000 }, async t => {
+test('real ToolRuntime: lossless read, no proposal tools, teardown', { skip, timeout: 240_000 }, async t => {
   const env = await runtime(t, 'lifecycle')
   await t.test('legacy read: inspect/query/reference keep exact number tokens', async () => {
     const inspect = parseJSON(env.ok(await env.call('framivra_timeline_read', { timeline: 'timeline.json', view: 'inspect' })))
@@ -197,119 +171,20 @@ test('real ToolRuntime: read lossless, legacy rejection, adopt→propose→UI co
       'reference raw must be an exact on-disk substring')
   })
 
-  await t.test('legacy propose is rejected by the kernel, file untouched', async () => {
-    const inspect = parseJSON(env.ok(await env.call('framivra_timeline_read', { timeline: 'timeline.json', view: 'inspect' })))
+  await t.test('proposal tools are unregistered and cannot touch the timeline', async () => {
     const before = await env.readRaw()
-    const rejected = parseJSON(env.ok(await env.call('framivra_timeline_propose', {
-      timeline: 'timeline.json', expected_content_version: inspect.result.content_version,
-      operations_json: stringifyJSON([{ op: 'project.resize', duration_frames: 130 }]),
-    })))
-    assert.equal(rejected.ok, false)
-    assert.equal(rejected.state, 'plan_rejected')
-    assert.equal(rejected.plan.code, 'input.structure')
-    assert.match(rejected.plan.message, /explicit adopt required/)
-    assert.equal(await env.readRaw(), before, 'a rejected plan must not touch the file')
-  })
-
-  await t.test('explicit test-side adopt converts the fixture, tokens survive', async () => {
-    await adopt(env)
-    const reread = env.ok(await env.call('framivra_timeline_read', { timeline: 'timeline.json', view: 'inspect' }))
-    assert.ok(reread.includes('9007199254740993') && reread.includes('-9007199254740993'),
-      'adopt must preserve exact number tokens')
-  })
-
-  let proposal, rawBefore
-  await t.test('propose is zero-write and deduplicated', async () => {
-    const inspect = parseJSON(env.ok(await env.call('framivra_timeline_read', { timeline: 'timeline.json', view: 'inspect' })))
-    rawBefore = await env.readRaw()
-    const args = {
-      timeline: 'timeline.json', expected_content_version: inspect.result.content_version,
-      operations_json: stringifyJSON([{ op: 'project.resize', duration_frames: 130 }]),
+    assert.deepEqual(env.tools.map(tool => tool.name), ['framivra_timeline_read'])
+    for (const name of ['framivra_timeline_propose', 'framivra_proposal_status']) {
+      env.fails(await env.call(name, { timeline: 'timeline.json' }), /UNKNOWN_TOOL|unknown tool/i)
     }
-    proposal = parseJSON(env.ok(await env.call('framivra_timeline_propose', args))).proposal
-    assert.equal(proposal.state, 'pending')
-    assert.match(proposal.plan.submitted_request.op_id, /^[a-f0-9-]{36}$/)
-    assert.equal(await env.readRaw(), rawBefore, 'a plan is zero-write')
-    const duplicate = parseJSON(env.ok(await env.call('framivra_timeline_propose', args)))
-    assert.equal(duplicate.duplicate, true)
-    assert.equal(duplicate.proposal.proposal_id, proposal.proposal_id)
-    assert.equal(await env.readRaw(), rawBefore)
-  })
-
-  let opId
-  await t.test('UI authorize-write + proposal-confirm commits the exact frozen request', async () => {
-    const opened = await env.controlOk('one', { op: 'open', timeline: 'timeline.json' })
-    const write = await env.controlOk('one', { op: 'authorize-write', grant: opened.grant })
-    const confirmed = await env.controlOk('one', {
-      op: 'proposal-confirm', grant: opened.grant, writeGrant: write.writeGrant, proposalId: proposal.proposal_id,
-    })
-    assert.equal(confirmed.ok, true)
-    assert.equal(confirmed.proposal.state, 'applied')
-    opId = confirmed.proposal.confirmation.op_id
-    assert.equal(opId, proposal.plan.submitted_request.op_id, 'confirmed op_id must be the frozen plan op_id')
-    assert.deepEqual(confirmed.proposal.outcome.submitted_request, proposal.plan.submitted_request,
-      'no body replacement, no rebase, no fresh id')
-    assert.equal(confirmed.proposal.outcome.op_id, opId)
-    const raw = await env.readRaw()
-    assert.notEqual(raw, rawBefore, 'the real file changed')
-    const doc = parseJSON(raw)
-    assert.equal(doc._vtx.head, opId, 'kernel head is the confirmed op_id')
-    assert.equal(doc.project.duration_frames, 130)
-    await env.controlOk('one', { op: 'close', grant: opened.grant })
-  })
-
-  await t.test('model sees applied; double-confirm and duplicate paths stay single-use', async () => {
-    const status = parseJSON(env.ok(await env.call('framivra_proposal_status', { timeline: 'timeline.json' })))
-    assert.equal(status.proposal.state, 'applied')
-    assert.equal(status.proposal.outcome.op_id, opId)
-    const opened = await env.controlOk('one', { op: 'open', timeline: 'timeline.json' })
-    const write = await env.controlOk('one', { op: 'authorize-write', grant: opened.grant })
-    const again = await env.control('one', {
-      op: 'proposal-confirm', grant: opened.grant, writeGrant: write.writeGrant, proposalId: proposal.proposal_id,
-    })
-    assert.equal(again.status, 409)
-    assert.equal(again.answer.error, 'PROPOSAL_CONSUMED')
-    await env.controlOk('one', { op: 'close', grant: opened.grant })
-  })
-
-  await t.test('reject path: pending proposal refused without a write, then rejected by the user', async () => {
-    const rawAfterCommit = await env.readRaw()
-    const inspect = parseJSON(env.ok(await env.call('framivra_timeline_read', { timeline: 'timeline.json', view: 'inspect' })))
-    const second = parseJSON(env.ok(await env.call('framivra_timeline_propose', {
-      timeline: 'timeline.json', expected_content_version: inspect.result.content_version,
-      // Address-free op: after adopt, track-addressed ops need the regenerated
-      // stable track ids, and the reject path must not depend on them.
-      operations_json: stringifyJSON([{ op: 'project.resize', duration_frames: 140 }]),
-    }))).proposal
-    assert.equal(second.state, 'pending')
-    assert.equal(await env.readRaw(), rawAfterCommit, 'reject path is still zero-write until confirmed')
-    const opened = await env.controlOk('one', { op: 'open', timeline: 'timeline.json' })
-    const rejected = await env.controlOk('one', { op: 'proposal-reject', grant: opened.grant, proposalId: second.proposal_id })
-    assert.equal(rejected.proposal.state, 'rejected')
-    await env.controlOk('one', { op: 'close', grant: opened.grant })
-    const status = parseJSON(env.ok(await env.call('framivra_proposal_status', { timeline: 'timeline.json', proposal_id: second.proposal_id })))
-    assert.equal(status.proposal.state, 'rejected')
-    assert.equal(await env.readRaw(), rawAfterCommit, 'a rejected proposal never writes')
-  })
-
-  await t.test('stale bases are refused, never rebased', async () => {
-    const stale = await env.call('framivra_timeline_propose', {
-      timeline: 'timeline.json', expected_content_version: proposal.base_revision,
-      operations_json: stringifyJSON([{ op: 'project.resize', duration_frames: 140 }]),
-    })
-    env.fails(stale, /Timeline changed; read it again before proposing/)
-    const malformed = await env.call('framivra_timeline_propose', {
-      timeline: 'timeline.json', expected_content_version: 'not-a-version',
-      operations_json: stringifyJSON([{ op: 'project.resize', duration_frames: 140 }]),
-    })
-    env.fails(malformed, /exact content version/)
+    assert.equal(await env.readRaw(), before)
   })
 
   await t.test('teardown: unregister hides the tools, disposal refuses service, children are reaped', async () => {
     for (const dispose of env.disposers) dispose()
     env.fails(await env.call('framivra_timeline_read', { timeline: 'timeline.json', view: 'inspect' }), /UNKNOWN_TOOL|unknown tool/i)
     const re = env.ctx.tools.register(env.tools[0])
-    env.host.dispose()
+    await env.host.dispose()
     env.fails(await env.call('framivra_timeline_read', { timeline: 'timeline.json', view: 'inspect' }),
       /Timeline tools are unavailable after plugin disposal/)
     re()
@@ -319,50 +194,18 @@ test('real ToolRuntime: read lossless, legacy rejection, adopt→propose→UI co
   await env.save()
 })
 
-test('real ToolRuntime: session/cwd isolation and drift invalidation', { skip, timeout: 240_000 }, async t => {
+test('real ToolRuntime: session-scoped reads follow the current workspace', { skip, timeout: 240_000 }, async t => {
   const env = await runtime(t, 'isolation')
-  await adopt(env, 'one')
-  await adopt(env, 'two')
-
-  const inspect = parseJSON(env.ok(await env.call('framivra_timeline_read',
-    { timeline: 'timeline.json', view: 'inspect' }, env.sessionOne)))
-  const proposal = parseJSON(env.ok(await env.call('framivra_timeline_propose', {
-    timeline: 'timeline.json', expected_content_version: inspect.result.content_version,
-    operations_json: stringifyJSON([{ op: 'project.resize', duration_frames: 150 }]),
-  }, env.sessionOne))).proposal
-  assert.equal(proposal.state, 'pending')
-
-  await t.test('another session reads only its own workspace copy', async () => {
-    const other = parseJSON(env.ok(await env.call('framivra_timeline_read',
-      { timeline: 'timeline.json', view: 'inspect' }, env.sessionTwo)))
-    assert.equal(other.ok, true)
-    assert.notEqual(other.result.content_version, proposal.base_revision,
-      'session two sees its own adopted file, not session one’s timeline')
-  })
-
-  await t.test('another session cannot confirm or even see the proposal', async () => {
-    const opened = await env.controlOk('two', { op: 'open', timeline: 'timeline.json' })
-    const write = await env.controlOk('two', { op: 'authorize-write', grant: opened.grant })
-    const cross = await env.control('two', {
-      op: 'proposal-confirm', grant: opened.grant, writeGrant: write.writeGrant, proposalId: proposal.proposal_id,
-    })
-    assert.equal(cross.status, 404)
-    assert.equal(cross.answer.error, 'BAD_PROPOSAL')
-    await env.controlOk('two', { op: 'close', grant: opened.grant })
-    const otherStatus = parseJSON(env.ok(await env.call('framivra_proposal_status',
-      { timeline: 'timeline.json' }, env.sessionTwo)))
-    assert.equal(otherStatus.proposal, null, 'receipts are session-scoped')
-  })
-
-  await t.test('cwd drift invalidates pending proposals for the drifting session', async () => {
-    const before = parseJSON(env.ok(await env.call('framivra_proposal_status', { timeline: 'timeline.json' })))
-    assert.equal(before.proposal.state, 'pending')
-    env.cwds.one.value = env.dirTwo
-    const drifted = parseJSON(env.ok(await env.call('framivra_proposal_status', { timeline: 'timeline.json' })))
-    assert.equal(drifted.proposal, null, 'a pending receipt does not follow the session into another workspace')
-    env.cwds.one.value = env.dir
-    const after = parseJSON(env.ok(await env.call('framivra_proposal_status', { timeline: 'timeline.json' })))
-    assert.equal(after.proposal.state, 'invalidated', 'the drift invalidated the pending proposal')
-  })
+  // Distinct document bytes make accidental cross-session reads observable.
+  const otherPath = join(env.dirTwo, 'timeline.json')
+  await writeFile(otherPath, legacyDocumentText().replace('9007199254740993', '9007199254740995'))
+  const first = env.ok(await env.call('framivra_timeline_read', { timeline: 'timeline.json', view: 'inspect' }, env.sessionOne))
+  const other = env.ok(await env.call('framivra_timeline_read', { timeline: 'timeline.json', view: 'inspect' }, env.sessionTwo))
+  assert.ok(first.includes('9007199254740993'))
+  assert.ok(other.includes('9007199254740995'))
+  assert.notEqual(parseJSON(first).result.content_version, parseJSON(other).result.content_version)
+  env.cwds.one.value = env.dirTwo
+  const moved = env.ok(await env.call('framivra_timeline_read', { timeline: 'timeline.json', view: 'inspect' }, env.sessionOne))
+  assert.equal(parseJSON(moved).result.content_version, parseJSON(other).result.content_version)
   await env.save()
 })

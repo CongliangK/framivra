@@ -26,7 +26,6 @@ export const HOST_PROTOCOL_OPS = [
   'hello', 'open', 'browse', 'close',
   'authorize-write', 'revoke-write', 'invalidate-plan', 'cancel-write',
   'plan', 'commit', 'status', 'recover', 'adopt', 'undo',
-  'proposal-list', 'proposal-reject', 'proposal-confirm',
   'inspect', 'query', 'reference',
   'storage-inspect', 'storage-plan', 'storage-clean', 'storage-cancel',
 ]
@@ -49,8 +48,8 @@ export const BAKED_BUILD_STAMP = '__FRAMIVRA_BUILD_STAMP__'
 export const HOST_LIB_MODULES = ['configuration', 'kernel-config', 'kernel-management', 'protocol', 'bounded', 'json', 'media', 'agent', 'tools', 'host', 'index']
 /** Client-side modules that participate in the build stamp, in fixed order. */
 export const CLIENT_MODULES = [
-  'icons', 'icon-controls', 'editor-controls', 'viewport', 'timeline', 'timeline-settings', 'manual',
-  'selection', 'reference', 'frame', 'settings', 'kernel-settings', 'draft-services', 'proposals',
+  'icons', 'icon-controls', 'editor-controls', 'viewport', 'timeline', 'manual',
+  'selection', 'reference', 'draft-summary', 'frame', 'edit-review', 'settings', 'kernel-settings', 'draft-services',
   'grant-lifecycle', 'official-draft', 'timecode', 'monitor', 'workbench', 'storage', 'index',
 ]
 /** Stamp recipe: prefix + first 16 hex of sha256 over the per-file sha256

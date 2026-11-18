@@ -62,7 +62,7 @@ test('Transport: buttons and input drive callbacks only; no fetch or any network
   const frames = [], texts = [], queries = []
   await act(async () => root.render(h(Transport, { frame: 5, frameText: '5', duration: 30, onFrame: v => frames.push(v), onText: v => texts.push(v), onQuery: () => queries.push(1) })))
   const buttons = [...document.querySelectorAll('button')]
-  assert(!buttons.some(b => ['定位首帧', '监视器前一帧', '监视器后一帧', '定位末帧'].includes(b.getAttribute('aria-label'))), 'navigation belongs to the timeline, not duplicated in the monitor')
+  assert.equal(Boolean(!buttons.some(b => ['定位首帧', '监视器前一帧', '监视器后一帧', '定位末帧'].includes(b.getAttribute('aria-label')))), true, 'navigation belongs to the timeline, not duplicated in the monitor')
   assert.deepEqual(frames, [])
   const input = document.querySelector('input[name="framivra-frame"]')
   await act(async () => Simulate.change(input, { target: { value: '12' } }))
@@ -80,9 +80,9 @@ test('Transport: compact row keeps one accessible advanced disclosure and concis
   assert.equal(document.querySelectorAll('details').length, 1)
   const details = document.querySelector('details.fv-monitor-disclosure')
   assert.equal(details.open, false)
-  assert(details.querySelector('summary[aria-label="高级帧定位"]'))
+  assert.equal(Boolean(details.querySelector('summary[aria-label="高级帧定位"]')), true)
   const panel = details.querySelector('.fv-monitor-popover')
-  for (const name of ['framivra-frame', 'framivra-seconds', 'framivra-offset']) assert(panel.querySelector(`[name="${name}"]`))
+  for (const name of ['framivra-frame', 'framivra-seconds', 'framivra-offset']) assert.equal(Boolean(panel.querySelector(`[name="${name}"]`)), true)
   await act(async () => root.render(h(Transport, { ...props, duration: 'x' })))
   assert.equal(document.querySelector('.fv-duration').textContent, '时长不可显示')
 })
@@ -147,8 +147,8 @@ test('LayoutDivider: keyboard and double-click resize locally, clamped to 26..65
 const version = `sha256:${'a'.repeat(64)}`
 const mkResult = (kind, name) => ({
   content_version: version, coverage: { complete: true, scope: 'stored', unexpanded: [] }, diagnostics: [],
-  tracks: [{ family: 'video', track_index: 0, address: '/t/0', data: { name: 'MAIN', ...(kind === 'gfx' ? { kind: 'gfx' } : {}) } }],
-  blocks: [{ family: 'video', track_index: 0, block_index: 0, address: '/t/0/b/0', range: [10, 40], data: { name, kind } }],
+  tracks: [{ family: 'video', track_index: 0, address: '/t/0', data: { id:'track', name: 'MAIN', ...(kind === 'gfx' ? { kind: 'gfx' } : {}) } }],
+  blocks: [{ family: 'video', track_index: 0, block_index: 0, address: '/t/0/b/0', range: [10, 40], data: { id:'clip', name, kind } }],
 })
 
 test('SelectionSummary: shows the saved clip name and range; split gated by bounds, gfx, count and write grant', async t => {
@@ -157,37 +157,37 @@ test('SelectionSummary: shows the saved clip name and range; split gated by boun
   const quickCalls = []
   const render = (props) => act(async () => root.render(h(SelectionSummary, { selection: { kind: 'block', address: '/t/0/b/0' }, selected: [{ kind: 'block', address: '/t/0/b/0' }], result, frame: 20, fps: 30, onFrame: () => {}, onClear: () => {}, onProperties: () => {}, quick: op => quickCalls.push(op), ...props })))
   await render({})
-  assert(document.body.textContent.includes('A-roll 开场'), 'name comes from saved block data')
-  assert(document.body.textContent.includes('00:00:10–00:01:10 · 长度 00:01:00'), 'range from saved projection displayed as timecode')
+  assert.equal(Boolean(document.body.textContent.includes('A-roll 开场')), true, 'name comes from saved block data')
+  assert.equal(Boolean(document.body.textContent.includes('00:00:10–00:01:10 · 长度 00:01:00')), true, 'range from saved projection displayed as timecode')
   const split = document.querySelector('[aria-label="在播放头分割选中片段"]')
-  assert(!split.disabled, 'interior frame + write grant enables split')
+  assert.equal(Boolean(!split.disabled), true, 'interior frame + write grant enables split')
   await act(async () => split.click())
   assert.deepEqual(quickCalls, ['block.split'])
-  await render({ frame: 10 }); assert(document.querySelector('[aria-label="在播放头分割选中片段"]').disabled, 'frame === range[0] blocked')
-  await render({ frame: 40 }); assert(document.querySelector('[aria-label="在播放头分割选中片段"]').disabled, 'frame === range[1] blocked')
-  await render({ frame: 'x' }); assert(document.querySelector('[aria-label="在播放头分割选中片段"]').disabled, 'malformed frame blocked')
+  await render({ frame: 10 }); assert.equal(Boolean(document.querySelector('[aria-label="在播放头分割选中片段"]').disabled), true, 'frame === range[0] blocked')
+  await render({ frame: 40 }); assert.equal(Boolean(document.querySelector('[aria-label="在播放头分割选中片段"]').disabled), true, 'frame === range[1] blocked')
+  await render({ frame: 'x' }); assert.equal(Boolean(document.querySelector('[aria-label="在播放头分割选中片段"]').disabled), true, 'malformed frame blocked')
   await render({ quick: undefined })
   const readonly = document.querySelector('[aria-label="在播放头分割选中片段"]')
-  assert(readonly.disabled && readonly.title.includes('请先在属性面板明确授予工程写许可'), 'no quick → readonly with grant hint')
-  assert(document.querySelector('[aria-label="将移除选中片段加入批次"]').disabled)
+  assert.equal(Boolean(readonly.disabled && readonly.title.includes('请先启用编辑')), true, 'no quick → readonly with grant hint')
+  assert.equal(Boolean(document.querySelector('[aria-label="移除选中片段"]').disabled), true)
   await render({ selected: [{ kind: 'block', address: '/t/0/b/0' }, { kind: 'block', address: '/t/0/b/1' }], result: { ...result, blocks: [...result.blocks, { ...result.blocks[0], address: '/t/0/b/1' }] } })
-  assert(document.querySelector('[aria-label="在播放头分割选中片段"]').disabled, 'multi-selection cannot split')
+  assert.equal(Boolean(document.querySelector('[aria-label="在播放头分割选中片段"]').disabled), true, 'multi-selection cannot split')
 })
 
 test('SelectionSummary: gfx blocks and gfx tracks disable split but keep remove', async t => {
   const { root } = await mount(t)
   const gfxBlock = mkResult('gfx', '动态图表')
   await act(async () => root.render(h(SelectionSummary, { selection: { kind: 'block', address: '/t/0/b/0' }, selected: [{ kind: 'block', address: '/t/0/b/0' }], result: gfxBlock, frame: 20, onFrame: () => {}, onClear: () => {}, onProperties: () => {}, quick: () => { throw new Error('must not run') } })))
-  assert(document.querySelector('[aria-label="在播放头分割选中片段"]').disabled, 'gfx block cannot split')
-  assert(!document.querySelector('[aria-label="将移除选中片段加入批次"]').disabled, 'gfx can still be removed')
+  assert.equal(Boolean(document.querySelector('[aria-label="在播放头分割选中片段"]').disabled), true, 'gfx block cannot split')
+  assert.equal(Boolean(!document.querySelector('[aria-label="移除选中片段"]').disabled), true, 'gfx can still be removed')
   // gfx track via the owning track, even when the block itself is not kind gfx
   const gfxTrack = mkResult('aroll', '普通块')
   gfxTrack.tracks[0].data.kind = 'gfx'
   await act(async () => root.render(h(SelectionSummary, { selection: { kind: 'block', address: '/t/0/b/0' }, selected: [{ kind: 'block', address: '/t/0/b/0' }], result: gfxTrack, frame: 20, onFrame: () => {}, onClear: () => {}, onProperties: () => {}, quick: () => { throw new Error('must not run') } })))
-  assert(document.querySelector('[aria-label="在播放头分割选中片段"]').disabled, 'block on a gfx track cannot split')
+  assert.equal(Boolean(document.querySelector('[aria-label="在播放头分割选中片段"]').disabled), true, 'block on a gfx track cannot split')
 })
 
-// ---------- ManualEditor quick: stale retained handlers refuse ----------
+// ---------- ManualEditor quick: direct transactions and stale handlers ----------
 
 const openedFixture = { grant: 'g1', snapshot: { content_version: version, document: { _vtx: { protocol: 1 }, sources: [] } }, media: [] }
 
@@ -200,6 +200,33 @@ async function editorMount(t, quicks) {
   return { root, calls, render, ...ui }
 }
 
+test('ManualEditor quick: split/remove await direct plan and commit without exposing a queue', async t => {
+  const { root } = await mount(t), calls = [], refreshed = []
+  let quick
+  const result = mkResult('aroll', '块一')
+  const call = async (_session, payload) => {
+    calls.push(payload)
+    if (payload.op === 'authorize-write') return { ok: true, writeGrant: 'wg' }
+    if (payload.op === 'plan') return { ok: true, planToken: `token-${calls.length}`, submitted_request: { op_id: `op-${calls.length}` } }
+    return { ok: true }
+  }
+  await act(async () => root.render(h(ManualEditor, { sessionId: 'one', opened: openedFixture, result, selection: { kind: 'block', address: '/t/0/b/0' }, selected: [{ kind: 'block', address: '/t/0/b/0' }], frame: 20, tabSignal: new AbortController().signal, call, onCommitted: options => refreshed.push(options), onQuickReady: callback => { quick = callback } })))
+  await act(async () => [...document.querySelectorAll('button')].find(node => node.textContent === '启用编辑').click())
+  for (const op of ['block.split', 'block.remove']) {
+    let answer
+    await act(async () => { answer = await quick(op) })
+    assert.equal(answer.ok, true)
+    const plan = calls.filter(payload => payload.op === 'plan').at(-1), commit = calls.filter(payload => payload.op === 'commit').at(-1)
+    assert.equal(plan.operations.length, 1); assert.equal(plan.operations[0].op, op); assert.equal(plan.operations[0].id, 'clip')
+    assert.equal(commit.planToken.startsWith('token-'), true)
+    assert.equal(commit.operations, undefined, 'commit only uses the frozen plan token')
+    if (op === 'block.split') { assert.equal(plan.operations[0].at, 20); assert.equal(typeof plan.operations[0].new_id, 'string'); assert.equal(refreshed.at(-1).focusId, 'clip') }
+  }
+  assert.equal(calls.filter(payload => payload.op === 'plan').length, 2); assert.equal(calls.filter(payload => payload.op === 'commit').length, 2)
+  assert.equal(document.querySelector('[aria-label="待保存操作"]') === null, true)
+  assert.equal(calls.some(payload => payload.op.startsWith('proposal-')), false)
+})
+
 test('ManualEditor quick: retained callback refuses after selection/frame/grant change (EDIT_STALE) and rejects unsupported ops', async t => {
   const quicks = []
   const { root, calls, render, byLabel } = await editorMount(t, quicks)
@@ -208,28 +235,28 @@ test('ManualEditor quick: retained callback refuses after selection/frame/grant 
   await act(async () => { [...document.querySelectorAll('button')].find(b => b.textContent === '启用编辑').click() })
   for (let i = 0; i < 100 && !(quicks.at(-1) instanceof Function); i++) await act(async () => { await new Promise(r => setTimeout(r, 1)) })
   const quick = quicks.find(q => q instanceof Function)
-  assert(quick, 'quick became available after explicit write authorization')
+  assert.equal(Boolean(quick), true, 'quick became available after explicit write authorization')
   // change the frame: the retained callback must refuse
   await render({ result, frame: 21 })
-  assert.throws(() => quick('block.split'), /EDIT_STALE/)
+  await assert.rejects(quick('block.split'), /EDIT_STALE/)
   // refresh and capture the new callback; then change selection target
   const quick2 = quicks.at(-1)
-  assert(quick2 instanceof Function)
+  assert.equal(Boolean(quick2 instanceof Function), true)
   await render({ result, selection: { kind: 'track', address: '/t/0' }, selected: [{ kind: 'track', address: '/t/0' }] })
-  assert.throws(() => quick2('block.split'), /EDIT_STALE/)
+  await assert.rejects(quick2('block.split'), /EDIT_STALE/)
   // unsupported operations and gfx split are refused even on a fresh callback
   const quick3 = quicks.at(-1)
-  assert(quick3 instanceof Function)
-  assert.throws(() => quick3('track.rename'), /EDIT_UNSUPPORTED/)
+  assert.equal(Boolean(quick3 instanceof Function), true)
+  await assert.rejects(quick3('track.rename'), /EDIT_UNSUPPORTED/)
   const gfx = mkResult('gfx', '图形块')
   await render({ result: gfx, frame: 20 })
   await render({ result: gfx, frame: 20 })
   const fresh = quicks.at(-1)
-  assert(fresh instanceof Function)
-  assert.throws(() => fresh('block.split'), /EDIT_UNSUPPORTED/, 'fresh gfx callback must specifically refuse this unsupported operation')
+  assert.equal(Boolean(fresh instanceof Function), true)
+  await assert.rejects(fresh('block.split'), /EDIT_UNSUPPORTED/, 'fresh gfx callback must specifically refuse this unsupported operation')
 })
 
-test('ManualEditor quick: split outside block bounds refuses with EDIT_BOUNDS; no plan or commit is ever issued by quick', async t => {
+test('ManualEditor quick: split outside block bounds refuses with EDIT_BOUNDS; rejected quick emits no plan or commit', async t => {
   const quicks = []
   const { render, calls } = await editorMount(t, quicks)
   const result = mkResult('aroll', '块一')
@@ -237,11 +264,11 @@ test('ManualEditor quick: split outside block bounds refuses with EDIT_BOUNDS; n
   await act(async () => { [...document.querySelectorAll('button')].find(b => b.textContent === '启用编辑').click() })
   for (let i = 0; i < 100 && !(quicks.at(-1) instanceof Function); i++) await act(async () => { await new Promise(r => setTimeout(r, 1)) })
   const quick = quicks.at(-1)
-  assert(quick instanceof Function)
+  assert.equal(Boolean(quick instanceof Function), true)
   // re-render at an out-of-bounds frame, then grab the fresh callback
   await render({ result, frame: 5 })
   const fresh = quicks.at(-1)
-  assert(fresh instanceof Function)
-  assert.throws(() => fresh('block.split'), /EDIT_BOUNDS/)
-  assert(!calls.some(c => c.op === 'plan' || c.op === 'commit'), 'quick never plans or commits on its own')
+  assert.equal(Boolean(fresh instanceof Function), true)
+  await assert.rejects(fresh('block.split'), /EDIT_BOUNDS/)
+  assert.equal(Boolean(!calls.some(c => c.op === 'plan' || c.op === 'commit')), true, 'invalid quick never plans or commits')
 })

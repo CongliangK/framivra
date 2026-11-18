@@ -224,16 +224,9 @@ try {
   // Hook state/effects run under the exact same React instance supplied to the loader.
   await act(async () => submit(form()))
   await until(() => document.querySelector('.fv-ruler'))
-  // On a Windows Host the store is unavailable before any opt-in/UI probe.
-  // On supported Hosts the authorization panel still mounts and polls as before.
-  if (process.platform === 'win32') {
-    assert.deepEqual(requests.map(x => x.op), ['open', 'query'])
-    assert(document.body.textContent.includes('当前宿主仅支持只读时间线'))
-  } else {
-    assert.deepEqual(requests.filter(x => x.op !== 'proposal-list').map(x => x.op), ['open', 'query'])
-    assert.equal(requests.filter(x => x.op === 'proposal-list').length, 1)
-  }
-  assert.deepEqual([...tools], ['framivra_timeline_read', 'framivra_timeline_propose', 'framivra_proposal_status'])
+  assert.deepEqual(requests.map(x => x.op), ['open', 'query'])
+  if (process.platform === 'win32') assert(document.body.textContent.includes('当前宿主仅支持只读时间线'))
+  assert.deepEqual([...tools], ['framivra_timeline_read'])
   assert(requests.every(x => x.sessionId === 'one'))
   assert(document.body.textContent.includes('已保存视图'))
   assert(!document.body.textContent.includes('9007199254740993'), 'raw JSON is not rendered')
