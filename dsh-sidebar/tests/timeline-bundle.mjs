@@ -47,7 +47,7 @@ try {
   assert.equal(document.querySelectorAll('.fv-clip').length, 3)
   assert.equal(document.querySelectorAll('.fv-row').length, 3)
   assert(document.querySelector('style').textContent.includes('.fv-timeline .fv-clip'))
-  assert.equal(document.querySelector('link[rel="stylesheet"]'), null)
+  assert(document.querySelector('link[rel="stylesheet"]') === null, "Expected absent DOM node: document.querySelector('link[rel=\"stylesheet\"]')")
   assert(document.body.textContent.includes('external.srt'))
   assert(document.body.textContent.includes('9007199254740993'))
   const ruler = document.querySelector('.fv-ruler')

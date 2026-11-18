@@ -1,3 +1,4 @@
+import { domTextExcerpt } from './dom-diagnostics.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import React, { act } from 'react'
@@ -78,7 +79,7 @@ test('control responses are bounded BEFORE decode: oversized body fails closed w
   await act(async () => root.render(h(PreviewBody, { ...host, sessionId: 'one' })))
   await openViaPathForm(dom)
   await settle(() => document.body.textContent.includes('BODY_LIMIT'), 'oversized response surfaces the bound')
-  assert(document.body.textContent.includes('BODY_LIMIT'), `error mentions the bound: ${document.body.textContent.slice(0, 200)}`)
+  assert(document.body.textContent.includes('BODY_LIMIT'), `error mentions the bound: ${domTextExcerpt(document)}`)
   assert(document.querySelector('.fv-ruler') === null, 'oversized response never produces a ready timeline')
   assert.equal(document.querySelectorAll('video').length, 0)
 })
@@ -161,9 +162,9 @@ test('S/Delete act only on the current authorized managed selection and never pl
   await key(monitor, 's'); await key(monitor, 'Delete')
   assert(!requests.some(r => r.op === 'invalidate-plan'), 'no quick action before write authorization')
   // authorize write, select the single managed block, pin an interior frame
-  await act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === '明确允许本会话向此工程及 core 历史写入').click())
-  await settle(() => [...document.querySelectorAll('button')].some(b => b.textContent === '撤销本会话/工程写许可'), 'write grant active')
-  const pickBlock = () => [...document.querySelectorAll('button')].find(b => b.textContent === '选择块 /t/0/b/0')
+  await act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === '启用编辑').click())
+  await settle(() => [...document.querySelectorAll('button')].some(b => b.textContent === '撤销许可'), 'write grant active')
+  const pickBlock = () => document.querySelector('.fv-clip')
   await settle(() => pickBlock())
   await act(async () => pickBlock().click())
   await act(async () => Simulate.change(document.querySelector('input[name="framivra-frame"]'), { target: { value: '10' } }))
@@ -184,7 +185,7 @@ test('S/Delete act only on the current authorized managed selection and never pl
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
   assert.equal(requests.filter(r => r.op === 'invalidate-plan').length, before3, 'input fields are never intercepted')
   // no block selected (track selection): S does nothing
-  const pickTrack = () => [...document.querySelectorAll('button')].find(b => b.textContent === '选择轨道 /t/0')
+  const pickTrack = () => document.querySelector('[aria-label="选择轨道 /t/0"]')
   await act(async () => pickTrack().click())
   const before4 = requests.filter(r => r.op === 'invalidate-plan').length
   await key(monitor, 's')

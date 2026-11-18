@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom'
 import { FrameEpoch, FrameTools } from '../src/client/frame.mjs'
 
 // Presentation-only regression for the FrameTools UI branch: preview stage,
-// objectURL lifecycle, folded prose/certificate, preserved test-facing labels.
+// objectURL lifecycle, folded frame details, preserved test-facing labels.
 // Generate/stage/copy semantics also stay covered by frame-ghost.test.mjs;
 // follow opt-in and serialized cleanup are exercised below with held HTTP replies.
 const raw = '{"project":{"duration_frames":100}}'
@@ -49,7 +49,7 @@ async function fixture(t, { withObjectURL = false } = {}) {
 
 test('prepare and independent HTML trust synchronously invalidate; no layer mode or automatic render', async t => {
   const f = await fixture(t)
-  assert.equal(f.section().querySelector('select'), null)
+  assert(f.section().querySelector('select') === null, "Expected absent DOM node: f.section().querySelector('select')")
   const prepare = [...f.section().querySelectorAll('input')].find(input => input.parentElement.textContent.includes('允许按需准备当前帧图形'))
   assert(prepare); assert.equal(prepare.checked, false)
   assert(!f.section().textContent.includes('仅信任的工程'))
@@ -105,7 +105,7 @@ test('UI prepare allows cold SVG without HTML trust; only explicit clicks send b
   assert(!Object.hasOwn(requests[2], 'prepareGfx')); assert(!Object.hasOwn(requests[2], 'htmlTrust'))
   for (const request of requests) { assert.equal(request.renderConsent, 'cache/preview-only'); assert(!Object.hasOwn(request, 'htmlBlockAddress')) }
 })
-test('frame visual: stage placeholders, folded prose/certificate, labels and consent order preserved', async t => {
+test('frame visual: stage placeholders, folded frame details, labels and consent order preserved', async t => {
   const f = await fixture(t)
   const section = f.section()
   // Consent stays the first input; all four action labels keep their prefixes.
@@ -114,7 +114,7 @@ test('frame visual: stage placeholders, folded prose/certificate, labels and con
   for (const prefix of ['显式生成并验证固定帧 PNG', '复制已生成 PNG', '将该帧 + 精确引用加入当前草稿', '显式取消帧并等待回收']) assert(labels.some(text => text.startsWith(prefix)), prefix)
   assert.equal(section.getAttribute('aria-busy'), 'false')
   assert.deepEqual([...section.children].filter(node => node.tagName !== 'STYLE').map(node => node.className), ['fv-frame-tools-stage fv-program-stage', 'fv-monitor-footer'])
-  assert.equal(section.querySelector('h3'), null, 'no persistent title or version heading')
+  assert(section.querySelector('h3') === null, 'no persistent title or version heading')
   const footer = section.querySelector('.fv-monitor-footer')
   const settings = footer.querySelector('details')
   assert(settings.matches('.fv-monitor-disclosure.fv-monitor-disclosure-up'))
@@ -126,14 +126,13 @@ test('frame visual: stage placeholders, folded prose/certificate, labels and con
   // No frame pinned -> concise placeholder, no img.
   await f.rerender(null)
   assert(section.textContent.includes('未固定帧'))
-  assert.equal(section.querySelector('img'), null)
+  assert(section.querySelector('img') === null, "Expected absent DOM node: section.querySelector('img')")
   // Frame pinned, nothing generated -> no-render placeholder; prose folded into a closed details.
   await f.rerender(10)
   assert(section.textContent.includes('未生成画面（需显式生成）'))
   const details = section.querySelector('.fv-frame-tools-details')
   assert(details && !details.hasAttribute('open'), 'certificate details exists and starts closed')
-  assert(details.textContent.includes('不是成片 QC'), 'boundary prose moved into details')
-  assert.equal(section.querySelector('details pre'), null, 'certificate pre only appears after generation')
+  assert(section.querySelector('details pre') === null, 'no raw certificate shown')
   // Black 16:9 stage CSS contract, fully scoped to .fv-frame-tools.
   assert.equal(section.className, 'fv-frame-tools')
   const css = section.querySelector('style').textContent
@@ -153,8 +152,8 @@ test('frame visual: verified objectURL only from owner.generated.file, revoked o
   const img = f.section().querySelector('img')
   assert(img && img.src === 'blob:frame-1')
   assert(img.alt.includes('已验证合成帧 10'))
-  // Certificate now visible inside the closed details.
-  assert(f.section().querySelector('details pre'), 'certificate pre present after generation')
+  assert(f.section().querySelector('.fv-frame-tools-details').textContent.includes('1920 × 1080 PNG'))
+  assert(f.section().querySelector('details pre') === null, 'verified frame has a summary rather than raw JSON')
   // Replacement revokes the old URL before creating the new one.
   f.owner.generated = second
   await f.rerender(10)
@@ -165,7 +164,7 @@ test('frame visual: verified objectURL only from owner.generated.file, revoked o
   f.owner.invalidate(); f.owner.generated = undefined
   await f.rerender(10)
   assert.deepEqual(f.calls.at(-1), { op: 'revoke', url: 'blob:frame-2' })
-  assert.equal(f.section().querySelector('img'), null)
+  assert(f.section().querySelector('img') === null, "Expected absent DOM node: f.section().querySelector('img')")
   // Unmount of a live preview revokes its URL too.
   f.owner.generated = first
   await f.rerender(10)
@@ -193,7 +192,7 @@ test('verified availability status expires with a dirty preview, without hiding 
   assert(f.section().querySelector('img'))
   assert.match(f.section().querySelector('[role=status]').textContent, /已验证 PNG/)
   f.owner.editChanged({ dirty: true }); await f.rerender()
-  assert.equal(f.section().querySelector('img'), null)
+  assert(f.section().querySelector('img') === null, "Expected absent DOM node: f.section().querySelector('img')")
   assert(generate().disabled)
   assert.match(f.section().querySelector('[role=alert]').textContent, /拒绝生成和加入草稿/)
   assert.match(f.section().querySelector('[role=status]').textContent, /旧画面已失效/)

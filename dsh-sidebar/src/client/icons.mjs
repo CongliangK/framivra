@@ -12,6 +12,8 @@ const h = React.createElement
 
 /** Vendored Lucide node data keyed by app icon name (see file header for provenance). */
 export const iconNodes = {
+  // lucide-static v1.70.0 icon "magnet" (ISC)
+  "magnet": [["path", {"d": "m12 15 4 4"}], ["path", {"d": "M2.352 10.648a1.205 1.205 0 0 0 0 1.704l2.296 2.296a1.205 1.205 0 0 0 1.704 0l6.029-6.029a1 1 0 1 1 3 3l-6.029 6.029a1.205 1.205 0 0 0 0 1.704l2.296 2.296a1.205 1.205 0 0 0 1.704 0l6.365-6.367A1 1 0 0 0 8.716 4.282z"}], ["path", {"d": "m5 8 4 4"}]],
   // lucide-static v1.70.0 icon "film" (ISC)
   "film": [["rect", {"width": "18", "height": "18", "x": "3", "y": "3", "rx": "2"}], ["path", {"d": "M7 3v18"}], ["path", {"d": "M3 7.5h4"}], ["path", {"d": "M3 12h18"}], ["path", {"d": "M3 16.5h4"}], ["path", {"d": "M17 3v18"}], ["path", {"d": "M17 7.5h4"}], ["path", {"d": "M17 16.5h4"}]],
   // lucide-static v1.70.0 icon "folder" (ISC)

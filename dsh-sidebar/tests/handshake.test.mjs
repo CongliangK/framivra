@@ -1,3 +1,4 @@
+import { domTextExcerpt } from './dom-diagnostics.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
@@ -113,7 +114,7 @@ async function mount(t) {
       if (predicate()) return
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)) })
     }
-    assert.fail(`DOM did not settle${message ? ` (${message})` : ''}: ${document.body.textContent.slice(0, 300)}`)
+    assert.fail(`DOM did not settle${message ? ` (${message})` : ''}: ${domTextExcerpt(document)}`)
   }
   return { root, dom, label, settle }
 }

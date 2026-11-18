@@ -94,9 +94,9 @@ test('program monitor switches one visible stage without auto rendering; live co
   assert.equal(live.hidden, true)
   await f.metadata(f.video()); await f.settle(f.video())
   await f.click('实时真预览')
-  assert.equal(document.querySelector('video'), null)
+  assert(document.querySelector('video') === null, "Expected absent DOM node: document.querySelector('video')")
   assert.deepEqual(stages().map(node => node.dataset.mode), ['live'])
-  assert.equal(document.querySelector('.fv-frame-tools'), live)
+  assert(document.querySelector('.fv-frame-tools') === live, "Expected same DOM node: document.querySelector('.fv-frame-tools')")
   assert.equal(consent.checked, true)
   await f.render({ frame: undefined, blank: false })
   const pinCount = f.pins.length

@@ -3,6 +3,8 @@ import { displayExtent, windowFor, zoomWindow, panWindow, framePercent, clipGeom
 import { Icon } from './icons.mjs'
 import { ToolButton, iconControlCSS } from './icon-controls.mjs'
 import { formatTimecode, projectClock } from './timecode.mjs'
+import { familyName } from './editor-controls.mjs'
+import { closeGapIntent, internalGaps, snapDelta } from './direct-edit.mjs'
 
 import { emptySelection, transitionSelection } from './selection.mjs'
 
@@ -22,9 +24,6 @@ const css = `
 .fv-timeline .fv-tools{display:flex;flex:none;flex-wrap:nowrap;gap:4px;align-items:center}
 .fv-timeline .fv-tools svg{flex:none;opacity:.85}
 .fv-timeline .fv-status{display:flex;flex-wrap:wrap;gap:2px 12px;margin:3px 0;font-size:11.5px;font-variant-numeric:tabular-nums;color:color-mix(in srgb,currentColor 80%,transparent)}
-.fv-timeline .fv-help{margin:4px 0;font-size:12px}
-.fv-timeline .fv-help summary{cursor:pointer;color:color-mix(in srgb,currentColor 68%,transparent)}
-.fv-timeline .fv-help p{margin:6px 0}
 .fv-timeline .fv-scroll{max-height:460px;overflow:auto;border:1px solid color-mix(in srgb,currentColor 35%,transparent);border-radius:6px;padding:4px 0;min-width:0}
 /* Ruler row and every track row share one grid: fixed header column + aligned frame area. */
 .fv-timeline .fv-ruler-row,.fv-timeline .fv-track{display:grid;grid-template-columns:var(--fv-tl-head-w,112px) minmax(0,1fr);column-gap:8px;align-items:stretch}
@@ -46,6 +45,19 @@ const css = `
 .fv-timeline .fv-empty-note{font-size:10px;padding-left:6px;color:color-mix(in srgb,currentColor 55%,transparent);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fv-timeline .fv-row{position:relative;height:var(--fv-lane-height,46px);margin:2px 0;background:color-mix(in srgb,currentColor 6%,transparent);border-radius:4px;background-image:repeating-linear-gradient(90deg,transparent 0,transparent calc(25% - 1px),color-mix(in srgb,currentColor 9%,transparent) 25%)}
 .fv-timeline .fv-clip{position:absolute;top:var(--fv-clip-top,3px);height:var(--fv-clip-height,40px);min-height:0;min-width:3px;padding:2px 6px!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;font-size:12px;align-items:center;border:1px solid color-mix(in srgb,var(--fv-tl-video,#6f8fad) 60%,transparent);background:color-mix(in srgb,var(--fv-tl-video,#6f8fad) 26%,transparent)}
+.fv-timeline .fv-clip{user-select:none}
+.fv-timeline .fv-clip[data-movable=true]{cursor:grab;touch-action:none}
+.fv-timeline[data-dragging=true] .fv-clip[data-movable=true]{cursor:grabbing}
+.fv-timeline .fv-clip[data-pending=true]{opacity:.55}
+.fv-timeline .fv-placement{position:absolute;top:var(--fv-clip-top);height:var(--fv-clip-height);border:2px dashed var(--fv-tl-hit,#e1ae50);border-radius:4px;pointer-events:none;z-index:4;min-width:3px}
+.fv-timeline .fv-placement[data-kind=drag]{border-style:solid;background:color-mix(in srgb,var(--fv-tl-accent) 30%,transparent);border-color:var(--fv-tl-accent)}
+.fv-timeline .fv-placement[data-kind=blocked]{border-color:var(--fv-tl-playhead)}
+.fv-timeline .fv-drag-feedback{position:absolute;bottom:6px;right:8px;z-index:5;max-width:calc(100% - 16px);background:var(--fv-tl-surface);border:1px solid var(--fv-line,currentColor);border-radius:5px;padding:3px 8px;display:flex;align-items:center;gap:6px;font-size:12px;font-variant-numeric:tabular-nums;pointer-events:none}
+.fv-timeline .fv-drag-feedback button{pointer-events:auto}
+.fv-timeline .fv-snap-line{border-color:var(--fv-tl-accent);z-index:5}
+.fv-timeline .fv-snap-line::before{display:none}
+.fv-timeline .fv-gap{position:absolute;top:var(--fv-clip-top);height:var(--fv-clip-height);min-height:0;padding:0!important;overflow:hidden;color:var(--fv-muted);border-color:transparent;background:transparent;opacity:.7;z-index:1}
+.fv-timeline .fv-gap:hover,.fv-timeline .fv-gap:focus-visible{opacity:1;border-color:var(--fv-accent);color:var(--fv-text)}
 .fv-timeline .fv-clip:hover{filter:brightness(1.12)}
 .fv-timeline .fv-gfx{border-color:color-mix(in srgb,var(--fv-tl-gfx,#a678d9) 60%,transparent);background:color-mix(in srgb,var(--fv-tl-gfx,#a678d9) 26%,transparent)}
 .fv-timeline .fv-audio{border-color:color-mix(in srgb,var(--fv-tl-audio,#4fae87) 60%,transparent);background:color-mix(in srgb,var(--fv-tl-audio,#4fae87) 26%,transparent)}
@@ -97,22 +109,18 @@ const laneCSS = `
 const label = (data, fallback) => typeof data?.name === 'string' ? data.name : typeof data?.text === 'string' ? data.text : typeof data?.src === 'string' ? data.src : fallback
 const trackIcon = kind => kind === 'audio' ? 'audio' : kind === 'subtitles' ? 'text' : kind === 'gfx' ? 'clip' : 'film'
 
-// The help/legend text, extracted verbatim from the inline details so the
-// compact timeline can omit it while the inspector mounts the same content.
-// Same labels and copy; standalone TimelineView keeps its inline default.
-export function TimelineHelp({ result, onGesture }) {
-  return h('details', { className: 'fv-help' },
-    h('summary', null, '操作说明（选择 / 播放头 / 拖拽 / 精度）'),
-    h('p', null, `全部 ${result.tracks.length} 轨 / ${result.blocks.length} 块 · video / gfx / audio / subtitles；显示仅映射已保存 kernel range，不查询、不渲染。${onGesture ? '拖动块 / 跨轨 / 两侧 trim 手柄仅生成 ghost + 未保存 batch，预检与提交在下方；键盘使用专用表单。' : '未授写许可，不执行编辑或渲染。'}`),
-    h('p', null, '帧标尺：点击/拖动固定播放头；聚焦标尺用 ←/→、Home/End。全片导航条：点击/拖动或 ←/→/Home/End 只平移缩放显示窗口，不查询、不渲染、不改选择。像素仅概览（1/1024 CSS px 采样），高帧/细块请放大或用整数输入精确定位。Ctrl/⌘ 点击切换多选，Shift 点击按 kernel 查询顺序选择同类区间；引用是组内最后激活的一项，引用不批量；写授权后可用多选批次。'))
-}
+const kindOfTrack = track => track.family === 'video' && track.data?.kind === 'gfx' ? 'gfx' : track.family
+const trackKey = item => `${item.family}:${item.track_index}`
+const trackId = track => track.family === 'subtitles' ? 'subtitles' : track.data?.id
+const trackLabel = track => label(track.data, `${familyName(kindOfTrack(track))} ${track.track_index + 1}`)
 
-export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, compact = false, selectionTools, focusTool }) {
+export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onUndo, compact = false, selectionTools, focusTool }) {
   const extent = displayExtent(snapshot, result)
   const fps = snapshot.document?.project?.fps, clock = projectClock(fps)
   const time = value => formatTimecode(value, fps) ?? '时间码不可显示'
   const [window, setWindow] = useState()
   const [hover, setHover] = useState()
+  const [snap, setSnap] = useState(true)
   const minLaneHeight = globalThis.window?.matchMedia?.('(pointer:coarse)').matches ? 24 : 14
   const [requestedLaneHeight, setLaneHeight] = useState(46)
   const laneHeight = Math.max(minLaneHeight, requestedLaneHeight)
@@ -164,7 +172,10 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
   // never on a keyboard activation or an unrelated pointer's end/capture loss.
   const pointerTails = useRef(new Set())
   const [ghost, setGhost] = useState()
-  const [gestureError, setGestureError] = useState('')
+  const [feedback, setFeedback] = useState()
+  const [saving, setSaving] = useState()
+  const directOwner = useRef()
+  useLayoutEffect(() => () => { directOwner.current = undefined }, [])
   function releaseGesture(g) {
     try { if (g.node.hasPointerCapture?.(g.pointer)) g.node.releasePointerCapture(g.pointer) } catch { /* detached/lost capture */ }
   }
@@ -174,11 +185,12 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     gesture.current = undefined
     pointerTails.current.add(g.pointer)
     setGhost(undefined)
+    if (g.moved) setFeedback({ text: '拖动已取消。' })
     g.publish?.(g.token, false)
     releaseGesture(g)
   }
-  useLayoutEffect(() => () => cancelGesture(), [snapshot.content_version, onGesture, onGestureState, intent, frame])
-  useEffect(() => { setWindow(undefined); setHover(undefined); setLocalIntent(emptySelection()); drag.current = undefined; overviewPointer.current = undefined }, [snapshot.content_version])
+  useLayoutEffect(() => () => cancelGesture(), [snapshot.content_version, onGesture, onGestureState, gestureUnavailable, intent, frame, window, snap])
+  useEffect(() => { setHover(undefined); setLocalIntent(emptySelection()); drag.current = undefined; overviewPointer.current = undefined }, [snapshot.content_version])
   useEffect(() => {
     // The native dialog collapse never remounts this component, and window
     // blur / hidden tab can end a pointer capture WITHOUT delivering any
@@ -211,7 +223,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
   const pinned = safeFrame(frame) ? frame : undefined
   const hitSet = hits ? new Set(hits.blocks.map(block => block.address)) : undefined
   const groups = new Map()
-  const kindOf = new Map(result.tracks.map(track => [`${track.family}:${track.track_index}`, track.family === 'video' && track.data?.kind === 'gfx' ? 'gfx' : track.family]))
+  const tracksByKey = new Map(result.tracks.map(track => [trackKey(track), track]))
   for (const block of result.blocks) {
     const key = `${block.family}:${block.track_index}`
     if (!groups.has(key)) groups.set(key, [])
@@ -251,74 +263,144 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     onFrame?.(next)
   }
   function beginGesture(event, block, track, mode) {
-    if (!onGesture || event.button !== 0 || !block.data?.id || event.ctrlKey || event.metaKey) return
-    if ((mode === 'left' || mode === 'right') && event.pointerType === 'touch') {
-      // Hybrid-device safety: a touch pointer never starts a trim even where the
-      // handle is visible (fine primary pointer). Keep selection and move.
-      setGestureError('触控指针不支持 trim 手柄：请用下方整数帧表单精确修改块起始/结束帧。')
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) return
+    if (mode !== 'move' && event.pointerType === 'touch') {
+      setFeedback({ problem: true, text: '触控指针不支持拖动裁剪，请在属性面板输入帧号。' })
       return
     }
+    if (directOwner.current) return
     const origin = pointerFrame(event.clientX, ruler.current.getBoundingClientRect(), view)
     if (origin === undefined) return
-    const moving = selected.includes(`block:${block.address}`) ? result.blocks.filter(b => selected.includes(`block:${b.address}`)) : [block]
-    const next = { pointer: event.pointerId, node: event.currentTarget, origin, block, track, mode, moving, token: {}, publish: onGestureState }
-    // Exclude frame work in this very DOM event, before capture/release can
-    // dispatch callbacks. Retiring the old token cannot clear this new one.
-    next.publish?.(next.token, true)
-    cancelGesture()
+    const moving = mode === 'move' && selected.includes(`block:${block.address}`) ? selectedBlocks : [block]
+    const allowed = onGesture && moving.every(item => typeof item.data?.id === 'string')
+    const next = { pointer: event.pointerId, node: event.currentTarget, origin, x: event.clientX, y: event.clientY, block, track, mode, moving, token: {},
+      reason: !onGesture ? gestureUnavailable ?? '请先启用编辑。' : !allowed ? '此片段不可编辑。' : undefined,
+      publish: allowed ? onGestureState : undefined }
+    const previous = gesture.current
     gesture.current = next
-    event.currentTarget.setPointerCapture?.(event.pointerId)
+    try { event.currentTarget.setPointerCapture?.(event.pointerId) }
+    catch { gesture.current = previous; setFeedback({ problem: true, text: '未能开始拖动，请重试。' }); return }
+    next.publish?.(next.token, true)
+    if (previous && previous.pointer !== next.pointer) {
+      pointerTails.current.add(previous.pointer)
+      previous.publish?.(previous.token, false)
+      releaseGesture(previous)
+    }
+    setGhost(undefined)
+    setFeedback(undefined)
   }
   function updateGesture(event) {
     const g = gesture.current
     if (!g || g.pointer !== event.pointerId || g.node !== event.currentTarget) return
-    const at = pointerFrame(event.clientX, ruler.current.getBoundingClientRect(), view)
+    const rect = ruler.current.getBoundingClientRect()
+    const at = pointerFrame(event.clientX, rect, view)
     if (at === undefined) return
+    if (!g.moved && Math.max(Math.abs(event.clientX - g.x), Math.abs(event.clientY - g.y)) < 3) return g
+    g.moved = true
     let target = g.track
-    for (const [key, node] of trackNodes.current) {
-      if (!node) continue
-      const box = node.getBoundingClientRect()
-      if (event.clientY >= box.top && event.clientY < box.bottom) { target = result.tracks.find(t => `${t.family}:${t.track_index}` === key); break }
+    if (g.mode === 'move') {
+      target = undefined
+      for (const [key, node] of trackNodes.current) {
+        const box = node.getBoundingClientRect()
+        if (event.clientY >= box.top && event.clientY < box.bottom) { target = tracksByKey.get(key); break }
+      }
     }
-    const delta = at - g.origin
-    setGhost({ ...g, delta, target })
-    return { ...g, delta, target }
+    let placed = { delta: at - g.origin }
+    const within = delta => g.mode === 'move'
+      ? g.moving.every(({ range }) => safeFrame(range[0] + delta) && safeFrame(range[1] + delta) && range[1] + delta <= extent.end)
+      : g.mode === 'left' ? delta >= 0 && delta < g.block.range[1] - g.block.range[0] : delta <= 0 && -delta < g.block.range[1] - g.block.range[0]
+    if (snap && !event.altKey && !g.reason && target && (placed.delta !== 0 || target !== g.track)) {
+      placed = snapDelta({ delta: placed.delta, range: g.block.range, mode: g.mode, playhead: pinned, extent: extent.end, span, width: rect.width,
+        neighbors: (groups.get(trackKey(target)) ?? []).filter(block => !g.moving.includes(block)), accepts: within })
+    }
+    const { delta, frame: snapFrame } = placed
+    let problem = g.reason
+    let placements = [], operations = []
+    if (!problem && g.mode === 'move') {
+      if (!target) problem = '请把片段放到轨道内。'
+      else {
+        placements = g.moving.map(block => {
+          const track = trackKey(block) === trackKey(g.track) ? target : tracksByKey.get(trackKey(block))
+          return { block, track, range: block.range.map(value => value + delta) }
+        })
+        if (kindOfTrack(target) !== kindOfTrack(g.track) || !trackId(target)) problem = '只能移到同类型的可编辑轨道。'
+        else if (placements.some(({ range }) => !range.every(safeFrame) || range[1] > extent.end)) problem = '片段不能超出工程范围。'
+        else if (delta || target !== g.track) operations = placements.map(({ block, track, range }) => ({ op: 'block.move', id: block.data.id, track_id: trackId(track), at: range[0] }))
+      }
+    } else if (!problem) {
+      const [start, end] = g.block.range
+      const range = [start + (g.mode === 'left' ? delta : 0), end + (g.mode === 'right' ? delta : 0)]
+      if (range[0] < start || range[1] > end || range[0] >= range[1]) problem = '只能向内裁剪，至少保留 1 帧。'
+      else {
+        placements = [{ block: g.block, track: g.track, range }]
+        if (delta) operations = [{ op: 'block.trim', id: g.block.data.id, start: range[0], end: range[1], fade_policy: 'preserve-content' }]
+      }
+    }
+    const primary = placements.find(entry => entry.block === g.block)
+    const text = problem || (primary ? `${g.mode === 'move' ? trackLabel(primary.track) : '裁剪'} · ${time(primary.range[0])}–${time(primary.range[1])}` : '')
+    const next = { ...g, placements, operations, problem, text, snapFrame }
+    setGhost(next)
+    return next
   }
   function endGesture(event) {
     const g = updateGesture(event)
     if (!g) return
-    gesture.current = undefined; setGhost(undefined)
-    if (!g.delta && (g.mode !== 'move' || g.target.address === g.track.address)) {
-      g.publish?.(g.token, false); releaseGesture(g); return
-    }
-    pointerTails.current.add(g.pointer)
+    gesture.current = undefined
+    setGhost(undefined)
     try {
-      if (g.mode === 'move') {
-        const operations = g.moving.map(b => { const start = b.range[0] + g.delta; if (!Number.isSafeInteger(start) || start < 0) throw new Error('拖动结果不是可编辑安全整数帧')
-          const original = result.tracks.find(t => t.family === b.family && t.track_index === b.track_index)
-          const target = b.address === g.block.address || (b.family === g.block.family && b.track_index === g.block.track_index) ? g.target : original
-          return { op: 'block.move', id: b.data.id, track_id: target.family === 'subtitles' ? 'subtitles' : target.data.id, at: start }
-        })
-        onGesture(operations)
-      } else {
-        const start = g.mode === 'left' ? g.block.range[0] + g.delta : g.block.range[0]
-        const end = g.mode === 'right' ? g.block.range[1] + g.delta : g.block.range[1]
-        if (![start,end].every(Number.isSafeInteger)) throw new Error('trim 帧不安全，改用整数表单')
-        onGesture([{ op: 'block.trim', id: g.block.data.id, start, end, fade_policy: 'preserve-content' }])
-      }
-      setGestureError('拖动/trim 已加入未保存批次。边界、源窗、AV、gfx 和 fade 以内核计划为准；默认明确 preserve-content，可在表单选择另一策略。')
-    } catch (error) { setGestureError(error.message) }
+      if (!g.moved) return
+      pointerTails.current.add(g.pointer)
+      if (g.problem) { setFeedback({ problem: true, text: g.problem, open: Boolean(g.reason) }); return }
+      if (!g.operations.length) { setFeedback({ text: '位置未变化，可放大后逐帧调整。' }); return }
+      applyDirect(g.operations, g.placements, g.block.data.id)
+    } catch (error) { setFeedback({ problem: true, text: error.message, open: true }) }
     finally {
-      // onGesture publishes queued dirty synchronously before exclusion ends.
       g.publish?.(g.token, false)
       releaseGesture(g)
     }
   }
+  function applyDirect(operations, placements = [], focusId, label = '已保存。') {
+    if (directOwner.current) return
+    if (!onGesture) { setFeedback({ problem: true, text: gestureUnavailable || '请先启用编辑。', open: true }); return }
+    const token = {}
+    directOwner.current = token
+    setSaving({ placements })
+    setFeedback(undefined)
+    let submitted
+    try { submitted = onGesture(operations, { focusId }) }
+    catch (error) { finish(error); return }
+    // The callback takes ownership synchronously before we release the pointer
+    // and preview exclusion; the promise covers plan, write, and fresh readback.
+    void Promise.resolve(submitted).then(() => finish(), finish)
+    function finish(error) {
+      if (directOwner.current !== token) return
+      directOwner.current = undefined
+      setSaving(undefined)
+      setFeedback(error ? { problem: !error.applied, text: error.message, open: error.outcomeUnknown || error.applied || error.recoveryRequired } : { text: label })
+    }
+  }
+  function gapControl(track, range) {
+    const geometry = clipGeometry(range, view)
+    if (!geometry || geometry.width <= 0 || !trackId(track)) return null
+    const duration = range[1] - range[0]
+    const name = `闭合空隙 · ${trackLabel(track)} · ${duration} 帧`
+    return h('button', { key: `gap:${range[0]}`, type: 'button', className: 'fv-gap', disabled: Boolean(saving),
+      style: { left: `${geometry.left}%`, width: `${geometry.width}%` }, 'aria-label': name,
+      title: `${name}；仅将当前轨道后续片段向左移动`, onClick: () => applyDirect([closeGapIntent(track, range)], [], undefined, `已闭合 ${duration} 帧空隙。`) },
+      h('span', { 'aria-hidden': true }, '↔'))
+  }
+  function placement(entry, kind) {
+    const { range, block } = entry
+    const geometry = range.every(safeFrame) && range[0] < range[1] ? clipGeometry(range, view) : undefined
+    return geometry ? h('span', { key: `${kind}:${block.address}`, className: 'fv-placement', 'data-kind': kind, 'aria-hidden': true,
+      style: { left: `${geometry.left}%`, width: `${geometry.width}%` } }) : null
+  }
   const lines = () => [
     pinned !== undefined && pinned >= view.start && pinned < view.end ? h('span', { key: 'pin', className: 'fv-line', style: { left: `${framePercent(pinned, view)}%` }, 'aria-hidden': true }) : null,
+    ghost && !ghost.problem && safeFrame(ghost.snapFrame) && ghost.snapFrame >= view.start && ghost.snapFrame <= view.end ? h('span', { key: 'snap', className: 'fv-line fv-snap-line', style: { left: `${framePercent(ghost.snapFrame, view)}%` }, 'aria-hidden': true }) : null,
     hover !== undefined && hover >= view.start && hover < view.end ? h('span', { key: 'hover', className: 'fv-line fv-hover', style: { left: `${framePercent(hover, view)}%` }, 'aria-hidden': true }) : null,
   ]
-  return h('section', { className: compact ? 'fv-timeline fv-compact' : 'fv-timeline', 'data-small-lanes': laneHeight < 30, 'data-sized-lanes': fitLanes || laneHeight < 46, style: { '--fv-lane-height': `${laneHeight}px`, '--fv-clip-top': `${Math.min(3, Math.floor(laneHeight / 10))}px`, '--fv-clip-height': `${laneHeight - 2 * Math.min(3, Math.floor(laneHeight / 10))}px` }, 'aria-label': '完整只读可视时间轴',
+  return h('section', { className: compact ? 'fv-timeline fv-compact' : 'fv-timeline', 'data-small-lanes': laneHeight < 30, 'data-sized-lanes': fitLanes || laneHeight < 46, style: { '--fv-lane-height': `${laneHeight}px`, '--fv-clip-top': `${Math.min(3, Math.floor(laneHeight / 10))}px`, '--fv-clip-height': `${laneHeight - 2 * Math.min(3, Math.floor(laneHeight / 10))}px` }, 'aria-label': '完整只读可视时间轴', 'data-dragging': Boolean(ghost && !ghost.problem),
     onPointerDownCapture: event => pointerTails.current.delete(event.pointerId),
     onClickCapture: event => {
       if (event.detail === 0 || !pointerTails.current.delete(event.nativeEvent.pointerId)) return
@@ -329,6 +411,9 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     h('div', { className: 'fv-head' },
       h('h3', { title: label(snapshot.document?.project, '时间线') }, label(snapshot.document?.project, '时间线')),
       focusTool,
+      compact ? h('div', { className: 'fv-tools', role: 'group', 'aria-label': '直接剪辑' },
+        h(ToolButton, { icon: 'magnet', label: '吸附', tooltip: '吸附到同轨片段边缘或播放头 · 按住 Alt 临时关闭', 'aria-pressed': snap, onClick: () => setSnap(value => !value) }),
+        h(ToolButton, { icon: 'undo', label: '撤销上次编辑', disabled: !onUndo || Boolean(saving), tooltip: '单步撤销最近一次保存', onClick: () => { setFeedback(undefined); void onUndo?.().then(answer => setFeedback(answer?.ok ? { text: '已撤销。' } : { problem: true, text: '未能确认撤销，请查看编辑状态。', open: true }), error => setFeedback({ problem: true, text: error.message, open: true })) } })) : null,
       h('details', { className: 'fv-disclosure', name: disclosureGroup },
         h('summary', { 'aria-label': '轨道高度', title: '轨道高度与适配全部轨道' }, h(Icon, { name: 'settings', size: 15 })),
         h('div', { className: 'fv-popover fv-lane-controls' },
@@ -349,21 +434,18 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
       h('details', { className: 'fv-disclosure', name: disclosureGroup },
         h('summary', { 'aria-label': '时间线状态', title: '时间线状态与诊断' }, h(Icon, { name: 'info', size: 15 })),
         h('div', { className: 'fv-popover' },
-          h('span', { className: 'fv-badge' }, onGesture ? '可拖拽 · 未保存 intents' : '只读'),
+          h('span', { className: 'fv-badge' }, onGesture ? '可编辑' : '只读'),
     h('div', { className: 'fv-status', role: 'status' },
       h('span', { 'aria-label': '可见帧范围' }, `时间码窗口 [${time(view.start)}, ${time(view.end)}) / 全片 [${time(0)}, ${time(extent.end)})`),
       h('span', null, `播放头 ${pinned === undefined ? '未固定' : time(pinned)}`),
       h('span', null, `悬停时间码：${hover === undefined ? '—' : time(hover)}`),
       clock?.den === 1001 ? h('span', null, `NTSC non-drop · 名义 ${clock.nominal} fps（不是墙钟）`) : null,
       h('span', null, `已选 ${selected.length}`),
-      h('span', { 'aria-label': '活动引用' }, `活动引用：${activeSelection ? `${activeSelection.kind} ${activeSelection.address}` : '无'}`)),
-    ghost ? h('p', { role: 'status', 'aria-label': '未保存拖动 ghost', style: { margin: '4px 0', fontSize: '12px' } }, `未保存 ghost · ${ghost.mode} 偏移 ${ghost.delta} 帧 → ${ghost.target.data?.name ?? ghost.target.address}（未改文件/引用）`) : null,
-    gestureError ? h('p', { role: 'status', style: { margin: '4px 0', fontSize: '12px' } }, gestureError) : null,
-    ))),
-    h('span', { className: 'fv-live-status', role: 'status', 'aria-atomic': true }, `播放头 ${pinned === undefined ? '未固定' : time(pinned)} · 已选 ${selected.length}${ghost ? ` · 未保存 ghost 偏移 ${ghost.delta} 帧` : ''}${gestureError ? ` · ${gestureError}` : ''}`),
-    // Compact mode (monitor-pane embedding) suppresses only the inline help; the
-    // inspector mounts the identical TimelineHelp content separately.
-    compact ? null : h(TimelineHelp, { result, onGesture }),
+      h('span', { 'aria-label': '活动引用' }, `活动引用：${activeSelection ? activeSelection.address : '无'}`))))),
+    h('span', { className: 'fv-live-status', role: 'status', 'aria-atomic': true }, `播放头 ${pinned === undefined ? '未固定' : time(pinned)} · 已选 ${selected.length}`),
+    ghost || saving || feedback ? h('div', { className: 'fv-drag-feedback', 'aria-label': ghost ? '未保存拖动 ghost' : undefined },
+      h('span', { role: ghost?.problem || (!ghost && feedback?.problem) ? 'alert' : 'status' }, ghost ? `${ghost.text}${safeFrame(ghost.snapFrame) && !ghost.problem ? ' · 已吸附' : ''}` : saving ? '正在保存…' : feedback.text),
+      !ghost && !saving && feedback?.open && onOpenEdits ? h('button', { type: 'button', onClick: onOpenEdits }, '打开编辑') : null) : null,
     h('div', { className: 'fv-scroll', ref: scrollport, tabIndex: 0, role: 'region', 'aria-label': '轨道垂直滚动区' },
       h('div', { className: 'fv-overview-row' },
         h('div', { className: 'fv-corner', 'aria-hidden': true }, '全片'),
@@ -392,7 +474,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
           onLostPointerCapture: event => { if (overviewPointer.current === event.pointerId) overviewPointer.current = undefined },
         },
           result.blocks.map(block => { const geometry = clipGeometry(block.range, extent); if (!geometry) return null
-            return h('span', { key: block.address, className: `fv-ov fv-ov-${kindOf.get(`${block.family}:${block.track_index}`) ?? block.family}`, style: { left: `${geometry.left}%`, width: `${Math.max(geometry.width, 0.4)}%` }, title: `${label(block.data, block.address)} · [${time(block.range[0])}, ${time(block.range[1])})`, 'aria-hidden': true }) }),
+            return h('span', { key: block.address, className: `fv-ov fv-ov-${kindOfTrack(tracksByKey.get(trackKey(block)) ?? block)}`, style: { left: `${geometry.left}%`, width: `${Math.max(geometry.width, 0.4)}%` }, title: `${label(block.data, block.address)} · [${time(block.range[0])}, ${time(block.range[1])})`, 'aria-hidden': true }) }),
           h('span', { className: 'fv-ov-window', style: { left: `${framePercent(view.start, extent)}%`, width: `${Math.max(framePercent(view.end, extent) - framePercent(view.start, extent), 0.6)}%` }, 'aria-hidden': true }),
           pinned !== undefined ? h('span', { className: 'fv-ov-pin', style: { left: `${framePercent(pinned, extent)}%` }, 'aria-hidden': true }) : null)),
       h('div', { className: 'fv-ruler-row' },
@@ -424,28 +506,30 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
       result.tracks.map(track => {
         const key = `${track.family}:${track.track_index}`
         const blocks = groups.get(key) ?? []
-        const kind = track.family === 'video' && track.data?.kind === 'gfx' ? 'gfx' : track.family
-        const name = `${kind} / track ${track.track_index} · ${label(track.data, track.address)}`
+        const kind = kindOfTrack(track)
+        const name = trackLabel(track)
         const trackSelection = { kind: 'track', address: track.address }
         return h('section', { key, ref: node => { if (node) trackNodes.current.set(key, node); else trackNodes.current.delete(key) }, className: 'fv-track', 'aria-label': name },
           h('div', { className: 'fv-track-head' },
             h('button', { className: 'fv-track-title', type: 'button', title: name, 'aria-label': `选择轨道 ${track.address}`, 'aria-pressed': selected.includes(`track:${track.address}`), onClick: event => pick(trackSelection, event) }, h(Icon, { name: trackIcon(kind), size: 13 }), h('span', { className: 'fv-track-name' }, name)),
             blocks.length === 0 ? h('span', { className: 'fv-empty-note', title: '空轨道（kernel 未返回存储块）' }, '空轨道') : null),
           h('div', { className: 'fv-lanes' },
-            blocks.length === 0 ? null : displayLanes(blocks).map((row, index) => h('div', { className: 'fv-row', key: index, 'aria-label': `显示子行 ${index + 1}（不是新轨道）` },
+            (blocks.length ? displayLanes(blocks) : [[]]).map((row, index) => h('div', { className: 'fv-row', key: index, 'aria-label': `显示子行 ${index + 1}（不是新轨道）` },
               row.map(block => {
                 const geometry = clipGeometry(block.range, view)
                 if (!geometry) return null
                 const text = label(block.data, block.address)
                 const duration = block.range[1] - block.range[0]
-                const events = mode => ({ onPointerDown: e => beginGesture(e, block, track, mode), onPointerMove: updateGesture, onPointerUp: endGesture, onPointerCancel: e => { cancelGesture(e); if (!gesture.current) setGhost(undefined) }, onLostPointerCapture: e => { cancelGesture(e); if (!gesture.current) setGhost(undefined) } })
-                const button = h('button', { key: 'body', type: 'button', className: `fv-clip fv-${kind}`, style: { left: `${geometry.left}%`, width: `${geometry.width}%`, maxWidth: `${100 - geometry.left}%`, touchAction: onGesture ? 'none' : undefined },
+                const events = mode => ({ onPointerDown: e => beginGesture(e, block, track, mode), onPointerMove: updateGesture, onPointerUp: endGesture, onPointerCancel: e => cancelGesture(e), onLostPointerCapture: e => cancelGesture(e) })
+                const button = h('button', { key: 'body', type: 'button', className: `fv-clip fv-${kind}`, style: { left: `${geometry.left}%`, width: `${geometry.width}%`, maxWidth: `${100 - geometry.left}%` }, 'data-movable': Boolean(onGesture && block.data?.id), 'data-pending': Boolean(saving?.placements.some(item => item.block.address === block.address)),
                   title: `${text}\n${block.address} · [${time(block.range[0])}, ${time(block.range[1])}) · 长度 ${time(duration)}`, 'aria-label': `选择块 ${block.address} · ${text} · 帧 [${block.range[0]}, ${block.range[1]})`,
                   'aria-pressed': selected.includes(`block:${block.address}`), 'data-hit': hitSet?.has(block.address) ?? false,
-                  onClick: event => pick({ kind: 'block', address: block.address }, event), ...events('move'),
+                  onDragStart: event => event.preventDefault(), onClick: event => pick({ kind: 'block', address: block.address }, event), ...events('move'),
                 }, h('span', { className: 'fv-clip-name' }, text), Number.isSafeInteger(duration) && duration >= 0 ? h('span', { className: 'fv-clip-len' }, time(duration)) : null)
-                const handles = onGesture && block.data?.id ? ['left','right'].map(mode => h('button',{ key:mode,type:'button',className:'fv-trim','aria-label':`${mode === 'left' ? '左' : '右'} trim 手柄 ${block.address}`,title:'仅 inward trim；拖动后内核预检。触控请用下方精确帧表单。',style:{position:'absolute',top:'var(--fv-clip-top)',left:`${mode === 'left' ? geometry.left : geometry.left+geometry.width}%`,transform:mode==='right'?'translateX(-100%)':undefined,width:7,height:'var(--fv-clip-height)',padding:0,zIndex:3,touchAction:'none',cursor:'ew-resize'},...events(mode)})) : []
+                const handles = onGesture && block.data?.id && kind !== 'gfx' ? ['left','right'].filter(mode => mode === 'left' ? block.range[0] >= view.start : block.range[1] <= view.end).map(mode => h('button',{ key:mode,type:'button',className:'fv-trim','aria-label':`${mode === 'left' ? '左' : '右'} trim 手柄 ${block.address}`,title:'向内拖动以裁剪',style:{position:'absolute',top:'var(--fv-clip-top)',left:`${mode === 'left' ? geometry.left : geometry.left+geometry.width}%`,transform:mode==='right'?'translateX(-100%)':undefined,width:`min(7px, ${geometry.width / 4}%)`,minWidth:0,height:'var(--fv-clip-height)',padding:0,zIndex:3,touchAction:'none',cursor:'ew-resize'},...events(mode)})) : []
                 return h(React.Fragment,{key:block.address},button,...handles)
-              }), ghost && index === 0 && ghost.target.address === track.address ? (() => { const range = ghost.mode === 'move' ? ghost.block.range.map(f => f + ghost.delta) : [ghost.block.range[0] + (ghost.mode === 'left' ? ghost.delta : 0), ghost.block.range[1] + (ghost.mode === 'right' ? ghost.delta : 0)]; const geometry = clipGeometry(range, view); return geometry ? h('span', { 'aria-hidden':true, style:{position:'absolute',left:`${geometry.left}%`,width:`${geometry.width}%`,height:'var(--fv-clip-height)',top:'var(--fv-clip-top)',border:'2px dashed var(--fv-tl-hit,#e1ae50)',borderRadius:4,pointerEvents:'none',zIndex:4,opacity:.8} }) : null })() : null, lines()))))
-      }), result.blocks.length === 0 ? h('p', { style: { margin: '6px' } }, '空项目：没有存储块；外部字幕是否展开见 coverage。') : null))
+               }), index === 0 ? saving?.placements.filter(entry => trackKey(entry.track) === key).map(entry => placement(entry, 'pending')) : null,
+              index === 0 ? ghost?.placements?.filter(entry => trackKey(entry.track) === key).map(entry => placement(entry, ghost.problem ? 'blocked' : 'drag')) : null,
+              index === 0 && compact && !ghost && !saving ? internalGaps(blocks).map(range => gapControl(track, range)) : null, lines()))))
+      }), result.blocks.length === 0 ? h('p', { style: { margin: '6px' } }, '空项目：暂无片段。') : null))
 }

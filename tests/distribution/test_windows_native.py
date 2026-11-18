@@ -179,14 +179,15 @@ class WindowsBrowserJob(unittest.TestCase):
                 handles.append(handle)
             yield kernel.WaitForSingleObject, handles
 
-    def tree(self, root, *, hold_pipes=False):
+    def tree(self, root, *, hold_pipes=False, exit_root=False):
         leaf = ('from pathlib import Path; import sys,time; '
                 'Path(sys.argv[1]).write_text("ready"); time.sleep(25)')
         code = '''import json, os, subprocess, sys, time
 from pathlib import Path
 root = Path(sys.argv[1])
 pipes = sys.argv[3] == 'True'
-settings = dict(stdout=sys.stdout, stderr=sys.stderr) if pipes else {}
+settings = dict(stdout=sys.stdout, stderr=sys.stderr) if pipes else dict(
+    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 leaf = subprocess.Popen([sys.executable, '-I', '-B', '-c', sys.argv[2], str(root / 'leaf')], **settings)
 (root / 'pids.json').write_text(json.dumps([os.getpid(), leaf.pid]))
 for _ in range(200):
@@ -195,13 +196,13 @@ for _ in range(200):
     time.sleep(.02)
 else:
     raise RuntimeError('leaf did not start')
-if pipes:
+if pipes or sys.argv[4] == 'True':
     sys.stdout.buffer.write(b'root stdout')
     sys.stderr.buffer.write(b'root stderr')
     sys.exit(19)
 time.sleep(25)
 '''
-        return [self.python, '-I', '-B', '-c', code, str(root), leaf, str(hold_pipes)]
+        return [self.python, '-I', '-B', '-c', code, str(root), leaf, str(hold_pipes), str(exit_root)]
 
     def pids(self, root):
         end = time.monotonic() + 8
@@ -284,6 +285,48 @@ sys.exit(7)
         self.assertEqual(result.stdout, b'out!' * 1048576)
         self.assertEqual(result.stderr, b'err!' * 1048576)
 
+    def test_cli_root_and_both_eofs_do_not_settle_job(self):
+        self.isolated('_root_eofs_fixture')
+
+    def _root_eofs_fixture(self):
+        from vtx.render.gfx_cli import _run_cli_browser
+        from vtx.runtime import windows_browser as wb
+        api = wb._api()
+        query, stop = api.QueryInformationJobObject, wb.BrowserJob._stop_job
+        with tempfile.TemporaryDirectory() as d, ExitStack() as cleanup:
+            root = Path(d)
+            observed, counts = [], []
+
+            def observe_then_stop(job):
+                self.assertEqual(job.proc.poll(), 19)
+                self.assertTrue(all(stream.eof for stream in job._captures))
+                pids = self.pids(root)
+                self.assertEqual(job.proc.pid, pids[0])
+                observed.append((job, cleanup.enter_context(self.own_member_handles(pids[1:], job))))
+                info = wb._BasicAccounting()
+                self.assertTrue(query(job._job, 1, ctypes.byref(info), ctypes.sizeof(info), None))
+                self.assertEqual(info.active, 1)
+                stop(job)
+
+            def record_accounting(handle, kind, info, size, returned):
+                self.assertTrue(handle.value)
+                self.assertIs(handle, observed[0][0]._job)
+                ok = query(handle, kind, info, size, returned)
+                if ok:
+                    counts.append(ctypes.cast(info, ctypes.POINTER(wb._BasicAccounting)).contents.active)
+                return ok
+
+            with patch.object(wb.BrowserJob, '_stop_job', observe_then_stop), \
+                    patch.object(api, 'QueryInformationJobObject', side_effect=record_accounting):
+                result = _run_cli_browser(self.tree(root, exit_root=True), d, 8)
+            self.assertEqual((result.returncode, result.stdout, result.stderr),
+                             (19, b'root stdout', b'root stderr'))
+            (job, (wait, handles)), = observed
+            self.assertEqual(counts[-1:], [0])
+            self.assertIsNone(job._job.value)
+            # Accounting may decrement before the process handle is signaled.
+            self.assertEqual(wait(handles[0], 5000), 0)
+
     def test_cli_timeout_stops_owned_descendant_holding_pipes(self):
         self.isolated('_pipe_timeout_fixture')
 
@@ -312,6 +355,150 @@ sys.exit(7)
             self.assertEqual(raised.exception.stderr, b'root stderr')
             (wait, handles), = observed
             self.assertEqual(wait(handles[0], 5000), 0)
+
+    def test_cli_timeout_and_accounting_share_cleanup_deadline(self):
+        self.isolated('_timeout_budget_fixture')
+
+    def _timeout_budget_fixture(self):
+        from vtx.runtime import windows_browser as wb
+        api = wb._api()
+        query, pump = api.QueryInformationJobObject, wb.BrowserJob._pump
+        deadlines, counts = [], []
+
+        def slow_drain(job, deadline):
+            deadlines.append(deadline)
+            if len(deadlines) == 2:
+                time.sleep(max(0, deadline - time.monotonic() - .10))
+            return pump(job, deadline)
+
+        def still_active(handle, kind, info, size, returned):
+            ok = query(handle, kind, info, size, returned)
+            if ok:
+                counts.append(time.monotonic())
+                ctypes.cast(info, ctypes.POINTER(wb._BasicAccounting)).contents.active = 1
+            return ok
+
+        with tempfile.TemporaryDirectory() as d, \
+                patch.object(wb.BrowserJob, '_pump', slow_drain), \
+                patch.object(api, 'QueryInformationJobObject', side_effect=still_active):
+            with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                wb.run_browser(self.tree(Path(d), hold_pipes=True), 2)
+        self.assertEqual(raised.exception.timeout, 2)
+        self.assertEqual(raised.exception.stdout, b'root stdout')
+        self.assertEqual(raised.exception.stderr, b'root stderr')
+        self.assertEqual(raised.exception.__cause__.errno, errno.ETIMEDOUT)
+        self.assertGreater(len(counts), 0)
+        self.assertLess(time.monotonic(), deadlines[1] + .6)
+
+    def test_accounting_checks_deadline_before_query_and_accepting_zero(self):
+        from types import SimpleNamespace
+        from vtx.runtime import windows_browser as wb
+
+        for start, end, expected in ((1, 1, 0), (0, .999, 1), (0, 1, 1), (0, 2, 1)):
+            with self.subTest(start=start, end=end):
+                now = [start]
+                queries = []
+
+                def query(handle, kind, info, size, returned):
+                    queries.append(handle.value)
+                    now[0] = end
+                    ctypes.cast(info, ctypes.POINTER(wb._BasicAccounting)).contents.active = 0
+                    ctypes.cast(returned, ctypes.POINTER(wb._D)).contents.value = size
+                    return True
+
+                job = wb.BrowserJob.__new__(wb.BrowserJob)
+                job._job = wb._H(10)
+                job._api = SimpleNamespace(QueryInformationJobObject=query)
+                with patch.object(wb, 'time', SimpleNamespace(monotonic=lambda: now[0])):
+                    if end < 1:
+                        job._wait_job_empty(1)
+                    else:
+                        with self.assertRaises(OSError) as failure:
+                            job._wait_job_empty(1)
+                        self.assertEqual(failure.exception.errno, errno.ETIMEDOUT)
+                self.assertEqual(queries, [10] * expected)
+
+    def test_cleanup_failure_does_not_return_success(self):
+        self.isolated('_cleanup_failure_fixture')
+
+    def _cleanup_failure_fixture(self):
+        from vtx.runtime import windows_browser as wb
+        api = wb._api()
+
+        def denied(*args):
+            ctypes.set_last_error(5)
+            return False
+
+        for operation in ('TerminateJobObject', 'QueryInformationJobObject'):
+            with self.subTest(operation=operation), patch.object(api, operation, side_effect=denied):
+                # Even successful root exit + dual EOF cannot bypass failed settlement.
+                with self.assertRaises(OSError) as raised:
+                    wb.run_browser([self.python, '-I', '-B', '-c', 'pass'], 5)
+                self.assertEqual(raised.exception.winerror, 5)
+                self.assertIn(operation, str(raised.exception))
+        with tempfile.TemporaryDirectory() as d, ExitStack() as cleanup:
+            root = Path(d)
+            job = wb.BrowserJob(self.tree(root))
+            pids = self.pids(root)
+            with self.own_member_handles(pids, job) as (wait, handles), \
+                    patch.object(api, 'TerminateJobObject', side_effect=denied):
+                with self.assertRaises(OSError):
+                    job.close()
+                self.assertIsNone(job._job.value)
+                self.assertEqual([wait(handle, 5000) for handle in handles], [0, 0])
+            with self.assertRaisesRegex(OSError, 'cleanup previously failed'):
+                job.close()  # kill-on-close cannot retroactively prove settlement
+
+    def test_interrupt_survives_a_second_handle_close_failure(self):
+        for phase in ('query', 'close'):
+            with self.subTest(phase=phase):
+                self.isolated(f'_{phase}_interrupt_close_failure_fixture')
+
+    def _query_interrupt_close_failure_fixture(self):
+        self._interrupt_close_failure_fixture('query')
+
+    def _close_interrupt_close_failure_fixture(self):
+        self._interrupt_close_failure_fixture('close')
+
+    def _interrupt_close_failure_fixture(self, phase):
+        from vtx.runtime import windows_browser as wb
+        api = wb._api()
+        close_handle = api.CloseHandle
+        cancel = KeyboardInterrupt(f'{phase} interrupted')
+        job = wb.BrowserJob([self.python, '-I', '-B', '-c', 'import time; time.sleep(25)'],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        denied = job._job if phase == 'query' else job._captures[-1].handle
+
+        def close(handle):
+            if phase == 'close' and handle == job._job.value:
+                raise cancel
+            if handle == denied.value:
+                ctypes.set_last_error(5)
+                return False
+            return close_handle(handle)
+
+        with ExitStack() as cleanup:
+            # Fault injection keeps real handles open; close them after unpatching.
+            cleanup.callback(wb._close_handle, api, job._job, 'value')
+            cleanup.callback(wb._close_handle, api, job._info, 'process')
+            for capture in job._captures:
+                cleanup.callback(wb._close_handle, api, capture.handle, 'value')
+            with ExitStack() as inject:
+                if phase == 'query':
+                    query = inject.enter_context(patch.object(api, 'QueryInformationJobObject', side_effect=cancel))
+                inject.enter_context(patch.object(api, 'CloseHandle', side_effect=close))
+                with self.assertRaises(KeyboardInterrupt) as raised:
+                    job.close()
+            self.assertIs(raised.exception, cancel)
+            self.assertIsInstance(cancel.__cause__, wb.JobSettlementError)
+            self.assertEqual(cancel.__cause__.__cause__.winerror, 5)
+            self.assertIn('CloseHandle', str(cancel.__cause__.__cause__))
+            self.assertTrue(job._close_failed)
+            self.assertTrue(job._job.value)
+            self.assertIsNone(job._info.process)
+            self.assertTrue(all(capture.handle.value is None for capture in job._captures if capture.handle is not denied))
+            if phase == 'query':
+                query.assert_called_once()
 
     def test_combined_capture_limit_is_hard_failure(self):
         self.isolated('_capture_limit_fixture')

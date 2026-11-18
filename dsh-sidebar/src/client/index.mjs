@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { parseJSON, stringifyJSON } from '../json.mjs'
 import { captureCurrentDraft, performReferenceAction } from './reference.mjs'
-import { TimelineHelp, VisualTimeline } from './timeline.mjs'
+import { VisualTimeline } from './timeline.mjs'
 import { ManualEditor } from './manual.mjs'
 import { emptySelection, transitionSelection, preserveSelection } from './selection.mjs'
 import { FrameEpoch } from './frame.mjs'
@@ -12,9 +12,10 @@ import { WorkbenchStyles, FileBrowser, buildMismatchMessage } from './workbench.
 import { Icon } from './icons.mjs'
 import { ToolButton, ToolSummary } from './icon-controls.mjs'
 import { boundedText, CONTROL_REQUEST_LIMIT } from '../bounded.mjs'
-import { LayoutDivider, SelectionSummary, Transport, editingTarget, stepFrame } from './editor-controls.mjs'
+import { LayoutDivider, SelectionSummary, Transport, editingTarget, stepFrame, clipName, familyName } from './editor-controls.mjs'
 import { terminalGrantFailure, GRANT_DEAD_MESSAGE } from './grant-lifecycle.mjs'
 import { StoragePanel } from './storage.mjs'
+import { formatTimecode, projectClock } from './timecode.mjs'
 
 const h = React.createElement
 const ID = 'framivra-dsh-sidebar'
@@ -56,10 +57,10 @@ async function control(sessionId, payload, signal) {
 }
 
 /** Pure presentation: all addresses, ranges, selection and raw fields come from vtx. */
-export function TimelineView({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, selectionTools, focusTool, compact = false }) {
+export function TimelineView({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onUndo, selectionTools, focusTool, compact = false }) {
   if (snapshot.content_version !== result.content_version) return h('p', { role: 'alert' }, 'Timeline changed between reads. Reopen preview; mixed-version selection is not displayed.')
   return h(React.Fragment, null,
-    h(VisualTimeline, { key: snapshot.content_version, snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, selectionTools, focusTool, compact }),
+    h(VisualTimeline, { snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onUndo, selectionTools, focusTool, compact }),
     compact ? null : timelineData({ snapshot, result, hits, onSelect }))
 }
 function timelineData({ snapshot, result, hits, onSelect }) {
@@ -85,52 +86,77 @@ function timelineData({ snapshot, result, hits, onSelect }) {
     details('Complete query envelope', result))
 }
 
-export function ReferenceTools({ selection, sessionId, opened, frame, tabSignal, getDraftServices, onStale }) {
+export function ReferenceTools({ selection, sessionId, opened, tabSignal, getDraftServices, onStale, onGrantDead }) {
   const [state, setState] = useState({})
   const task = useRef()
-  useEffect(() => () => task.current?.abort(), [selection, sessionId, opened.grant, opened.snapshot.content_version, frame, tabSignal])
+  useEffect(() => () => task.current?.abort(), [selection, sessionId, opened.grant, opened.snapshot.content_version, tabSignal])
   async function run(action) {
     task.current?.abort()
     const controller = new AbortController()
     task.current = controller
     const signal = AbortSignal.any([controller.signal, tabSignal])
-    let captured
     try {
-      // Capture is deliberately before the first await and before starting reference IO.
-      if (action === 'draft') captured = captureCurrentDraft(getDraftServices, sessionId)
-      setState(previous => ({ ...previous, busy: true, message: '正在读取 vtx 原文…' }))
-      const result = await performReferenceAction({ action, selection, contentVersion: opened.snapshot.content_version, frame, signal, captured,
+      const captured = action === 'draft' ? captureCurrentDraft(getDraftServices, sessionId) : undefined
+      setState({ busy: true })
+      // Stored references do not claim that the clip intersects the playhead.
+      const result = await performReferenceAction({ action, selection, contentVersion: opened.snapshot.content_version, signal, captured,
         clipboard: globalThis.navigator?.clipboard,
         read: (query, signal) => control(sessionId, { op: 'reference', grant: opened.grant, query }, signal),
-        onReference: (envelope, item) => setState(previous => ({ ...previous, envelope, item })),
       })
-      // A completed draft mutation must not be relabelled "unchanged" if a
-      // synchronous subscriber navigated/aborted after the public action ran.
       if (action !== 'draft') signal.throwIfAborted()
-      setState(previous => ({ ...previous, busy: false, message: result.status === 'copied' ? '已复制。' : result.status === 'ready' ? '引用就绪。' : draftResultMessage(result) }))
+      setState({ message: result.status === 'copied' ? '已复制。' : result.status === 'ready' ? undefined : result.status === 'applied' ? '已加入会话草稿。' : draftResultMessage(result), ready: result.status === 'ready' })
     } catch (error) {
       if (signal.aborted) return
       const stale = /STALE_REFERENCE|reference\.stale/.test(error.message)
+      const dead = terminalGrantFailure(error.message)
       if (stale) onStale()
-      setState(previous => ({ ...previous, busy: false, ...(stale ? { envelope: undefined, item: undefined } : {}), message: error.message }))
+      if (dead) onGrantDead?.(dead, opened.grant)
+      const message = stale || dead ? '请刷新时间线后再试。' : /CLIPBOARD|NotAllowedError/i.test(`${error.name} ${error.message}`) ? '无法访问剪贴板，请检查浏览器权限。' : /DRAFT_UNAVAILABLE/.test(error.message) ? '请先打开一个已有会话，再加入草稿。' : /RAW_UNAVAILABLE/.test(error.message) ? '此轨道没有可复制的原文。' : '无法读取此选区，请刷新后重试。'
+      setState({ error: true, message })
     }
   }
-  useEffect(() => { task.current?.abort(); setState({}) }, [frame])
-  useEffect(() => { setState({}); if (selection) void run('read') }, [selection, sessionId, opened.grant, opened.snapshot.content_version])
-  return h('section', { 'aria-label': '时间线引用', style: { border: '1px solid currentColor', padding: 8 } },
-    h('h3', null, '时间线引用 · 仅存储语义'),
-    h('details', null, h('summary', null, '引用与草稿说明'),
-      h('p', null, '选择轨道或块后可复制。raw JSON 是 vtx 提取的原文，不是上方 read/v1 的重编码。整数帧由 vtx 解释；成片播放与工程播放头联动，但来源版本未验证，不能替代当前合成帧证书。此处仅提取引用；生成 PNG 与加入图片草稿需在帧工具中单独授权、点击。'),
-      h('p', null, '加入草稿通过官方会话 InputActions；在点击时选区起点插入，不替换已选文字或原有引用。文本和图片顺序加入，部分结果会明确提示；不会创建会话、自动补投或发送。')),
-    selection ? h('p', null, `当前选择：${selection.kind} ${selection.address} · ${opened.snapshot.content_version}`) : h('p', null, '尚未选择轨道或块。'),
+  useEffect(() => { setState({}); if (selection) void run('read') }, [selection, sessionId, opened.grant, opened.snapshot.content_version, tabSignal])
+  if (!selection) return null
+  const action = (key, icon, label) => h(ToolButton, { key, icon, label, disabled: state.busy, onClick: () => { void run(key) } })
+  return h('div', { className: 'fv-reference', 'aria-label': '时间线引用' },
     h('div', { className: 'fv-reference-actions', role: 'group', 'aria-label': '引用与草稿工具' },
-      ...[['id', 'id', '复制 ID / 临时定位'], ['raw', 'code', '复制 raw JSON'], ['diagnostic', 'diagnostic', '复制诊断引用 JSON'], ['draft', 'draft', '加入当前会话草稿（不发送）']].map(([action, icon, label]) => h(ToolButton, { key: action, icon, label, disabled: !selection || state.busy, onClick: () => { void run(action) } })),
-      state.busy ? h(ToolButton, { icon: 'cancel', label: '取消引用操作', onClick: () => { task.current?.abort(); setState(previous => ({ ...previous, busy: false, message: '已取消；未重试/补投草稿，选择与已读取原文保留。' })) } }) : null),
-    state.message ? h('p', { role: 'status' }, state.message) : null,
-    state.item ? h(React.Fragment, null,
-      h('p', null, state.item.stable_id === null ? `legacy / 无协议稳定 ID：临时地址 ${state.item.address}（仅此 content_version 有效）` : `稳定 ID：${state.item.stable_id}`),
-      h('details', null, h('summary', null, '选中对象原文'), h('pre', { 'aria-label': '选中对象 raw JSON', style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, state.item.raw ?? '无存储原文（虚拟轨道）')),
-      details('vtx reference/v1 诊断与选择（完整）', state.envelope)) : null)
+      action('id', 'id', '复制 ID / 临时定位'), action('draft', 'draft', '加入当前会话草稿（不发送）'),
+      h('details', { className: 'fv-reference-more' }, h(ToolSummary, { icon: 'more', label: '更多引用操作' }),
+        h('div', { className: 'fv-reference-extra' }, action('raw', 'code', '复制 raw JSON'), action('diagnostic', 'diagnostic', '复制诊断引用 JSON'))),
+      state.busy ? h(ToolButton, { icon: 'cancel', label: '取消引用操作', onClick: () => { task.current?.abort(); setState({ message: '已取消。' }) } }) : null),
+    state.ready ? h('span', { className: 'fv-sr-only', role: 'status' }, '引用就绪。') : null,
+    state.message ? h('p', { role: state.error ? 'alert' : 'status' }, state.message) : null)
+}
+
+function SelectionCard({ selection, items, result, fps, onPin, children }) {
+  const block = selection?.kind === 'block' ? result.blocks.find(item => item.address === selection.address) : undefined
+  const track = result.tracks.find(item => block ? item.family === block.family && item.track_index === block.track_index : item.address === selection?.address)
+  if (!track && !block) return h('div', { className: 'fv-inspector-empty' }, h(Icon, { name: 'clip', size: 19 }), h('p', null, '选择片段或轨道以查看属性。'))
+  const family = track?.data?.kind === 'gfx' ? 'gfx' : (block ?? track).family
+  const kind = familyName(family), trackName = clipName(track?.data, `${kind} ${(track?.track_index ?? 0) + 1}`)
+  const title = block ? clipName(block.data) : trackName
+  const time = value => formatTimecode(value, fps) ?? `${value} 帧`
+  const metric = (name, value) => h('div', { key: name }, h('dt', null, name), h('dd', null, value))
+  return h('section', { className: 'fv-selection-card', 'aria-label': '选区' },
+    h('div', { className: 'fv-inspector-item' },
+      h('span', { className: 'fv-selection-kind', 'data-family': family }, h(Icon, { name: family === 'audio' ? 'audio' : family === 'subtitles' ? 'text' : 'clip', size: 18 })),
+      h('div', null, h('strong', { title }, title), h('p', null, `${kind}${block ? ` · ${trackName}` : '轨道'}${items.length > 1 ? ` · 已选 ${items.length} 项` : ''}`))),
+    block ? h('dl', { className: 'fv-inspector-metrics' }, metric('起点', time(block.range[0])), metric('终点', time(block.range[1])), metric('时长', time(block.range[1] - block.range[0]))) : h('p', null, `${result.blocks.filter(item => item.family === track.family && item.track_index === track.track_index).length} 个片段`),
+    h('div', { className: 'fv-inspector-tools' }, block ? h(ToolButton, { icon: 'pin', label: '定位片段起点', onClick: () => onPin(String(block.range[0])) }) : null, children))
+}
+
+function ProjectCard({ snapshot, result, hits, fps }) {
+  const coverage = result.coverage.complete ? snapshot.coverage : result.coverage
+  const diagnostics = [...(snapshot.diagnostics ?? []), ...(result.diagnostics ?? []), ...(hits?.diagnostics ?? [])]
+  const project = snapshot.document?.project ?? {}, clock = projectClock(fps)
+  return h('details', { className: 'fv-inspector-section' }, h('summary', null, '工程概览'),
+    h('dl', { className: 'fv-inspector-overview' },
+      h('dt', null, '规格'), h('dd', null, `${project.width ?? '—'} × ${project.height ?? '—'}${clock ? ` · ${clock.den === 1 ? clock.num : `${clock.num}/${clock.den}`} fps` : ''}`),
+      h('dt', null, '时长'), h('dd', null, formatTimecode(project.duration_frames, fps) ?? '—'),
+      h('dt', null, '轨道 / 片段'), h('dd', null, `${result.tracks.length} / ${result.blocks.length}`),
+      hits ? [h('dt', { key: 'hits-label' }, '当前查询'), h('dd', { key: 'hits-count' }, `命中 ${hits.blocks.length} 个片段`)] : null),
+    !coverage.complete ? h('p', null, '未展开外部引用', ...(coverage.unexpanded ?? []).map((entry, i) => h('span', { className: 'fv-external-ref', key: i }, entry.reference))) : null,
+    diagnostics.length ? h('ul', { className: 'fv-inspector-diagnostics' }, diagnostics.map((entry, i) => h('li', { key: i }, entry.message ?? entry.code))) : null)
 }
 
 export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostServices, inputActions, useAccess = () => false }) {
@@ -195,6 +221,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   const ownerBinding = useRef()
   if (ownerBinding.current !== sessionId) { frameOwner.invalidate(); frameOwner.ghost = undefined; frameOwner.edit = { dirty: false, busy: false, unknown: false }; ownerBinding.current = sessionId }
   const gestureState = React.useCallback((token, active) => {
+    if (active) { const video = workbench.current?.querySelector('video'); if (video && !video.paused) video.pause() }
     if (frameOwner.gestureChanged(token, active)) setState(previous => ({ ...previous }))
   }, [frameOwner])
   const { primary: selection, items: selected } = selectionIntent
@@ -202,7 +229,10 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   const clearSelection = React.useCallback(() => { frameOwner.invalidate(); setSelectionIntent(emptySelection()) }, [frameOwner])
   const pin = React.useCallback(value => { frameOwner.invalidate(); setFrame(value) }, [frameOwner])
   const editState = next => { if (state.opened?.grant && grant.current === state.opened.grant && frameOwner.editChanged(next)) setState(previous => ({ ...previous })) }
-  const [gesture, setGesture] = useState()
+  const [gesture, setGesture] = useState({})
+  const [undoEdit, setUndoEdit] = useState()
+  const gestureReady = React.useCallback((callback, reason) => setGesture(previous => previous?.callback === callback && previous?.reason === reason ? previous : { callback, reason }), [])
+  const undoReady = React.useCallback(callback => setUndoEdit(() => callback), [])
   const task = useRef()
   const grant = useRef()
   const readSequence = useRef(0)
@@ -351,7 +381,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       }
     }
   }
-  async function refreshCommitted() {
+  async function refreshCommitted({ focusId } = {}) {
     frameOwner.invalidate()
     task.current?.abort()
     const controller = new AbortController()
@@ -364,24 +394,30 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
     signal.throwIfAborted()
     if (grant.current !== opened.grant || readSequence.current !== sequence || task.current !== controller) return
     // A later read cannot be overwritten by an old commit-refresh completion.
-    setSelectionIntent(previous => snapshot.content_version === result.content_version ? preserveSelection(previous, state.result, result) : emptySelection())
-    setState({ phase: 'ready', sessionId, timeline: state.timeline, opened: { ...opened, snapshot }, result, stale: snapshot.content_version !== result.content_version })
+    const consistent = snapshot.content_version === result.content_version
+    const focus = focusId ? result.blocks.find(block => block.data?.id === focusId) : undefined
+    setSelectionIntent(previous => {
+      if (!consistent) return emptySelection()
+      const retained = preserveSelection(previous, state.result, result)
+      return !focus || retained.items.some(item => item.address === focus.address && item.kind === 'block') ? retained : transitionSelection(retained, { kind: 'block', address: focus.address }, {}, result)
+    })
+    setState({ phase: 'ready', sessionId, timeline: state.timeline, opened: { ...opened, snapshot }, result, stale: !consistent })
+    if (!consistent) throw new Error('时间线已变化，请刷新工程。')
   }
   const ready = state.phase === 'ready' && state.sessionId === sessionId
   const valid = ready && !state.stale && state.opened.snapshot.content_version === state.result.content_version
+  const editUnsupported = ready && state.opened.storeCapabilities?.error === 'WRITE_UNSUPPORTED'
   const activePath = ready ? state.timeline : timeline
   const filename = activePath.split('/').at(-1) || '时间线'
   const duration = state.opened?.snapshot.document?.project?.duration_frames
   const fps = state.opened?.snapshot.document?.project?.fps
-  const manualPane = useRef()
-  function showProperties(edit = false) {
+  function showProperties() {
     setTimelineFocus(false)
     setInspectorVisible(true)
-    if (edit && manualPane.current) manualPane.current.open = true
   }
   function runQuick(operation) {
     if (!quickEdit) return
-    try { quickEdit(operation); showProperties(true) }
+    try { quickEdit(operation); showProperties() }
     catch (error) { setState(previous => ({ ...previous, message: error.message })) }
   }
   const disclosureGroup = React.useId()
@@ -419,34 +455,34 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
             h('button', { type: 'submit' }, '打开 / 刷新'))),
         h(ToolButton, { icon: expanded ? 'collapse' : 'expand', label: expanded ? '收起工作台' : '展开工作台', elementRef: expandButton, onClick: toggleExpanded })),
       state.phase === 'loading' || state.loading ? h('p', { className: 'fv-notice', role: 'status' }, '正在通过 vtx 读取时间线…') : null,
-      state.message ? h('p', { className: 'fv-notice', role: 'alert' }, state.message) : null,
+      state.message ? h('p', { className: 'fv-notice', role: 'alert' }, state.message.split('\n')[0]) : null,
       grantDead ? h('p', { className: 'fv-notice', role: 'alert', style: { border: '1px solid currentColor', padding: 8 } }, `${GRANT_DEAD_MESSAGE}（${grantDead}）`) : null,
       valid && (!state.result.coverage.complete || !state.opened.snapshot.coverage.complete) ? h('p', { className: 'fv-notice', role: 'alert' }, '存在未展开的外部素材；请在属性面板查看完整诊断。') : null,
       h('div', { className: 'fv-body' },
         h('div', { className: 'fv-upper' },
           filesVisible ? h(FileBrowser, { key: `${sessionId}:${browserEpoch}`, sessionId, tabSignal: tab.signal, call: control, selectedPath: ready ? activePath : undefined, onChoose: path => void load(false, path), onClose: closeFiles, recalibrate: browserRecalibrate, hostOps: state.opened?.host?.ops }) : null,
           h('main', { className: 'fv-monitor', 'aria-label': ready ? '画面预览' : '时间线启动区' },
-            ready ? (valid && !grantDead ? h('fieldset', { disabled: storageBusy, style: { display: 'contents' } }, h(ProgramMonitor, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, suspended: storageBusy, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, blank: frame === '', fps, duration, onFrame: pin, selection, tabSignal: tab.signal, getDraftServices, call: control, transport, disclosureGroup })) : h('div', { className: 'fv-monitor-toolbar' }, transport)) :
+            ready ? (valid && !grantDead ? h('fieldset', { disabled: storageBusy, style: { display: 'contents' } }, h(ProgramMonitor, { key: state.opened.grant, suspended: storageBusy, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, blank: frame === '', fps, duration, onFrame: pin, selection, tabSignal: tab.signal, getDraftServices, call: control, transport, disclosureGroup })) : h('div', { className: 'fv-monitor-toolbar' }, transport)) :
               h('div', { className: 'fv-empty' }, h(Icon, { name: 'film', size: 32 }), h('h3', null, '从一条时间线开始'), h('p', null, '选择当前工作区中的时间线 JSON 文件，开始预览与剪辑。'),
                 h('div', { className: 'fv-start-actions' },
                   h('button', { className: 'fv-primary', type: 'button', onClick: browseWorkspace }, h(Icon, { name: 'folder', size: 17 }), '浏览工作区'),
                   h('button', { className: 'fv-path-action', type: 'button', onClick: openPath }, '通过路径打开')))),
           ready ? h('aside', { className: 'fv-inspector', ref: inspector, 'aria-label': '属性与剪辑', hidden: !inspectorVisible },
             h('div', { className: 'fv-panel-heading' }, h('h3', null, '属性与剪辑'), h(ToolButton, { icon: 'close', label: '收起属性与剪辑', onClick: () => setInspectorVisible(false) })),
-            valid && !grantDead && !frameError ? h('details', { className: 'fv-inspector-section', open: true }, h('summary', null, '选区与引用'),
-              h(ReferenceTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}:${selection?.kind}:${selection?.address}`, selection, sessionId, opened: state.opened, frame: frameValue, tabSignal: tab.signal, getDraftServices,
+            valid && !grantDead ? h(SelectionCard, { selection, items: selected, result: state.result, fps, onPin: pin },
+              h(ReferenceTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}:${selection?.kind}:${selection?.address}`, selection, sessionId, opened: state.opened, tabSignal: tab.signal, getDraftServices, onGrantDead: grantDied,
                 onStale: () => { clearSelection(); setState(previous => ({ ...previous, stale: true })) } })) : null,
-            valid && !grantDead ? h(StoragePanel, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, sessionId, opened: state.opened, tabSignal: tab.signal, call: control, active: inspectorVisible, disabled: !!(frameOwner.edit.dirty || frameOwner.edit.busy || frameOwner.edit.unknown || frameOwner.ghost), onBusyChange: setStorageBusy, onGrantDead: grantDied }) : null,
-            valid && !grantDead && state.opened.storeCapabilities?.error === 'WRITE_UNSUPPORTED' ? h('p', null, '当前宿主仅支持只读时间线；语义编辑与提案确认不可用。') : null,
-             valid && !grantDead && state.opened.storeCapabilities?.error !== 'WRITE_UNSUPPORTED' ? h('details', { className: 'fv-inspector-section', ref: manualPane }, h('summary', null, '剪辑编辑与提交'),
-              h('fieldset', { disabled: storageBusy, style: { border: 0, padding: 0, margin: 0, minWidth: 0 } }, h(ManualEditor, { key: state.opened.grant, sessionId, opened: state.opened, result: state.result, selection, selected, frame: frameValue, tabSignal: tab.signal, call: control, onCommitted: refreshCommitted, onEditState: editState, onGrantDead: grantDied, onGestureReady: callback => setGesture(() => callback), onQuickReady: callback => setQuickEdit(() => callback) }))) : null,
-             valid ? timelineData({ snapshot: state.opened.snapshot, result: state.result, hits: state.hits, onSelect: pick }) : null,
-             valid ? h(TimelineHelp, { result: state.result, onGesture: gesture }) : null) : null),
-        ready ? h(LayoutDivider, { value: timelineShare, onChange: setTimelineShare }) : null,
+            valid && !grantDead ? h(React.Fragment, null,
+              editUnsupported ? h('p', null, '当前宿主仅支持只读时间线；语义编辑与提案确认不可用。') : h('fieldset', { className: 'fv-inspector-editor', disabled: storageBusy }, h(ManualEditor, { key: state.opened.grant, sessionId, opened: state.opened, result: state.result, selection, selected, frame: frameValue, tabSignal: tab.signal, call: control, onCommitted: refreshCommitted, onEditState: editState, onGrantDead: grantDied, onGestureReady: gestureReady, onUndoReady: undoReady, onQuickReady: callback => setQuickEdit(() => callback) })),
+              h(ProjectCard, { snapshot: state.opened.snapshot, result: state.result, hits: state.hits, fps }),
+              h(StoragePanel, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, sessionId, opened: state.opened, tabSignal: tab.signal, call: control, active: inspectorVisible, initiallyOpen: false, disabled: !!(frameOwner.edit.dirty || frameOwner.edit.busy || frameOwner.edit.unknown || frameOwner.ghost), onBusyChange: setStorageBusy, onGrantDead: grantDied })) : null) : null),
+         ready ? h(LayoutDivider, { value: timelineShare, onChange: setTimelineShare }) : null,
         ready ? h('section', { className: 'fv-timeline-pane', 'aria-label': '工程时间线' },
-          state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请刷新保存版本。') : h(TimelineView, { compact: true, snapshot: state.opened.snapshot, result: state.result, hits: state.hits, frame: frameValue, onFrame: value => pin(String(value)), onSelect: pick, activeSelection: selection, selectionIntent, onGesture: gesture, onGestureState: gestureState,
+          state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请刷新保存版本。') : h(TimelineView, { key: state.opened.grant, compact: true, snapshot: state.opened.snapshot, result: state.result, hits: state.hits, frame: frameValue, onFrame: value => pin(String(value)), onSelect: pick, activeSelection: selection, selectionIntent, onGesture: !storageBusy && !grantDead && !editUnsupported ? gesture?.callback : undefined, onGestureState: gestureState,
+             gestureUnavailable: grantDead ? '请刷新时间线后再编辑。' : storageBusy ? '请等待空间操作结束。' : editUnsupported ? '当前环境仅支持只读时间线。' : gesture?.reason, onOpenEdits: showProperties,
+             onUndo: !storageBusy && !grantDead && !editUnsupported ? undoEdit : undefined,
              focusTool: h(ToolButton, { icon: timelineFocus ? 'collapse' : 'expand', label: '轨道专注视图', tooltip: timelineFocus ? '恢复画面和时间线' : '暂时隐藏画面和侧栏，为轨道腾出整个工作区', 'aria-pressed': timelineFocus, onClick: () => setTimelineFocus(value => !value) }),
-             selectionTools: valid ? h(SelectionSummary, { selection, selected, result: state.result, frame: frameValue, fps, onFrame: pin, onClear: clearSelection, onProperties: () => showProperties(true), quick: quickEdit ? runQuick : undefined }) : null })) : null)))
+             selectionTools: valid ? h(SelectionSummary, { selection, selected, result: state.result, frame: frameValue, fps, onFrame: pin, onClear: clearSelection, onProperties: () => showProperties(), quick: quickEdit && !editUnsupported && !storageBusy && !grantDead ? runQuick : undefined }) : null })) : null)))
 }
 // DSH 0.2.2-rc.1: this is the tab-scoped action, not ISidebarRight.
 // Its boolean replaceTab:true is translated to this occurrence's TabId by

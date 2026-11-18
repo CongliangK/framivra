@@ -24,8 +24,8 @@ const button = (label, onClick, disabled) => h('button', { type: 'button', onCli
 
 /** Visible-only sampling. Cleanup is a separate explicit, single-use consent;
  * no UI path chooses files or interprets cache keys. */
-export function StoragePanel({ sessionId, opened, tabSignal, call, active = true, disabled = false, onBusyChange, onGrantDead }) {
-  const [expanded, setExpanded] = React.useState(true)
+export function StoragePanel({ sessionId, opened, tabSignal, call, active = true, initiallyOpen = true, disabled = false, onBusyChange, onGrantDead }) {
+  const [expanded, setExpanded] = React.useState(initiallyOpen)
   const [visible, setVisible] = React.useState(() => globalThis.document?.visibilityState !== 'hidden')
   const [measurement, setMeasurement] = React.useState(null)
   const [plan, setPlan] = React.useState(null)
@@ -127,7 +127,6 @@ export function StoragePanel({ sessionId, opened, tabSignal, call, active = true
     h('summary', null, '空间与缓存'),
     h('style', null, '.fv-storage dl{display:grid;grid-template-columns:1fr auto;gap:6px;margin:8px 0}.fv-storage dd{margin:0;font-variant-numeric:tabular-nums}.fv-storage p,.fv-storage li{overflow-wrap:anywhere}.fv-storage-actions{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.fv-storage-list{max-height:200px;overflow:auto;padding-left:18px}.fv-storage label{display:flex;gap:6px;align-items:flex-start}.fv-storage small{display:block;margin:8px 0}') ,
     !supported ? h('p', { role: 'status' }, '当前内核或插件尚不支持空间管理，请更新后重新打开时间线；预览与编辑仍可使用。') : h(React.Fragment, null,
-      h('p', null, '统计当前时间线所在项目目录；面板可见时每 10 秒刷新，不跟随符号链接，不扫描外部素材。'),
       usage ? h('dl', { 'aria-label': '项目空间统计' },
         h('dt', null, '项目合计'), h('dd', null, storageBytes(usage.project_bytes)),
         h('dt', null, '缓存 cache'), h('dd', null, storageBytes(usage.cache_bytes)),
@@ -135,14 +134,13 @@ export function StoragePanel({ sessionId, opened, tabSignal, call, active = true
         h('dt', null, '素材及其他'), h('dd', null, storageBytes(usage.other_bytes))) : h('p', null, busy === 'storage-inspect' ? '正在扫描项目空间…' : '尚无当前空间统计。'),
       measurement ? h('small', null, `${error ? '上次成功采样' : '采样时间'} ${measurement.sampledAt} · 逻辑字节，非独占物理占用；跳过 ${usage.symlinks_skipped} 个链接。`) : null,
       h('p', null, `当前缓存档位：${measurement?.cache_mode ?? '待读取'}。切换请打开“插件 → Framivra → 配置文件”的“缓存档位”。`),
-      h('small', null, 'off 关闭复用，core 保留核心缓存，aggressive 保留更多缓存；全局配置下次操作生效，切换不会立即删除旧缓存。'),
       h('div', { className: 'fv-storage-actions' },
         button('刷新空间', () => { setNotice(''); void request('storage-inspect') }, !!busy || dead),
         button(plan ? '重新生成清理预演' : '预演缓存清理', () => { setPlan(null); setConfirmed(false); void request('storage-plan') }, !!busy || disabled || dead)),
       plan ? h('div', null,
         h('p', null, `可回收 ${plan.plan.count} 项，共 ${storageBytes(plan.plan.bytes)}；仅按当前内核普通 GC 规则，非清空整个缓存。`),
-        h('pre', { className: 'fv-storage-list', 'aria-label': '清理候选清单', style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, plan.plan.entries.map(entry => `${entry.path} · ${storageBytes(entry.bytes)} · ${entry.reason}`).join('\n')),
-        h('label', null, h('input', { type: 'checkbox', checked: confirmed, disabled: !!busy || disabled, onChange: event => setConfirmed(event.target.checked) }), '我已停止本项目所有渲染、预览及其他写入，确认删除上述候选。'),
+        h('ul', { className: 'fv-storage-list', 'aria-label': '清理候选清单' }, plan.plan.entries.map(entry => h('li', { key: entry.path }, h('strong', null, entry.path), ` · ${storageBytes(entry.bytes)} · ${entry.reason}`))),
+         h('label', null, h('input', { type: 'checkbox', checked: confirmed, disabled: !!busy || disabled, onChange: event => setConfirmed(event.target.checked) }), '我已停止本项目所有渲染、预览及其他写入，确认删除上述候选。'),
         h('small', null, '清理不可撤销；确认有效期 60 秒。时间线或候选变化会拒绝执行，回收后重建仍需原素材及依赖。'),
         h('div', { className: 'fv-storage-actions' }, button('确认清理', clean, !confirmed || !!busy || disabled || plan.plan.count === 0), button('取消预演', () => { setPlan(null); setConfirmed(false) }, !!busy))) : null,
       busy && busy !== 'storage-inspect' ? h('p', { role: 'status' }, busy === 'storage-plan' ? '正在生成清理预演…' : '正在清理；不要修改或渲染此项目…') : null,
