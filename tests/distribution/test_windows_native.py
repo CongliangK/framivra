@@ -1,6 +1,10 @@
 """Native Windows safety: actual kernel handles, process trees and cleanup races."""
+from collections import Counter
+from contextlib import ExitStack, contextmanager
 import ctypes
 from ctypes import wintypes
+import errno
+import io
 import json
 import os
 from pathlib import Path
@@ -138,52 +142,334 @@ class WindowsCleanup(unittest.TestCase):
 
 @unittest.skipUnless(os.name == 'nt', 'Windows Job Objects required')
 class WindowsBrowserJob(unittest.TestCase):
-    def wait_pids(self, pids, action):
+    # Use the actual interpreter rather than the venv redirector for exact root PID assertions.
+    python = getattr(sys, '_base_executable', sys.executable)
+
+    def isolated(self, fixture, *, cwd=None):
+        """CONTRIBUTING:28: only a separate, bounded, own process group exercises termination."""
+        repo = Path(__file__).resolve().parents[2]
+        code = ('import sys; sys.path.insert(0, sys.argv[1]); '
+                'from tests.distribution.test_windows_native import WindowsBrowserJob; '
+                'getattr(WindowsBrowserJob(), sys.argv[2])()')
+        result = subprocess.run([sys.executable, '-B', '-c', code, str(repo), fixture], cwd=cwd or repo,
+                                start_new_session=True, creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP
+                                                                      | subprocess.CREATE_NO_WINDOW),
+                                capture_output=True, timeout=45)
+        self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', 'replace'))
+
+    @contextmanager
+    def own_member_handles(self, pids, job):
         kernel = ctypes.WinDLL('kernel32', use_last_error=True)
         kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
         kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.IsProcessInJob.argtypes = [wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
         kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
         kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-        handles = [kernel.OpenProcess(0x100000, False, p) for p in pids]
-        self.assertTrue(all(handles), pids)
-        try:
-            action()
-            for handle in handles:
-                self.assertEqual(kernel.WaitForSingleObject(handle, 10000), 0)
-        finally:
-            for handle in handles:
-                if handle: kernel.CloseHandle(handle)
+        with ExitStack() as cleanup:
+            handles = []
+            for pid in pids:  # from an owned fixture, observation rights only
+                handle = kernel.OpenProcess(0x100000 | 0x1000, False, pid)
+                self.assertTrue(handle, pid)
+                cleanup.callback(kernel.CloseHandle, handle)
+                member = wintypes.BOOL()
+                self.assertTrue(kernel.IsProcessInJob(handle, job._job, ctypes.byref(member)))
+                self.assertTrue(member.value, pid)
+                self.assertEqual(kernel.WaitForSingleObject(handle, 0), 258)
+                handles.append(handle)
+            yield kernel.WaitForSingleObject, handles
 
-    def tree(self, root):
-        code = "import subprocess,sys,time,json,os; p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)']); open(sys.argv[1],'w').write(json.dumps([os.getpid(),p.pid])); time.sleep(120)"
-        return [sys.executable, '-c', code, str(root / 'pids.json')]
+    def tree(self, root, *, hold_pipes=False):
+        leaf = ('from pathlib import Path; import sys,time; '
+                'Path(sys.argv[1]).write_text("ready"); time.sleep(25)')
+        code = '''import json, os, subprocess, sys, time
+from pathlib import Path
+root = Path(sys.argv[1])
+pipes = sys.argv[3] == 'True'
+settings = dict(stdout=sys.stdout, stderr=sys.stderr) if pipes else {}
+leaf = subprocess.Popen([sys.executable, '-I', '-B', '-c', sys.argv[2], str(root / 'leaf')], **settings)
+(root / 'pids.json').write_text(json.dumps([os.getpid(), leaf.pid]))
+for _ in range(200):
+    if (root / 'leaf').exists():
+        break
+    time.sleep(.02)
+else:
+    raise RuntimeError('leaf did not start')
+if pipes:
+    sys.stdout.buffer.write(b'root stdout')
+    sys.stderr.buffer.write(b'root stderr')
+    sys.exit(19)
+time.sleep(25)
+'''
+        return [self.python, '-I', '-B', '-c', code, str(root), leaf, str(hold_pipes)]
 
     def pids(self, root):
-        end = time.monotonic() + 10
+        end = time.monotonic() + 8
         while time.monotonic() < end:
             try:
-                return json.loads((root / 'pids.json').read_text())
+                if (root / 'leaf').exists():
+                    return json.loads((root / 'pids.json').read_text())
             except (FileNotFoundError, ValueError):
-                time.sleep(.05)
+                pass
+            time.sleep(.02)
         self.fail('tree did not start')
 
     def test_close_kills_entire_tree(self):
+        self.isolated('_close_fixture')
+
+    def _close_fixture(self):
         from vtx.runtime.windows_browser import BrowserJob
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory() as d, ExitStack() as cleanup:
             root = Path(d)
             job = BrowserJob(self.tree(root))
-            self.addCleanup(job.close)
-            self.wait_pids(self.pids(root), job.close)
+            cleanup.callback(job.close)
+            pids = self.pids(root)
+            self.assertEqual(job.proc.pid, pids[0])
+            self.assertIsNone(job.proc.poll())
+            with self.own_member_handles(pids, job) as (wait, handles):
+                job.close()
+                job.close()
+                self.assertIsNotNone(job.proc.poll())
+                self.assertEqual(job.proc.wait(0), job.proc.returncode)
+                self.assertIsNone(job._info.process)
+                self.assertIsNone(job._info.thread)
+                self.assertEqual([wait(h, 5000) for h in handles], [0, 0])
 
     def test_host_termination_kills_entire_tree(self):
+        self.isolated('_host_fixture')
+
+    def _host_fixture(self):
+        from vtx.runtime.windows_browser import BrowserJob
+        with tempfile.TemporaryDirectory() as d, ExitStack() as cleanup:
+            root = Path(d)
+            code = ('from vtx.runtime.windows_browser import BrowserJob; import sys,json,time; '
+                    'job=BrowserJob(json.loads(sys.argv[1])); time.sleep(25)')
+            host = BrowserJob([self.python, '-B', '-c', code, json.dumps(self.tree(root))])
+            cleanup.callback(host.close)
+            pids = self.pids(root)
+            self.assertNotIn(host.proc.pid, pids)
+            # Terminate only the exact handle returned by launch for this dedicated outer-job fixture.
+            kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+            kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+            with self.own_member_handles(pids, host) as (wait, members):
+                self.assertTrue(kernel.TerminateProcess(host._info.process, 77))
+                self.assertEqual(host.proc.wait(5), 77)
+                self.assertEqual([wait(h, 5000) for h in members], [0, 0])
+
+    def test_cli_drains_independent_large_pipes(self):
+        self.isolated('_large_pipes_fixture')
+
+    def _large_pipes_fixture(self):
+        from vtx.render.gfx_cli import _run_cli_browser
+        code = '''import sys, threading
+from pathlib import Path
+from os import environ
+assert Path.cwd().samefile(sys.argv[1])
+assert environ['VTX_NATIVE_JOB_TEST'] == '中文 env'
+assert sys.argv[2:] == ['', '空 格 # 😺', 'with "quote"', 'slash ' + chr(92)]
+writers = [threading.Thread(target=stream.buffer.write, args=(data * 1048576,))
+           for stream, data in ((sys.stdout, b'out!'), (sys.stderr, b'err!'))]
+for writer in writers:
+    writer.start()
+for writer in writers:
+    writer.join()
+sys.exit(7)
+'''
+        with patch.dict(os.environ, {'VTX_NATIVE_JOB_TEST': '中文 env'}):
+            with tempfile.TemporaryDirectory() as d:
+                args = [Path(self.python), '-I', '-B', '-c', code, str(Path.cwd()), '',
+                        '空 格 # 😺', 'with "quote"', 'slash ' + chr(92)]
+                result = _run_cli_browser(args, d, 15)
+        self.assertEqual(result.returncode, 7, result.stderr[:500])
+        self.assertEqual(result.stdout, b'out!' * 1048576)
+        self.assertEqual(result.stderr, b'err!' * 1048576)
+
+    def test_cli_timeout_stops_owned_descendant_holding_pipes(self):
+        self.isolated('_pipe_timeout_fixture')
+
+    def _pipe_timeout_fixture(self):
+        from vtx.render.gfx_cli import _run_cli_browser
+        from vtx.runtime.windows_browser import BrowserJob
+        with tempfile.TemporaryDirectory() as d, ExitStack() as cleanup:
+            root = Path(d)
+            observed = []
+            stop = BrowserJob._stop_job
+
+            def observe_then_stop(job):
+                if job._job.value and not observed:
+                    self.assertEqual(job.proc.poll(), 19)  # root already exited, leaf still holds both writes
+                    pids = self.pids(root)
+                    self.assertEqual(job.proc.pid, pids[0])
+                    observed.append(cleanup.enter_context(self.own_member_handles(pids[1:], job)))
+                stop(job)
+
+            start = time.monotonic()
+            with patch.object(BrowserJob, '_stop_job', observe_then_stop):
+                with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                    _run_cli_browser(self.tree(root, hold_pipes=True), d, 3)
+            self.assertLess(time.monotonic() - start, 8)
+            self.assertEqual(raised.exception.stdout, b'root stdout')
+            self.assertEqual(raised.exception.stderr, b'root stderr')
+            (wait, handles), = observed
+            self.assertEqual(wait(handles[0], 5000), 0)
+
+    def test_combined_capture_limit_is_hard_failure(self):
+        self.isolated('_capture_limit_fixture')
+
+    def _capture_limit_fixture(self):
+        from vtx.runtime import windows_browser as wb
+        with tempfile.TemporaryDirectory() as d, ExitStack() as cleanup:
+            root = Path(d)
+            stop = wb.BrowserJob._stop_job
+            observed = []
+
+            def observe_then_stop(job):
+                if job._job.value and not observed:
+                    pids = self.pids(root)
+                    self.assertEqual(job.proc.pid, pids[0])
+                    observed.append(cleanup.enter_context(self.own_member_handles(pids[1:], job)))
+                stop(job)
+
+            # The root writes exactly 11 bytes to each pipe. Neither stream can exceed
+            # 21 alone, but together a single extra byte must fail and stop the live leaf.
+            with patch.object(wb, '_CAPTURE_LIMIT', 22):
+                exact = wb.run_browser([self.python, '-I', '-B', '-c',
+                                        "import os; os.write(1,b'root stdout'); os.write(2,b'root stderr')"], 15)
+                self.assertEqual((exact.returncode, exact.stdout, exact.stderr),
+                                 (0, b'root stdout', b'root stderr'))
+            with patch.object(wb, '_CAPTURE_LIMIT', 21), patch.object(wb.BrowserJob, '_stop_job', observe_then_stop):
+                with self.assertRaises(OSError) as raised:
+                    wb.run_browser(self.tree(root, hold_pipes=True), 15)
+            self.assertEqual(raised.exception.errno, errno.EFBIG)
+            (wait, handles), = observed
+            self.assertEqual(wait(handles[0], 5000), 0)
+
+    def test_discovery_binds_windows_native_exe_and_rejects_wrapper_override(self):
+        import vt
+        from vtx.media import encoders
+        from vtx.render import browser_paths, gfx_render
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            code = 'from vtx.runtime.windows_browser import BrowserJob; import sys,json,time; job=BrowserJob(json.loads(sys.argv[1])); time.sleep(120)'
-            host = subprocess.Popen([sys.executable, '-c', code, json.dumps(self.tree(root))])
-            self.addCleanup(lambda: host.kill() if host.poll() is None else None)
-            def kill():
-                host.kill(); host.wait(timeout=5)
-            self.wait_pids(self.pids(root), kill)
+            wrapper_dir = root / 'wrapper'
+            native_dir = root / 'native'
+            wrapper_dir.mkdir()
+            native_dir.mkdir()
+            wrapper = wrapper_dir / 'native-fixture.cmd'
+            executable = native_dir / 'native-fixture.exe'
+            installed = root / 'installed.exe'
+            override = root / 'override.exe'
+            for path in (wrapper, executable, installed, override):
+                path.touch()  # discovery test only, never executed
+
+            def assert_selected(path):
+                self.assertEqual(encoders.find_chrome(), str(path))
+                self.assertEqual(vt.find_chrome(), str(path))
+                browser = gfx_render.Browser()
+                browser._find_chrome()
+                self.assertEqual(browser.chrome, str(path))
+
+            with patch.object(browser_paths, 'chrome_install_paths', return_value=(str(installed),)), \
+                    patch.dict(os.environ, {'PATH': os.pathsep.join((str(wrapper_dir), str(native_dir)))}):
+                with patch.object(browser_paths, 'chrome_names', return_value=(str(override), 'native-fixture')):
+                    assert_selected(override)
+                with patch.object(browser_paths, 'chrome_names', return_value=(None, 'native-fixture')):
+                    assert_selected(executable)
+                    with patch.dict(os.environ), patch.object(os, 'defpath', str(native_dir)):
+                        os.environ.pop('PATH', None)
+                        assert_selected(installed)  # unset PATH never inherits a default search path
+                    executable.unlink()
+                    assert_selected(installed)
+                with patch.object(browser_paths, 'chrome_names', return_value=(str(wrapper), 'native-fixture')):
+                    self.assertIsNone(browser_paths.find_chrome_candidate('win32'))
+                    self.assertIsNone(vt.find_chrome())
+                    with self.assertRaisesRegex(RuntimeError, '^no chrome found$'):
+                        gfx_render.Browser()._find_chrome()
+
+    def test_browser_consumer_owns_devnull_child(self):
+        self.isolated('_browser_fixture', cwd=Path(self.python).parent)
+
+    def _browser_fixture(self):
+        from vtx.render.gfx_render import Browser
+        with tempfile.TemporaryDirectory() as d:
+            ready = Path(d) / 'ready'
+            code = '''import ctypes as c, msvcrt, os, sys, time
+from ctypes import wintypes as w
+from pathlib import Path
+kernel = c.WinDLL('kernel32', use_last_error=True)
+kernel.GetFileType.argtypes = (w.HANDLE,)
+kernel.GetFinalPathNameByHandleW.argtypes = (w.HANDLE, w.LPWSTR, w.DWORD, w.DWORD)
+assert [kernel.GetFileType(msvcrt.get_osfhandle(fd)) for fd in (0, 1, 2)] == [2, 2, 2]
+assert not sys.stdin.buffer.read(1)
+os.write(1, b'discard'); os.write(2, b'discard')
+other = c.create_unicode_buffer(32768)
+if kernel.GetFinalPathNameByHandleW(int(sys.argv[2]), other, len(other), 0):
+    assert Path(other.value).name != 'extra-inheritable-handle.txt'
+ready = Path(sys.argv[1])
+tmp = ready.with_suffix('.tmp')
+tmp.write_text(str(os.getpid())); tmp.replace(ready)
+time.sleep(15)
+'''
+            # An explicitly provided relative file is normalized without any PATH search.
+            explicit = '.\\' + Path(self.python).name
+            browser = Browser(explicit, tabs=1)
+            try:
+                with (Path(d) / 'extra-inheritable-handle.txt').open('wb') as sentinel:
+                    import msvcrt
+                    handle = msvcrt.get_osfhandle(sentinel.fileno())
+                    os.set_handle_inheritable(handle, True)
+                    flags = ('-I', '-B', '-c', code, str(ready), str(handle))
+                    with patch('vtx.render.gfx_environment.CHROME_VISUAL_FLAGS', flags), \
+                            patch('vtx.render.gfx_render.urllib.request.urlopen', side_effect=lambda *_a, **_k:
+                                  io.BytesIO(b'{"webSocketDebuggerUrl":"ws://fixture/devtools/page/mock"}')):
+                        browser.start()
+                    deadline = time.monotonic() + 5
+                    while not ready.exists() and time.monotonic() < deadline:
+                        time.sleep(.01)
+                    self.assertEqual(int(ready.read_text()), browser.proc.pid)
+                    root_proc = browser.proc
+                    self.assertIsNone(root_proc.poll())
+            finally:
+                browser.stop()
+            browser.stop()
+            self.assertIsNone(browser.proc)
+            self.assertIsNotNone(root_proc.returncode)
+
+    def test_launch_rejects_bare_exe_and_failures_do_not_retry(self):
+        from vtx.runtime import windows_browser as wb
+        args = [self.python, '-I', '-B', '-c', 'raise SystemExit(11)']
+        api = wb._api()
+        with patch.object(api, 'CreateProcessW', wraps=api.CreateProcessW) as launch:
+            with self.assertRaises(OSError):
+                wb.run_browser(['python.exe', *args[1:]], timeout=10)
+            launch.assert_not_called()
+            with tempfile.TemporaryDirectory() as d:
+                with self.assertRaises(OSError) as raised:
+                    wb.run_browser([Path(d) / 'missing.exe', *args[1:]], timeout=10)
+            self.assertEqual(raised.exception.winerror, 2)
+            launch.assert_called_once()
+
+    def test_launch_attribute_init_failure_closes_acquired_handles(self):
+        from vtx.runtime import windows_browser as wb
+        api = wb._api()
+        init = api.InitializeProcThreadAttributeList
+
+        def fail_init(buffer, *args):
+            if buffer is None:
+                return init(buffer, *args)
+            ctypes.set_last_error(87)
+            return False
+
+        with patch.object(api, 'InitializeProcThreadAttributeList', side_effect=fail_init), \
+                patch.object(api, 'CreateProcessW') as launch, \
+                patch.object(api, 'CreatePipe', wraps=api.CreatePipe) as pipes, \
+                patch.object(api, 'CloseHandle', wraps=api.CloseHandle) as closed:
+            with self.assertRaises(OSError) as raised:
+                wb.run_browser([self.python, '-I', '-B', '-c', 'raise SystemExit(11)'])
+        self.assertEqual(raised.exception.winerror, 87)
+        launch.assert_not_called()
+        self.assertEqual(pipes.call_count, 2)
+        # Job + NUL + both ends of each real pipe; each original live handle closes once.
+        self.assertEqual(sorted(Counter(call.args[0] for call in closed.call_args_list).values()), [1] * 6)
 
 @unittest.skipUnless(os.name == 'nt', 'Windows renderer resolver required')
 class WindowsEnvironment(unittest.TestCase):

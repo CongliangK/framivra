@@ -7,6 +7,7 @@ import base64
 import json
 import os
 from pathlib import Path
+import posixpath
 import subprocess
 import sys
 import tempfile
@@ -28,7 +29,8 @@ class BrowserDiscoveryMock(unittest.TestCase):
     def test_both_callers_share_candidate_order_and_platform_fallbacks(self):
         env = {'VTX_CHROME': '/custom/chrome', 'PROGRAMFILES': r'C:\Program Files',
                'PROGRAMFILES(X86)': r'C:\Program Files (x86)', 'LOCALAPPDATA': r'C:\Users\fixture\AppData\Local'}
-        for platform in ('linux', 'darwin', 'win32'):
+        # Windows selection is covered by the native absolute-.exe discovery fixture.
+        for platform in ('linux', 'darwin'):
             with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(sys, 'platform', platform):
                 candidates = [c for c in (*browser_paths.chrome_names(),
                                          *browser_paths.chrome_install_paths(platform)) if c]
@@ -39,6 +41,7 @@ class BrowserDiscoveryMock(unittest.TestCase):
                         with self.subTest(platform=platform, expected=expected, available=available), \
                                 mock.patch.object(browser_paths.shutil, 'which', side_effect=lambda c:
                                                   '/resolved/' + c if c in available and c in candidates[:7] else None), \
+                                mock.patch.object(browser_paths.os.path, 'isabs', side_effect=posixpath.isabs), \
                                 mock.patch.object(browser_paths.os.path, 'isfile', side_effect=lambda c:
                                                   c.removeprefix('/resolved/') in available), \
                                 mock.patch.object(browser_paths.os, 'access', return_value=True), \

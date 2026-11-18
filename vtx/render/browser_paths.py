@@ -50,12 +50,37 @@ def _linux_native_executable(candidate):
 
 
 def find_chrome_candidate(platform, *, allow_override_file=True):
-    """Retain candidate spelling; Linux automatic discovery requires native ELF.
+    """Discover a browser; Windows returns the selected absolute .exe.
 
     Renderer callers historically accept an explicit file even without X_OK;
     doctor disables that file-only fallback to retain its executable policy.
     """
     names = chrome_names()
+    if platform == 'win32':
+        def executable(candidate, allow_file):
+            suffix = os.path.splitext(candidate)[1]
+            if suffix and suffix.lower() != '.exe':
+                return None
+            name = candidate if suffix else candidate + '.exe'
+            # Search only explicit PATH entries, not PATHEXT wrappers or an implicit cwd.
+            paths = (name,) if os.path.dirname(name) else (
+                os.path.join(directory.strip('"'), name)
+                for directory in os.environ.get('PATH', '').split(os.pathsep) if directory.strip('"'))
+            for path in paths:
+                absolute = os.path.abspath(path)
+                if os.path.isfile(absolute) and (allow_file or os.access(absolute, os.X_OK)):
+                    return absolute
+            return None
+
+        if names[0]:
+            # An explicit override may not turn into a different browser (or a shell script).
+            return executable(names[0], allow_override_file)
+        for candidate in (*names[1:], *chrome_install_paths(platform)):
+            if candidate:
+                found = executable(candidate, True)
+                if found:
+                    return found
+        return None
     # An available override remains the user's executable, including a custom
     # CLI wrapper. Never silently replace it with a distro browser; renderer
     # identity/launch failures remain the caller's responsibility.
