@@ -7,6 +7,7 @@ import stat
 import json
 import subprocess
 import sysconfig
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -785,6 +786,85 @@ class WindowsFontconfigCheck(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 fc.inspect_face(scratch, scratch / 'font.ttf', sha256='0' * 64, scratch=scratch)
         self.assertEqual(list(scratch.iterdir()), [launch.call_args.kwargs['cwd']])
+
+
+@unittest.skipUnless(os.name == 'nt' and sysconfig.get_platform() == 'win-amd64', 'native Windows x64')
+class WindowsRuntimeSnapshot(unittest.TestCase):
+    def scratch_fixture(self, snapshot):
+        parent = Path(tempfile.gettempdir())
+        if not str(parent).isascii() or ';' in str(parent):
+            self.skipTest('this fixture requires an ASCII TEMP path without semicolons')
+        try:
+            with contextlib.ExitStack() as stack:
+                snapshot._pin_dirs(stack, snapshot._local_path(parent))
+        except ValueError as exc:
+            self.skipTest(f'TEMP does not meet snapshot directory requirements: {exc}')
+        except OSError as exc:
+            if getattr(exc, 'winerror', None) not in (1, 50, 87):
+                raise
+            self.skipTest('TEMP filesystem does not support the required handle metadata')
+        return temporary_root(self)
+
+    def test_fixed_copy_selection_and_cleanup(self):
+        from vtx.render import gfx_svg_win_snapshot as snapshot
+        # Only regular data; the fixture has no executable bytes and launches nothing.
+        root = self.scratch_fixture(snapshot)
+        scratch = root / 'scratch'
+        scratch.mkdir()
+        bundle = root / '便携包 # source'
+        tree = bundle / 'inkscape'
+        entry = tree / 'bin' / 'inkscape.com'
+        entry.parent.mkdir(parents=True)
+        (tree / 'share').mkdir()  # empty directories contribute to the identity
+        entry.write_bytes(b'sample')
+        expected = 'd6d2fef7359bebd313ce33a0e1e68a0ba295112ce886be28446833c0b8755ee0'
+        with mock.patch.multiple(snapshot, _MAX_FILES=1, _MAX_DIRS=2, _MAX_BYTES=6,
+                                 _TREE_SHA256=expected):
+            with self.assertRaisesRegex(RuntimeError, 'caller stopped'):
+                with snapshot._runtime_snapshot(bundle, scratch=scratch) as inputs:
+                    self.assertEqual(inputs.executable, inputs.vendor / 'bin/inkscape.com')
+                    self.assertEqual(inputs.cwd, inputs.vendor.parent / 'shell')
+                    self.assertEqual(inputs.vendor.parent.parent, scratch)
+                    self.assertFalse(inputs.executable.samefile(entry))
+                    self.assertEqual(inputs.executable.read_bytes(), b'sample')
+                    self.assertEqual(list(inputs.cwd.iterdir()), [])
+                    raise RuntimeError('caller stopped')
+            self.assertEqual(list(scratch.iterdir()), [])
+            self.assertEqual(entry.read_bytes(), b'sample')
+            entry.write_bytes(b'Sample')  # same shape and size, different default bytes
+            with self.assertRaisesRegex(ValueError, 'vendor tree identity mismatch'):
+                with snapshot._runtime_snapshot(bundle, scratch=scratch):
+                    self.fail('unverified vendor tree was selected')
+            self.assertEqual(list(scratch.iterdir()), [])
+            self.assertEqual(entry.read_bytes(), b'Sample')
+
+    def test_overlapping_directory_chains_refuse_before_mkdtemp(self):
+        from vtx.render import gfx_svg_win_snapshot as snapshot
+        root = self.scratch_fixture(snapshot)
+        tree = root / 'inkscape'
+        inside = tree / 'scratch'
+        inside.mkdir(parents=True)
+        with mock.patch.object(tempfile, 'mkdtemp') as mkdtemp:
+            for scratch in (root, tree, inside):
+                with self.subTest(scratch=scratch), self.assertRaisesRegex(ValueError, 'overlaps'):
+                    with snapshot._runtime_snapshot(root, scratch=scratch):
+                        self.fail('overlapping scratch was accepted')
+        mkdtemp.assert_not_called()
+        self.assertEqual(list(inside.iterdir()), [])
+
+    def test_handle_reparse_metadata_refuses_even_with_ordinary_lstat(self):
+        from vtx.render import gfx_svg_win_snapshot as snapshot
+        root = temporary_root(self)
+        self.assertFalse(root.lstat().st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+        # No real reparse point: emulate only its two handle metadata signals.
+        for attributes, tag in ((stat.FILE_ATTRIBUTE_DIRECTORY, 1),
+                                (stat.FILE_ATTRIBUTE_DIRECTORY | stat.FILE_ATTRIBUTE_REPARSE_POINT, 0)):
+            with self.subTest(attributes=attributes, tag=tag):
+                info = snapshot._AttributeTagInfo(attributes, tag)
+                with mock.patch.object(snapshot, '_handle_info', return_value=info):
+                    with self.assertRaisesRegex(ValueError, 'reparse point'):
+                        with snapshot._pin_dir(root):
+                            self.fail('reparse metadata was accepted')
 
 
 if __name__ == '__main__': unittest.main()
