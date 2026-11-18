@@ -20,7 +20,7 @@ from typing import NamedTuple
 from xml.sax.saxutils import escape
 
 from ..runtime import windows_browser as native
-from . import gfx_svg_win_input as win_input
+from . import gfx_svg, gfx_svg_win_input as win_input
 from .gfx_cli import _png_stream_invalid_reason
 from .gfx_svg_stage import _FONT_ERROR
 from .gfx_svg_win_snapshot import (_local_path, _ordinary, _pin_dir, _pin_dirs, _pin_entry,
@@ -50,6 +50,10 @@ _STANDARD_RGBA_SHA256 = '3b245999b54791dcc7be240418965d8c91445a758bfc9450afbe522
 # Full portable-v2 reference: original prepared checker; independent verified
 # Inkscape 1.4.4 x64 CLI export and FFmpeg 9.0.2 RGBA framehash reopen.
 _RASTER_FRAMES = 900
+# Original #465 prepared Windows manifest, byte-for-byte reproduced by the
+# locked build_demo.js manifest() with JSON.stringify(..., null, 2) plus LF.
+_RASTER_MANIFEST_BYTES = 29140
+_RASTER_MANIFEST_SHA256 = 'e500ae49644014da611621ad5ce1c9d5e3e30f90cd6f7ee4cdb06a376235e14d'
 _RASTER_SVG_LIMIT, _RASTER_SVG_TOTAL = 5 * 1024, 2326452
 _RASTER_PNG_LIMIT = 72 * 1024  # reference max 73,707 bytes; f0135 retains its own 64 KiB limit
 _RASTER_CAPTURE_LIMIT = 1024 * 1024  # combined streams, including the full shell transcript
@@ -63,6 +67,8 @@ _RASTER_PNG_SHA256 = '30cad9d17b086500d6a15ed285bad63449dc5816806bb3744b68f941b1
 _RASTER_RGBA_SHA256 = '6884a426e5fa0a51cdf0d1b23975c883b69e626bd73a76aa864e9e12b804787f'
 _DEMO = Path(__file__).resolve().parents[2] / 'templates/demo-timeline-svg'
 _FONT_NAMES = ('NotoSansCJK-Regular.ttc', 'NotoSansCJK-Bold.ttc', 'DejaVuSans.ttf', 'DejaVuSans-Bold.ttf')
+# Fixed family names of the four faces in the portable-v2 fonts.lock.json.
+_RASTER_FAMILIES = frozenset({'Noto Sans CJK SC', 'DejaVu Sans'})
 _FONT_LIMIT = 24 * 1024 * 1024  # Per file; four fixed inputs, no font directory scan.
 _EXPORT = ('file-open:{stem}.svg;export-type:png;export-area-page;export-width:{width};export-height:{height};'
            'export-background:#000000;export-background-opacity:0;export-filename:{png};'
@@ -496,11 +502,25 @@ def _raster_time(deadline):
         raise TimeoutError('Windows SVG canonical raster deadline expired')
 
 
+def _require_raster_manifest(project_root, frame_paths, font_paths):
+    raw = win_input.read(project_root, 'gfx/demo.frames.json',
+                         limit=_RASTER_MANIFEST_BYTES, expected_path=None)
+    if len(raw) != _RASTER_MANIFEST_BYTES or gfx_svg.digest(raw) != _RASTER_MANIFEST_SHA256:
+        raise ValueError('Windows SVG canonical raster manifest byte identity mismatch')
+    manifest = json.loads(raw.decode('utf-8'))
+    width, height = _STANDARD_SIZE
+    if (manifest != {'format': gfx_svg.FORMAT, 'fps': 30, 'width': width, 'height': height,
+                     'frame_count': _RASTER_FRAMES, 'generator': 'build_demo.js',
+                     'fonts': font_paths, 'frames': frame_paths}
+            or any(type(manifest[key]) is not int for key in ('fps', 'width', 'height', 'frame_count'))):
+        raise ValueError('Windows SVG canonical raster manifest fields mismatch')
+
+
 def _accept_standard_raster(portable_root, *, scratch, project_root):
     """Attest only the fixed portable-v2 raster, not project or render eligibility.
 
     Use an authorized stable NTFS project root and an exclusive disjoint
-    scratch parent. No project declarations or caller expectation is consumed.
+    scratch parent. The pinned manifest is checked, never used to select inputs.
     """
     from PIL import Image
 
@@ -508,14 +528,18 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
     launch_deadline = deadline - _RASTER_VERIFY_RESERVE
     project_root = os.fspath(project_root)  # anchored reader checks the original spelling
     stems = tuple(f'f{i:04d}' for i in range(_RASTER_FRAMES))
+    frame_paths = [f'gfx/frames-svg/{stem}.svg' for stem in stems]
+    font_paths = ['assets/fonts/' + name for name in _FONT_NAMES]
+    _raster_time(launch_deadline)
+    _require_raster_manifest(project_root, frame_paths, font_paths)
+
     outputs = tuple(stem + '.png' for stem in stems)
     width, height = _STANDARD_SIZE
     svg = _raster_fold(b'svg')
     sources, remaining = [], _RASTER_SVG_TOTAL
-    for i, stem in enumerate(stems):
+    for i, frame in enumerate(frame_paths):
         _raster_time(launch_deadline)
-        data = win_input.read(project_root, f'gfx/frames-svg/{stem}.svg',
-                              limit=min(remaining, _RASTER_SVG_LIMIT), expected_path=None)
+        data = win_input.read(project_root, frame, limit=min(remaining, _RASTER_SVG_LIMIT), expected_path=None)
         if not data:
             raise ValueError('Windows SVG canonical raster has an empty source frame')
         remaining -= len(data)
@@ -523,6 +547,13 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
         sources.append(data)
     if remaining or svg.hexdigest() != _RASTER_SVG_SHA256:
         raise ValueError('Windows SVG canonical raster source byte identity mismatch')
+    for i, data in enumerate(sources):
+        _raster_time(launch_deadline)
+        try:
+            # Validate the retained bytes; the return value only concerns export reuse.
+            gfx_svg.inspect_svg(data, width, height, fonts=font_paths, families=_RASTER_FAMILIES)
+        except ValueError as error:
+            raise ValueError(f'Windows SVG canonical raster static frame {i}: {error}') from error
 
     actions = (''.join(_EXPORT.format(stem=stem, width=width, height=height, png='frames/' + png)
                        for stem, png in zip(stems, outputs)) + 'quit\n').encode('ascii')
@@ -539,7 +570,7 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
             pins.enter_context(_pin_dir(fonts))
             for i, (name, expected) in enumerate(zip(_FONT_NAMES, _locked_font_digests())):
                 _raster_time(launch_deadline)
-                data = win_input.read(project_root, 'assets/fonts/' + name, limit=_FONT_LIMIT, expected_path=None)
+                data = win_input.read(project_root, font_paths[i], limit=_FONT_LIMIT, expected_path=None)
                 _stage_font(data, expected, name, fonts / f'font{i}{Path(name).suffix}', pins)
             for stem, data in zip(stems, sources):
                 _raster_time(launch_deadline)

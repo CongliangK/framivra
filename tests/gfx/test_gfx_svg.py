@@ -1300,9 +1300,16 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
         for directory in (inputs, fonts, scratch, root / 'inkscape/bin', root / 'inkscape/share/inkscape'):
             directory.mkdir(parents=True)
         (root / 'inkscape/bin/inkscape.com').write_bytes(b'sample')  # never executed
-        (inputs.parent / 'demo.frames.json').write_bytes(b'not a trusted input')
+        manifest_path = inputs.parent / 'demo.frames.json'
         stems = [f'f{i:04d}' for i in range(4)]
-        sources = [f'<svg id="{stem}"/>'.encode() for stem in stems]
+        manifest = {'format': 'framivra-svg-sequence/v1', 'fps': 30, 'width': 6, 'height': 4,
+                    'frame_count': 4, 'generator': 'build_demo.js',
+                    'fonts': ['assets/fonts/' + name for name in shell._FONT_NAMES],
+                    'frames': [f'gfx/frames-svg/{stem}.svg' for stem in stems]}
+        raw = json.dumps(manifest).encode('utf-8')
+        sources = [f'<svg xmlns="http://www.w3.org/2000/svg" width="6" height="4" viewBox="0 0 6 4">'
+                   f'<text id="{stem}" font-family="{family}">Demo</text></svg>'.encode()
+                   for stem, family in zip(stems, ('Noto Sans CJK SC', 'DejaVu Sans') * 2)]
         font_data = [name.encode() for name in shell._FONT_NAMES]
         for stem, data in zip(stems, sources):
             (inputs / (stem + '.svg')).write_bytes(data)
@@ -1318,6 +1325,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
         svg_sha, png_sha = fold('svg', sources), fold('png', outputs)
         rgba_sha = fold('rgba', [sha256(data).digest() for data in pixels])
         with mock.patch.multiple(shell, _RASTER_FRAMES=4, _STANDARD_SIZE=(6, 4),
+                                 _RASTER_MANIFEST_BYTES=len(raw), _RASTER_MANIFEST_SHA256=sha256(raw).hexdigest(),
                                  _RASTER_SVG_TOTAL=sum(map(len, sources)), _RASTER_SVG_SHA256=svg_sha,
                                  _RASTER_PNG_SHA256=png_sha, _RASTER_RGBA_SHA256=rgba_sha), \
                 mock.patch.multiple(snapshot, _MAX_FILES=1, _MAX_DIRS=3, _MAX_BYTES=6,
@@ -1328,11 +1336,43 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
             def accept(where=scratch):
                 return shell._accept_standard_raster(root, scratch=where, project_root=project)
 
-            later = inputs / 'f0003.svg'
-            later.write_bytes(sources[-1].replace(b'f0003', b'f0002'))  # same-size late source change
-            with self.assertRaisesRegex(ValueError, 'source byte identity mismatch'):
-                accept()
-            later.write_bytes(sources[-1])
+            with mock.patch.object(shell, '_fixed_shell') as staging:
+                with self.assertRaises(FileNotFoundError):
+                    accept()
+                alternate = manifest_path.with_suffix('.JSON')
+                alternate.write_bytes(raw)
+                with self.assertRaisesRegex(ValueError, 'exact Windows filesystem name'):
+                    accept()
+                alternate.unlink()
+                manifest_path.write_bytes(raw + b'\n')
+                with self.assertRaisesRegex(ValueError, 'exceeds byte budget'):
+                    accept()
+                manifest_path.write_bytes(b'?' + raw[1:])  # invalid JSON, correct length: reject before parsing
+                with self.assertRaisesRegex(ValueError, 'manifest byte identity mismatch'):
+                    accept()
+                for field, wrong in [('fps', 30.0), ('generator', 'renderer.js'),
+                                     ('fonts', manifest['fonts'][::-1]), ('frames', manifest['frames'][::-1])]:
+                    with self.subTest(manifest_field=field):
+                        wrong_raw = json.dumps(dict(manifest, **{field: wrong})).encode('utf-8')
+                        manifest_path.write_bytes(wrong_raw)
+                        with mock.patch.multiple(shell, _RASTER_MANIFEST_BYTES=len(wrong_raw),
+                                                 _RASTER_MANIFEST_SHA256=sha256(wrong_raw).hexdigest()):
+                            with self.assertRaisesRegex(ValueError, 'manifest fields mismatch'):
+                                accept()
+                manifest_path.write_bytes(raw)
+
+                later = inputs / 'f0003.svg'
+                later.write_bytes(sources[-1].replace(b'f0003', b'f0002'))  # same-size late source change
+                with self.assertRaisesRegex(ValueError, 'source byte identity mismatch'):
+                    accept()
+                wrong_family = sources[-1].replace(b'DejaVu Sans', b'Liberation Sans')
+                later.write_bytes(wrong_family)
+                with mock.patch.multiple(shell, _RASTER_SVG_TOTAL=sum(map(len, sources[:-1])) + len(wrong_family),
+                                         _RASTER_SVG_SHA256=fold('svg', sources[:-1] + [wrong_family])):
+                    with self.assertRaisesRegex(ValueError, 'static frame 3: .*text.font-family'):
+                        accept()
+                later.write_bytes(sources[-1])
+                staging.assert_not_called()
             with self.assertRaisesRegex(ValueError, 'scratch overlaps the project'):
                 accept(project)
             last_font = fonts / shell._FONT_NAMES[-1]
