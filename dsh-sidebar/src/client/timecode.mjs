@@ -13,7 +13,10 @@ export function projectClock(fps) {
 
 /** mm:ss:frame, unlimited minutes. NTSC is explicitly nominal non-drop, not wall time. */
 export function formatTimecode(frame, fps) {
-  const clock = projectClock(fps)
+  return formatClockTimecode(frame, projectClock(fps))
+}
+
+export function formatClockTimecode(frame, clock) {
   if (!clock || !safeFrame(frame)) return null
   const value = BigInt(frame), nominal = BigInt(clock.nominal), seconds = value / nominal
   return `${String(seconds / 60n).padStart(2, '0')}:${String(seconds % 60n).padStart(2, '0')}:${String(value % nominal).padStart(String(clock.nominal - 1).length, '0')}`

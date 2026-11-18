@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { PreviewError, TimelineReader, prepareGfxArgs, prepareGfxCapable, fail, HOST_IDENTITY, createRequestLogger, BAKED_BUILD_STAMP, BUILD_STAMP_MARKER, HOST_LIB_MODULES, CLIENT_MODULES, composeBuildStamp } from './protocol.mjs'
+import { PreviewError, TimelineReader, validateEnvelope, prepareGfxArgs, prepareGfxCapable, fail, HOST_IDENTITY, createRequestLogger, BAKED_BUILD_STAMP, BUILD_STAMP_MARKER, HOST_LIB_MODULES, CLIENT_MODULES, composeBuildStamp } from './protocol.mjs'
 import { mediaResponse } from './media.mjs'
 import { boundedText, CONTROL_REQUEST_LIMIT, FRAME_REQUEST_LIMIT, FRAME_WIRE_LIMIT } from './bounded.mjs'
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
@@ -70,6 +70,22 @@ const platformAllowsFrame = () => ['linux', 'darwin'].includes(process.platform)
 const writePlatformMessage = '当前宿主不支持内核语义写入；仍可读取时间线、复制或引用。'
 const framePlatformMessage = '当前宿主不支持生成完整合成帧；可继续查看时间线与播放已有成片。'
 const writeUnavailable = message => ({ ok: false, error: 'WRITE_UNSUPPORTED', message })
+const editViewCapable = value => value?.edit_view?.command === 'edit-view' && value.edit_view.read_schema === 'framivra.timeline.read/v1' && value.edit_view.wire_limit_bytes === 8388608
+const revisionShape = value => typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value)
+const uuidShape = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value)
+
+/** Receipt proof is separate from view proof: a bad view must not hide an applied edit. */
+function appliedEditReceipt(result, request) {
+  return result?.schema === 'framivra.timeline.store/v1' && result.ok === true && result.operation === 'edit' &&
+    result.op_id === request.op_id && result.base_revision === request.base_revision && revisionShape(result.revision) &&
+    revisionShape(result.current_revision) && typeof result.replayed === 'boolean'
+}
+function validateEditView(result, request) {
+  if (!appliedEditReceipt(result, request) || result.replayed !== false || result.current_revision !== result.revision) fail('PROTOCOL_MISMATCH', 'Exact non-replayed edit receipt required', 502)
+  const snapshot = validateEnvelope(result.view?.snapshot, 'inspect')
+  const query = validateEnvelope(result.view?.result, 'query')
+  if (snapshot.content_version !== result.revision || query.content_version !== result.revision || snapshot.document._vtx?.head !== request.op_id) fail('PROTOCOL_MISMATCH', 'Edit view must contain matching saved revision/head and full query', 502)
+}
 
 function previewCapabilities(value) {
   // The core's static frame declaration describes the wire format, not local
@@ -162,6 +178,7 @@ export function createPreviewHost(ctx, config = {}) {
     grant.storagePlan = undefined
     grant.write?.abort()
     grant.write = undefined
+    grant.writeCapabilities = undefined
     grant.plan = undefined
   }
   function expire() {
@@ -199,6 +216,36 @@ export function createPreviewHost(ctx, config = {}) {
     const result = await contained(grant.relative, grant.cwd, root, 'file', signal)
     if (result.target.targetKey !== grant.timeline.targetKey) fail('PATH_CHANGED', 'Timeline identity changed; reopen preview', 409)
     return result.target
+  }
+  async function editViewTarget(grant, signal) {
+    signal.throwIfAborted()
+    grantFor(grant.session.id, grant.id)
+    const timeline = await validateTimeline(grant, signal)
+    const project = await localTarget(grant.projectPath, undefined, signal)
+    if (project.targetKey !== grant.project.targetKey || (await ctx.fs.stat(project, signal))?.type !== 'directory') fail('PATH_CHANGED', 'Project identity changed; reopen', 409)
+    const executable = await localTarget(grant.executable, undefined, signal)
+    const info = await ctx.fs.stat(executable, signal)
+    if (executable.targetKey !== grant.executableTarget.targetKey || info?.type !== 'file' || info.version !== grant.executableVersion || ctx.fs.contains(grant.root, executable)) fail('EXECUTABLE_CHANGED', 'Installed executable identity changed; reopen', 409)
+    grantFor(grant.session.id, grant.id)
+    signal.throwIfAborted()
+    return ctx.fs.processPath(timeline)
+  }
+  function primeEditView(grant) {
+    if (!editViewCapable(grant.writeCapabilities) || grant.writeCapabilities.edit_view.preload_stdin !== true) return
+    const write = grant.write
+    // Detached from the HTTP lease: only the exact write grant and reader
+    // lifecycle own this zero-byte EOF waiter. Priming never delays a response.
+    queueMicrotask(() => {
+      void (async () => {
+        const path = ctx.fs.processPath(grant.timeline)
+        const validate = async signal => {
+          const current = () => grant.write === write && !write.signal.aborted && !grant.running && !grant.outcomeUnknown && !grant.editViewNeedsRefresh
+          if (!current()) throw new DOMException('Write grant unavailable', 'AbortError')
+          if (await editViewTarget(grant, signal) !== path || !current()) throw new DOMException('Write grant changed', 'AbortError')
+        }
+        await reader.primeEditView(grant.executable, path, write.signal, grant.configSnapshot, grant.id, write, validate)
+      })().catch(() => {})
+    })
   }
   function lease(request, deadline = true) {
     lifecycle.signal.throwIfAborted()
@@ -401,7 +448,7 @@ export function createPreviewHost(ctx, config = {}) {
         return json({ ok: true })
       }
       if (['storage-inspect', 'storage-plan', 'storage-clean', 'storage-cancel'].includes(data.op)) return await storageControl(data, grant, hold.signal)
-      if (['authorize-write', 'revoke-write', 'invalidate-plan', 'cancel-write', 'plan', 'commit', 'status', 'recover', 'adopt', 'undo'].includes(data.op)) {
+      if (['authorize-write', 'revoke-write', 'invalidate-plan', 'cancel-write', 'plan', 'commit', 'status', 'recover', 'adopt', 'undo', 'edit-view'].includes(data.op)) {
         if (!['revoke-write', 'invalidate-plan'].includes(data.op) && frameOwners.size) fail('FRAME_BUSY', 'Cancel the frame and confirm actual process reaping before semantic operations', 409)
         semanticAdmission++
         try { return await editControl(data, grant, hold.signal, cleanup) }
@@ -409,10 +456,14 @@ export function createPreviewHost(ctx, config = {}) {
       }
       if (!['inspect', 'query', 'reference'].includes(data.op)) fail('BAD_OPERATION', 'Unknown operation')
       if (data.op === 'reference' && data.query?.expected_content_version !== grant.contentVersion) fail('STALE_REFERENCE', 'Reference version must match this opened preview; refresh first', 409)
+      if (data.op === 'inspect' && grant.editViewing) fail('WRITE_BUSY', 'Wait for the edit view before refreshing', 409)
+      const readEpoch = grant.editViewEpoch ?? 0
       const timeline = await validateTimeline(grant, hold.signal)
       const result = await reader.read(grant.executable, ctx.fs.processPath(timeline), data.op, data.query, hold.signal, grant.configSnapshot, grant.id)
       grantFor(data.sessionId, data.grant)
       if (data.op === 'inspect') {
+        if (grant.editViewing || (grant.editViewEpoch ?? 0) !== readEpoch) fail('STALE_READ', 'An edit started during this read; refresh explicitly', 409)
+        grant.editViewNeedsRefresh = false
         if (grant.contentVersion !== result.content_version) { grant.storagePlan = undefined; grant.storageEpoch = (grant.storageEpoch ?? 0) + 1; grant.plan = undefined; grant.planEpoch = (grant.planEpoch ?? 0) + 1 }
         grant.contentVersion = result.content_version
         if (grant.recoveryObserved) { grant.outcomeUnknown = false; grant.recoveryObserved = false }
@@ -529,11 +580,16 @@ export function createPreviewHost(ctx, config = {}) {
     return capabilities
   }
   async function editControl(data, grant, signal, cleanup = false) {
-    if (['plan', 'commit', 'adopt', 'undo', 'recover'].includes(data.op)) grant.storagePlan = undefined
+    if (data.op === 'edit-view') {
+      if (Object.keys(data).some(key => !['op', 'sessionId', 'grant', 'writeGrant', 'op_id', 'base_revision', 'operations'].includes(key))) fail('BAD_INTENT', 'Only explicit edit-view request fields are accepted')
+      if (!uuidShape(data.op_id)) fail('BAD_OP_ID', 'Direct UI operation ID must be an explicit UUID')
+      if (!Array.isArray(data.operations) || !data.operations.length || data.operations.length > 256) fail('BAD_INTENT', 'Use 1..256 explicit semantic operations')
+    }
+    if (['plan', 'commit', 'adopt', 'undo', 'recover', 'edit-view'].includes(data.op)) grant.storagePlan = undefined
     if (storageOwners.size && !['revoke-write', 'invalidate-plan', 'cancel-write'].includes(data.op)) fail('STORAGE_BUSY', 'Wait for storage process cleanup before semantic operations', 409)
     await validateTimeline(grant, signal, cleanup)
     grantFor(data.sessionId, data.grant, cleanup)
-    if (data.op === 'revoke-write') { revoke(grant); await Promise.all([grant.runningDone, grant.frameDone, grant.storageDone]); return json({ ok: true }) }
+    if (data.op === 'revoke-write') { revoke(grant); await Promise.all([grant.runningDone, grant.frameDone, grant.storageDone]); await reader.reapIdle(grant.id); return json({ ok: true }) }
     // Revoking a frozen plan is host bookkeeping, not permission to spawn or write.
     // cancel-write IS the explicit store-child cancel: it must never be gated
     // by a stuck semanticBusy (a failed cleanup), or the retry path wedges.
@@ -541,13 +597,16 @@ export function createPreviewHost(ctx, config = {}) {
     if (data.op === 'authorize-write') {
       revoke(grant)
       await grant.runningDone
+      await reader.reapIdle(grant.id)
       const capabilities = await writeCapabilities(grant, signal)
       grantFor(data.sessionId, data.grant)
       await validateTimeline(grant, signal)
       revoke(grant)
       grant.write = new AbortController()
       grant.writeKey = randomUUID()
-      return json({ ok: true, writeGrant: grant.writeKey, capabilities })
+      grant.writeCapabilities = capabilities
+      primeEditView(grant)
+      return json({ ok: true, writeGrant: grant.writeKey, capabilities, ...(editViewCapable(capabilities) ? { editView: true } : {}) })
     }
     if (!grant.write || grant.write.signal.aborted || data.writeGrant !== grant.writeKey) fail('WRITE_DENIED', 'Read access is not write permission; explicitly authorize this Session/project first', 403)
     if (data.op === 'cancel-write') {
@@ -561,8 +620,13 @@ export function createPreviewHost(ctx, config = {}) {
     if (data.op === 'invalidate-plan') { grant.plan = undefined; grant.planEpoch = (grant.planEpoch ?? 0) + 1; return json({ ok: true }) }
     if (grant.running) fail('WRITE_BUSY', 'Wait for managed process cleanup before another command', 409)
     if (grant.outcomeUnknown && !['status', 'recover'].includes(data.op)) fail('OUTCOME_UNKNOWN', 'Use explicit core status/recover and refresh before any new plan or transaction', 409)
+    if (grant.editViewNeedsRefresh && ['edit-view', 'plan', 'commit', 'adopt', 'undo'].includes(data.op)) fail('STALE_BASE', 'Explicitly refresh after an applied edit whose view was unavailable', 409)
+    if (data.op === 'edit-view') {
+      if (!editViewCapable(grant.writeCapabilities)) fail('EDIT_VIEW_UNSUPPORTED', 'Installed core did not advertise the exact edit-view capability during write authorization', 422)
+    }
     const controller = new AbortController()
     grant.running = controller
+    if (data.op === 'edit-view') { grant.editViewing = true; grant.editViewEpoch = (grant.editViewEpoch ?? 0) + 1 }
     let settled
     grant.runningDone = new Promise(resolve => { settled = resolve })
     const combined = AbortSignal.any([signal, grant.write.signal, controller.signal])
@@ -571,14 +635,15 @@ export function createPreviewHost(ctx, config = {}) {
       // A throwing provider inside a timer would kill the whole Host process;
       // treat any probe failure as "world unverifiable" and abort fail-closed.
       try {
-        if (ctx.sessions.get(data.sessionId) !== grant.session || ctx.workingDirectory.get(grant.session) !== grant.cwd || !configCurrent(grant)) controller.abort()
+        if ((data.op === 'edit-view' && clock() >= grant.expiresAt) || ctx.sessions.get(data.sessionId) !== grant.session || ctx.workingDirectory.get(grant.session) !== grant.cwd || !configCurrent(grant)) controller.abort()
       } catch { controller.abort() }
     }, 50)
     monitor.unref?.()
     const epoch = grant.planEpoch ?? 0
-    let mutating = false, request
+    let mutating = false, request, appliedReceipt
+    const editViewFence = () => editViewTarget(grant, combined)
     try {
-      const path = ctx.fs.processPath(await validateTimeline(grant, combined))
+      const path = data.op === 'edit-view' ? await editViewFence() : ctx.fs.processPath(await validateTimeline(grant, combined))
       if (data.op === 'status' || data.op === 'recover') {
         mutating = true // Even status may initialize lock/manifest; write grant required.
         const result = await reader.store(grant.executable, path, data.op, undefined, combined, grant.configSnapshot, grant.id)
@@ -599,6 +664,33 @@ export function createPreviewHost(ctx, config = {}) {
         return json({ ...result, submitted_request: request })
       }
       if (data.base_revision !== grant.contentVersion) fail('STALE_BASE', 'Refresh the authoritative timeline before planning', 409)
+      if (data.op === 'edit-view') {
+        request = { operation: 'edit', op_id: data.op_id, base_revision: data.base_revision, operations: data.operations }
+        grant.plan = undefined
+        mutating = true
+        const result = await reader.store(grant.executable, path, 'edit-view', request, combined, grant.configSnapshot, grant.id,
+          grant.writeCapabilities.edit_view.preload_stdin === true ? grant.write : undefined, async () => {
+            if (await editViewFence() !== path) fail('PATH_CHANGED', 'Timeline process path changed before dispatch', 409)
+          })
+        if (result.outcome_unknown === true || result.code === 'outcome_unknown') {
+          grant.outcomeUnknown = true
+          return json({ ...result, op_id: request.op_id })
+        }
+        if (!result.ok) {
+          if (typeof result.code !== 'string' || !result.code.trim() || (result.op_id !== undefined && result.op_id !== request.op_id)) fail('PROTOCOL_MISMATCH', 'Bounded edit failure requires a code and matching operation identity when present', 502)
+          return json(result)
+        }
+        if (appliedEditReceipt(result, request)) appliedReceipt = result
+        validateEditView(result, request)
+        await editViewFence()
+        grantFor(data.sessionId, data.grant)
+        combined.throwIfAborted()
+        grant.contentVersion = result.revision
+        grant.storageEpoch = (grant.storageEpoch ?? 0) + 1
+        grant.planEpoch = (grant.planEpoch ?? 0) + 1
+        primeEditView(grant)
+        return json(result)
+      }
       if (data.op === 'plan') {
         if (!Array.isArray(data.operations) || !data.operations.length || data.operations.length > 256) fail('BAD_INTENT', 'Use 1..256 explicit semantic operations')
         request = { operation: 'edit', op_id: randomUUID(), base_revision: data.base_revision, operations: data.operations }
@@ -628,11 +720,19 @@ export function createPreviewHost(ctx, config = {}) {
       grant.plan = { token, request }
       return json({ ...result, planToken: token, submitted_request: request })
     } catch (error) {
+      if (appliedReceipt) {
+        grant.editViewNeedsRefresh = true
+        const { view: _view, ...receipt } = appliedReceipt
+        return json({ ...receipt, ok: false, applied: true, code: 'applied_view_unavailable',
+          ...(['BAD_GRANT', 'CONFIG_CHANGED', 'PATH_CHANGED', 'EXECUTABLE_CHANGED'].includes(error.code) ? { terminal_code: error.code } : {}),
+          message: 'The edit was applied, but its view could not be published. Do not retry; refresh explicitly or reopen.',
+          diagnostics: { error: error.code ?? error.name, message: error.message } })
+      }
       if (mutating) { grant.outcomeUnknown = true; return json({ ok: false, schema: 'framivra.timeline.store/v1', code: 'outcome_unknown', op_id: request?.op_id ?? null,
-        submitted_request: request, message: 'Command interrupted or result unavailable. It may have committed; use explicit core status/recover. Never generate a replacement operation to retry.',
+        ...(data.op === 'edit-view' ? { outcome_unknown: true } : { submitted_request: request }), message: 'Command interrupted or result unavailable. It may have committed; use explicit core status/recover. Never generate a replacement operation to retry.',
         diagnostics: { error: error.code ?? error.name, message: error.message } }) }
       throw error
-    } finally { clearInterval(monitor); grant.running = undefined; settled() }
+    } finally { clearInterval(monitor); grant.running = undefined; if (data.op === 'edit-view') grant.editViewing = false; settled() }
   }
   async function frame(request, note = {}) {
     if (request.method !== 'POST') fail('METHOD_NOT_ALLOWED', 'Frame is POST-only', 405)
@@ -665,7 +765,7 @@ export function createPreviewHost(ctx, config = {}) {
       if (!inlineCapable(grant.capabilities)) fail('FRAME_UNSUPPORTED', 'Installed core must actually advertise --include-png; no path fallback', 422)
       if (options?.prepareGfx === true && !prepareGfxCapable(grant.capabilities)) fail('FRAME_UNSUPPORTED', 'Installed core must advertise current-composite preview-only graphics preparation', 422)
       if (semanticAdmission || grant.running || grant.outcomeUnknown || grant.plan) fail('WRITE_BUSY', 'Resolve the active/unknown write or pending plan and refresh before a frame', 409)
-      if (grant.frame || (!frameQueue.length && (frameOwners.size || reader.active.size))) fail('FRAME_BUSY', 'Previous process ownership has not been reaped; cancel it explicitly', 409)
+      if (grant.frame || (!frameQueue.length && (frameOwners.size || reader.frameBusy))) fail('FRAME_BUSY', 'Previous process ownership has not been reaped; cancel it explicitly', 409)
       if (frameQueue.length >= 5) fail('FRAME_QUEUE_FULL', 'At most four explicit frame clicks may wait; no automatic retry', 429)
       grant.frameNonces ??= new Set()
       if (grant.frameNonces.has(data.operationId)) fail('FRAME_REPLAY', 'A render click is single-use; no automatic retry', 409)
@@ -715,7 +815,7 @@ export function createPreviewHost(ctx, config = {}) {
       signal.throwIfAborted()
       // Predecessor cleanup is complete, but failed cleanup or an unrelated
       // read may still own a child. Refuse once, never wait/retry behind it.
-      if (reader.active.size || [...frameOwners].some(owner => owner !== grant && !frameQueue.some(entry => entry.grant === owner))) fail('FRAME_BUSY', 'Previous process ownership has not been reaped', 409)
+      if (reader.frameBusy || [...frameOwners].some(owner => owner !== grant && !frameQueue.some(entry => entry.grant === owner))) fail('FRAME_BUSY', 'Previous process ownership has not been reaped', 409)
       const path = await validate()
       const result = await reader.frame(grant.executable, path, data.frame, data.contentVersion, signal, grant.configSnapshot, grant.id, options)
       await validate()
@@ -823,7 +923,10 @@ export function createPreviewHost(ctx, config = {}) {
     const hold = lease({ signal })
     try {
       await validateTimeline(grant, hold.signal)
-      return await probeStore(grant.executable, ctx.fs.processPath(grant.timeline), hold.signal, grant.configSnapshot, grant.id)
+      const capabilities = await probeStore(grant.executable, ctx.fs.processPath(grant.timeline), hold.signal, grant.configSnapshot, grant.id)
+      // Fast-write transport is an owner UI capability, not model authority.
+      const { edit_view: _editView, ...modelCapabilities } = capabilities
+      return modelCapabilities
     } finally { hold.release() }
   }
   async function decodeControl(response) {

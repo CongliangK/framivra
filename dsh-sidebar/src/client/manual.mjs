@@ -14,6 +14,7 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
   const base = opened.snapshot.content_version, head = opened.snapshot.document?._vtx?.head
   const managed = opened.snapshot.document?._vtx?.protocol === 1
   const [write, setWrite] = useState()
+  const [editView, setEditView] = useState(false)
   const [message, setMessage] = useState(), [status, setStatus] = useState(), [undoneRevision, setUndoneRevision] = useState()
   const flags = useRef({ dirty: false, busy: false, unknown: false })
   const [{ dirty, busy, unknown }, setFlags] = useState(flags.current)
@@ -48,7 +49,13 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
     report({ busy: true }); setMessage({ text: direct ? '正在保存…' : '处理中…' })
     try {
       let answer
-      if (direct) {
+      if (direct && editView) {
+        // Release is the final authorized intent. The same kernel transaction
+        // validates, commits and returns its exact saved view; never retry it.
+        operationId = crypto.randomUUID()
+        dispatched = true
+        answer = await send('edit-view', { op_id: operationId, base_revision: base, operations })
+      } else if (direct) {
         const prepared = await send('plan', { base_revision: base, operations })
         signal.throwIfAborted()
         if (!prepared.ok) throw answerError(prepared)
@@ -71,6 +78,11 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
         answer = await send(action, extra)
       }
       if (!answer.ok) {
+        if (direct && editView && answer.applied === true && answer.code === 'applied_view_unavailable') {
+          applied = true
+          const terminal = terminalGrantFailure(`${answer.terminal_code}:`)
+          if (terminal) onGrantDead?.(terminal, opened.grant)
+        }
         dispatched = unknownResult(answer)
         throw answerError(answer)
       }
@@ -80,10 +92,15 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
       if (action === 'authorize-write') {
         if (!answer.writeGrant) throw new Error('未获得编辑许可。')
         setWrite(answer.writeGrant)
-      } else if (action === 'revoke-write') setWrite(undefined)
+        setEditView(answer.editView === true)
+      } else if (action === 'revoke-write') { setWrite(undefined); setEditView(false) }
       else if (applied || statusObserved) {
         if (statusObserved) setStatus(answer)
-        await onCommitted?.({ focusId, expectedRevision: applied ? answer.revision : answer.current_revision })
+        const expectedRevision = applied ? answer.revision : answer.current_revision
+        if (direct && editView) {
+          if (!answer.view) throw new Error('缺少内核已保存视图。')
+          await onCommitted?.({ focusId, expectedRevision, view: answer.view })
+        } else await onCommitted?.({ focusId, expectedRevision })
         signal.throwIfAborted()
         report({ dirty: false, unknown: applied || answer.pending === false ? false : flags.current.unknown || answer.pending === true })
         if (action === 'undo') setUndoneRevision(answer.revision)
@@ -137,7 +154,7 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
       return transact(token, 'edit', { focusId: block.data.id, operations: [{ op: operation, id: block.data.id, at: frame, new_id: crypto.randomUUID(), ...(block.family === 'subtitles' ? { text_policy: 'duplicate-text' } : { fade_policy: 'preserve-content' }) }] })
     } : undefined)
     return () => { active.current = undefined; onEnableReady?.(undefined); onGestureReady?.(undefined, '编辑已关闭'); onUndoReady?.(undefined); onQuickReady?.(undefined) }
-  }, [reason, write, busy, dirty, unknown, managed, suspended, stale, base, head, undoneRevision, selected, selection, frame, result, sessionId, opened.grant, tabSignal])
+  }, [reason, write, editView, busy, dirty, unknown, managed, suspended, stale, base, head, undoneRevision, selected, selection, frame, result, sessionId, opened.grant, tabSignal])
 
   const invoke = action => { void transact(active.current, action).catch(() => {}) }
   const locked = suspended || busy
