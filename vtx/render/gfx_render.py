@@ -30,6 +30,7 @@ __vtx_render 加速特性（方案 v2 阶段 2，详见「渲染主体」前注�
 """
 import base64
 from ..runtime import fstxn, file_clone
+from ..runtime.windows_browser import JobSettlementError, job_cleanup_unconfirmed
 from itertools import groupby
 import hashlib
 from pathlib import Path
@@ -496,6 +497,7 @@ class Browser:
         self.group = None       # SupervisedProcessGroup（ctx 模式独有）
         self.proc = None
         self.windows_job = None
+        self._windows_cleanup = None
         self.port = None
         self.user_data_dir = None
         self.tab_ws_urls = []
@@ -551,7 +553,12 @@ class Browser:
             if sys.platform == "win32":
                 from ..runtime.windows_browser import BrowserJob
                 argv[0] = os.path.abspath(argv[0])  # normalize an explicit relative file, not a PATH lookup
-                self.windows_job = BrowserJob(argv)
+                try:
+                    self.windows_job = BrowserJob(argv)
+                except BaseException as error:
+                    if isinstance(error.__cause__, JobSettlementError):
+                        self._windows_cleanup = error.__cause__
+                    raise
                 self.proc = self.windows_job.proc
             else:
                 self.proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -607,8 +614,18 @@ class Browser:
             self.proc = None
             self.user_data_dir = None
             return
+        if self._windows_cleanup is not None:
+            raise self._windows_cleanup
         if self.windows_job is not None:
-            self.windows_job.close()
+            try:
+                self.windows_job.close()
+            except OSError as cleanup:
+                self._windows_cleanup = JobSettlementError('Windows browser Job cleanup unconfirmed')
+                raise self._windows_cleanup from cleanup
+            except KeyboardInterrupt as cancel:
+                if isinstance(cancel.__cause__, JobSettlementError):
+                    self._windows_cleanup = cancel.__cause__
+                raise
             self.windows_job = None
             self.proc = None  # the Job already closed its root handle
         if self.proc and self.proc.poll() is None:
@@ -664,6 +681,21 @@ class Browser:
 # golden 全零门槛不过），相关驱动与 VTX_GFX_BATCH* env 一并移除。
 
 # ---------------------------------------------------------------- 渲染主体
+
+
+def _stop_after_render(browser, primary):
+    # Keep the old cleanup behavior for non-Job failures and non-Windows browsers.
+    try:
+        browser.stop()
+    except JobSettlementError as cleanup:
+        if primary is None:
+            raise
+        raise primary from cleanup
+    except KeyboardInterrupt as cancel:
+        if isinstance(primary, KeyboardInterrupt) and job_cleanup_unconfirmed(cancel):
+            raise primary from cancel.__cause__
+        raise
+
 
 _BG_INJECT_WHITE = (
     "(()=>{let s=document.getElementById('__vtx_bg');if(!s){s=document.createElement('style');"
@@ -899,11 +931,11 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     browser = Browser(chrome_path, tabs_n, width, height, ctx=ctx)
     try:
         browser.start()
-    except BaseException:
+    except BaseException as primary:
         # start 在下方 try(其 finally 才调 stop)之外,半途失败时 Chrome 进程
         # (起了但 devtools 未就绪/建 tab 失败)与 mkdtemp 临时目录双泄漏且调用方
         # 拿不到 stop——此处显式回收再上抛(RECP-20260916-002 主修缺陷)。
-        browser.stop()
+        _stop_after_render(browser, primary)
         raise
     pool = []
     owned_tabs = []             # Only sessions not yet closed; protected by browser.lock.
@@ -1114,6 +1146,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             # on some Python versions. This event records actual target exit.
             settled[idx].set()
 
+    primary = None
     try:
         pool = browser.open_tabs()
         owned_tabs.extend(pool)
@@ -1207,11 +1240,15 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 t.start()
             for t in threads:
                 t.join()
+    except BaseException as error:
+        primary = error
+        raise
     finally:
         # Cancel before taking the restart lock: an in-flight heal may finish,
         # but no waiting worker may start another browser after teardown.
         stopping.set()
         interrupted = None
+        job_cleanup = None
 
         def finish_cleanup(operation):
             nonlocal interrupted
@@ -1221,6 +1258,9 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 except KeyboardInterrupt as exc:
                     if interrupted is None:
                         interrupted = exc
+                    if job_cleanup_unconfirmed(exc):
+                        # The Job's fallback already ran; retry cannot prove shutdown.
+                        raise exc.__cause__
 
         finish_cleanup(browser.lock.acquire)
         try:
@@ -1228,7 +1268,10 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 for t in owned_tabs:
                     finish_cleanup(t.interrupt)
             finally:
-                finish_cleanup(browser.stop)
+                try:
+                    finish_cleanup(browser.stop)
+                except JobSettlementError as cleanup:
+                    job_cleanup = cleanup
         finally:
             browser.lock.release()
             try:
@@ -1243,7 +1286,13 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             finally:
                 for t in owned_tabs:
                     finish_cleanup(t.close)
-        if interrupted is not None and sys.exc_info()[0] is None:
+        if job_cleanup is not None:
+            if not isinstance(primary, KeyboardInterrupt) and interrupted is not None:
+                primary = interrupted
+            if primary is not None:
+                raise primary from job_cleanup
+            raise job_cleanup
+        if interrupted is not None and primary is None:
             raise interrupted
     dt = (time.monotonic() - t0) * 1000
     # —— 特性 2 延后复制：头帧已由本次渲染落盘，缺失成员字节复制头帧文件 ——
@@ -1330,6 +1379,7 @@ def render_strict_page(html_path, outdir, n_frames, chrome_path, width, height,
     pool = []
     started = time.monotonic()
     requested = list(range(n_frames) if frames is None else frames)
+    primary = None
     try:
         browser.start()
         pool = browser.open_tabs()
@@ -1364,7 +1414,10 @@ def render_strict_page(html_path, outdir, n_frames, chrome_path, width, height,
                 'timings_ms': {c: _timings_summary([]) for c in _TIME_CATS},
                 'dependency_enforcement': 'fetch-pinned-local-v1',
                 'dependency_observed': sorted(tab.request_policy.observed)}
+    except BaseException as error:
+        primary = error
+        raise
     finally:
         for tab in pool:
             tab.close()
-        browser.stop()
+        _stop_after_render(browser, primary)

@@ -14,10 +14,20 @@ import time
 
 _PTR, _SIZE, _H, _D, _B = C.c_void_p, C.c_size_t, W.HANDLE, W.DWORD, W.BOOL
 _JOB_LIST, _HANDLE_LIST = 0x0002000D, 0x00020002
+_JOB_BASIC_ACCOUNTING = 1  # JobObjectBasicAccountingInformation
 _KILL_ON_CLOSE, _EXTENDED_STARTUPINFO = 0x2000, 0x00080000
 _WAIT_TIMEOUT, _INFINITE = 258, 0xFFFFFFFF
 _STOP_TIMEOUT, _DRAIN_TIMEOUT = 10, 2
 _CAPTURE_LIMIT = 32 * 1024 * 1024  # aggregate stdout + stderr, including timeout cleanup
+
+
+class JobSettlementError(OSError):
+    """The owned Windows browser could not be proved shut down."""
+
+
+def job_cleanup_unconfirmed(error):
+    """An unproved Job shutdown must not be routed to another browser."""
+    return isinstance(error, JobSettlementError) or isinstance(error.__cause__, JobSettlementError)
 
 
 class _StartupInfo(C.Structure):
@@ -49,12 +59,19 @@ class _ExtendedLimits(C.Structure):
     _fields_ = [('basic', _BasicLimits), ('io', C.c_uint64 * 6), ('memory', _SIZE * 4)]
 
 
+class _BasicAccounting(C.Structure):
+    _fields_ = [('times', C.c_int64 * 4), ('page_faults', _D), ('total', _D),
+                ('active', _D), ('total_terminated', _D)]
+
+
 @lru_cache(maxsize=1)
 def _api():
     kernel = C.WinDLL('kernel32', use_last_error=True)
     signatures = {
         'CreateJobObjectW': (_H, _PTR, W.LPCWSTR),
         'SetInformationJobObject': (_B, _H, C.c_int, _PTR, _D),
+        'TerminateJobObject': (_B, _H, W.UINT),
+        'QueryInformationJobObject': (_B, _H, C.c_int, _PTR, _D, C.POINTER(_D)),
         'InitializeProcThreadAttributeList': (_B, _PTR, _D, _D, C.POINTER(_SIZE)),
         'UpdateProcThreadAttribute': (_B, _PTR, _D, _SIZE, _PTR, _SIZE, _PTR, _PTR),
         'DeleteProcThreadAttributeList': (None, _PTR),
@@ -196,6 +213,7 @@ class BrowserJob:
             raise ValueError('Windows browser accepts only DEVNULL or PIPE for stdout/stderr')
         self._api = api = _api()
         self._job, self._info, self._captures = _H(), _ProcessInfo(), []
+        self._close_failed = False
         self.proc = _Process(api, self._info, argv)
         try:
             self._job.value = _check(api.CreateJobObjectW(None, None), 'CreateJobObjectW')
@@ -223,30 +241,96 @@ class BrowserJob:
                     _check(api.CreateProcessW(args[0], cmd, None, None, True, _EXTENDED_STARTUPINFO,
                                               None, None, C.byref(startup), C.byref(self._info)),
                            'CreateProcessW')
-        except BaseException:
-            self.close()
+        except BaseException as primary:
+            try:
+                self.close()
+            except OSError as cleanup:
+                unconfirmed = JobSettlementError('Windows browser Job cleanup unconfirmed during launch')
+                unconfirmed.__cause__ = cleanup
+                raise primary from unconfirmed
+            except KeyboardInterrupt as cleanup:
+                if isinstance(primary, KeyboardInterrupt) and isinstance(cleanup.__cause__, JobSettlementError):
+                    raise primary from cleanup.__cause__
+                raise
             raise
 
     def _stop_job(self):
-        _close_handle(self._api, self._job, 'value')
+        # Only the unnamed, non-inheritable Job created above, never the caller's Job.
+        _check(self._api.TerminateJobObject(self._job, 1), 'TerminateJobObject')
 
-    def _close(self, wait_timeout):
+    def _wait_job_empty(self, deadline):
+        accounting, size = _BasicAccounting(), _D()
+        while time.monotonic() < deadline:
+            _check(self._api.QueryInformationJobObject(self._job, _JOB_BASIC_ACCOUNTING,
+                                                       C.byref(accounting), C.sizeof(accounting),
+                                                       C.byref(size)), 'QueryInformationJobObject')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break  # even a zero returned at or after the deadline is not proof
+            if size.value != C.sizeof(accounting):
+                raise OSError(errno.EIO, 'Windows browser Job accounting size mismatch')
+            if accounting.active == 0:
+                return
+            time.sleep(min(.005, remaining))
+        raise OSError(errno.ETIMEDOUT, 'Windows browser Job settlement deadline expired')
+
+    def _close(self, deadline, *, drain=False):
+        interrupted = None
+
+        @contextmanager
+        def remember_interrupt():
+            nonlocal interrupted
+            try:
+                yield
+            except KeyboardInterrupt as cancel:
+                if interrupted is None:
+                    interrupted = cancel
+                raise
+
+        def close_owned(owner, field):
+            with remember_interrupt():
+                _close_handle(self._api, owner, field)
+
         try:
-            self._stop_job()
-            if self._info.process:
-                self.proc.wait(wait_timeout)
-        finally:
-            with ExitStack() as closing:
-                closing.callback(_close_handle, self._api, self._info, 'process')
-                closing.callback(_close_handle, self._api, self._info, 'thread')
+            # Capture cancellation before finally/ExitStack can replace it.
+            with ExitStack() as closing, remember_interrupt():
+                closing.callback(close_owned, self._info, 'process')
+                closing.callback(close_owned, self._info, 'thread')
                 for capture in self._captures:
-                    closing.callback(_close_handle, self._api, capture.handle, 'value')
+                    closing.callback(close_owned, capture.handle, 'value')
+                # On any failure this still kills on last close, but cannot prove settlement.
+                closing.callback(close_owned, self._job, 'value')
+                if self._close_failed:
+                    raise OSError(errno.EIO, 'Windows browser Job cleanup previously failed')
+                if self._info.process:  # no child to settle on a pre-launch failure
+                    self._stop_job()  # stop before draining pipes that descendants may hold open
+                    try:
+                        with remember_interrupt():
+                            if drain:
+                                self._pump(deadline)
+                    finally:
+                        # Preserve the exact root status and release its handle before accounting.
+                        try:
+                            self.proc.wait(max(0, deadline - time.monotonic()))
+                        except subprocess.TimeoutExpired:
+                            # Do not expose the browser argv/profile as a cleanup cause.
+                            raise OSError(errno.ETIMEDOUT, 'Windows browser root wait timed out') from None
+                        _close_handle(self._api, self._info, 'process')
+                        self._wait_job_empty(deadline)
+        except BaseException as error:
+            self._close_failed = True  # a retry must not confuse a closed handle with proof
+            cancel = interrupted if interrupted is not None else error
+            if isinstance(cancel, KeyboardInterrupt):
+                unconfirmed = JobSettlementError('Windows browser Job cleanup interrupted; shutdown unconfirmed')
+                if error is not cancel:
+                    unconfirmed.__cause__ = error
+                raise cancel from unconfirmed
+            raise
 
     def close(self):
-        self._close(_STOP_TIMEOUT)
+        self._close(time.monotonic() + _STOP_TIMEOUT)
 
-    def _pump(self, timeout):
-        deadline = None if timeout is None else time.monotonic() + timeout
+    def _pump(self, deadline):
         remaining = _CAPTURE_LIMIT - sum(len(capture.data) for capture in self._captures)
         while deadline is None or time.monotonic() < deadline:
             before = remaining
@@ -267,25 +351,21 @@ class BrowserJob:
 def run_browser(argv, timeout=None):
     """Capture both streams and settle the owned tree on every exit."""
     job = BrowserJob(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    deadline = cleanup_error = None
     try:
-        if job._pump(timeout):
-            stdout, stderr = job._output()
-            return subprocess.CompletedProcess(argv, job.proc.returncode, stdout, stderr)
-        deadline = time.monotonic() + _DRAIN_TIMEOUT
+        captured = job._pump(None if timeout is None else time.monotonic() + timeout)
+    except BaseException as primary:
         try:
-            job._stop_job()  # before attempting any further reads; descendants may hold writers
-            job._pump(max(0, deadline - time.monotonic()))
-        except OSError as cleanup:
-            cleanup_error = cleanup
-    finally:
-        if deadline is None:
             job.close()
-        else:
-            try:
-                # The exact root gets only the remainder, even if the drain failed or overflowed.
-                job._close(max(0, deadline - time.monotonic()))
-            except (OSError, subprocess.TimeoutExpired) as cleanup:
-                if cleanup_error is None:
-                    cleanup_error = cleanup
+        except (OSError, subprocess.TimeoutExpired) as cleanup:
+            raise primary from cleanup
+        raise
+    if captured:
+        job.close()  # root exit and two EOFs do not establish that the Job is empty
+        return subprocess.CompletedProcess(argv, job.proc.returncode, *job._output())
+    cleanup_error = None
+    try:
+        # Share the existing timeout cleanup budget across capture, root and Job settlement.
+        job._close(time.monotonic() + _DRAIN_TIMEOUT, drain=True)
+    except (OSError, subprocess.TimeoutExpired) as cleanup:
+        cleanup_error = cleanup
     raise subprocess.TimeoutExpired(argv, timeout, *job._output()) from cleanup_error

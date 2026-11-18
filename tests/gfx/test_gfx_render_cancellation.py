@@ -389,6 +389,68 @@ class RenderCancellationTests(unittest.TestCase):
                 if cancel_join:
                     self.assertTrue(self.finished.is_set())
 
+    def test_windows_job_interruption_stays_primary_after_fallback_close(self):
+        from vtx.runtime import windows_browser as wb
+
+        render_browser = render.Browser
+        base_browser = self.browser
+        case = self
+        for initial_cancel in (False, True):
+            with self.subTest(initial_cancel=initial_cancel):
+                self.release.clear()
+                self.entered.clear()
+                self.written.clear()
+                original = KeyboardInterrupt('join cancelled')
+                close_cancel = KeyboardInterrupt('accounting cancelled')
+                job = wb.BrowserJob.__new__(wb.BrowserJob)
+                job._job, job._info, job._captures = wb._H(10), wb._ProcessInfo(), []
+                job._info.process = 20
+                job._close_failed = False
+                job.proc = mock.Mock()
+                job._api = mock.Mock()
+                job._api.QueryInformationJobObject.side_effect = close_cancel
+
+                class Browser(base_browser):
+                    def __init__(self, *args, **kwargs):
+                        super().__init__(*args, **kwargs)
+                        self.windows_job = job
+                        self._windows_cleanup = None
+                        self.group = None
+                        self.proc = job.proc
+                        self.user_data_dir = 'unconfirmed-profile'
+
+                    def stop(self):
+                        case.release.set()
+                        return render_browser.stop(self)
+
+                original_join = threading.Thread.join
+                cancelled = False
+
+                def join(thread):
+                    nonlocal cancelled
+                    if initial_cancel and not cancelled:
+                        cancelled = True
+                        self.assertTrue(self.entered.wait(2))
+                        raise original
+                    return original_join(thread)
+
+                with self.environment() as directory, \
+                        mock.patch.object(render, 'Browser', Browser), \
+                        mock.patch.object(render, 'decode_canvas_export',
+                                          side_effect=self.export if initial_cancel else lambda *_: b'png'), \
+                        mock.patch.object(threading.Thread, 'join', join), \
+                        mock.patch.object(render.shutil, 'rmtree', wraps=render.shutil.rmtree) as remove:
+                    with self.assertRaises(KeyboardInterrupt) as failure:
+                        render.render_page('page.html', directory, 1, tabs=1)
+                    remove.assert_not_called()
+                self.assertIs(failure.exception, original if initial_cancel else close_cancel)
+                self.assertIsInstance(failure.exception.__cause__, wb.JobSettlementError)
+                self.assertTrue(job._close_failed)
+                self.assertIsNone(job._job.value)
+                self.assertIsNone(job._info.process)
+                self.assertEqual(job._api.CloseHandle.call_count, 2)
+                job._api.QueryInformationJobObject.assert_called_once()
+
     def test_browser_stop_retains_owned_handles_after_interrupt(self):
         for attribute, operation in (('group', 'stop'), ('windows_job', 'close')):
             with self.subTest(attribute=attribute):

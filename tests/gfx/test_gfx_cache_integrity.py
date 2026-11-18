@@ -90,6 +90,29 @@ class CacheIntegrity(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             cli.gfx(self.c)
 
+    def test_unconfirmed_windows_job_does_not_route_to_cli_or_publish_completion(self):
+        from vtx.runtime.windows_browser import JobSettlementError
+
+        cleanup = JobSettlementError('shutdown unconfirmed')
+        startup = RuntimeError('chrome exited during startup')
+        startup.__cause__ = cleanup
+        for primary in (cleanup, startup, KeyboardInterrupt('cancelled')):
+            with self.subTest(primary=primary), mock.patch.object(gfx_cli, 'render_cli') as fallback, \
+                    mock.patch.object(gfx_cli, 'complete_page') as complete:
+                kind = KeyboardInterrupt if isinstance(primary, KeyboardInterrupt) else SystemExit
+                with self.assertRaises(kind) as caught:
+                    self.run_gfx(renderer=mock.Mock(side_effect=primary))
+                if kind is KeyboardInterrupt:
+                    self.assertIs(caught.exception, primary)
+                else:
+                    self.assertEqual(caught.exception.code, 1)
+                    self.assertIs(caught.exception.__context__, primary)
+                    detail = json.loads((self.c.out / 'receipt.json').read_text())['stages']['gfx']['detail']
+                    self.assertIn(str(primary), detail)
+                    self.assertIn(str(cleanup), detail)
+                fallback.assert_not_called()
+                complete.assert_not_called()
+
     def duplicate_clips(self, *, project=None, **changes):
         timeline = json.loads(self.timeline.read_text())
         first = dict(src='page.html', dst_in=0, dur=3)
