@@ -83,7 +83,7 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
       } else if (action === 'revoke-write') setWrite(undefined)
       else if (applied || statusObserved) {
         if (statusObserved) setStatus(answer)
-        await onCommitted?.({ focusId })
+        await onCommitted?.({ focusId, expectedRevision: applied ? answer.revision : answer.current_revision })
         signal.throwIfAborted()
         report({ dirty: false, unknown: applied || answer.pending === false ? false : flags.current.unknown || answer.pending === true })
         if (action === 'undo') setUndoneRevision(answer.revision)
