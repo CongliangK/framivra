@@ -109,6 +109,11 @@ def input_path(c, name):
 def read_input(c, name, *, limit=None, expected_path=None):
     """Bound the read itself, rather than allocating first and checking later."""
     limit = MAX_INPUT_BYTES if limit is None else limit
+    if os.name == 'nt':
+        from .gfx_svg_win_input import read
+        if type(limit) is not int or not 0 <= limit <= MAX_INPUT_BYTES:
+            raise ValueError('SVG input exceeds byte budget')
+        return read(c.root, name, limit=limit, expected_path=expected_path)
     if limit < 0:
         raise ValueError('SVG input exceeds byte budget')
     path = input_path(c, name)
@@ -585,16 +590,14 @@ def _dependency_members(c, clip):
             yield name, None
         return
 
-    # Validate original declarations before building the canonical union: a
-    # resolved absolute path by itself loses the spelling in the timeline.
-    root = Path(c.root).resolve()
-    paths = {str(path): path for path in (input_path(c, name) for name in project + local)}
-    for _, path in sorted(paths.items()):
-        # input_path checked this boundary against the resolved root; check
-        # against our snapshot too, without WindowsPath's case folding.
-        if len(path.parts) <= len(root.parts) or path.parts[:len(root.parts)] != root.parts:
-            raise ValueError('SVG dependency must resolve inside the project root')
-        yield '/'.join(path.parts[len(root.parts):]), path
+    # Build the union only after checking original spellings. No resolve here:
+    # the reader must check the declared components, not an alias's target.
+    from .gfx_svg_win_input import relative_parts
+
+    root = Path(c.root)
+    names = {'/'.join(relative_parts(name)) for name in project + local}
+    for name in sorted(names, key=lambda name: name.replace('/', '\\')):
+        yield name, root / name
 
 
 def resolve(c, clip):
