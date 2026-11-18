@@ -258,13 +258,14 @@ function hostFixture() {
   return { requests, forbidden, notify, store, getDraftServices, useTabInfo }
 }
 
-test('post-edit reads overlap without publishing a partial or mismatched saved view', async t => {
+for (const observation of ['mixed', 'later', 'saved']) test(`post-edit reads: ${observation} revision pair`, async t => {
   const { root, button, submit, settle, Simulate } = await mount(t)
   const oldFetch = globalThis.fetch
   t.after(() => { globalThis.fetch = oldFetch })
   const managed = { ...snapshot, document: { ...snapshot.document, _vtx: { protocol: 1, head: 'head' } } }
   const editable = { ...full, tracks: [{ ...tracks[0], data: { id: 'track' } }], blocks: [{ ...blocks[0], data: { id: 'clip' } }] }
   const reply = value => new Response(stringifyJSON(value))
+  const saved = `sha256:${'b'.repeat(64)}`, newer = `sha256:${'c'.repeat(64)}`
   let committed = false
   const reads = new Map()
   globalThis.fetch = async (_url, init) => {
@@ -273,7 +274,8 @@ test('post-edit reads overlap without publishing a partial or mismatched saved v
     if (op === 'query' && !committed) return reply(editable)
     if (op === 'authorize-write') return reply({ ok: true, writeGrant: 'write' })
     if (op === 'plan') return reply({ ok: true, planToken: 'plan' })
-    if (op === 'commit') { committed = true; return reply({ ok: true }) }
+    if (op === 'commit') { committed = true; return reply({ ok: true, revision: saved }) }
+    if (op === 'reference') return reply({ content_version: committed ? saved : version, selection: { blocks: [{ address: '/t/0/b/0' }] } })
     if (op === 'inspect' || op === 'query') return new Promise(resolve => reads.set(op, resolve))
     return reply({ ok: true })
   }
@@ -289,12 +291,21 @@ test('post-edit reads overlap without publishing a partial or mismatched saved v
   await act(async () => Simulate.pointerUp(clip, { pointerId: 1, clientX: 50, clientY: 10, altKey: true }))
   await settle(() => reads.size === 2, 'both reads dispatched while neither has answered')
   const feedback = () => document.querySelector('.fv-drag-feedback')?.textContent
-  await act(async () => reads.get('query')(reply({ ...editable, content_version: `sha256:${'b'.repeat(64)}` })))
+  const observed = observation === 'later' ? newer : saved
+  await act(async () => reads.get('query')(reply({ ...editable, content_version: observed,
+    blocks: [{ ...editable.blocks[0], range: [5, 25] }] })))
   assert.equal(feedback(), '正在保存…')
   assert.match(clip.getAttribute('aria-label'), /帧 \[0, 20\)/)
-  await act(async () => reads.get('inspect')(reply(managed)))
-  await settle(() => document.querySelector('.fv-edit-status')?.textContent.includes('内核已保存，但工程刷新失败'))
-  assert.equal(document.querySelectorAll('.fv-clip').length, 0, 'mixed revisions never become the editable view')
+  await act(async () => reads.get('inspect')(reply({ ...managed, content_version: observation === 'mixed' ? version : observed })))
+  if (observation === 'saved') {
+    await settle(() => document.querySelector('.fv-edit-status')?.textContent === '已保存。')
+    assert.match(document.querySelector('.fv-clip')?.getAttribute('aria-label') ?? '', /帧 \[5, 25\)/)
+  } else {
+    await settle(() => document.querySelector('.fv-edit-status')?.textContent.includes('内核已保存，但工程刷新失败'))
+    await act(async () => Simulate.submit(document.querySelector('form.fv-frame-query')))
+    assert.ok(document.body.textContent.includes('请先刷新保存版本，再查询播放头。'))
+    assert.equal(document.querySelectorAll('.fv-clip').length, 0, 'position queries cannot authorize an unconfirmed view')
+  }
 })
 
 test('unknown drag turns off its timeline warning only after settled recovery and matching readback', async t => {
@@ -318,8 +329,8 @@ test('unknown drag turns off its timeline warning only after settled recovery an
       case 'authorize-write': return reply({ ok: true, writeGrant: 'write' })
       case 'plan': return reply({ ok: true, planToken: 'plan', submitted_request: { op_id: 'lost-receipt' } })
       case 'commit': throw new Error('lost response')
-      case 'status': return reply({ ok: true, pending: true })
-      case 'recover': recovering = true; return reply({ ok: true, pending: false })
+      case 'status': return reply({ ok: true, pending: true, current_revision: version })
+      case 'recover': recovering = true; return reply({ ok: true, pending: false, current_revision: savedVersion })
       default: return reply({ ok: true })
     }
   }

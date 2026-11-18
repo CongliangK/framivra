@@ -4,7 +4,7 @@
 
 - timeline.json/素材→帧精确视频/混音/QC/缓存；[内核](<vtx/>)永不可关
 - [应用](<apps/>)产素材/辅助结果；[插件](<plugins/>)扩时间线，启用不忽略依赖/失败；已知不可用声明先于 probe 拒绝，源声明在 prepare/range 裸缓存前同拒。
-- [侧栏](<dsh-sidebar/README.md>)独立发行：完整合成非单页，预览共用整数播放头、成片联动非合成证书；单行工具栏，帧步进与轨道高度在时间线；字幕轨置顶与轨高/专注视图只改显示；宽屏文件列表独立滚动；单帧拒绝其他插件，官方 BGM 仅作无声画面引用、不执行；HTML信任≠沙箱；拖动复用已保存片段视图；启用直接剪辑后松手走内核预检/CAS，双读同版本后才确认保存，非法保留原位；吸附/闭合同轨空隙不改时基或他轨；授权/历史在顶栏，恢复确认且同版读回后才清底部待恢复提示，模型工具只读不代理写入；会话草稿只附 ≤300 字符的定位摘要，不发送。
+- [侧栏](<dsh-sidebar/README.md>)独立发行：完整合成非单页，预览共用整数播放头、成片联动非合成证书；单行工具栏，帧步进与轨道高度在时间线；字幕轨置顶与轨高/专注视图只改显示；宽屏文件列表独立滚动；单帧拒绝其他插件，官方 BGM 仅作无声画面引用、不执行；HTML信任≠沙箱；拖动复用已保存片段视图；启用直接剪辑后松手走内核预检/CAS，双读均匹配内核回执版本才恢复监看，非法保留原位；吸附/闭合同轨空隙不改时基或他轨；授权/历史在顶栏，恢复确认且同版读回后才清底部待恢复提示，模型工具只读不代理写入；会话草稿只附 ≤300 字符的定位摘要，不发送。
 - 侧栏按宿主与内核能力分开报告读、整帧与事务；Windows 不把静态协议声明或成片播放当成内核帧合成、写入资格。
 - [空间管理](<docs/reference/storage-api.md>)删除权归内核；清理须独立确认停写，不向模型开放。
 - macOS授权见接口；目录fd≠proc-fd Path；单帧须全输入前后复核；环境文件批查仅复用本次目录前缀并前后核验，仍重枚举/哈希/查链接；Linux缺RECORD只认元数据所属RPM清单。
@@ -54,7 +54,7 @@
 - [Windows SVG 读输入](<vtx/render/gfx_svg_win_input.py>)先验原始相对声明，依赖并集用 `/` 并核对精确路径；仅接受调用方授权的稳定项目根与直连固定 NTFS 映射，句柄逐级拒绝重解析，同一文件句柄验单链接并限量读取；不授 Windows SVG 渲染资格。
 - [Windows SVG-only 回执](<vtx/cache/cache_state.py>)的清单和声明依赖字节沿用项目根句柄读取与限额；缺失、拒读或无法读取均直接失败，不记 MISSING 或回退；不是原子指纹。[影响分析](<vtx/inspection/impact.py>)用调用方原始根和精确相对名复核已观测的 SVG 文件，不以报表绝对路径代替，也不作原子快照。
 - [Windows Fontconfig 检查](<vtx/render/gfx_svg_win_fontconfig.py>)在私有 Job 中用固定官方 DLL 快照查单个已知字体 face；启动所有权或结算未证则不读回执、不删暂存；不证明闭包、渲染或产物资格。
-- [Windows SVG 快照](<vtx/render/gfx_svg_win_snapshot.py>)先用目录句柄拒绝重解析和物理重叠，再核验独占包树；核验入口不启动进程。[内部验收](<vtx/render/gfx_svg_win_shell.py>)仅以固定官方 `.com` 验几何或锁字体文本单帧、固定 180 帧几何序列；逐帧验像素，期限内未证 Job 结算则不读 PNG、不删操作目录；不证明加载域、成片、缓存或发布资格。
+- [Windows SVG 快照](<vtx/render/gfx_svg_win_snapshot.py>)先用目录句柄拒绝重解析和物理重叠，再核验独占包树；核验入口不启动进程。[内部验收](<vtx/render/gfx_svg_win_shell.py>)仅以固定官方 `.com` 验几何或锁字体文本单帧、固定 180 帧几何序列及 portable-v2 固定 1080p `f0135`（句柄锚定读取并锁定 SVG 和字体字节）；逐帧验像素，期限内未证 Job 结算则不读 PNG、不删操作目录；不证明加载域、成片、缓存或发布资格。
 - [SVG shell](<vtx/render/gfx_svg_stage.py>) 即使退出成功也拒收明确的 Fontconfig error / Pango-CRITICAL，不发布完成凭据；该诊断只报告固定短错误，不回显日志，普通警告不拒收。
 - portable-v2 基线仅用 `scripts/demo.py prepare/verify`；锁字体与标准库音频，禁混旧输入；预检不授渲染资格，见[SVG 基线](<templates/demo-timeline-svg/README.md>)。
 - [可编辑主 Demo](<templates/demo-workbench/README.md>)同源生成 SVG/HTML，默认由主时间线直引乐谱 JSON，不提交音频；CDP、CEF 与 Inkscape 验收不代替安装、冻结与性能基线。

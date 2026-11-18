@@ -48,8 +48,9 @@ test('status ok with failed refresh does not clear a prior unknown write verdict
 
 test('successful explicit status refresh releases stale-owned dirty and callbacks, without resubmitting the write',async t=>{
  const calls=[];let refreshes=0
- const call=async(_session,payload)=>{calls.push(payload.op);if(payload.op==='authorize-write')return {ok:true,writeGrant:'wg'};if(payload.op==='plan')return {ok:true,planToken:'tok',submitted_request:{op_id:'op-9'}};return {ok:true,history:[],pending:false}}
- const ui=await mount(t,call,async()=>{if(++refreshes===1)throw Error('REFRESH_GONE')})
+ const committed=`sha256:${'c'.repeat(64)}`,observed=`sha256:${'d'.repeat(64)}`
+ const call=async(_session,payload)=>{calls.push(payload.op);if(payload.op==='authorize-write')return {ok:true,writeGrant:'wg'};if(payload.op==='plan')return {ok:true,planToken:'tok',submitted_request:{op_id:'op-9'}};if(payload.op==='commit')return {ok:true,revision:committed,current_revision:observed};return {ok:true,history:[],pending:false,current_revision:observed}}
+ const ui=await mount(t,call,async({expectedRevision})=>{if(++refreshes===1){assert.equal(expectedRevision,committed);throw Error('REFRESH_GONE')}assert.equal(expectedRevision,observed)})
  await act(async()=>assert.rejects(ui.gesture()(operations),error=>error.applied===true));assert.equal(settled(ui).dirty,true)
  await act(async()=>button('读取状态').click());assert.equal(settled(ui).dirty,false);assert.equal(settled(ui).unknown,false);assert.equal(typeof ui.gesture(),'function');assert.equal(typeof ui.undo(),'function')
  assert.equal(refreshes,2);assert.equal(calls.filter(op=>op==='plan').length,1);assert.equal(calls.filter(op=>op==='commit').length,1)
