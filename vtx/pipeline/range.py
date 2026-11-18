@@ -11,7 +11,7 @@ CLI draft 写 cache/preview/range_<A标签>_<B标签>.mp4，可冷填充同键 s
 内部原尺寸窗口把所有写入隔离在调用方的独占预览工作区；两者均不发布正式阶段回执。
 """
 from copy import copy
-import json, os, re, subprocess, sys, time
+import hashlib, json, os, re, subprocess, sys, time
 from math import lcm
 from pathlib import Path
 
@@ -173,7 +173,51 @@ def _intersects(clip, a, b):
     return clip['dst_in'] < b and clip['dst_in'] + clip['dur'] > a
 
 
-def render_1080p_window(c, fa: int, fb: int, *, workspace: Path) -> Path:
+def _stage_window_gfx(c, fa, fb, scratch, check_cancel):
+    from ..render import gfx_packed_reader as reader
+    from ..render.frame_source import PngSequence
+
+    requests, count = [], 0
+    for ti, track in enumerate(c.tl['video_tracks']):
+        if track.get('kind') != 'gfx':
+            continue
+        for ci, clip in enumerate(track['clips']):
+            if not _intersects(clip, fa, fb):
+                continue
+            dst = clip['dst_in']
+            start, stop = max(fa, dst) - dst, min(fb, dst + clip['dur']) - dst
+            count += stop - start
+            if count > reader._MAX_FRAMES:
+                raise ValueError('1080p window exceeds aggregate graphics frame limit')
+            requests.append((ti, ci, clip, start, stop))
+
+    remaining = reader._MAX_BYTES
+    staged, rechecks = {}, []
+    for ti, ci, clip, start, stop in requests:
+        check_cancel()
+        if remaining <= 0:
+            raise ValueError('1080p window exceeds aggregate graphics byte limit')
+        frames = reader.read_frames(c, clip, start, stop, max_bytes=remaining,
+                                    check_cancel=check_cancel, keep_recheck=rechecks.append)
+        directory = scratch / f'gfx-{ti}-{ci}'
+        fstxn.mkdir(directory, root=c.root)
+        hashes = {}
+        for i, data in enumerate(frames, start):
+            check_cancel()
+            hashes[i] = hashlib.sha256(data).hexdigest()
+            fstxn.atomic_write(directory / f'f{i:04d}.png', data, root=c.root)
+            remaining -= len(data)
+        # Only digests and paths survive to the next layer. The private image2
+        # sequence ends at stop and uses the exact original clip-local numbers.
+        del frames, data
+        identity = hashlib.sha256(''.join(hashes.values()).encode('ascii')).hexdigest()
+        source = PngSequence(directory, identity, clip['dur'], c.fps, c.w, c.h,
+                             environment_check=lambda hashes=hashes: hashes)
+        staged[ti, ci] = source, stop
+    return staged, rechecks
+
+
+def render_1080p_window(c, fa: int, fb: int, *, workspace: Path, check_cancel=None) -> Path:
     """Internal producer, not a DSH authorization boundary or public API.
 
     Caller supplies a trusted, validated Ctx (including trusted methods and
@@ -182,7 +226,9 @@ def render_1080p_window(c, fa: int, fb: int, *, workspace: Path) -> Path:
     workspace isolates kernel output paths; this function is not a sandbox for
     arbitrary Ctx implementations. Caller handles cleanup and may consume the
     result only on success. Caller event sinks are not inherited. No resize,
-    timeline rewrite, graphics preparation, or formal gain/receipt access.
+    timeline rewrite, cold graphics preparation, or formal gain/receipt access.
+    The optional cancellation callback raises at cooperative checkpoints; it
+    does not supervise or interrupt a running media subprocess.
     """
     if any(os.environ.get(name) for name in ('FFREPORT', 'LD_PRELOAD', 'LD_AUDIT')):
         raise ValueError('1080p window refuses FFREPORT and loader injection overrides')
@@ -190,38 +236,43 @@ def render_1080p_window(c, fa: int, fb: int, *, workspace: Path) -> Path:
         raise ValueError('1080p window requires an executing 1920x1080 project context')
     if type(fa) is not int or type(fb) is not int or not 0 <= fa < fb <= c.dur:
         raise ValueError('1080p window requires an in-project half-open integer frame interval')
-    if any(_intersects(clip, fa, fb) for track in c.tl['video_tracks']
-           if track.get('kind') == 'gfx' for clip in track['clips']):
-        raise ValueError('1080p window overlaps gfx; this producer has no scoped graphics qualification')
-
     workspace = Path(workspace)
     physical = ensure_inside_project(workspace, c.root, what='1080p workspace')
     if (workspace != physical or c.root.resolve() / 'cache' / 'preview' not in physical.parents
             or not physical.is_dir() or any(physical.iterdir())):
         raise ValueError('1080p window requires an empty physical workspace below project/cache/preview')
 
-    # Keep the full timeline and input pin. Rebind writes only on this operation's
-    # context, not on the caller. Disallow hooks (including audio/BGM providers);
-    # the caller must apply the same preflight before constructing its context.
-    ctx = copy(c)
-    ctx._core_only_preview = True
-    ctx._visual_bgm = None
-    ctx._visual_bgm_source_ids = frozenset()
+    # Preserve the caller's full input pin and real read-only cache routing,
+    # but reject plugins on EVERY verification, not only before/after staging.
+    # The caller must apply the same preflight before constructing its context.
+    read_ctx = copy(c)
+    read_ctx._core_only_preview = True
+    read_ctx._visual_bgm = None
+    read_ctx._visual_bgm_source_ids = frozenset()
+    read_ctx._svg_consumer_sources = None
+    read_ctx.cache_session = None
+    read_ctx.probes = c.probes.copy()
+    read_ctx.execution = events.ExecutionContext()
+    read_ctx.diagnostics = None
+    check_cancel = check_cancel if check_cancel is not None else lambda: None
+    check_cancel()
+    read_ctx.verify_inputs(None)
+    scratch = physical / 'work'
+    staged, rechecks = _stage_window_gfx(read_ctx, fa, fb, scratch, check_cancel)
+
+    # Only the composing context is rebound. GFX rechecks still see real c.cache
+    # routing through read_ctx; caller paths and event sinks are not modified.
+    ctx = copy(read_ctx)
     ctx.range_window = (fa, fb)  # prepare_layers must not write a receipt on failure
     ctx.draft = ctx.gpu = False
-    ctx.cache = ctx.gfx_cache = ctx.cache_store = physical / 'work'
+    ctx.cache = ctx.gfx_cache = ctx.cache_store = scratch
     ctx.out = ctx.cache / 'out'
     ctx.preview_cache = physical
-    ctx.cache_session = None
-    ctx._svg_consumer_sources = None
-    ctx.probes = c.probes.copy()
-    ctx.execution = events.ExecutionContext()
-    ctx.diagnostics = None
-    ctx.verify_inputs(None)
-    return _render_range(ctx, fa, fb, draft=False)
+    return _render_range(ctx, fa, fb, draft=False, staged_gfx=staged,
+                         gfx_rechecks=rechecks, check_cancel=check_cancel)
 
 
-def _render_range(c, fa, fb, *, draft):
+def _render_range(c, fa, fb, *, draft, staged_gfx=None, gfx_rechecks=(), check_cancel=lambda: None):
     t0 = time.monotonic()
     f = 0.5 if draft else 1.0
     W, H = ((c.w // 2) // 2 * 2, (c.h // 2) // 2 * 2) if draft else (c.w, c.h)
@@ -231,22 +282,25 @@ def _render_range(c, fa, fb, *, draft):
     print("  ℹ 预览渲染：不写 out/ 与 receipt，产物在 cache/preview/")
 
     t = time.monotonic()
-    layers = prepare_layers(c, native_window=(fa, fb))
-    if not draft:
-        layers = [layer for layer in layers if _intersects(layer['cl'], fa, fb)]
-        if any(layer['gfx'] for layer in layers):
-            raise ValueError('1080p window overlaps gfx; this producer has no scoped graphics qualification')
+    if draft:
+        layers = prepare_layers(c, native_window=(fa, fb))
+    else:
+        if staged_gfx is None:
+            raise ValueError('native range requires a scoped graphics selection')
+        check_cancel()
+        layers = prepare_layers(c, native_window=(fa, fb), staged_gfx=staged_gfx)
     print(f"[timing] gfx/seg 复用检查（{len(layers)} 层）: {time.monotonic() - t:.1f}s")
-    # Draft keeps its full-project gfx readiness gate. The native profile above
-    # never selects or reads gfx frames, even if an unrelated page is cold.
+    # Draft keeps its full-project gate. Native layers have already been staged
+    # and _layer_input_args verifies the private sequence before consumption.
     missing_gfx = []
-    for L in layers:
-        if not L["gfx"]: continue
-        if c.dry: continue
-        try:
-            L["source"].require_ready()
-        except ValueError as exc:
-            missing_gfx.append(f"{L['cl']['src']}: {exc}")
+    if draft and not c.dry:
+        for L in layers:
+            if not L["gfx"]:
+                continue
+            try:
+                L["source"].require_ready()
+            except ValueError as exc:
+                missing_gfx.append(f"{L['cl']['src']}: {exc}")
     if missing_gfx:
         print("✗ gfx 帧缓存缺失——区间渲染只复用不渲染 gfx，请先运行 vtx gfx")
         for error in missing_gfx[:8]:
@@ -271,6 +325,7 @@ def _render_range(c, fa, fb, *, draft):
 
     segs = []
     for i, (a, b) in enumerate(parts):
+        check_cancel()
         t = time.monotonic()
         sfile = vdir / f"subs_{a:06d}_{b:06d}.ass"
         plan.write_seg_ass(sfile, a, b)             # 段级字幕（段内相对时间，同整片机制）
@@ -293,12 +348,14 @@ def _render_range(c, fa, fb, *, draft):
     fstxn.atomic_write(lst, _concat_manifest(
         ((path, a, b) for path, (a, b) in zip(segs, parts)), c.fps), root=c.root)
     t = time.monotonic()
+    check_cancel()
     c.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
            "-c", "copy", str(tmpv)])
     print(f"[timing] 画面 concat（{len(segs)} 段 -c copy）: {time.monotonic() - t:.1f}s")
 
     t = time.monotonic()
     wav = vdir / f'{stem}.wav'
+    check_cancel()
     direct = _ensure_audio_wavs(c, fa, fb, allow_direct_pcm=not draft)
     # Draft retains its formal gain lookup. The isolated producer must not read
     # delivery receipts; its result is explicitly window-local loudness only.
@@ -317,6 +374,7 @@ def _render_range(c, fa, fb, *, draft):
     # The MP4 movie/edit-list clock must represent both frame and sample edges.
     # A millisecond movie clock can truncate or extend the AAC presentation.
     movie_clock = [] if draft else ['-movie_timescale', str(lcm(c.frame_rate.numerator, AUDIO_SAMPLE_RATE))]
+    check_cancel()
     c.run(["ffmpeg", "-v", "error", "-y", "-i", str(tmpv), "-i", str(wav),
            # Both inputs are already bounded to the exact frame/sample window.
            # -shortest can discard trailing copied video packets when rounded
@@ -330,6 +388,7 @@ def _render_range(c, fa, fb, *, draft):
         print(f"  [dry-run] 跳过产物自检与落盘（帧数以段切点计算为准 = {fb - fa}）")
         print("✓ [dry-run] 区间预览命令验证通过（未产出文件）")
         return None
+    check_cancel()
     fr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                          "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(out)],
                         capture_output=True, text=True,
@@ -345,6 +404,10 @@ def _render_range(c, fa, fb, *, draft):
         for source in direct.values():
             source.verify()
         c.verify_inputs(None)
+        for recheck in gfx_rechecks:
+            check_cancel()
+            recheck()
+        check_cancel()
     print(f"[timing] 音视频 mux + 自检（{fr} 帧）: {time.monotonic() - t:.1f}s")
     print(f"✓ 区间预览：{out}（{enc}，总计 [timing] {time.monotonic() - t0:.1f}s）")
     return out

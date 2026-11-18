@@ -378,9 +378,20 @@ class TestRangeCachePolicy(unittest.TestCase):
         self.assertFalse(self.c.out.exists())
 
     def test_native_window_rejects_unqualified_graphics_and_nonisolated_workspace(self):
+        from tests.gfx._environment import bind_environment
+        from vtx.cache.policy import CachePolicy
         from vtx.pipeline import range as ranges
-        self.c.w, self.c.h, self.c.dry = 1920, 1080, False
-        self.c.tl['video_tracks'] = [{'kind': 'gfx', 'clips': [{'dst_in': 6, 'dur': 4}]}]
+        from vtx.pipeline.infra import Ctx
+        bind_environment(self)
+        (self.root / 'cold.html').write_text('<html><body>cold page</body></html>')
+        timeline = self.root / 'timeline.json'
+        tl = TestCliGuards._min_tl(video_tracks=[{'name': 'gfx', 'kind': 'gfx', 'clips': [
+            {'src': 'cold.html', 'dst_in': 6, 'dur': 4}]}])
+        tl['project'].update(width=1920, height=1080)
+        timeline.write_text(json.dumps(tl))
+        self.c = Ctx(timeline)
+        self.c.run = mock.Mock()
+        self.c.cache_policy = CachePolicy('core')
         workspace = self.c.cache / 'preview' / 'request'
         workspace.mkdir(parents=True)
         (workspace / 'foreign').touch()
@@ -388,8 +399,11 @@ class TestRangeCachePolicy(unittest.TestCase):
             with mock.patch.dict(os.environ, {'FFREPORT': 'file=unexpected.log'}), \
                     self.assertRaisesRegex(ValueError, 'refuses FFREPORT'):
                 ranges.render_1080p_window(self.c, 0, 6, workspace=workspace)
-            with self.assertRaisesRegex(ValueError, 'overlaps gfx'):
-                ranges.render_1080p_window(self.c, 5, 7, workspace=workspace)
+            cold = workspace.with_name('cold')
+            cold.mkdir()
+            with self.assertRaisesRegex(ValueError, 'cache artifact missing'):
+                ranges.render_1080p_window(self.c, 5, 7, workspace=cold)
+            self.assertEqual(list(cold.iterdir()), [])
             with self.assertRaisesRegex(ValueError, 'integer frame interval'):
                 ranges.render_1080p_window(self.c, False, 6, workspace=workspace)
             with self.assertRaisesRegex(ValueError, 'empty physical workspace'):
@@ -400,6 +414,130 @@ class TestRangeCachePolicy(unittest.TestCase):
         prepare.assert_not_called()
         self.c.run.assert_not_called()
         self.assertEqual(list(self.c.out.iterdir()), [])
+
+    @unittest.skipUnless(sys.platform in ('linux', 'darwin'), 'requires the anchored pack reader')
+    def test_native_window_stages_packed_intersections_and_rechecks_before_return(self):
+        import struct
+        import zlib
+        from tests.gfx._environment import bind_environment
+        from vtx.cache.hygiene import gfx_dir
+        from vtx.cache.policy import CachePolicy
+        from vtx.cache.session import pack_path
+        from vtx.pipeline import range as ranges
+        from vtx.pipeline.infra import Ctx
+        from vtx.render import gfx_cli, gfx_environment, gfx_pack, gfx_packed_reader
+
+        def png(red):
+            def chunk(tag, data):
+                return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
+            row = b'\0' + bytes((red, 42, 80, 128)) * 1920
+            return (gfx_cli.PNG_SIGNATURE + chunk(b'IHDR', struct.pack('>IIBBBBB', 1920, 1080, 8, 6, 0, 0, 0))
+                    + chunk(b'IDAT', zlib.compress(row * 1080)) + chunk(b'IEND', b''))
+
+        bind_environment(self)
+        environment = mock.patch.dict(os.environ, VTX_GFX='cdp', VTX_GFX_CACHE_NS='',
+                                      VTX_VIDEO_SEGMENTS='1', VTX_SEG_NVENC='0')
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in ('lower', 'upper', 'cold'):
+            (self.root / f'{name}.html').write_text(f'<body>{name}</body>')
+        tracks = [{'kind': 'gfx', 'name': 'lower', 'clips': [
+            {'src': 'lower.html', 'dur': 4, 'dst_in': 6, 'opacity': .7},
+            {'src': 'cold.html', 'dur': 4, 'dst_in': 10}]},
+            {'kind': 'gfx', 'name': 'upper', 'clips': [
+                {'src': 'upper.html', 'dur': 4, 'dst_in': 8, 'fade_in_frames': 2}]}]
+        tl = TestCliGuards._min_tl(video_tracks=tracks)
+        tl['project'].update(width=1920, height=1080)
+        timeline = self.root / 'timeline.json'
+        timeline.write_text(json.dumps(tl))
+        c = Ctx(timeline)
+        c.cache_policy = CachePolicy('core')
+        c.run = mock.Mock()
+        lower, upper = (t['clips'][0] for t in c.tl['video_tracks'])
+        expected, packs = {}, []
+        for clip, seed in ((lower, 20), (upper, 40)):
+            directory = gfx_dir(c, clip)
+            directory.mkdir(parents=True)
+            for i in range(4):
+                expected[clip['src'], i] = data = png(seed + i)
+                (directory / f'f{i:04d}.png').write_bytes(data)
+            gfx_cli.complete_page(directory, 4, directory.name, c.w, c.h,
+                                  environment=gfx_environment.certificate(c), verify_inputs=lambda: None)
+            record = json.loads((directory / 'complete.json').read_bytes())
+            archive = pack_path(c, clip)
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            gfx_pack.pack_page(directory, archive, root=c.root, expected_record=record)
+            for member in directory.iterdir():
+                member.unlink()
+            packs.append(archive)
+
+        consumed, cancelled = [], []
+        def composite(plan, layers, _out, _subs, *, a, b, sub_file):
+            self.assertEqual((a, b), (7, 10))
+            self.assertEqual([layer['cl'] for layer in layers], [lower, upper])
+            for layer, (first, stop) in zip(layers, ((1, 4), (0, 2))):
+                source = layer['source']
+                self.assertEqual(layer['source_stop'], stop)
+                self.assertEqual(plan._layer_input_args(layer, a)[5], str(first))
+                self.assertEqual(sorted(p.name for p in source.directory.iterdir()),
+                                 [f'f{i:04d}.png' for i in range(first, stop)])
+                for i in range(first, stop):
+                    self.assertEqual(source.frame_path(i).read_bytes(), expected[layer['cl']['src'], i])
+            consumed.append(True)
+
+        def check_cancel():
+            if cancelled:
+                raise KeyboardInterrupt
+
+        def render(case):
+            work = c.cache / 'preview' / case
+            work.mkdir(parents=True)
+            return ranges.render_1080p_window(c, 7, 10, workspace=work, check_cancel=check_cancel)
+
+        def readback(*_args, **_kwargs):
+            if case == 'cancelled':
+                cancelled.append(True)
+            elif case == 'changed-pack':
+                with packs[-1].open('ab') as stream:
+                    stream.write(b'late change')
+            return mock.Mock(stdout='3\n')
+
+        with mock.patch.object(ranges.RenderPlan, 'composite', composite), \
+                mock.patch.object(ranges, 'mix_audio_wav'), \
+                mock.patch.object(ranges, 'pick_vcodec', return_value=([], 'mock')), \
+                mock.patch.object(ranges, 'media_cache_valid', side_effect=lambda p, **_: p.name.startswith('native_')), \
+                mock.patch.object(ranges.subprocess, 'run', side_effect=readback), \
+                mock.patch.object(gfx_packed_reader, 'read_frames', wraps=gfx_packed_reader.read_frames) as read:
+            case = 'warm'
+            self.assertEqual(render(case).parent.name, case)
+            self.assertEqual([call.args[1:] for call in read.call_args_list],
+                             [(lower, 1, 4), (upper, 0, 2)])
+            read_ctx = read.call_args.args[0]
+            self.assertIs(read.call_args_list[0].args[0], read_ctx)
+            self.assertIsNot(read_ctx, c)
+            self.assertIs(read_ctx.tl, c.tl)
+            self.assertEqual(read_ctx.input_fingerprint, c.input_fingerprint)
+            self.assertEqual(read_ctx.cache, c.cache)
+            self.assertTrue(read_ctx._core_only_preview)
+            self.assertIsNone(read_ctx._svg_consumer_sources)
+            self.assertIsNot(read_ctx.execution, c.execution)
+            self.assertEqual(consumed, [True])
+            case = 'over-budget'
+            with mock.patch.object(gfx_packed_reader, '_MAX_BYTES',
+                                   sum(len(expected['lower.html', i]) for i in range(1, 4))
+                                   + len(expected['upper.html', 0])), \
+                    self.assertRaisesRegex(ValueError, 'byte limit'):
+                render(case)
+            self.assertEqual(consumed, [True])
+            case = 'cancelled'
+            with self.assertRaises(KeyboardInterrupt):
+                render(case)
+            cancelled.clear()
+            case = 'changed-pack'
+            with self.assertRaisesRegex(ValueError, 'packed gfx changed'):
+                render(case)
+        self.assertFalse(c.out.exists())
+        self.assertTrue(all(not any(gfx_dir(c, clip).iterdir()) for clip in (lower, upper)))
 
 
 @unittest.skipUnless(os.environ.get("VTX_RANGE_INTEG") == "1",

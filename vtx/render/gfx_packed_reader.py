@@ -5,6 +5,7 @@ proof gates with independently resolved CURRENT inputs/backend/environment.
 Electron deliberately retains its full-page producer/PNG checks: no O(1) claim.
 """
 import re
+import stat
 
 from ..cache.cache_state import verify_input_identity
 from ..cache.hygiene import gfx_cache_ns, gfx_dir
@@ -42,15 +43,31 @@ def _bare_bytes(c, source, index):
     return data
 
 
-def _bare_frames(c, clip, start, stop, directory, archive, check_cancel):
+def _cache_version(path):
+    """Small namespace + file-version reference, not a producer proof."""
+    chain = fstxn.cleanup_identity(path)
+    if chain is None or chain[-1][2] != stat.S_IFREG:
+        raise GfxCacheError('graphics cache artifact missing, linked or special')
+    info = path.lstat()
+    if fstxn.entry_identity(info) != chain[-1] or fstxn.cleanup_identity(path) != chain:
+        raise GfxCacheError('graphics cache artifact changed during read')
+    return chain, info.st_size, info.st_nlink, info.st_mtime_ns, info.st_ctime_ns
+
+
+def _bare_frames(c, clip, start, stop, directory, archive, check_cancel, max_bytes, keep_recheck):
     from .frame_source import png_source
+    from .gfx_backend import selected
     source = png_source(c, clip)
     if source.directory != directory:
         raise GfxCacheError('PNG source does not match canonical page')
     # The same completion gates as require_ready(), but parse/hash each PNG
     # from its anchored immutable snapshot rather than first reopening by path.
+    paths = versions = None
+    if keep_recheck is not None:
+        paths = [directory / 'complete.json', *(source.frame_path(i) for i in range(start, stop))]
+        versions = tuple(_cache_version(path) for path in paths)
     expected = _bare_hashes(source, start, stop)
-    data, hashes, remaining = [], [], _MAX_BYTES
+    data, hashes, remaining = [], [], max_bytes
     for i in range(start, stop):
         if check_cancel is not None:
             check_cancel()
@@ -66,12 +83,28 @@ def _bare_frames(c, clip, start, stop, directory, archive, check_cancel):
     if any(current[i] != digest for i, digest in enumerate(hashes, start)):
         raise GfxCacheError('PNG completion changed during read')
     verify_input_identity(c)
-    if gfx_dir(c, clip) != directory:
-        raise GfxCacheError('PNG inputs/backend changed during read')
-    if fstxn.cleanup_identity(archive) is not None:
-        raise GfxCacheError('packed gfx appeared during bare read; retry against the pack')
+    electron = not gfx_svg.is_svg(clip) and selected() == 'electron'
+    def recheck():
+        if gfx_dir(c, clip) != directory:
+            raise GfxCacheError('PNG inputs/backend changed during read')
+        if fstxn.cleanup_identity(archive) is not None:
+            raise GfxCacheError('packed gfx appeared during bare read; retry against the pack')
+        if versions is not None and any(_cache_version(p) != v for p, v in zip(paths, versions)):
+            raise GfxCacheError('bare gfx artifacts changed during consumption')
+
+    recheck()
     if check_cancel is not None:
         check_cancel()
+    if keep_recheck is not None:
+        def final_recheck():
+            # Electron's legacy bare producer proof covers more than the selected
+            # PNGs and completion. Do not silently narrow it to just those files.
+            if electron:
+                current = _bare_hashes(source, start, stop)
+                if any(current[i] != value for i, value in enumerate(hashes, start)):
+                    raise GfxCacheError('PNG completion changed during consumption')
+            recheck()
+        keep_recheck(final_recheck)
     return tuple(data)
 
 
@@ -80,7 +113,7 @@ def read_frame(c, clip, index):
     return read_frames(c, clip, index, index + 1 if type(index) is int else None)[0]
 
 
-def read_frames(c, clip, start, stop, *, check_cancel=None):
+def read_frames(c, clip, start, stop, *, check_cancel=None, max_bytes=None, keep_recheck=None):
     """Return a tuple of original PNGs in clip-local [start, stop) order.
 
     ``c`` retains the full normal input pin for read-only verify_input_identity;
@@ -90,9 +123,17 @@ def read_frames(c, clip, start, stop, *, check_cancel=None):
     back. Linux/macOS anchored reads only; off mode is a hard refusal.
     Requests must be nonempty, at most 120 frames and 256 MiB of returned logical
     PNG bytes (not a peak-memory bound for decompression or producer proofs).
-    Optional ``check_cancel()`` raises KeyboardInterrupt to abort cooperatively.
-    Nothing is returned until all requested bytes and final checks pass.
+    Optional ``max_bytes`` lowers the per-call budget; ``check_cancel()`` raises
+    KeyboardInterrupt to abort cooperatively. A consumer spanning other work can
+    take a small ``keep_recheck(recheck)`` reference to the accepted storage and
+    producer identity, and call it after its own final full input check. No pack
+    handle or decoded PNGs are retained by the reference. Nothing is returned
+    until all requested bytes and final checks pass.
     """
+    if max_bytes is None:
+        max_bytes = _MAX_BYTES
+    elif type(max_bytes) is not int or not 0 < max_bytes <= _MAX_BYTES:
+        raise GfxCacheError('invalid graphics byte limit')
     if not policy_for(c).reuse_graphics:
         raise GfxCacheError('packed gfx reuse is disabled by cache.mode=off')
     if type(start) is not int or type(stop) is not int or not 0 <= start < stop <= clip['dur']:
@@ -105,7 +146,8 @@ def read_frames(c, clip, start, stop, *, check_cancel=None):
     directory = gfx_dir(c, clip)
     archive = pack_path(c, clip)
     if fstxn.cleanup_identity(archive) is None:
-        return _bare_frames(c, clip, start, stop, directory, archive, check_cancel)
+        return _bare_frames(c, clip, start, stop, directory, archive, check_cancel, max_bytes, keep_recheck)
+    version = _cache_version(archive) if keep_recheck is not None else None
     record = inspect_pack(archive, root=c.root)['record']
     svg = gfx_svg.is_svg(clip)
     environment = inputs = backend = namespace = settings = None
@@ -133,6 +175,23 @@ def read_frames(c, clip, start, stop, *, check_cancel=None):
             gfx_cli.verify_page_record(record, clip['dur'], directory.name, c.w, c.h,
                 backend_ns=namespace, environment=environment,
                 dependency_digest=digest(resolve(c, clip)) if strict else None)
+    svg_digest = gfx_svg.digest(gfx_svg.canonical(inputs)) if svg else None
+
+    def recheck():
+        if gfx_dir(c, clip) != directory:
+            raise GfxCacheError('packed gfx inputs/backend changed during read')
+        if svg:
+            if gfx_svg.digest(gfx_svg.canonical(gfx_svg.resolve(c, clip))) != svg_digest:
+                raise GfxCacheError('packed SVG inputs changed during read')
+        else:
+            gfx_environment.recheck(c)
+            if (selected() != backend or (gfx_cache_ns() or None) != namespace
+                    or gfx_environment.certificate(c) != environment
+                    or (backend == 'electron' and (identity(), electron_config()) != settings)):
+                raise GfxCacheError('packed gfx backend/environment changed during read')
+        if version is not None and _cache_version(archive) != version:
+            raise GfxCacheError('packed gfx changed during consumption')
+
     if check_cancel is not None:
         check_cancel()
     with PagePack(archive, expected_record=record, root=c.root) as page:
@@ -151,21 +210,13 @@ def read_frames(c, clip, start, stop, *, check_cancel=None):
                     settings[0], namespace, expected_html=c.root / clip['src'],
                     expected_config=settings[1], read_artifact=artifact) is None:
                 raise GfxCacheError('packed Electron producer/completion proof invalid; rerun vtx gfx')
-        data = page.read_frames(start, stop, max_bytes=_MAX_BYTES, check_cancel=check_cancel)
+        data = page.read_frames(start, stop, max_bytes=max_bytes, check_cancel=check_cancel)
         if check_cancel is not None:
             check_cancel()
         verify_input_identity(c)
-        if gfx_dir(c, clip) != directory:
-            raise GfxCacheError('packed gfx inputs/backend changed during read')
-        if svg:
-            if gfx_svg.resolve(c, clip) != inputs:
-                raise GfxCacheError('packed SVG inputs changed during read')
-        else:
-            gfx_environment.recheck(c)
-            if (selected() != backend or (gfx_cache_ns() or None) != namespace
-                    or gfx_environment.certificate(c) != environment
-                    or (backend == 'electron' and (identity(), electron_config()) != settings)):
-                raise GfxCacheError('packed gfx backend/environment changed during read')
+        recheck()
     if check_cancel is not None:
         check_cancel()
+    if keep_recheck is not None:
+        keep_recheck(recheck)
     return data

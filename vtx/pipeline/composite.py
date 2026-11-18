@@ -905,7 +905,7 @@ def _media_geometry(c, cl):
     return windowed, 0, 0, None, None, [c.crop169(cl['src']), f'scale={c.w}:{c.h}:flags=lanczos']
 
 
-def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None):
+def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None, staged_gfx=None):
     """全部视频轨 clip 的图层预处理 + seg 预编码（缓存命中即跳过），返回 layers 列表
     （每项 {cl, seg|source, x, y, w2, h2, gfx, ti}，顺序=图层序）。
 
@@ -930,11 +930,16 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None):
         for ci, cl in enumerate(tr["clips"]):
             kind = tr.get("kind")
             if kind == "gfx":
-                # gfx 帧缓存目录 = 内容寻址键（与 gfx 阶段同键，见 hygiene.gfx_key；
-                # PR#1 的路径哈希 gfx_dir 被此方案取代——内容键同样隔离同名页/换时长）
-                layers.append({"cl": cl, "source": png_source(c, cl),
-                               "x": cl.get("x", 0), "y": cl.get("y", 0), "w2": None, "h2": None,
-                               "gfx": True, "ti": ti})
+                layer = {"cl": cl, "x": cl.get("x", 0), "y": cl.get("y", 0),
+                         "w2": None, "h2": None, "gfx": True, "ti": ti}
+                if staged_gfx is None:
+                    layer["source"] = png_source(c, cl)
+                else:
+                    a, b = native_window
+                    if cl['dst_in'] >= b or cl['dst_in'] + cl['dur'] <= a:
+                        continue
+                    layer["source"], layer["source_stop"] = staged_gfx[ti, ci]
+                layers.append(layer)
                 continue
             windowed, x, y, w2, h2, geometry = _media_geometry(c, cl)
             need_alpha = seg_needs_alpha(cl, c.probe(c.src_path(cl['src'])))

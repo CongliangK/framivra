@@ -63,6 +63,6 @@
 - [portable-v2 锁定运行时源](<templates/demo-timeline-svg/benchmark/portable-v2.json>)须以 LF 检出（含 Windows）；[属性规则](<.gitattributes>)仅补齐既有 Python 规则未覆盖的锁成员，核验仍按原始字节。
 - 同输入/质量/环境/后端/配置分冷暖测全链；留身份/哈希/证据；未测UNRUN，探针非整体提速；SVG有界调度/串行回退见[缓存](<docs/cache-provenance.md#产物身份>)。
 - [事件](<docs/reference/execution-events.md>)跨阶段回执绑定实际嵌套任务，区间不相加冒充墙钟。
-- [区间渲染](<vtx/pipeline/range.py>)只预编码相交普通片，切点取全片，draft 全验图形；内部原尺寸窗口限已验上下文与独占目录，共用合成/混音，仅直读确证的 48kHz 双声道 PCM，其余正常抽取；拒活动插件及相交 GFX，不授正式回执或宿主播放资格。GFX 单帧/有界区间共用暖读认证，坏包不降级。
+- [区间渲染](<vtx/pipeline/range.py>)只预编码相交普通片，切点取全片，draft 全验图形；内部原尺寸窗口限已验上下文与独占目录、拒活动插件，共用合成/混音，仅直读确证的 48kHz 双声道 PCM，其余正常抽取；按跨层总预算认证并暂存相交暖 GFX，复核后才返回。坏包不降级，不授正式回执或宿主播放资格。
 - 帧率由[constraints](<vtx/pipeline/constraints.py>)统一；FFmpeg用精确时基，音频按绝对帧端点取采样；正式/区间concat共用端点；原尺寸区间 MP4 的 movie 时基取帧率分子与 48 kHz 的最小公倍数，回归核验呈现时间戳和音频终点，不只数帧。
 - [CEF 帧证明](<experiments/gfx_cef_worker/README.md>)的拒收/非推进回调只能计账，不得推进 signed 阶段、冻结候选或写输出；推进须 owned 快照及对应绘制后 JS 围栏，保留完整见证/字节 veto；修复须重编并绑定 worker 二进制身份。
