@@ -20,7 +20,7 @@ from typing import NamedTuple
 from xml.sax.saxutils import escape
 
 from ..runtime import windows_browser as native
-from . import gfx_svg, gfx_svg_win_input as win_input
+from . import gfx_svg, gfx_svg_win_fontconfig as fontconfig, gfx_svg_win_input as win_input
 from .gfx_cli import _png_stream_invalid_reason
 from .gfx_svg_stage import _FONT_ERROR
 from .gfx_svg_win_snapshot import (_local_path, _ordinary, _pin_dir, _pin_dirs, _pin_entry,
@@ -58,6 +58,7 @@ _RASTER_SVG_LIMIT, _RASTER_SVG_TOTAL = 5 * 1024, 2326452
 _RASTER_PNG_LIMIT = 72 * 1024  # reference max 73,707 bytes; f0135 retains its own 64 KiB limit
 _RASTER_CAPTURE_LIMIT = 1024 * 1024  # combined streams, including the full shell transcript
 _RASTER_TIMEOUT, _RASTER_VERIFY_RESERVE = 360, 75  # staging through verification; Job reserve is separate
+_FACE_TIMEOUT = 15  # all four face workers, including Job settlement, within the launch budget
 _FACTS_TIMEOUT, _FACTS_CAPTURE_LIMIT = 15, 1024  # shared subdeadline; combined stdout/stderr per query
 _IMAGE_TIMEOUT, _IMAGE_PUMP_SLICE = 15, .025  # inside the shell's existing pump deadline
 _IMAGE_MODULE_LIMIT, _IMAGE_NAME_LIMIT = 512, 1024
@@ -67,8 +68,15 @@ _RASTER_PNG_SHA256 = '30cad9d17b086500d6a15ed285bad63449dc5816806bb3744b68f941b1
 _RASTER_RGBA_SHA256 = '6884a426e5fa0a51cdf0d1b23975c883b69e626bd73a76aa864e9e12b804787f'
 _DEMO = Path(__file__).resolve().parents[2] / 'templates/demo-timeline-svg'
 _FONT_NAMES = ('NotoSansCJK-Regular.ttc', 'NotoSansCJK-Bold.ttc', 'DejaVuSans.ttf', 'DejaVuSans-Bold.ttf')
-# Fixed family names of the four faces in the portable-v2 fonts.lock.json.
-_RASTER_FAMILIES = frozenset({'Noto Sans CJK SC', 'DejaVu Sans'})
+# Native family, style, index, weight and file member count, in _FONT_NAMES order.
+# Fixed by the #459 Fontconfig audit, not inferred from CSS or caller metadata.
+_RASTER_FONT_FACES = (
+    ('Noto Sans CJK SC', 'Regular', 2, 80.0, 10),
+    ('Noto Sans CJK SC', 'Bold', 2, 200.0, 10),
+    ('DejaVu Sans', 'Book', 0, 80.0, 1),
+    ('DejaVu Sans', 'Bold', 0, 200.0, 1),
+)
+_RASTER_FAMILIES = frozenset(face[0] for face in _RASTER_FONT_FACES)
 _FONT_LIMIT = 24 * 1024 * 1024  # Per file; four fixed inputs, no font directory scan.
 _EXPORT = ('file-open:{stem}.svg;export-type:png;export-area-page;export-width:{width};export-height:{height};'
            'export-background:#000000;export-background-opacity:0;export-filename:{png};'
@@ -516,6 +524,26 @@ def _require_raster_manifest(project_root, frame_paths, font_paths):
         raise ValueError('Windows SVG canonical raster manifest fields mismatch')
 
 
+def _require_staged_font_faces(operation, executable, cwd, staged, launch_deadline):
+    deadline = min(launch_deadline, time.monotonic() + _FACE_TIMEOUT)
+    bundle = cwd.parent
+    with _pin_dir(operation.inputs.vendor) as (handle, _):
+        vendor = _dos_path(handle)
+    if vendor != bundle / 'inkscape' or executable != vendor / 'bin' / 'inkscape.com':
+        raise ValueError('Windows SVG canonical raster snapshot layout mismatch')
+    if len(staged) != len(_RASTER_FONT_FACES):
+        raise ValueError('Windows SVG canonical raster staged font count mismatch')
+    for (target, sha256), expected in zip(staged, _RASTER_FONT_FACES):
+        # The same keep bit governs scratch and the entire snapshot. No later
+        # Job may start and clear it if this worker's settlement is uncertain.
+        face = fontconfig._inspect_face(bundle, target, sha256=sha256, scratch=bundle, index=expected[2],
+                                        operation=operation, deadline=deadline)
+        _raster_time(deadline)
+        fields = ('family', 'style', 'index', 'fontconfig_weight', 'file_face_count')
+        if tuple(face.get(key) for key in fields) != expected or face.get('font_sha256') != sha256:
+            raise ValueError('Windows SVG staged font face metadata mismatch')
+
+
 def _accept_standard_raster(portable_root, *, scratch, project_root):
     """Attest only the fixed portable-v2 raster, not project or render eligibility.
 
@@ -568,10 +596,14 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
             frames.mkdir()
             pins.enter_context(_pin_dir(frames))
             pins.enter_context(_pin_dir(fonts))
+            staged_fonts = []
             for i, (name, expected) in enumerate(zip(_FONT_NAMES, _locked_font_digests())):
                 _raster_time(launch_deadline)
                 data = win_input.read(project_root, font_paths[i], limit=_FONT_LIMIT, expected_path=None)
-                _stage_font(data, expected, name, fonts / f'font{i}{Path(name).suffix}', pins)
+                target = fonts / f'font{i}{Path(name).suffix}'
+                _stage_font(data, expected, name, target, pins)
+                staged_fonts.append((target, expected))
+            _require_staged_font_faces(operation, executable, cwd, staged_fonts, launch_deadline)
             for stem, data in zip(stems, sources):
                 _raster_time(launch_deadline)
                 target = cwd / (stem + '.svg')
