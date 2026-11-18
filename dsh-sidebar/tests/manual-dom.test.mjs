@@ -23,7 +23,7 @@ test('actual pointer handlers: pure ghost, multi move one batch, vertical-only c
  await act(async()=>Simulate.click(clip(0),{}));await act(async()=>Simulate.click(clip(1),{ctrlKey:true}));assert.equal(selections.at(-1).length,2)
  await act(async()=>Simulate.pointerDown(clip(0),{pointerId:1,button:0,clientX:0,clientY:10}))
  await act(async()=>Simulate.pointerMove(clip(0),{pointerId:1,clientX:100,clientY:10}));assert.equal(Boolean(document.querySelector('[aria-label="未保存拖动 ghost"]')), true);assert.equal(batches.length,0);assert.match(clip(0).getAttribute('aria-label'),/帧 \[0, 30\)/)
- await act(async()=>Simulate.pointerUp(clip(0),{pointerId:1,clientX:100,clientY:10}));assert.deepEqual(batches.pop(),[{op:'block.move',id:'c',track_id:'v',at:10},{op:'block.move',id:'d',track_id:'v',at:70}])
+ await act(async()=>Simulate.pointerUp(clip(0),{pointerId:1,clientX:150,clientY:10}));assert.deepEqual(batches.pop(),[{op:'block.move',id:'c',track_id:'v',at:15},{op:'block.move',id:'d',track_id:'v',at:75}])
  await act(async()=>Simulate.click(clip(0),{}));await act(async()=>Simulate.pointerDown(clip(0),{pointerId:2,button:0,clientX:0,clientY:10}));await act(async()=>Simulate.pointerUp(clip(0),{pointerId:2,clientX:0,clientY:110}));assert.deepEqual(batches.pop(),[{op:'block.move',id:'c',track_id:'v2',at:0}])
  for(const [side,x,expected] of [['左',50,{start:5,end:30}],['右',-50,{start:0,end:25}]]){
   const handle=document.querySelector(`[aria-label="${side} trim 手柄 ${blocks[0].address}"]`),origin=side==='左'?0:300

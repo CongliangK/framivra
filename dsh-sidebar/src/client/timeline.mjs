@@ -114,7 +114,7 @@ const trackId = track => track.family === 'subtitles' ? 'subtitles' : track.data
 const trackLabel = track => label(track.data, `${familyName(kindOfTrack(track))} ${track.track_index + 1}`)
 
 export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onOpenHistory, editActionLabel = '启用编辑', onUndo, compact = false, selectionTools, focusTool }) {
-  const extent = displayExtent(snapshot, result)
+  const extent = React.useMemo(() => displayExtent(snapshot, result), [snapshot, result])
   const fps = snapshot.document?.project?.fps, clock = projectClock(fps)
   const time = value => formatTimecode(value, fps) ?? '时间码不可显示'
   const [window, setWindow] = useState()
@@ -158,7 +158,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
   // supplies its single intent; this fallback is never a second product selection.
   const [localIntent, setLocalIntent] = useState(emptySelection())
   const intent = selectionIntent ?? localIntent
-  const selected = intent.items.map(item => `${item.kind}:${item.address}`)
+  const selected = React.useMemo(() => new Set(intent.items.map(item => `${item.kind}:${item.address}`)), [intent])
   const drag = useRef()
   const ruler = useRef()
   const trackNodes = useRef(new Map())
@@ -217,17 +217,23 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     return () => { hostWindow.removeEventListener('blur', clear); document.removeEventListener('visibilitychange', onVisibility) }
   }, [])
   useEffect(() => { if (!activeSelection) setLocalIntent(emptySelection()) }, [activeSelection])
-  if (extent.diagnostic) return h('p', { role: 'alert' }, extent.diagnostic)
-  const view = window ? windowFor(extent.end, window.start, window.end - window.start) : extent
+  const view = React.useMemo(() => window && !extent.diagnostic ? windowFor(extent.end, window.start, window.end - window.start) : extent, [window, extent])
   const pinned = safeFrame(frame) ? frame : undefined
-  const hitSet = hits ? new Set(hits.blocks.map(block => block.address)) : undefined
-  const groups = new Map()
-  const tracksByKey = new Map(result.tracks.map(track => [trackKey(track), track]))
-  for (const block of result.blocks) {
-    const key = `${block.family}:${block.track_index}`
-    if (!groups.has(key)) groups.set(key, [])
-    groups.get(key).push(block)
-  }
+  const { groups, tracksByKey, displayTracks } = React.useMemo(() => {
+    const groups = new Map()
+    const tracksByKey = new Map(result.tracks.map(track => [trackKey(track), track]))
+    // Lift subtitle lanes without changing kernel order for selection or editing.
+    const displayTracks = [
+      ...result.tracks.filter(track => track.family === 'subtitles'),
+      ...result.tracks.filter(track => track.family !== 'subtitles'),
+    ]
+    for (const block of result.blocks) {
+      const key = trackKey(block)
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key).push(block)
+    }
+    return { groups, tracksByKey, displayTracks }
+  }, [result])
   // Overview/navigation strip: display-only. Pointer and keyboard move the view
   // window; they never query, render, edit, pin the playhead, or change selection.
   const span = view.end - view.start
@@ -241,8 +247,8 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     if (at === undefined) return
     setWindow(windowFor(extent.end, Math.max(0, Math.min(at - Math.floor(span / 2), extent.end - span)), span))
   }
-  const selectedBlocks = result.blocks.filter(block => selected.includes(`block:${block.address}`))
-  const selectionZoom = selectedBlocks.length ? windowFor(extent.end, Math.min(...selectedBlocks.map(block => block.range[0])), Math.max(1, Math.max(...selectedBlocks.map(block => block.range[1])) - Math.min(...selectedBlocks.map(block => block.range[0])))) : undefined
+  const selectedBlocks = React.useMemo(() => result.blocks.filter(block => selected.has(`block:${block.address}`)), [result, selected])
+  const selectionZoom = !extent.diagnostic && selectedBlocks.length ? windowFor(extent.end, Math.min(...selectedBlocks.map(block => block.range[0])), Math.max(1, Math.max(...selectedBlocks.map(block => block.range[1])) - Math.min(...selectedBlocks.map(block => block.range[0])))) : undefined
   function pick(item, event) {
     if (selectionIntent) { onSelect?.(item, event); return }
     const next = transitionSelection(localIntent, item, event, result)
@@ -270,7 +276,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     if (directOwner.current) return
     const origin = pointerFrame(event.clientX, ruler.current.getBoundingClientRect(), view)
     if (origin === undefined) return
-    const moving = mode === 'move' && selected.includes(`block:${block.address}`) ? selectedBlocks : [block]
+    const moving = mode === 'move' && selected.has(`block:${block.address}`) ? selectedBlocks : [block]
     const allowed = onGesture && moving.every(item => typeof item.data?.id === 'string')
     const next = { pointer: event.pointerId, node: event.currentTarget, origin, x: event.clientX, y: event.clientY, block, track, mode, moving, token: {},
       reason: !onGesture ? gestureUnavailable ?? '请先启用编辑。' : !allowed ? '此片段不可编辑。' : undefined,
@@ -399,6 +405,44 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     ghost && !ghost.problem && safeFrame(ghost.snapFrame) && ghost.snapFrame >= view.start && ghost.snapFrame <= view.end ? h('span', { key: 'snap', className: 'fv-line fv-snap-line', style: { left: `${framePercent(ghost.snapFrame, view)}%` }, 'aria-hidden': true }) : null,
     hover !== undefined && hover >= view.start && hover < view.end ? h('span', { key: 'hover', className: 'fv-line fv-hover', style: { left: `${framePercent(hover, view)}%` }, 'aria-hidden': true }) : null,
   ]
+  // Pointer feedback never changes saved clips. Reuse their nodes while
+  // dispatching events through the latest committed view and authorization.
+  const actions = useRef()
+  useLayoutEffect(() => { actions.current = { beginGesture, updateGesture, endGesture, cancelGesture, pick } })
+  const editable = Boolean(onGesture)
+  const rowsByTrack = React.useMemo(() => {
+    if (extent.diagnostic) return new Map()
+    const hitSet = hits ? new Set(hits.blocks.map(block => block.address)) : undefined
+    const pending = new Set(saving?.placements.map(item => item.block.address))
+    return new Map(displayTracks.map(track => {
+      const key = trackKey(track), kind = kindOfTrack(track)
+      const blocks = groups.get(key) ?? []
+      const rows = blocks.length ? displayLanes(blocks) : [[]]
+      return [key, rows.map(row => row.map(block => {
+        const geometry = clipGeometry(block.range, view)
+        if (!geometry) return null
+        const text = label(block.data, block.address)
+        const duration = block.range[1] - block.range[0]
+        const events = mode => ({ onPointerDown: e => actions.current.beginGesture(e, block, track, mode), onPointerMove: e => actions.current.updateGesture(e), onPointerUp: e => actions.current.endGesture(e), onPointerCancel: e => actions.current.cancelGesture(e), onLostPointerCapture: e => actions.current.cancelGesture(e) })
+        const button = h('button', { key: 'body', type: 'button', className: `fv-clip fv-${kind}`, style: { left: `${geometry.left}%`, width: `${geometry.width}%`, maxWidth: `${100 - geometry.left}%` }, 'data-movable': Boolean(editable && block.data?.id), 'data-pending': pending.has(block.address),
+          title: `${text}\n${block.address} · [${time(block.range[0])}, ${time(block.range[1])}) · 长度 ${time(duration)}`, 'aria-label': `选择块 ${block.address} · ${text} · 帧 [${block.range[0]}, ${block.range[1]})`,
+          'aria-pressed': selected.has(`block:${block.address}`), 'data-hit': hitSet?.has(block.address) ?? false,
+          onDragStart: event => event.preventDefault(), onClick: event => actions.current.pick({ kind: 'block', address: block.address }, event), ...events('move'),
+        }, h('span', { className: 'fv-clip-name' }, text), Number.isSafeInteger(duration) && duration >= 0 ? h('span', { className: 'fv-clip-len' }, time(duration)) : null)
+        const handles = editable && block.data?.id && kind !== 'gfx' ? ['left','right'].filter(mode => mode === 'left' ? block.range[0] >= view.start : block.range[1] <= view.end).map(mode => h('button',{ key:mode,type:'button',className:'fv-trim','aria-label':`${mode === 'left' ? '左' : '右'} trim 手柄 ${block.address}`,title:'向内拖动以裁剪',style:{position:'absolute',top:'var(--fv-clip-top)',left:`${mode === 'left' ? geometry.left : geometry.left+geometry.width}%`,transform:mode==='right'?'translateX(-100%)':undefined,width:`min(7px, ${geometry.width / 4}%)`,minWidth:0,height:'var(--fv-clip-height)',padding:0,zIndex:3,touchAction:'none',cursor:'ew-resize'},...events(mode)})) : []
+        return h(React.Fragment,{key:block.address},button,...handles)
+      }))]
+    }))
+  }, [extent, displayTracks, groups, view, fps, editable, saving, selected, hits])
+  const overviewClips = React.useMemo(() => {
+    if (extent.diagnostic) return null
+    return result.blocks.map(block => {
+      const geometry = clipGeometry(block.range, extent)
+      if (!geometry) return null
+      return h('span', { key: block.address, className: `fv-ov fv-ov-${kindOfTrack(tracksByKey.get(trackKey(block)) ?? block)}`, style: { left: `${geometry.left}%`, width: `${Math.max(geometry.width, 0.4)}%` }, title: `${label(block.data, block.address)} · [${time(block.range[0])}, ${time(block.range[1])})`, 'aria-hidden': true })
+    })
+  }, [result, extent, fps, tracksByKey])
+  if (extent.diagnostic) return h('p', { role: 'alert' }, extent.diagnostic)
   return h('section', { className: compact ? 'fv-timeline fv-compact' : 'fv-timeline', 'data-small-lanes': laneHeight < 30, 'data-sized-lanes': fitLanes || laneHeight < 46, style: { '--fv-lane-height': `${laneHeight}px`, '--fv-clip-top': `${Math.min(3, Math.floor(laneHeight / 10))}px`, '--fv-clip-height': `${laneHeight - 2 * Math.min(3, Math.floor(laneHeight / 10))}px` }, 'aria-label': '完整只读可视时间轴', 'data-dragging': Boolean(ghost && !ghost.problem),
     onPointerDownCapture: event => pointerTails.current.delete(event.pointerId),
     onClickCapture: event => {
@@ -439,9 +483,9 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
       h('span', null, `播放头 ${pinned === undefined ? '未固定' : time(pinned)}`),
       h('span', null, `悬停时间码：${hover === undefined ? '—' : time(hover)}`),
       clock?.den === 1001 ? h('span', null, `NTSC non-drop · 名义 ${clock.nominal} fps（不是墙钟）`) : null,
-      h('span', null, `已选 ${selected.length}`),
+      h('span', null, `已选 ${selected.size}`),
       h('span', { 'aria-label': '活动引用' }, `活动引用：${activeSelection ? activeSelection.address : '无'}`))))),
-    h('span', { className: 'fv-live-status', role: 'status', 'aria-atomic': true }, `播放头 ${pinned === undefined ? '未固定' : time(pinned)} · 已选 ${selected.length}`),
+    h('span', { className: 'fv-live-status', role: 'status', 'aria-atomic': true }, `播放头 ${pinned === undefined ? '未固定' : time(pinned)} · 已选 ${selected.size}`),
     ghost || saving || feedback ? h('div', { className: 'fv-drag-feedback', 'aria-label': ghost ? '未保存拖动 ghost' : undefined },
       h('span', { role: ghost?.problem || (!ghost && feedback?.problem) ? 'alert' : 'status' }, ghost ? `${ghost.text}${safeFrame(ghost.snapFrame) && !ghost.problem ? ' · 已吸附' : ''}` : saving ? '正在保存…' : feedback.text),
       !ghost && !saving && feedback?.history && onOpenHistory ? h('button', { type: 'button', onClick: onOpenHistory }, '历史与恢复') : !ghost && !saving && feedback?.open && onOpenEdits ? h('button', { type: 'button', onClick: () => { setFeedback(undefined); onOpenEdits() } }, editActionLabel) : null) : null,
@@ -472,8 +516,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
           onPointerCancel: event => { if (overviewPointer.current === event.pointerId) overviewPointer.current = undefined },
           onLostPointerCapture: event => { if (overviewPointer.current === event.pointerId) overviewPointer.current = undefined },
         },
-          result.blocks.map(block => { const geometry = clipGeometry(block.range, extent); if (!geometry) return null
-            return h('span', { key: block.address, className: `fv-ov fv-ov-${kindOfTrack(tracksByKey.get(trackKey(block)) ?? block)}`, style: { left: `${geometry.left}%`, width: `${Math.max(geometry.width, 0.4)}%` }, title: `${label(block.data, block.address)} · [${time(block.range[0])}, ${time(block.range[1])})`, 'aria-hidden': true }) }),
+          overviewClips,
           h('span', { className: 'fv-ov-window', style: { left: `${framePercent(view.start, extent)}%`, width: `${Math.max(framePercent(view.end, extent) - framePercent(view.start, extent), 0.6)}%` }, 'aria-hidden': true }),
           pinned !== undefined ? h('span', { className: 'fv-ov-pin', style: { left: `${framePercent(pinned, extent)}%` }, 'aria-hidden': true }) : null)),
       h('div', { className: 'fv-ruler-row' },
@@ -502,7 +545,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
           onLostPointerCapture: event => { if (drag.current === event.pointerId) drag.current = undefined },
           onPointerLeave: () => { if (drag.current === undefined) setHover(undefined) },
         }, frameTicks(view).map((tick, index, all) => h('span', { key: tick, className: 'fv-tick', style: { left: `${framePercent(tick, view)}%`, transform: index === all.length - 1 ? 'translateX(-100%)' : undefined }, 'aria-hidden': true }, time(tick))), lines())),
-      result.tracks.map(track => {
+      displayTracks.map(track => {
         const key = `${track.family}:${track.track_index}`
         const blocks = groups.get(key) ?? []
         const kind = kindOfTrack(track)
@@ -510,24 +553,11 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
         const trackSelection = { kind: 'track', address: track.address }
         return h('section', { key, ref: node => { if (node) trackNodes.current.set(key, node); else trackNodes.current.delete(key) }, className: 'fv-track', 'aria-label': name },
           h('div', { className: 'fv-track-head' },
-            h('button', { className: 'fv-track-title', type: 'button', title: name, 'aria-label': `选择轨道 ${track.address}`, 'aria-pressed': selected.includes(`track:${track.address}`), onClick: event => pick(trackSelection, event) }, h(Icon, { name: trackIcon(kind), size: 13 }), h('span', { className: 'fv-track-name' }, name)),
+            h('button', { className: 'fv-track-title', type: 'button', title: name, 'aria-label': `选择轨道 ${track.address}`, 'aria-pressed': selected.has(`track:${track.address}`), onClick: event => pick(trackSelection, event) }, h(Icon, { name: trackIcon(kind), size: 13 }), h('span', { className: 'fv-track-name' }, name)),
             blocks.length === 0 ? h('span', { className: 'fv-empty-note', title: '空轨道（kernel 未返回存储块）' }, '空轨道') : null),
           h('div', { className: 'fv-lanes' },
-            (blocks.length ? displayLanes(blocks) : [[]]).map((row, index) => h('div', { className: 'fv-row', key: index, 'aria-label': `显示子行 ${index + 1}（不是新轨道）` },
-              row.map(block => {
-                const geometry = clipGeometry(block.range, view)
-                if (!geometry) return null
-                const text = label(block.data, block.address)
-                const duration = block.range[1] - block.range[0]
-                const events = mode => ({ onPointerDown: e => beginGesture(e, block, track, mode), onPointerMove: updateGesture, onPointerUp: endGesture, onPointerCancel: e => cancelGesture(e), onLostPointerCapture: e => cancelGesture(e) })
-                const button = h('button', { key: 'body', type: 'button', className: `fv-clip fv-${kind}`, style: { left: `${geometry.left}%`, width: `${geometry.width}%`, maxWidth: `${100 - geometry.left}%` }, 'data-movable': Boolean(onGesture && block.data?.id), 'data-pending': Boolean(saving?.placements.some(item => item.block.address === block.address)),
-                  title: `${text}\n${block.address} · [${time(block.range[0])}, ${time(block.range[1])}) · 长度 ${time(duration)}`, 'aria-label': `选择块 ${block.address} · ${text} · 帧 [${block.range[0]}, ${block.range[1]})`,
-                  'aria-pressed': selected.includes(`block:${block.address}`), 'data-hit': hitSet?.has(block.address) ?? false,
-                  onDragStart: event => event.preventDefault(), onClick: event => pick({ kind: 'block', address: block.address }, event), ...events('move'),
-                }, h('span', { className: 'fv-clip-name' }, text), Number.isSafeInteger(duration) && duration >= 0 ? h('span', { className: 'fv-clip-len' }, time(duration)) : null)
-                const handles = onGesture && block.data?.id && kind !== 'gfx' ? ['left','right'].filter(mode => mode === 'left' ? block.range[0] >= view.start : block.range[1] <= view.end).map(mode => h('button',{ key:mode,type:'button',className:'fv-trim','aria-label':`${mode === 'left' ? '左' : '右'} trim 手柄 ${block.address}`,title:'向内拖动以裁剪',style:{position:'absolute',top:'var(--fv-clip-top)',left:`${mode === 'left' ? geometry.left : geometry.left+geometry.width}%`,transform:mode==='right'?'translateX(-100%)':undefined,width:`min(7px, ${geometry.width / 4}%)`,minWidth:0,height:'var(--fv-clip-height)',padding:0,zIndex:3,touchAction:'none',cursor:'ew-resize'},...events(mode)})) : []
-                return h(React.Fragment,{key:block.address},button,...handles)
-               }), index === 0 ? saving?.placements.filter(entry => trackKey(entry.track) === key).map(entry => placement(entry, 'pending')) : null,
+            rowsByTrack.get(key).map((row, index) => h('div', { className: 'fv-row', key: index, 'aria-label': `显示子行 ${index + 1}（不是新轨道）` },
+              row, index === 0 ? saving?.placements.filter(entry => trackKey(entry.track) === key).map(entry => placement(entry, 'pending')) : null,
               index === 0 ? ghost?.placements?.filter(entry => trackKey(entry.track) === key).map(entry => placement(entry, ghost.problem ? 'blocked' : 'drag')) : null,
               index === 0 && compact && !ghost && !saving ? internalGaps(blocks).map(range => gapControl(track, range)) : null, lines()))))
       }), result.blocks.length === 0 ? h('p', { style: { margin: '6px' } }, '空项目：暂无片段。') : null))
