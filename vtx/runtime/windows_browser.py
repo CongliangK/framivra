@@ -80,6 +80,7 @@ def _api():
         'CreateFileW': (_H, W.LPCWSTR, _D, _D, C.POINTER(_SecurityAttributes), _D, _D, _H),
         'CreatePipe': (_B, C.POINTER(_H), C.POINTER(_H), _PTR, _D),
         'SetHandleInformation': (_B, _H, _D, _D),
+        'DuplicateHandle': (_B, _H, _H, _H, C.POINTER(_H), _D, _B, _D),
         'SetNamedPipeHandleState': (_B, _H, C.POINTER(_D), _PTR, _PTR),
         'ReadFile': (_B, _H, _PTR, _D, C.POINTER(_D), _PTR),
         'WaitForSingleObject': (_D, _H, _D),
@@ -109,6 +110,33 @@ def _close_handle(api, owner, field):
     if handle:
         _check(api.CloseHandle(handle), 'CloseHandle')
         setattr(owner, field, None)
+
+
+@contextmanager
+def _remember_interrupt(interrupted):
+    try:
+        yield
+    except KeyboardInterrupt as cancel:
+        if not interrupted:
+            interrupted.append(cancel)
+        raise
+
+
+@contextmanager
+def _launch_handles():
+    interrupted = []
+
+    def close(api, owner, field):
+        with _remember_interrupt(interrupted):
+            _close_handle(api, owner, field)
+
+    try:
+        with ExitStack() as temporary, _remember_interrupt(interrupted):
+            yield temporary, close, interrupted
+    except BaseException as error:
+        if interrupted and error is not interrupted[0]:
+            raise interrupted[0] from error
+        raise
 
 
 @contextmanager
@@ -175,9 +203,9 @@ class _Capture:
         self.handle = _H()
         self.data, self.eof, self.buffer = bytearray(), False, C.create_string_buffer(65536)
 
-    def open(self, api, temporary):
+    def open(self, api, temporary, close=_close_handle):
         writer = _H()
-        temporary.callback(_close_handle, api, writer, 'value')
+        temporary.callback(close, api, writer, 'value')
         _check(api.CreatePipe(C.byref(self.handle), C.byref(writer), None, 0), 'CreatePipe')
         _check(api.SetHandleInformation(writer, 1, 1), 'SetHandleInformation')
         # Only the private read end is nonblocking; no background readers to join or cancel.
@@ -203,56 +231,52 @@ class _Capture:
         return 0
 
 
-class BrowserJob:
-    def __init__(self, argv, *, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL):
-        args = [os.fsdecode(value) for value in argv]
-        if (not args or not PureWindowsPath(args[0]).is_absolute()
-                or PureWindowsPath(args[0]).suffix.lower() != '.exe' or any('\0' in arg for arg in args)):
-            raise OSError(errno.EINVAL, 'Windows browser requires a fixed absolute .exe and valid argv')
-        if any(stream not in (subprocess.DEVNULL, subprocess.PIPE) for stream in (stdout, stderr)):
-            raise ValueError('Windows browser accepts only DEVNULL or PIPE for stdout/stderr')
+class _OwnedJob:
+    """Private native machinery; the caller validates inputs and owns cleanup before launch."""
+    def __init__(self, argv, *, capture_limit=None):
         self._api = api = _api()
         self._job, self._info, self._captures = _H(), _ProcessInfo(), []
         self._close_failed = False
+        self._capture_limit = _CAPTURE_LIMIT if capture_limit is None else capture_limit
         self.proc = _Process(api, self._info, argv)
-        try:
-            self._job.value = _check(api.CreateJobObjectW(None, None), 'CreateJobObjectW')
-            limits = _ExtendedLimits()
-            limits.basic.flags = _KILL_ON_CLOSE
-            _check(api.SetInformationJobObject(self._job, 9, C.byref(limits), C.sizeof(limits)),
-                   'SetInformationJobObject')
-            with ExitStack() as temporary:
-                temporary.callback(_close_handle, api, self._info, 'thread')
+
+    def _launch(self, args, stdout, stderr, *, stdin=None, cwd=None, environment=None):
+        api = self._api
+        self._job.value = _check(api.CreateJobObjectW(None, None), 'CreateJobObjectW')
+        limits = _ExtendedLimits()
+        limits.basic.flags = _KILL_ON_CLOSE
+        _check(api.SetInformationJobObject(self._job, 9, C.byref(limits), C.sizeof(limits)),
+               'SetInformationJobObject')
+        with _launch_handles() as (temporary, close, interrupted):
+            temporary.callback(close, api, self._info, 'thread')
+            nul = None
+            if stdin is None or subprocess.DEVNULL in (stdout, stderr):
                 security = _SecurityAttributes(C.sizeof(_SecurityAttributes), None, True)
                 nul = api.CreateFileW('NUL', 0xC0000000, 3, C.byref(security), 3, 0x80, None)
                 _check(nul and nul != _H(-1).value, 'CreateFileW (NUL)')
-                temporary.callback(_close_handle, api, _H(nul), 'value')
-                stdio = [nul]  # no browser stdin contract; do not inherit the host console handle
-                for stream in (stdout, stderr):
-                    if stream == subprocess.PIPE:
-                        capture = _Capture()
-                        self._captures.append(capture)
-                        stdio.append(capture.open(api, temporary))
-                    else:
-                        stdio.append(nul)
-                with _startup(api, self._job.value, stdio) as startup:
-                    cmd = C.create_unicode_buffer(subprocess.list2cmdline(args))
-                    # Absolute lpApplicationName, mutable argv; inherit cwd/environment, not arbitrary handles.
-                    _check(api.CreateProcessW(args[0], cmd, None, None, True, _EXTENDED_STARTUPINFO,
-                                              None, None, C.byref(startup), C.byref(self._info)),
-                           'CreateProcessW')
-        except BaseException as primary:
-            try:
-                self.close()
-            except OSError as cleanup:
-                unconfirmed = JobSettlementError('Windows browser Job cleanup unconfirmed during launch')
-                unconfirmed.__cause__ = cleanup
-                raise primary from unconfirmed
-            except KeyboardInterrupt as cleanup:
-                if isinstance(primary, KeyboardInterrupt) and isinstance(cleanup.__cause__, JobSettlementError):
-                    raise primary from cleanup.__cause__
-                raise
-            raise
+                temporary.callback(close, api, _H(nul), 'value')
+            inherited = _H()
+            if stdin is not None:
+                # Inherit a duplicate with the original read access, not a reopened name.
+                temporary.callback(close, api, inherited, 'value')
+                current = _H(-1)  # GetCurrentProcess pseudo-handle
+                _check(api.DuplicateHandle(current, stdin, current, C.byref(inherited), 0, True, 2),
+                       'DuplicateHandle (stdin)')  # DUPLICATE_SAME_ACCESS
+            stdio = [inherited.value if stdin is not None else nul]
+            for stream in (stdout, stderr):
+                if stream == subprocess.PIPE:
+                    capture = _Capture()
+                    self._captures.append(capture)
+                    stdio.append(capture.open(api, temporary, close))
+                else:
+                    stdio.append(nul)
+            with _startup(api, self._job.value, stdio) as startup, _remember_interrupt(interrupted):
+                cmd = C.create_unicode_buffer(subprocess.list2cmdline(args))
+                flags = _EXTENDED_STARTUPINFO
+                if environment is not None:
+                    flags |= 0x400 | 0x08000000  # CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW
+                _check(api.CreateProcessW(args[0], cmd, None, None, True, flags, environment,
+                                          cwd, C.byref(startup), C.byref(self._info)), 'CreateProcessW')
 
     def _stop_job(self):
         # Only the unnamed, non-inheritable Job created above, never the caller's Job.
@@ -275,25 +299,15 @@ class BrowserJob:
         raise OSError(errno.ETIMEDOUT, 'Windows browser Job settlement deadline expired')
 
     def _close(self, deadline, *, drain=False):
-        interrupted = None
-
-        @contextmanager
-        def remember_interrupt():
-            nonlocal interrupted
-            try:
-                yield
-            except KeyboardInterrupt as cancel:
-                if interrupted is None:
-                    interrupted = cancel
-                raise
+        interrupted = []
 
         def close_owned(owner, field):
-            with remember_interrupt():
+            with _remember_interrupt(interrupted):
                 _close_handle(self._api, owner, field)
 
         try:
             # Capture cancellation before finally/ExitStack can replace it.
-            with ExitStack() as closing, remember_interrupt():
+            with ExitStack() as closing, _remember_interrupt(interrupted):
                 closing.callback(close_owned, self._info, 'process')
                 closing.callback(close_owned, self._info, 'thread')
                 for capture in self._captures:
@@ -305,7 +319,7 @@ class BrowserJob:
                 if self._info.process:  # no child to settle on a pre-launch failure
                     self._stop_job()  # stop before draining pipes that descendants may hold open
                     try:
-                        with remember_interrupt():
+                        with _remember_interrupt(interrupted):
                             if drain:
                                 self._pump(deadline)
                     finally:
@@ -319,7 +333,7 @@ class BrowserJob:
                         self._wait_job_empty(deadline)
         except BaseException as error:
             self._close_failed = True  # a retry must not confuse a closed handle with proof
-            cancel = interrupted if interrupted is not None else error
+            cancel = interrupted[0] if interrupted else error
             if isinstance(cancel, KeyboardInterrupt):
                 unconfirmed = JobSettlementError('Windows browser Job cleanup interrupted; shutdown unconfirmed')
                 if error is not cancel:
@@ -331,7 +345,7 @@ class BrowserJob:
         self._close(time.monotonic() + _STOP_TIMEOUT)
 
     def _pump(self, deadline):
-        remaining = _CAPTURE_LIMIT - sum(len(capture.data) for capture in self._captures)
+        remaining = self._capture_limit - sum(len(capture.data) for capture in self._captures)
         while deadline is None or time.monotonic() < deadline:
             before = remaining
             for capture in self._captures:
@@ -346,6 +360,31 @@ class BrowserJob:
 
     def _output(self):
         return tuple(bytes(capture.data) for capture in self._captures)
+
+
+class BrowserJob(_OwnedJob):
+    def __init__(self, argv, *, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL):
+        args = [os.fsdecode(value) for value in argv]
+        if (not args or not PureWindowsPath(args[0]).is_absolute()
+                or PureWindowsPath(args[0]).suffix.lower() != '.exe' or any('\0' in arg for arg in args)):
+            raise OSError(errno.EINVAL, 'Windows browser requires a fixed absolute .exe and valid argv')
+        if any(stream not in (subprocess.DEVNULL, subprocess.PIPE) for stream in (stdout, stderr)):
+            raise ValueError('Windows browser accepts only DEVNULL or PIPE for stdout/stderr')
+        super().__init__(argv)
+        try:
+            self._launch(args, stdout, stderr)
+        except BaseException as primary:
+            try:
+                self.close()
+            except OSError as cleanup:
+                unconfirmed = JobSettlementError('Windows browser Job cleanup unconfirmed during launch')
+                unconfirmed.__cause__ = cleanup
+                raise primary from unconfirmed
+            except KeyboardInterrupt as cleanup:
+                if isinstance(primary, KeyboardInterrupt) and isinstance(cleanup.__cause__, JobSettlementError):
+                    raise primary from cleanup.__cause__
+                raise
+            raise
 
 
 def run_browser(argv, timeout=None):

@@ -53,7 +53,7 @@
 - 唯一主基线：30秒/900帧/1080p30 SVG；禁用退役12秒基线，探针不替主片。
 - Windows SVG 先校验原始项目相对声明，再用 `/` 序列化依赖并集并复核解析路径；不放行 Windows SVG 运行时。
 - [Windows Fontconfig 检查](<vtx/render/gfx_svg_win_fontconfig.py>)只在独立进程用固定官方 DLL 快照查询单个已知字体 face；仅供内部验证，不证明闭包、渲染或产物资格。
-- [Windows SVG 快照](<vtx/render/gfx_svg_win_snapshot.py>)创建独占 ASCII scratch 操作目录前，持有两侧目录链句柄，查重解析标记并按卷和文件 ID 拒绝重叠；固定官方包树、控制台映像与 cwd 仅供内部输入核验，不启动进程，不证明加载域、缓存或发布资格。
+- [Windows SVG 快照](<vtx/render/gfx_svg_win_snapshot.py>)先用目录句柄拒绝重解析和物理重叠，再核验独占包树；核验入口不启动进程。[内部验收](<vtx/render/gfx_svg_win_shell.py>)仅以固定官方 `.com` 验内置无字体单帧，期限内未证 Job 结算则不读 PNG、不删操作目录；不证明加载域、缓存或发布资格。
 - [SVG shell](<vtx/render/gfx_svg_stage.py>) 即使退出成功也拒收明确的 Fontconfig error / Pango-CRITICAL，不发布完成凭据；该诊断只报告固定短错误，不回显日志，普通警告不拒收。
 - portable-v2 基线仅用 `scripts/demo.py prepare/verify`；锁字体与标准库音频，禁混旧输入；预检不授渲染资格，见[SVG 基线](<templates/demo-timeline-svg/README.md>)。
 - [可编辑主 Demo](<templates/demo-workbench/README.md>)同源生成 SVG/HTML，默认从乐谱 JSON 现场渲染床乐，不提交音频；CDP、CEF 与 Inkscape 验收不代替安装、冻结与性能基线。

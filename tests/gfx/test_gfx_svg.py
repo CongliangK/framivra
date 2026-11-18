@@ -852,6 +852,72 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
         mkdtemp.assert_not_called()
         self.assertEqual(list(inside.iterdir()), [])
 
+    def test_owned_frame_rejection_and_retention(self):
+        from vtx.render import gfx_svg_win_shell as shell, gfx_svg_win_snapshot as snapshot
+        root = self.scratch_fixture(snapshot)
+        entry = root / 'inkscape/bin/inkscape.com'
+        entry.parent.mkdir(parents=True)
+        entry.write_bytes(b'not executable')
+        with self.assertRaisesRegex(OSError, r'absolute \.exe'):
+            shell.native.BrowserJob([str(entry), '--shell'])
+
+        def verified_fixture(source, *, destination=None):
+            if destination is not None:
+                (destination / 'bin').mkdir(parents=True)
+                (destination / 'bin/inkscape.com').write_bytes(entry.read_bytes())
+            return source / 'bin/inkscape.com'
+
+        for failure, message, kept, reads in (
+                ('settlement', 'settlement unconfirmed', True, 1),
+                ('diagnostic', 'severe Fontconfig', False, 1),
+                ('bad-png', 'valid 64x48 PNG', False, 2),
+                ('sharing', 'output locked', True, 1),
+                ('timeout', 'did not exit', False, 1),
+                ('cancel', 'first interrupt', True, 1)):
+            with self.subTest(failure=failure):
+                scratch = root / failure
+                scratch.mkdir()
+                job = mock.Mock()
+                job._pump.return_value = True  # root exit and both EOFs
+                job.proc.returncode = 0
+                job._output.return_value = (b'', b'Fontconfig error: fixture' if failure == 'diagnostic' else b'')
+                cancel = KeyboardInterrupt('first interrupt')
+                if failure == 'settlement':
+                    job._close.side_effect = OSError('injected job accounting failure')
+                elif failure == 'timeout':
+                    job._pump.return_value = False
+                elif failure == 'cancel':
+                    job._pump.side_effect = cancel
+                    job._close.side_effect = KeyboardInterrupt('second interrupt')
+
+                def launch(args, stdout, stderr, *, cwd, **kwargs):
+                    (Path(cwd) / 'f0000.png').write_bytes(b'PNG is not valid')
+
+                job._launch.side_effect = launch
+                pin = shell._pin_entry
+
+                def pin_or_conflict(path):
+                    if path.name == 'f0000.png':
+                        job._close.assert_called_once()
+                        if failure == 'sharing':
+                            raise OSError(0, 'output locked', None, 32)
+                    return pin(path)
+
+                with mock.patch.object(snapshot, '_tree', side_effect=verified_fixture), \
+                        mock.patch.object(shell.native, '_OwnedJob', return_value=job), \
+                        mock.patch.object(shell, '_pin_entry', side_effect=pin_or_conflict) as opened, \
+                        mock.patch.object(shell, '_read_pinned', wraps=shell._read_pinned) as read:
+                    with self.assertRaisesRegex((OSError, ValueError, KeyboardInterrupt), message) as rejected:
+                        shell._accept_frame(root, scratch=scratch)
+                if failure == 'cancel':
+                    self.assertIs(rejected.exception, cancel)
+                    self.assertTrue(shell.native.job_cleanup_unconfirmed(cancel))
+                job._close.assert_called_once()
+                self.assertEqual(read.call_count, reads)
+                self.assertEqual(opened.call_args_list[-1].args[0].name,
+                                 'f0000.png' if failure in ('bad-png', 'sharing') else 'actions.txt')
+                self.assertEqual(bool(list(scratch.iterdir())), kept)
+
     def test_handle_reparse_metadata_refuses_even_with_ordinary_lstat(self):
         from vtx.render import gfx_svg_win_snapshot as snapshot
         root = temporary_root(self)
