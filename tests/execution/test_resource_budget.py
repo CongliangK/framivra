@@ -509,6 +509,7 @@ class InventoryTests(unittest.TestCase):
             membership.write_text('0::/docker/container-id\n')
             directories = rb._cgroup_dirs(group, membership)
             self.assertEqual(directories, [group])
+            self.assertEqual(rb._cgroup_dirs(group, membership, require_membership=True), [])
             with mock.patch.object(rb, '_cgroup_dirs', return_value=directories):
                 inventory = rb.detect_inventory(root)
             self.assertEqual(inventory.limits.cpu_millis, 500)
@@ -524,6 +525,38 @@ class InventoryTests(unittest.TestCase):
                 inventory = rb.detect_inventory(root)
             self.assertEqual(inventory.limits.cpu_millis, 500)
             self.assertEqual(inventory.limits.ram_bytes, 100)
+
+    def test_strict_memory_inventory_caps_at_ancestors_and_rejects_unknown(self):
+        leaf, parent = Path('/group/leaf'), Path('/group')
+        readings = {Path('/proc/meminfo'): 'MemAvailable: 8192 kB',
+                    leaf / 'memory.max': 'max', parent / 'memory.max': '1000'}
+
+        def read_text(path):
+            if path not in readings:
+                raise FileNotFoundError(path)
+            return readings[path]
+
+        with mock.patch.object(Path, 'read_text', autospec=True, side_effect=read_text), \
+                mock.patch.object(rb, '_cgroup_dirs', return_value=[leaf, parent]) as groups:
+            self.assertEqual(rb.detect_inventory('.').limits.ram_bytes, 8192 * 1024)
+            for current, expected in ((None, 0), ('invalid', 0), ('900', 100), ('1001', 0)):
+                with self.subTest(memory_current=current):
+                    if current is not None:
+                        readings[parent / 'memory.current'] = current
+                    self.assertEqual(rb._linux_ram_headroom(), expected)
+            groups.assert_called_with(require_membership=True)
+            groups.return_value = []
+            self.assertEqual(rb._linux_ram_headroom(), 0)
+
+            # A normal v2 root may omit memory files. That is usable only
+            # when the resolved chain itself positively exposes the controller.
+            root = Path('/cgroup-root')
+            with mock.patch.object(rb, '_CGROUP_ROOT', root), \
+                    mock.patch.object(Path, 'stat', side_effect=FileNotFoundError):
+                groups.return_value = [leaf, root]
+                self.assertEqual(rb._linux_ram_headroom(), 8192 * 1024)
+                groups.return_value = [root]
+                self.assertEqual(rb._linux_ram_headroom(), 0)
 
 
 if __name__ == '__main__':

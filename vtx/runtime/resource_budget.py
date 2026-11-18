@@ -28,6 +28,7 @@ _FIELDS = ("cpu_millis", "ram_bytes", "vram_bytes", "disk_bytes")
 _SCHEMA = 1
 _POLL_SECONDS = 0.02
 _IMPORT_PID = os.getpid()
+_CGROUP_ROOT = Path("/sys/fs/cgroup")
 
 
 class BudgetError(RuntimeError):
@@ -98,26 +99,79 @@ class Inventory:
         return {"limits": self.limits.as_dict(), "sources": dict(self.sources)}
 
 
-def _cgroup_dirs(root=None, membership=None):
-    """Visible cgroup-v2 ancestors only; absence is reported, never guessed."""
-    root = Path("/sys/fs/cgroup") if root is None else Path(root)
+def _cgroup_dirs(root=None, membership=None, *, require_membership=False):
+    """Visible cgroup-v2 ancestors; optionally require a resolvable leaf."""
+    root = _CGROUP_ROOT if root is None else Path(root)
     membership = Path("/proc/self/cgroup") if membership is None else Path(membership)
     if not (root / "cgroup.controllers").is_file():
         return []
+    # A container may mount its cgroup subtree as the visible root. Best-effort
+    # callers can still account for visible root caps without a leaf mapping.
+    fallback = [] if require_membership else [root]
     try:
         line = next(line for line in membership.read_text().splitlines()
                     if line.startswith("0::"))
+        if not line[3:].startswith("/"):
+            return fallback
         relative = line[3:].lstrip("/")
         if ".." in Path(relative).parts:
             return []
         current = root / relative
         if not current.is_dir():
-            # A container may mount its cgroup subtree as the visible root.
-            # Even without a reliable leaf mapping, visible root caps still apply.
-            return [root]
+            return fallback
         return [current] + [p for p in current.parents if p == root or root in p.parents]
-    except (OSError, StopIteration):
-        return [root]
+    except (OSError, StopIteration, UnicodeError):
+        return fallback
+
+
+def _cgroup_ram_headroom(directory, *, allow_missing_root=False):
+    limit_path = directory / "memory.max"
+    current_path = directory / "memory.current"
+    try:
+        limit = limit_path.read_text().strip()
+    except FileNotFoundError:
+        if allow_missing_root and directory == _CGROUP_ROOT:
+            # Actual v2 root can omit both files. The caller must already have
+            # valid controller evidence from the resolved member/ancestors.
+            try:
+                current_path.stat()
+            except FileNotFoundError:
+                return None
+        raise
+    if limit == "max":
+        return None
+    limit, current = int(limit), int(current_path.read_text())
+    if min(limit, current) < 0:
+        raise ValueError("negative cgroup memory reading")
+    return max(0, limit - current)
+
+
+def _ram_inventory(cgroups, *, strict=False):
+    try:
+        fields = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())
+        ram = max(0, int(fields["MemAvailable"].split()[0])) * 1024
+    except (OSError, ValueError, KeyError, IndexError):
+        return 0, "unavailable: MemAvailable could not be measured"
+    observed_controller = False
+    for directory in cgroups:
+        try:
+            headroom = _cgroup_ram_headroom(directory, allow_missing_root=strict and observed_controller)
+            observed_controller = True
+            if headroom is not None:
+                ram = min(ram, headroom)
+        except (OSError, ValueError):
+            if strict:
+                return 0, "unavailable: cgroup-v2 memory headroom could not be measured"
+    return ram, "/proc/meminfo MemAvailable"
+
+
+def _linux_ram_headroom():
+    """Scheduling snapshot only; zero means exhausted or not reliably measured."""
+    try:
+        cgroups = _cgroup_dirs(require_membership=True)
+    except OSError:
+        return 0
+    return _ram_inventory(cgroups, strict=True)[0] if cgroups else 0
 
 
 def detect_inventory(disk_path, *, vram_bytes: Optional[int] = None):
@@ -136,29 +190,16 @@ def detect_inventory(disk_path, *, vram_bytes: Optional[int] = None):
         count = os.cpu_count()
         cpu = count * 1000 if count else 0
         sources["cpu_millis"] = "os.cpu_count" if count else "unavailable"
-    ram = 0
-    try:
-        fields = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())
-        ram = int(fields["MemAvailable"].split()[0]) * 1024
-        sources["ram_bytes"] = "/proc/meminfo MemAvailable"
-    except (OSError, ValueError, KeyError):
-        sources["ram_bytes"] = "unavailable: MemAvailable could not be measured"
     cgroups = _cgroup_dirs()
     sources["cgroup"] = ("visible cgroup-v2 paths: " + ", ".join(map(str, cgroups))
                          if cgroups else "unavailable: no visible cgroup-v2 limits")
+    ram, sources["ram_bytes"] = _ram_inventory(cgroups)
     for directory in cgroups:
         try:
             quota, period = (directory / "cpu.max").read_text().split()
             if quota != "max":
                 cpu = min(cpu, int(quota) * 1000 // int(period))
         except (OSError, ValueError, ZeroDivisionError):
-            pass
-        try:
-            limit = (directory / "memory.max").read_text().strip()
-            if limit != "max":
-                headroom = max(0, int(limit) - int((directory / "memory.current").read_text()))
-                ram = min(ram, headroom)
-        except (OSError, ValueError):
             pass
     try:
         disk = shutil.disk_usage(disk_path).free
