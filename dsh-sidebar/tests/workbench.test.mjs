@@ -72,6 +72,11 @@ test('FileBrowser: folder navigation and up re-browse with exact relative paths;
   await act(async () => label('打开文件夹 sub').click())
   await settle(() => document.querySelector('.fv-file-location span').textContent === 'sub')
   assert.deepEqual(calls, ['', 'sub'])
+  assert.equal(label('上一级文件夹').title, '上一级文件夹 · 当前目录：sub')
+  assert.equal(document.querySelector('.fv-file-search').title, '筛选当前文件夹 · sub')
+  const toolbar = document.querySelector('.fv-file-toolbar')
+  assert(toolbar.contains(label('刷新文件列表')) && toolbar.contains(label('收起项目文件')))
+  assert(label('上一级文件夹').getAttribute('aria-describedby')) // keyboard-focus help retains cwd
   // filter is client-side only: no new browse call
   const before = calls.length
   await change(document.querySelector('.fv-file-search'), 'inner')
@@ -336,7 +341,9 @@ test('PreviewBody: choosing a browser file opens through the Host control respon
   assert.equal(host.requests.at(-3).timeline, 'proj.json')
   assert.equal(host.requests.at(-3).sessionId, 'one')
   assert.equal(document.querySelector('.fv-title h2').textContent, 'proj.json')
-  assert(document.body.textContent.includes('已保存视图 · 精确帧定位'))
+  const savedView = document.querySelector('.fv-title .fv-subtitle')
+  assert.equal(savedView.textContent, '已保存视图')
+  assert.equal(savedView.title, '已保存视图 · 精确帧定位')
   assert(document.body.textContent.includes('MAIN_TRACK'), 'projection content comes from the vtx query envelope')
   assert.equal(label('打开时间线 proj.json').getAttribute('aria-current'), 'true')
   assert.deepEqual(dialogCalls, [], 'file choice itself never toggles the dialog')

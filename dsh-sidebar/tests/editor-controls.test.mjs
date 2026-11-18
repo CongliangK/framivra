@@ -62,11 +62,8 @@ test('Transport: buttons and input drive callbacks only; no fetch or any network
   const frames = [], texts = [], queries = []
   await act(async () => root.render(h(Transport, { frame: 5, frameText: '5', duration: 30, onFrame: v => frames.push(v), onText: v => texts.push(v), onQuery: () => queries.push(1) })))
   const buttons = [...document.querySelectorAll('button')]
-  await act(async () => { buttons.find(b => b.getAttribute('aria-label') === '定位首帧').click() })
-  await act(async () => { buttons.find(b => b.getAttribute('aria-label') === '监视器前一帧').click() })
-  await act(async () => { buttons.find(b => b.getAttribute('aria-label') === '监视器后一帧').click() })
-  await act(async () => { buttons.find(b => b.getAttribute('aria-label') === '定位末帧').click() })
-  assert.deepEqual(frames, ['0', '4', '6', '29'])
+  assert(!buttons.some(b => ['定位首帧', '监视器前一帧', '监视器后一帧', '定位末帧'].includes(b.getAttribute('aria-label'))), 'navigation belongs to the timeline, not duplicated in the monitor')
+  assert.deepEqual(frames, [])
   const input = document.querySelector('input[name="framivra-frame"]')
   await act(async () => Simulate.change(input, { target: { value: '12' } }))
   assert.deepEqual(texts, ['12'])
@@ -75,17 +72,19 @@ test('Transport: buttons and input drive callbacks only; no fetch or any network
   assert.deepEqual(queries, [1], 'form submit only queries; no network')
 })
 
-test('Transport: boundary disables and invalid-duration presentation', async t => {
+test('Transport: compact row keeps one accessible advanced disclosure and concise duration', async t => {
   const { root } = await mount(t)
-  await act(async () => root.render(h(Transport, { frame: 0, frameText: '0', duration: 30, onFrame: () => {}, onText: () => {}, onQuery: () => {} })))
-  assert(document.querySelector('[aria-label="监视器前一帧"]').disabled, 'frame 0 disables previous')
-  assert(!document.querySelector('[aria-label="监视器后一帧"]').disabled)
-  await act(async () => root.render(h(Transport, { frame: 29, frameText: '29', duration: 30, onFrame: () => {}, onText: () => {}, onQuery: () => {} })))
-  assert(document.querySelector('[aria-label="监视器后一帧"]').disabled, 'last frame disables next')
-  await act(async () => root.render(h(Transport, { frame: undefined, frameText: '', duration: 'x', onFrame: () => {}, onText: () => {}, onQuery: () => {} })))
-  assert(document.querySelector('[aria-label="定位首帧"]').disabled)
-  assert(document.querySelector('[aria-label="定位末帧"]').disabled)
-  assert(document.body.textContent.includes('时长不可显示'))
+  const props = { frame: 0, frameText: '0', duration: 30, fps: 30, onFrame: () => {}, onText: () => {}, onQuery: () => {} }
+  await act(async () => root.render(h(Transport, props)))
+  assert.equal(document.querySelector('.fv-duration').textContent, '/ 00:01:00')
+  assert.equal(document.querySelectorAll('details').length, 1)
+  const details = document.querySelector('details.fv-monitor-disclosure')
+  assert.equal(details.open, false)
+  assert(details.querySelector('summary[aria-label="高级帧定位"]'))
+  const panel = details.querySelector('.fv-monitor-popover')
+  for (const name of ['framivra-frame', 'framivra-seconds', 'framivra-offset']) assert(panel.querySelector(`[name="${name}"]`))
+  await act(async () => root.render(h(Transport, { ...props, duration: 'x' })))
+  assert.equal(document.querySelector('.fv-duration').textContent, '时长不可显示')
 })
 
 // ---------- LayoutDivider: pointer ownership, cancel/blur retirement, keyboard ----------
