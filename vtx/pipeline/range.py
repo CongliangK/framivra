@@ -16,6 +16,7 @@ from math import lcm
 from pathlib import Path
 
 from .composite import DEFAULT_SEGMENTS, RenderPlan, choose_cutpoints, prepare_layers, _concat_manifest
+from .constraints import AUDIO_SAMPLE_RATE
 from .infra import ensure_inside_project
 from .constraints import AUDIO_SAMPLE_RATE
 from ..media.encoders import pick_vcodec
@@ -304,15 +305,15 @@ def _render_range(c, fa, fb, *, draft, run_tasks=None):
     delivery_dir = getattr(c, 'preview_cache', vdir)
     fstxn.mkdir(delivery_dir, root=c.root)
     out = delivery_dir / f'{stem}.mp4'
-    # MP4 edit lists use the movie time scale. On the native profile, avoid
-    # rounding either exact frame endpoints or AAC presentation samples to ms.
+    # The MP4 movie/edit-list clock must represent both frame and sample edges.
+    # A millisecond movie clock can truncate or extend the AAC presentation.
     movie_clock = [] if draft else ['-movie_timescale', str(lcm(c.frame_rate.numerator, AUDIO_SAMPLE_RATE))]
     c.run(["ffmpeg", "-v", "error", "-y", "-i", str(tmpv), "-i", str(wav),
            # Both inputs are already bounded to the exact frame/sample window.
            # -shortest can discard trailing copied video packets when rounded
            # audio ends a fraction of one sample before the last frame endpoint.
            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-           *movie_clock, "-movflags", "+faststart", str(out)])
+           "-movflags", "+faststart", *movie_clock, str(out)])
     tmpv.unlink(missing_ok=True)
     # 自检：总帧数必须精确 == 窗口帧数（复合段边界丢帧不静默）。dry-run 无产物
     # （P1-A：此前 ffprobe 真执行读空 → 误报「自检失败」），只打印将执行的命令即退出。
