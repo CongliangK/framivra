@@ -146,6 +146,8 @@ export const workbenchCSS = `
  .fv-workbench[open] .fv-monitor-title{flex:none;margin-bottom:4px}
  .fv-workbench[open] .fv-frame-query{flex:none;font-size:12px}
  .fv-workbench[open] .fv-transport{position:sticky;top:0;z-index:2;background:var(--fv-bg)}
+ /* Expanded positioning fields scroll normally instead of pinning a tall form over the stage. */
+ .fv-workbench[open] .fv-transport:has(> details[open]){position:static;z-index:auto}
  .fv-workbench[open] .fv-frame-query button{font-size:12px}
  .fv-workbench[open] .fv-frame-tools{display:flex;flex-direction:column;flex:1;min-height:200px}
  .fv-workbench[open] .fv-frame-tools-head{display:none}
