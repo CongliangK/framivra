@@ -166,18 +166,21 @@ else:
 class CliProcessRouting(unittest.TestCase):
     def test_windows_keeps_job_object_runner(self):
         from vtx.render import gfx_cli
-        result = subprocess.CompletedProcess(['browser'], 0, b'out', b'err')
+        explicit = os.path.join('.', 'browser.exe')
+        resolved = os.path.abspath(explicit)
+        result = subprocess.CompletedProcess([resolved], 0, b'out', b'err')
         with mock.patch.object(gfx_cli.os, 'name', 'nt'), \
                 mock.patch('vtx.runtime.windows_browser.run_browser', return_value=result) as run:
-            self.assertIs(gfx_cli._run_cli_browser(['browser'], '.', 2), result)
-        run.assert_called_once_with(['browser'], timeout=2)
+            self.assertIs(gfx_cli._run_cli_browser([explicit], '.', 2), result)
+        run.assert_called_once_with([resolved], timeout=2)
 
     def test_unavailable_supervision_preserves_legacy_route(self):
         from vtx.render import gfx_cli
+        from vtx.runtime import proc_supervisor
         result = subprocess.CompletedProcess(['browser'], 0, b'out', b'err')
         with mock.patch.object(gfx_cli.os, 'name', 'posix'), \
-                mock.patch('vtx.runtime.proc_supervisor.supervision_available', return_value=False), \
-                mock.patch('vtx.runtime.proc_supervisor.SupervisedProcessGroup') as group, \
+                mock.patch.object(proc_supervisor, 'supervision_available', return_value=False), \
+                mock.patch.object(proc_supervisor, 'SupervisedProcessGroup') as group, \
                 mock.patch.object(gfx_cli.subprocess, 'run', return_value=result) as run:
             self.assertIs(gfx_cli._run_cli_browser(['browser'], '.', 2), result)
         run.assert_called_once_with(['browser'], capture_output=True, timeout=2)

@@ -122,6 +122,8 @@ def find_binary(names, extra_paths=()):
 
 def find_chrome():
     """与 vtx.media.encoders.find_chrome 同源逻辑：VTX_CHROME 优先 → PATH → 标准安装路径。"""
+    if OS == "win32":
+        return find_chrome_candidate(OS, allow_override_file=False)
     if OS == "linux":
         candidate = find_chrome_candidate(OS, allow_override_file=False)
         # doctor reports the resolved path, while renderer callers retain the

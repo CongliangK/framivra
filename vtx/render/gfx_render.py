@@ -550,6 +550,7 @@ class Browser:
                     "--no-first-run", "--no-default-browser-check", "about:blank"]
             if sys.platform == "win32":
                 from ..runtime.windows_browser import BrowserJob
+                argv[0] = os.path.abspath(argv[0])  # normalize an explicit relative file, not a PATH lookup
                 self.windows_job = BrowserJob(argv)
                 self.proc = self.windows_job.proc
             else:
@@ -609,6 +610,7 @@ class Browser:
         if self.windows_job is not None:
             self.windows_job.close()
             self.windows_job = None
+            self.proc = None  # the Job already closed its root handle
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:

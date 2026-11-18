@@ -17,6 +17,7 @@
 - [音乐原生验收](<apps/bgm/README.md#macos-原生验收>)用隔离配置与原创输入走完整链；基础、可选引擎、人工听审分别记账，缺资产不算通过。
 - IndexTTS 的 `probe` 和 `gen` 共用原生解释器发现；找到解释器不代表许可允许推理。
 - [CDP 启动诊断](<vtx/render/gfx_render.py>)区分 DevTools HTTP 就绪前进程退出与页面 CDP 握手后初始化 `Page.enable` 超时；退出只报告有界状态，不泄露 argv/profile，超时不证明页面域状态或 renderer/token 根因，不改 strict/CLI 回退。
+- [Windows 浏览器监管](<vtx/runtime/windows_browser.py>)固定绝对 `.exe`，用 JOB_LIST（Win10+/Server 2016+）创建即加入私有 Job，仅继承指定 stdio；不支持或启动失败不回退，双管合计有界，超时先关本方 Job 再有界排空，不接管外部进程。
 
 ## 常用命令
 

@@ -496,7 +496,8 @@ def _run_cli_browser(cmd, directory, timeout, *, root=None):
     """Capture one owned browser and clean its tree before returning or raising."""
     if os.name == 'nt':
         from ..runtime.windows_browser import run_browser
-        return run_browser(cmd, timeout=timeout)
+        # Preserve explicit relative files; discovery already resolves any selected PATH candidate.
+        return run_browser([os.path.abspath(cmd[0]), *cmd[1:]], timeout=timeout)
     from ..runtime.proc_supervisor import SupervisedProcessGroup, supervision_available
     if not supervision_available():
         # Preserve the existing unsupported-platform route; do not invent
