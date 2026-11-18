@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 from vtx.api import timeline_transaction, timeline_edit_plan
 from scripts.gfx._bench_runtime import verify_media
 from scripts.demo import DemoError, check_output_path
-from scripts.demo_workbench import graphics_spec
+from scripts.demo_workbench import add_soundtrack_option, graphics_spec
 
 
 def dump(path, value):
@@ -210,6 +210,7 @@ def main(argv=None):
     parser.add_argument('--backend', required=True, choices=['svg', 'cdp', 'cef'])
     parser.add_argument('--output', required=True, help='new absolute project directory outside the checkout')
     parser.add_argument('--fonts-dir', required=True)
+    add_soundtrack_option(parser)
     args = parser.parse_args(argv)
     require(Path(args.output).is_absolute(), '--output must be absolute')
     project = check_output_path(args.output)
@@ -222,7 +223,7 @@ def main(argv=None):
     require(not prepare_log.exists(), 'prepare evidence already exists')
     run([sys.executable, ROOT / 'scripts/demo_workbench.py', 'prepare', '--format',
          'svg' if args.backend == 'svg' else 'html', '--output', project,
-         '--fonts-dir', args.fonts_dir], prepare_log, env)
+         '--fonts-dir', args.fonts_dir, '--soundtrack', args.soundtrack], prepare_log, env)
     evidence = project / 'acceptance'
     evidence.mkdir()
     shutil.copyfile(prepare_log, evidence / 'prepare.log')

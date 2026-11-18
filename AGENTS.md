@@ -54,7 +54,7 @@
 - [Windows Fontconfig 检查](<vtx/render/gfx_svg_win_fontconfig.py>)只在独立进程用固定官方 DLL 快照查询单个已知字体 face；仅供内部验证，不证明闭包、渲染或产物资格。
 - [SVG shell](<vtx/render/gfx_svg_stage.py>) 即使退出成功也拒收明确的 Fontconfig error / Pango-CRITICAL，不发布完成凭据；该诊断只报告固定短错误，不回显日志，普通警告不拒收。
 - portable-v2 基线仅用 `scripts/demo.py prepare/verify`；锁字体与标准库音频，禁混旧输入；预检不授渲染资格，见[SVG 基线](<templates/demo-timeline-svg/README.md>)。
-- [可编辑主 Demo](<templates/demo-workbench/README.md>)同源生成 SVG/HTML；CDP、CEF 与 Inkscape 验收按实际后端留证，不代替安装、冻结与性能基线。
+- [可编辑主 Demo](<templates/demo-workbench/README.md>)同源生成 SVG/HTML，默认从乐谱 JSON 现场渲染床乐，不提交音频；CDP、CEF 与 Inkscape 验收不代替安装、冻结与性能基线。
 - [portable-v2 锁定运行时源](<templates/demo-timeline-svg/benchmark/portable-v2.json>)须以 LF 检出（含 Windows）；[属性规则](<.gitattributes>)仅补齐既有 Python 规则未覆盖的锁成员，核验仍按原始字节。
 - 同输入/质量/环境/后端/配置分冷暖测全链；留身份/哈希/证据；未测UNRUN，探针非整体提速；SVG有界调度/串行回退见[缓存](<docs/cache-provenance.md#产物身份>)。
 - [事件](<docs/reference/execution-events.md>)跨阶段回执绑定实际嵌套任务，区间不相加冒充墙钟。
