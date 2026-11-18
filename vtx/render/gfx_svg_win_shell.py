@@ -23,8 +23,8 @@ from ..runtime import windows_browser as native
 from . import gfx_svg, gfx_svg_win_fontconfig as fontconfig, gfx_svg_win_input as win_input
 from .gfx_cli import _png_stream_invalid_reason
 from .gfx_svg_stage import _FONT_ERROR
-from .gfx_svg_win_snapshot import (_local_path, _ordinary, _pin_dir, _pin_dirs, _pin_entry,
-                                   _snapshot_operation, _windows_api)
+from .gfx_svg_win_snapshot import (_local_path, _normalized_dos_name, _ordinary, _pin_dir, _pin_dirs,
+                                   _pin_entry, _snapshot_operation, _windows_api)
 
 
 _WIDTH, _HEIGHT = 64, 48
@@ -103,13 +103,7 @@ _MARKER = bytes((245, 218, 91, 255))
 
 
 def _dos_path(handle):
-    query = _windows_api('GetFinalPathNameByHandleW', W.DWORD, W.HANDLE, W.LPWSTR, W.DWORD, W.DWORD)
-    buffer = C.create_unicode_buffer(32768)
-    size = query(handle, buffer, len(buffer), 0)  # normalized FILE_NAME_NORMALIZED / VOLUME_NAME_DOS
-    path = buffer.value
-    if not 4 < size < len(buffer) or not path.startswith('\\\\?\\') or not path.isascii() or ';' in path:
-        raise ValueError('Windows SVG requires normalized ASCII DOS paths without semicolons')
-    return _local_path(path[4:])
+    return _local_path(_normalized_dos_name(handle))
 
 
 def _system_windows_path():
@@ -214,18 +208,18 @@ class _ImageOrigins(NamedTuple):
     winsxs: int
 
 
-def _raster_image_roots(executable, pins):
+def _raster_image_roots(pins, package_images):
     windows = _system_windows_path()
     for ancestor in reversed(windows.parents):
         pins.enter_context(_pin_dir(ancestor))
     handle, _ = pins.enter_context(_pin_dir(windows))
     windows = _dos_path(handle)
-    roots = (executable.parent, windows / 'System32', windows / 'WinSxS')
-    for expected in roots[1:]:
+    roots = (windows / 'System32', windows / 'WinSxS')
+    for expected in roots:
         handle, _ = pins.enter_context(_pin_dir(expected))
         if _dos_path(handle) != expected:
             raise ValueError('Windows SVG system image root mismatch')
-    return roots
+    return package_images, *roots
 
 
 def _observed_dos_name(buffer, size):
@@ -260,7 +254,7 @@ def _query_image_origins(job, executable, roots, deadline):
     _image_sample_time(deadline)
     native._check(query(process, 0, name, C.byref(size)), 'QueryFullProcessImageNameW')
     root = _observed_dos_name(name, size.value)
-    if root != executable:
+    if str(root) != str(executable):
         raise ValueError('Windows SVG observed root image differs from the pinned entry')
 
     # PSAPI is not atomic. One non-full list, one name query per entry, no retries.
@@ -271,7 +265,8 @@ def _query_image_origins(job, executable, roots, deadline):
     if not 0 < count < len(modules) or partial:
         raise ValueError('Windows SVG image sample returned an invalid module count')
     counts, seen = [0, 0, 0], set()
-    package, system32, winsxs = roots
+    package_images, system32, winsxs = roots
+    package = executable.parent
     for module in modules[:count]:
         _image_sample_time(deadline)
         if not module:
@@ -282,6 +277,10 @@ def _query_image_origins(job, executable, roots, deadline):
             raise ValueError('Windows SVG image sample returned a duplicate module name')
         seen.add(path)
         if path.parent == package:
+            # Windows Path equality ignores case. The package must match the
+            # exact spelling authenticated on the retained handles, not an alias.
+            if str(path) not in package_images:
+                raise ValueError('Windows SVG observed a module without an exact pinned package image')
             counts[0] += 1
         elif path.parent == system32:
             counts[1] += 1
@@ -396,14 +395,18 @@ def _accept_text_frame(portable_root, *, scratch, font_dir):
 
 
 @contextmanager
-def _fixed_shell(portable_root, scratch):
-    with _snapshot_operation(portable_root, scratch=scratch) as operation, ExitStack() as pins:
+def _fixed_shell(portable_root, scratch, *, retain_package_images=False):
+    with _snapshot_operation(portable_root, scratch=scratch,
+                             retain_package_images=retain_package_images) as operation, ExitStack() as pins:
         inputs = operation.inputs
-        pins.enter_context(_pin_dir(inputs.vendor))
-        pins.enter_context(_pin_dir(inputs.executable.parent))
-        entry, _, _, _ = pins.enter_context(_pin_entry(inputs.executable))
+        executable = inputs.executable
+        if not retain_package_images:
+            pins.enter_context(_pin_dir(inputs.vendor))
+            pins.enter_context(_pin_dir(executable.parent))
+            entry, _, _, _ = pins.enter_context(_pin_entry(executable))
+            executable = _dos_path(entry)
         cwd_handle, _ = pins.enter_context(_pin_dir(inputs.cwd))
-        executable, cwd = _dos_path(entry), _dos_path(cwd_handle)
+        cwd = _dos_path(cwd_handle)
         yield operation, executable, cwd, _environment(cwd, executable.parent), pins
 
 
@@ -665,7 +668,8 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
         if project_ids[-1] in scratch_ids or scratch_ids[-1] in project_ids:
             raise ValueError('Windows SVG canonical raster scratch overlaps the project')
         _raster_time(launch_deadline)
-        with _fixed_shell(portable_root, scratch) as (operation, executable, cwd, environment, pins):
+        with _fixed_shell(portable_root, scratch, retain_package_images=True) as context:
+            operation, executable, cwd, environment, pins = context
             frames, fonts = cwd / 'frames', cwd / 'fonts'
             frames.mkdir()
             pins.enter_context(_pin_dir(frames))
@@ -688,7 +692,7 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
                 if _read_pinned(handle, info, directory, len(data)) != data:
                     raise ValueError('Windows SVG staged canonical raster source changed')
             _require_runtime_facts(operation, executable, cwd, environment, pins, launch_deadline)
-            image_roots = _raster_image_roots(executable, pins)
+            image_roots = _raster_image_roots(pins, operation.package_images)
             with _fixed_stdin(cwd, actions) as stdin:
                 image_origins = _run(operation, executable, cwd, environment, stdin, deadline=launch_deadline,
                                      capture_limit=_RASTER_CAPTURE_LIMIT, image_roots=image_roots)
