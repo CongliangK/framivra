@@ -1224,6 +1224,70 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
             run.assert_called_once()
             self.assertEqual(list(scratch.iterdir()), [])
 
+    def test_standard_frame_requires_exact_anchored_source_and_locked_fonts(self):
+        from vtx.render import gfx_svg_win_shell as shell, gfx_svg_win_snapshot as snapshot
+
+        root = self.scratch_fixture(snapshot)
+        project, scratch = root / '工程 #', root / 'scratch'
+        frame = project / 'gfx/frames-svg/f0135.svg'
+        frame.parent.mkdir(parents=True)
+        scratch.mkdir()
+        (project / 'assets/fonts').mkdir(parents=True)
+        sample = b' ' * shell._STANDARD_SVG_BYTES
+        alternate = frame.with_suffix('.SVG')
+        alternate.write_bytes(sample)
+        with mock.patch.object(shell.native, '_OwnedJob') as own:
+            def accept(project_root=project):
+                return shell._accept_standard_frame(root, scratch=scratch, project_root=project_root)
+
+            with self.assertRaisesRegex(ValueError, 'absolute Windows project root'):
+                accept(str(project.parent) + '\\.\\' + project.name)
+            with self.assertRaises((FileNotFoundError, ValueError)) as rejected:
+                accept()  # Windows may open the alternate case, but cannot accept it.
+            if isinstance(rejected.exception, ValueError):
+                self.assertIn('exact Windows filesystem name', str(rejected.exception))
+            alternate.unlink()
+            frame.write_bytes(sample)
+            with self.assertRaisesRegex(ValueError, 'canonical frame byte identity mismatch'):
+                accept()
+            link = project / 'linked.svg'
+            os.link(frame, link)
+            with self.assertRaisesRegex(ValueError, 'one hard link'):
+                accept()
+            link.unlink()
+
+            entry = root / 'inkscape/bin/inkscape.com'
+            entry.parent.mkdir(parents=True)
+            (root / 'inkscape/share').mkdir()
+            entry.write_bytes(b'sample')  # validated data fixture, never executed
+            expected = 'd6d2fef7359bebd313ce33a0e1e68a0ba295112ce886be28446833c0b8755ee0'
+            with mock.patch.multiple(snapshot, _MAX_FILES=1, _MAX_DIRS=2, _MAX_BYTES=6,
+                                     _TREE_SHA256=expected), \
+                    mock.patch.object(shell, '_STANDARD_SVG_SHA256', gfx_svg.digest(sample)):
+                with self.assertRaises(FileNotFoundError):
+                    accept()
+                (project / 'assets/fonts/NotoSansCJK-Regular.ttc').write_bytes(b'wrong font')
+                with self.assertRaisesRegex(ValueError, 'locked demo font byte identity mismatch'):
+                    accept()
+        own.assert_not_called()
+        self.assertEqual(list(scratch.iterdir()), [])
+
+    def test_standard_frame_rejects_animation_with_matching_first_frame(self):
+        from PIL import Image
+        from vtx.render import gfx_svg_win_shell as shell
+
+        width, height = 1920, 1080
+        still, animated = io.BytesIO(), io.BytesIO()
+        with Image.new('RGBA', (width, height), 'red') as first, \
+                Image.new('RGBA', (width, height), 'blue') as second:
+            first.save(still, 'PNG')
+            first.save(animated, 'PNG', save_all=True, append_images=[second], duration=100)
+            self.assertEqual(shell._png_pixels(still.getvalue(), width, height, Image.open, static_only=True),
+                             first.tobytes())
+            self.assertEqual(shell._png_pixels(animated.getvalue(), width, height, Image.open), first.tobytes())
+        with self.assertRaisesRegex(ValueError, 'requires a static PNG'):
+            shell._png_pixels(animated.getvalue(), width, height, Image.open, static_only=True)
+
     def test_fixed_sequence_exact_outputs_and_index_pixels(self):
         from PIL import Image, ImageDraw
         from vtx.render import gfx_svg_win_shell as shell, gfx_svg_win_snapshot as snapshot

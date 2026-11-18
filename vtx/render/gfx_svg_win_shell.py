@@ -1,4 +1,4 @@
-"""Internal Windows acceptance of fixed single-frame and sequence fixtures.
+"""Internal Windows acceptance of fixed fixtures and one pinned canonical demo frame.
 
 The verified vendor copy, staged fonts and isolated profile belong to one
 operation. A Job controls our process tree, not the OS loader or arbitrary SVG;
@@ -18,6 +18,7 @@ import time
 from xml.sax.saxutils import escape
 
 from ..runtime import windows_browser as native
+from . import gfx_svg_win_input as win_input
 from .gfx_cli import _png_stream_invalid_reason
 from .gfx_svg_stage import _FONT_ERROR
 from .gfx_svg_win_snapshot import _local_path, _pin_dir, _pin_dirs, _pin_entry, _snapshot_operation, _windows_api
@@ -37,6 +38,12 @@ _TEXT_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="160" v
              '<text x="8" y="145" font-family="DejaVu Sans" font-weight="700" font-size="29">Framivra 123</text>'
              '</svg>').encode('utf-8')
 _TEXT_RGBA_SHA256 = '47b8a9149b9fbc45797fcd95ae0d265f89d9f174f9c314dbf9625f6108de63df'
+# portable-v2 arrangement_read (4.5 s), checked by the frozen template generator/checker.
+# Reference: two independent Inkscape 1.4.4 x64 CLI exports, reopened and decoded by FFmpeg.
+_STANDARD_STEM, _STANDARD_SIZE = 'f0135', (1920, 1080)
+_STANDARD_SVG_BYTES = 3419
+_STANDARD_SVG_SHA256 = '7f6ef5e87080ad55248052ebd5857d2fd1be84aca2ad7f28a2edc06cdcc6cc86'
+_STANDARD_RGBA_SHA256 = '3b245999b54791dcc7be240418965d8c91445a758bfc9450afbe5227c70edfd5'
 _DEMO = Path(__file__).resolve().parents[2] / 'templates/demo-timeline-svg'
 _FONT_NAMES = ('NotoSansCJK-Regular.ttc', 'NotoSansCJK-Bold.ttc', 'DejaVuSans.ttf', 'DejaVuSans-Bold.ttf')
 _FONT_LIMIT = 24 * 1024 * 1024  # Per file; four fixed inputs, no font directory scan.
@@ -121,14 +128,17 @@ def _stage_locked_fonts(source, destination, pins):
         for i, (name, expected) in enumerate(zip(_FONT_NAMES, digests)):
             with _pin_entry(source / name) as (handle, info, _, directory):
                 data = _read_pinned(handle, info, directory, _FONT_LIMIT)
-            if hashlib.sha256(data).hexdigest() != expected:
-                raise ValueError(f'Windows SVG locked demo font byte identity mismatch: {name}')
-            target = destination / f'font{i}{Path(name).suffix}'
-            with target.open('xb') as stream:
-                stream.write(data)
-            handle, info, _, directory = pins.enter_context(_pin_entry(target))
-            if hashlib.sha256(_read_pinned(handle, info, directory, len(data))).hexdigest() != expected:
-                raise ValueError('Windows SVG staged font byte identity mismatch')
+            _stage_font(data, expected, name, destination / f'font{i}{Path(name).suffix}', pins)
+
+
+def _stage_font(data, expected, name, target, pins):
+    if hashlib.sha256(data).hexdigest() != expected:
+        raise ValueError(f'Windows SVG locked demo font byte identity mismatch: {name}')
+    with target.open('xb') as stream:
+        stream.write(data)
+    handle, info, _, directory = pins.enter_context(_pin_entry(target))
+    if hashlib.sha256(_read_pinned(handle, info, directory, len(data))).hexdigest() != expected:
+        raise ValueError('Windows SVG staged font byte identity mismatch')
 
 
 def _settle(operation, job, deadline):
@@ -222,9 +232,16 @@ def _read_png(operation, path):
         raise
 
 
-def _png_pixels(data, width, height, open_image):
+def _png_pixels(data, width, height, open_image, *, static_only=False):
     if _png_stream_invalid_reason(io.BytesIO(data), len(data), width=width, height=height):
         raise ValueError(f'Windows SVG shell did not export a valid {width}x{height} PNG')
+    if static_only:
+        # The gate above checked every chunk boundary, CRC, and exact EOF at IEND.
+        offset = 8
+        while offset < len(data):
+            if data[offset + 4:offset + 8] in (b'acTL', b'fcTL', b'fdAT'):
+                raise ValueError('Windows SVG canonical frame requires a static PNG')
+            offset += 12 + int.from_bytes(data[offset:offset + 4], 'big')
     with open_image(io.BytesIO(data)) as image:
         return image.convert('RGBA').tobytes()
 
@@ -248,6 +265,45 @@ def _accept_fixed(portable_root, scratch, *, font_dir):
                 raise ValueError('Windows SVG locked text fixture pixels differ')
         elif rgba != _RGBA * (_WIDTH * _HEIGHT):
             raise ValueError('Windows SVG fixture pixels differ')
+        return data
+
+
+def _accept_standard_frame(portable_root, *, scratch, project_root):
+    """Accept only portable-v2 f0135 from a caller-authorized stable NTFS root.
+
+    Use only the fixed SVG and font leaves, not declarations from the project.
+    This returns one verified PNG, not evidence about the rest of the project.
+    """
+    from PIL import Image
+
+    project_root = os.fspath(project_root)  # preserve the original root spelling for anchored validation
+    filename = _STANDARD_STEM + '.svg'
+    svg = win_input.read(project_root, 'gfx/frames-svg/' + filename,
+                         limit=_STANDARD_SVG_BYTES, expected_path=None)
+    if len(svg) != _STANDARD_SVG_BYTES or hashlib.sha256(svg).hexdigest() != _STANDARD_SVG_SHA256:
+        raise ValueError('Windows SVG canonical frame byte identity mismatch')
+    width, height = _STANDARD_SIZE
+    png = _STANDARD_STEM + '.png'
+    actions = (_EXPORT.format(stem=_STANDARD_STEM, width=width, height=height, png=png) + 'quit\n').encode('ascii')
+    digests = _locked_font_digests()
+    with _fixed_shell(portable_root, scratch) as (operation, executable, cwd, environment, pins):
+        fonts = cwd / 'fonts'
+        pins.enter_context(_pin_dir(fonts))
+        for i, (name, expected) in enumerate(zip(_FONT_NAMES, digests)):
+            data = win_input.read(project_root, 'assets/fonts/' + name, limit=_FONT_LIMIT, expected_path=None)
+            _stage_font(data, expected, name, fonts / f'font{i}{Path(name).suffix}', pins)
+        source = cwd / filename
+        with source.open('xb') as stream:
+            stream.write(svg)
+        handle, info, _, directory = pins.enter_context(_pin_entry(source))
+        if _read_pinned(handle, info, directory, _STANDARD_SVG_BYTES) != svg:
+            raise ValueError('Windows SVG staged canonical frame changed')
+        with _fixed_stdin(cwd, actions) as stdin:
+            _run(operation, executable, cwd, environment, stdin)
+        data = _read_png(operation, cwd / png)
+        rgba = _png_pixels(data, width, height, Image.open, static_only=True)
+        if hashlib.sha256(rgba).hexdigest() != _STANDARD_RGBA_SHA256:
+            raise ValueError('Windows SVG canonical frame pixels differ')
         return data
 
 
