@@ -21,10 +21,10 @@ async function fixture(t) {
   return { dom, root, Simulate, opens, closes, render: async element => act(async () => root.render(element)), button: () => document.querySelector('button'), tip: () => document.querySelector('[role=tooltip]') }
 }
 
-test('icon library: all 40 vendored SVGs are structured decorative nodes, no text or external resources', async t => {
+test('icon library: all 41 vendored SVGs are structured decorative nodes, no text or external resources', async t => {
   const f = await fixture(t)
-  assert.equal(Object.keys(iconNodes).length, 40)
-  assert.equal(createHash('sha256').update(JSON.stringify(iconNodes)).digest('hex'), '390ff15e1b2ccdf697ba2a12b1d6eebc46506565b66055067668b89a5971c6d7', 'all 40 node arrays retain their independently verified upstream identity')
+  assert.equal(Object.keys(iconNodes).length, 41)
+  assert.equal(createHash('sha256').update(JSON.stringify(iconNodes)).digest('hex'), '21a6c84e1203490648519fdd3cf62e4e2ac77bd63a314cbf131117b879bd350b', 'all 41 node arrays retain their independently verified upstream identity')
   const safeTags = new Set(['path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon'])
   for (const [name, nodes] of Object.entries(iconNodes)) {
     assert(nodes.length > 0, name)

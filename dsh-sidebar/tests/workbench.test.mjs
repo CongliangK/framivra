@@ -229,7 +229,7 @@ const snapshot = { content_version: version, coverage, diagnostics: [], document
 const tracks = [{ family: 'video', track_index: 0, address: '/t/0', data: { name: 'MAIN_TRACK' } }]
 const blocks = [{ family: 'video', track_index: 0, block_index: 0, address: '/t/0/b/0', range: [0, 20], data: { src: 's.mp4' } }]
 const full = { content_version: version, coverage, diagnostics: [], tracks, blocks }
-const opened = { grant: 'grant', snapshot, media: [] }
+const opened = { grant: 'grant', snapshot, media: [], capabilities: { capabilities: { frame: { inline_png: { flag: '--include-png' } } } } }
 
 function hostFixture() {
   const requests = [], forbidden = []
@@ -299,7 +299,7 @@ test('PreviewBody: expand/shrink drives the native dialog via public showModal/c
   assert.equal(dialog.getAttribute('role'), 'region')
   assert.equal(label('展开工作台').getAttribute('aria-expanded'), null)
   const ruler = document.querySelector('.fv-ruler')
-  const editorSummary = [...document.querySelectorAll('.fv-inspector summary')].find(n => n.textContent === '剪辑编辑与提交')
+  const editorSummary = document.querySelector('[aria-label="手动语义编辑"]')
   const monitor = document.querySelector('.fv-monitor')
   assert.equal(document.querySelector('.fv-frame-tools').closest('fieldset').style.display, 'contents', 'storage exclusion must not insert a flex box that shrinks the expanded monitor')
   assert(editorSummary, 'ManualEditor section rendered')
@@ -310,7 +310,7 @@ test('PreviewBody: expand/shrink drives the native dialog via public showModal/c
   assert.equal(dialog.getAttribute('aria-modal'), 'true')
   assert(document.querySelector('[aria-label="收起工作台"]'))
   assert.strictEqual(document.querySelector('.fv-ruler'), ruler, 'SAME ruler node retained across expand')
-  assert.strictEqual([...document.querySelectorAll('.fv-inspector summary')].find(n => n.textContent === '剪辑编辑与提交'), editorSummary, 'SAME ManualEditor DOM node retained')
+  assert.strictEqual(document.querySelector('[aria-label="手动语义编辑"]'), editorSummary, 'SAME ManualEditor DOM node retained')
   assert.strictEqual(document.querySelector('.fv-monitor'), monitor)
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
   assert.equal(host.requests.length, afterLoad, 'expand issues no reopen/query/render IO')

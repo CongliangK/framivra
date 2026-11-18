@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import React, { act } from 'react'
 import { JSDOM } from 'jsdom'
-import { VisualTimeline, TimelineHelp } from '../src/client/timeline.mjs'
+import { VisualTimeline } from '../src/client/timeline.mjs'
 
 const h = React.createElement
 const version = `sha256:${'a'.repeat(64)}`
@@ -63,7 +63,7 @@ test('visual timeline: fixed header column grid aligns ruler with clip rows; fam
   for (const token of ['--fv-tl-accent', '--fv-tl-video', '--fv-tl-gfx', '--fv-tl-audio', '--fv-tl-subs', '--fv-tl-playhead', '--fv-tl-hit']) assert(css.includes(token), `token ${token} in css`)
 })
 
-test('visual timeline: keyboard/button accessible names, compact status bar, help details, selected count', async t => {
+test('visual timeline: keyboard/button accessible names, compact status bar and selected count', async t => {
   const { root } = await mount(t)
   const frames = []
   await act(async () => root.render(h(VisualTimeline, { snapshot, result, frame: 10, onFrame: value => frames.push(value) })))
@@ -79,9 +79,6 @@ test('visual timeline: keyboard/button accessible names, compact status bar, hel
   assert(document.body.textContent.includes('悬停时间码：—'))
   assert(document.body.textContent.includes('已选 0'))
   assert(document.body.textContent.includes('播放头 00:00:10'))
-  const help = document.querySelector('details.fv-help')
-  assert(help && help.textContent.includes('kernel range'))
-  // Heading stays a single compact line; explanatory paragraphs live only inside the details.
   const h3 = document.querySelector('.fv-timeline h3')
   assert.equal(h3.textContent, '可视化回归')
   await act(async () => button('放大').click())
@@ -286,7 +283,7 @@ test('coarse-pointer contract: 44px minimums hit only compact controls; trim han
   const tokens = []
   // Touch pointer on a trim handle is refused in JS with visible guidance — no gesture starts.
   await act(async () => Simulate.pointerDown(handles[0], { button: 0, clientX: 5, pointerId: 9, pointerType: 'touch' }))
-  assert(document.body.textContent.includes('触控指针不支持 trim 手柄'), 'touch trim refusal message is visible')
+  assert(document.body.textContent.includes('触控指针不支持拖动裁剪'), 'touch trim refusal message is visible')
   await act(async () => Simulate.pointerMove(handles[0], { clientX: 30, pointerId: 9 }))
   assert(!document.querySelector('[aria-label="未保存拖动 ghost"]'), 'no ghost from refused touch trim')
   // Touch pointers still own selection/move gestures on clip bodies.
@@ -299,36 +296,24 @@ test('coarse-pointer contract: 44px minimums hit only compact controls; trim han
   assert.deepEqual(tokens.slice(-1), [false])
 })
 
-test('compact mode: inline help suppressed and class applied; exported TimelineHelp preserves the same text', async t => {
+test('compact mode keeps timeline geometry and exposes snapping and exact gap actions', async t => {
   const { root } = await mount(t)
-  await act(async () => root.render(h(VisualTimeline, { snapshot, result, frame: 10, onFrame: () => {} })))
-  const section = document.querySelector('.fv-timeline')
-  assert(!section.classList.contains('fv-compact'), 'default is the full standalone timeline')
-  assert(document.querySelector('details.fv-help'), 'default keeps the inline help details')
-  const defaultText = document.querySelector('details.fv-help').textContent
-  // Compact (monitor-pane embedding): same tree minus the inline help.
-  await act(async () => root.render(h(VisualTimeline, { snapshot, result, frame: 10, onFrame: () => {}, compact: true })))
-  const compactSection = document.querySelector('.fv-timeline')
-  assert(compactSection.classList.contains('fv-compact'), 'compact adds the fv-compact class')
-  assert(!document.querySelector('details.fv-help'), 'compact suppresses the inline help only')
-  assert(compactSection.querySelector('.fv-ruler') && compactSection.querySelector('.fv-overview'), 'grid/overview/ruler unchanged in compact')
-  const css = compactSection.querySelector('style').textContent
-  assert(css.includes('.fv-timeline.fv-compact .fv-track{padding:0 6px}'), 'compact tightens track padding only')
-  assert(css.includes('.fv-timeline.fv-compact .fv-row{margin:0}'), 'compact zeroes row margins only')
-  assert.equal(compactSection.style.getPropertyValue('--fv-lane-height'), '46px', 'default lane geometry preserved in compact')
-  assert.equal(compactSection.style.getPropertyValue('--fv-clip-height'), '40px', 'default clip geometry preserved in compact')
-  // The exported TimelineHelp mounts the identical content for the inspector.
-  await act(async () => root.render(h('div', null, h(TimelineHelp, { result }), h(TimelineHelp, { result, onGesture: () => {} }))))
-  const [readOnlyHelp, editableHelp] = [...document.querySelectorAll('details.fv-help')]
-  assert(readOnlyHelp && editableHelp, 'exported TimelineHelp renders details.fv-help')
-  assert.equal(readOnlyHelp.querySelector('summary').textContent, '操作说明（选择 / 播放头 / 拖拽 / 精度）')
-  assert(readOnlyHelp.textContent.includes('kernel range'))
-  assert(readOnlyHelp.textContent.includes('全部 4 轨 / 8 块'), 'uses live result data')
-  assert(readOnlyHelp.textContent.includes('未授写许可'), 'read-only variant copy preserved')
-  assert.equal(readOnlyHelp.textContent, defaultText, 'exported help text matches the former inline default verbatim')
-  assert(editableHelp.textContent.includes('未保存 batch'), 'editable variant copy preserved')
+  const direct = []
+  const videoTracks = [{ ...tracks[0], data: { id: 'main', name: '主视频' } }]
+  const videoBlocks = blocks.filter(block => block.track_index === 0)
+  await act(async () => root.render(h(VisualTimeline, { snapshot, result: { ...result, tracks: videoTracks, blocks: videoBlocks }, compact: true, onGesture: operations => direct.push(operations) })))
+  const timeline = document.querySelector('.fv-timeline')
+  assert(timeline.classList.contains('fv-compact'))
+  assert(timeline.querySelector('.fv-ruler') && timeline.querySelector('.fv-overview'))
+  assert.equal(timeline.style.getPropertyValue('--fv-lane-height'), '46px')
+  const snap = timeline.querySelector('button[aria-label="吸附"]')
+  assert.equal(snap.getAttribute('aria-pressed'), 'true')
+  await act(async () => snap.click())
+  assert.equal(snap.getAttribute('aria-pressed'), 'false')
+  const [gap] = timeline.querySelectorAll('.fv-gap')
+  await act(async () => gap.click())
+  assert.deepEqual(direct, [[{ op: 'range.ripple', mode: 'delete', start: 20, end: 40, crossing: 'reject', resize: false, scope: { track_ids: ['main'], subtitles: false } }]])
 })
-
 
 test('lane height: header slot, measured overlap-row fit, resize bounds and manual override stay UI-only', async t => {
   const { root, dom } = await mount(t)

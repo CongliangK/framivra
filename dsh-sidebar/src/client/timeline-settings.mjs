@@ -2,7 +2,16 @@ import React, { useRef, useState } from 'react'
 import { parseJSON, stringifyJSON } from '../json.mjs'
 const h = React.createElement
 const own = (object, key) => Object.prototype.hasOwnProperty.call(object ?? {}, key)
-export const savedSetting = (object, key) => own(object, key) ? stringifyJSON(object[key]) : '未设置'
+export const savedSetting = (object, key) => {
+  if (!own(object, key)) return '未设置'
+  const value = object[key]
+  if (value === null) return '空值'
+  if (value === false || value === true) return value ? '已启用' : '已关闭'
+  if (Array.isArray(value)) return `${value.length} 项`
+  if (JSON.isRawJSON?.(value)) return stringifyJSON(value)
+  if (typeof value === 'object') return '已配置'
+  return String(value)
+}
 
 /** A deliberately closed UI surface; no root target, arbitrary key or document replacement. */
 export function settingsIntent(kind, { text, remove = false, id } = {}) {
@@ -74,15 +83,13 @@ export function TimelineSettings({ document, tracks = [], disabled, onChange, on
   return h('section', { 'aria-label': '时间线配置', className: 'fv-data' },
     h('h3', null, '时间线配置'),
     h('p', { 'aria-label': '已保存规格', style: { overflowWrap: 'anywhere' } }, `已保存 · FPS ${savedSetting(project, 'fps')} · 尺寸 ${savedSetting(project, 'width')} × ${savedSetting(project, 'height')} · ${savedSetting(project, 'duration_frames')} 帧`),
-    h('details', null, h('summary', null, '配置与预览边界'), h('p', null, '帧率与画布尺寸固定，只读显示已保存值。帧预览仍只针对已保存版本、内核支持的合成路径与已准备的缓存；不会自动准备素材或渲染，未保存输入须清空或提交后才能预览。')),
     h('details', null, h('summary', null, '时长与缓存依赖'),
       row('duration_frames', '工程时长', project), row('gfx_dependency_policy', '图形依赖策略', project), row('cache_dependencies', '缓存依赖', project)),
     h('details', null, h('summary', null, '插件声明与音轨策略'),
-      h('p', null, '仅编辑已保存声明；不检查插件安装或兼容性。插件键可能禁用帧预览；内核计划仅验证结构，不证明可渲染。'),
-      h('p', { style: { overflowWrap: 'anywhere' } }, `根 blender_bridge（只读）：${savedSetting(document, 'blender_bridge')}`),
+      h('p', { style: { overflowWrap: 'anywhere' } }, `Blender 桥接：${savedSetting(document, 'blender_bridge')}`),
       h('details', null, h('summary', null, '已保存素材 / 音轨声明（只读）'),
-        sources.map(source => h('p', { key: source.id, style: { overflowWrap: 'anywhere' } }, `${source.id} · denoise：${savedSetting(source, 'denoise')} · bgm：${savedSetting(source, 'bgm')}`)),
-        audio.map(track => h('p', { key: track.data.id, style: { overflowWrap: 'anywhere' } }, `${track.data.name ?? track.data.id} · duck_strategy：${savedSetting(track.data, 'duck_strategy')}`))),
+        sources.map(source => h('p', { key: source.id, style: { overflowWrap: 'anywhere' } }, `${source.id} · 降噪：${savedSetting(source, 'denoise')} · 音乐源：${savedSetting(source, 'bgm')}`)),
+        audio.map(track => h('p', { key: track.data.id, style: { overflowWrap: 'anywhere' } }, `${track.data.name ?? track.data.id} · 闪避：${savedSetting(track.data, 'duck_strategy')}`))),
       h('label', null, '配置素材', h('select', { 'aria-label': '配置素材', disabled, value: sourceId, style: inputStyle, onChange: e => { onChange(); setSourceId(e.target.value) } }, h('option', { value: '' }, '请选择素材'), sources.map(source => h('option', { key: source.id, value: source.id }, `${source.id} · ${source.path}`)))),
       source ? [row('denoise', '素材降噪', source, source.id), row('bgm', '音乐源', source, source.id)] : null,
       h('label', null, '配置音轨', h('select', { 'aria-label': '配置音轨', disabled, value: trackId, style: inputStyle, onChange: e => { onChange(); setTrackId(e.target.value) } }, h('option', { value: '' }, '请选择音轨'), audio.map(track => h('option', { key: track.data.id, value: track.data.id }, track.data.name ?? track.data.id)))),

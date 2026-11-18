@@ -47,10 +47,12 @@ test('BAD_GRANT stops the proposal poll permanently: one banner, lifted death, d
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor('read'), tabSignal: new AbortController().signal, call, writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {}, onEditState: () => {}, onGrantDead: (code, grant) => deaths.push({ code, grant }) })))
   assert(text().includes('等待您确认 · 尚未保存'), 'first poll rendered the pending row')
   await wait(1700) // second poll (1.5s cadence) now answered BAD_GRANT
-  assert.match(text(), /预览授权已失效（BAD_GRANT）：BAD_GRANT: Preview grant expired[^\n]*已停止轮询/, 'terminal banner explains the death and the stopped poll')
+  const banners = [...document.querySelectorAll('[role="alert"]')].filter(node => node.textContent.includes('预览授权已失效'))
+  assert.equal(banners.length, 1, 'exactly one terminal banner')
+  assert.match(banners[0].textContent, /预览授权已失效.*提案确认已全部停用.*刷新保存版本.*（BAD_GRANT）/, 'terminal banner explains disabled actions and explicit recovery')
   assert.deepEqual(deaths, [{ code: 'BAD_GRANT', grant: 'read' }], 'death lifted exactly once with the exact grant id')
-  assert.equal(button('确认提交此智能体冻结提案').disabled, true, 'confirm invalidated after terminal death')
-  assert.equal(button('拒绝此提案（不保存）').disabled, true, 'reject invalidated after terminal death')
+  assert.equal(button('保存提案').disabled, true, 'confirm invalidated after terminal death')
+  assert.equal(button('拒绝提案').disabled, true, 'reject invalidated after terminal death')
   const stopped = calls.length
   await wait(3200) // two full former cadences
   assert.equal(calls.length, stopped, `no further proposal-list polls (calls=${calls.join(',')})`)
@@ -63,7 +65,8 @@ test('non-terminal failures keep the ordinary retry cadence and never lift a gra
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor('read'), tabSignal: new AbortController().signal, call, writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {}, onEditState: () => {}, onGrantDead: (...args) => deaths.push(args) })))
   await wait(3200)
   assert.ok(calls.filter(op => op === 'proposal-list').length >= 3, 'transport errors still retry on cadence')
-  assert.match(text(), /无法读取智能体提案：连接已断开。请检查连接；不会自动提交。/)
+  assert.match(text(), /无法读取智能体提案：连接已断开。请检查连接。/)
+  assert(calls.every(op => op === 'proposal-list'), 'transport retries never submit a proposal')
   assert.deepEqual(deaths, [], 'no death lifted for a non-terminal failure')
 })
 
@@ -89,7 +92,7 @@ test('host expires_in_ms deadline: banner, tool teardown, stopped proposal poll;
     const request = JSON.parse(init.body)
     requests.push(request)
     let result
-    if (request.op === 'open') result = { grant: `g${++grantCounter}`, snapshot: snapshotFor(`g${grantCounter}`), expires_in_ms: grantCounter === 1 ? 400 : 400000, media: [] }
+    if (request.op === 'open') result = { grant: `g${++grantCounter}`, snapshot: snapshotFor(`g${grantCounter}`), expires_in_ms: grantCounter === 1 ? 400 : 400000, media: [], capabilities: { capabilities: { frame: { inline_png: { flag: '--include-png' } } } } }
     else if (request.op === 'query') result = full
     else if (request.op === 'proposal-list') result = { ok: true, proposals: [] }
     else result = { ok: true }
@@ -102,12 +105,12 @@ test('host expires_in_ms deadline: banner, tool teardown, stopped proposal poll;
   await act(async () => document.querySelectorAll('form')[0].dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true })))
   for (let i = 0; i < 200 && !document.querySelector('.fv-ruler'); i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
   assert(document.querySelector('.fv-ruler'), 'preview reached ready')
-  assert(document.body.textContent.includes('剪辑编辑与提交'), 'manual editor mounted on the live grant')
+  assert(document.querySelector('[aria-label="手动语义编辑"]') !== null, 'manual editor mounted on the live grant')
   assert(document.querySelector('[aria-label="当前合成帧与草稿"]'), 'frame tools mounted on the live grant')
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 3000)) }) // past the 400ms TTL
   assert(document.body.textContent.includes('预览授权已失效'), 'expiry banner is visible: ' + document.body.textContent.slice(0, 200))
   assert(document.body.textContent.includes('（EXPIRED）'), 'banner carries the expiry code')
-  assert(!document.body.textContent.includes('剪辑编辑与提交'), 'manual editor (and its proposal poller) torn down')
+  assert(document.querySelector('[aria-label="手动语义编辑"]') === null, 'manual editor (and its proposal poller) torn down')
   assert(document.querySelector('[aria-label="当前合成帧与草稿"]') === null, 'frame tools torn down — no stale verified PNG stays actionable')
   const pollsAtDeath = requests.filter(r => r.op === 'proposal-list').length
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 2000)) })
@@ -120,5 +123,5 @@ test('host expires_in_ms deadline: banner, tool teardown, stopped proposal poll;
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 500)) })
   assert.equal(requests.filter(r => r.op === 'open').length, 2, 'refresh reopened the timeline (new grant)')
   assert(!document.body.textContent.includes('预览授权已失效'), 'banner cleared by the new grant')
-  assert(document.body.textContent.includes('剪辑编辑与提交'), 'editing recovered on the new grant')
+  assert(document.querySelector('[aria-label="手动语义编辑"]') !== null, 'editing recovered on the new grant')
 })

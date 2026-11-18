@@ -1,13 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { stringifyJSON } from '../json.mjs'
 import { terminalGrantFailure, GRANT_DEAD_MESSAGE } from './grant-lifecycle.mjs'
+import { PlanReview, editError } from './edit-review.mjs'
 const h = React.createElement
 const active = row => ['pending', 'committing', 'outcome_unknown'].includes(row.state)
 const labels = { pending: '等待您确认 · 尚未保存', committing: '内核处理中 · 不可重复提交', applied: '内核已保存', not_applied: '内核未应用', outcome_unknown: '结果未知 · 先恢复，不重试', reconciled: '已读取恢复后的版本 · 原操作结果仍以 core 历史为准', rejected: '您已拒绝 · 未提交', expired: '提案已过期 · 不可提交', invalidated: '会话或目录已变化 · 不可提交' }
-const pre = { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 320, overflow: 'auto' }
 
 /** Proposals carry intent, never write authority; the existing manual permit stays UI-only. */
-export function AgentProposals({ sessionId, opened, tabSignal, call, writeGrant, manualBlocked, onCommitted, onEditState, onGrantDead }) {
+export function AgentProposals({ sessionId, opened, result, tabSignal, call, writeGrant, manualBlocked, onCommitted, onEditState, onGrantDead }) {
   const [rows, setRows] = useState([]), [loaded, setLoaded] = useState(false)
   const [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [unknown, setUnknown] = useState(false)
   // Terminal grant death (BAD_GRANT / CONFIG_CHANGED / PATH_CHANGED): the
@@ -72,8 +72,8 @@ export function AgentProposals({ sessionId, opened, tabSignal, call, writeGrant,
             stopped = true
             setDead(code)
             latest.current.onGrantDead?.(code, opened.grant)
-            setMessage(`预览授权已失效（${code}）：${error.message}。已停止轮询；请刷新或重新打开预览后继续，不会自动续期、提交或重试。`)
-          } else setMessage(`无法读取智能体提案：${error.message}。请检查连接；不会自动提交。`)
+            setMessage(`预览授权已失效（${code}）；请重开工程。`)
+          } else setMessage(`无法读取智能体提案：${editError(error)}。请检查连接。`)
         }
       }
       finally { if (!signal.aborted && !stopped) timer = setTimeout(poll, 1500) }
@@ -84,6 +84,7 @@ export function AgentProposals({ sessionId, opened, tabSignal, call, writeGrant,
 
   async function act(row, action) {
     if (dead || busyRef.current || !owner.current || owner.current.signal.aborted) return
+    if (action === 'proposal-confirm' && (!writeGrant || manualBlocked || unknown || stale || row.state !== 'pending' || opened.snapshot.content_version !== row.base_revision)) return
     const signal = AbortSignal.any([tabSignal, owner.current.signal])
     busyRef.current = true; setBusy(true); setMessage('正在等待宿主与内核回执…')
     let applied = false
@@ -94,7 +95,7 @@ export function AgentProposals({ sessionId, opened, tabSignal, call, writeGrant,
       setRows(previous => previous.map(item => item.proposal_id === row.proposal_id ? answer.proposal : item))
       setUnknown(answer.proposal.state === 'outcome_unknown')
       if (answer.proposal.state === 'applied') { applied = true; await latest.current.onCommitted(); setStale(false) }
-      setMessage(action === 'proposal-reject' ? '已拒绝此提案，没有提交。' : answer.proposal.state === 'applied' ? '已保存并重新读取权威时间线。智能体可用 proposal_status 读取此回执；不会自动发送消息。' : '请检查下方内核回执；未知结果须先显式 core status / recover，不要重复提交。')
+      setMessage(action === 'proposal-reject' ? '已拒绝提案。' : answer.proposal.state === 'applied' ? '已保存并刷新工程。' : answer.proposal.outcome ? editError(answer.proposal.outcome) : '请先读取状态 / 恢复，不要重复提交。')
     } catch (error) {
       if (!signal.aborted) {
         if (applied) {
@@ -102,39 +103,39 @@ export function AgentProposals({ sessionId, opened, tabSignal, call, writeGrant,
           // view refresh failed. Lock the stale view (reported dirty blocks
           // manual writes and frame export), keep unknown false, no retry.
           setStale(true); setUnknown(false)
-          setMessage(`内核已确认保存（回执 applied）；仅权威视图刷新失败：${error.message}。旧视图已锁定（禁止再写与导帧）；请刷新或关闭后重开预览；不会自动重试，智能体可用 proposal_status 读取此回执。`)
+          setMessage('内核已确认保存（applied）；权威视图刷新失败，旧视图已锁定。请刷新或重开工程。')
         } else {
           if (action === 'proposal-confirm') setUnknown(true)
-          setMessage(`${error.message}${action === 'proposal-confirm' ? `。提交回执未取得不代表失败；保留原 op_id ${row.plan?.submitted_request?.op_id ?? row.confirmation?.op_id ?? '见冻结计划'}，读取提案回执及 core status / recover，不自动重试。` : ''}`)
+          setMessage(`${editError(error)}${action === 'proposal-confirm' ? `。结果未知；原操作 ID：${row.plan?.submitted_request?.op_id ?? row.confirmation?.op_id ?? '见冻结计划'}。请读取状态 / 恢复，不要重试保存。` : ''}`)
         }
       }
     } finally { busyRef.current = false; if (!signal.aborted) setBusy(false) }
   }
   async function copy(row) {
     try {
-      if (!navigator.clipboard?.writeText) throw new Error('系统剪贴板不可用；可在展开的回执中手动选择文本')
+      if (!navigator.clipboard?.writeText) throw new Error('系统剪贴板不可用，请检查浏览器权限。')
       await navigator.clipboard.writeText(stringifyJSON(row, 2)); setMessage('已复制提案 / 确认回执；未发送消息。')
     } catch (error) { setMessage(error.message) }
   }
-  return h('div', { 'aria-label': '智能体提案', style: { minWidth: 0, marginTop: 12, paddingTop: 12, borderTop: '1px solid currentColor' } },
-    h('h3', null, '智能体提案 · 您确认后才保存'),
-    dead ? h('p', { role: 'alert', style: { border: '1px solid currentColor', padding: 8 } }, `${GRANT_DEAD_MESSAGE}（${dead}）`) : null,
-    h('p', null, '智能体只能读取或运行零写预检。请核对目标、版本和冻结操作；本区复用上方明确授予的写许可，不会把许可交给模型。'),
-    !loaded ? h('p', { role: 'status' }, '正在读取本会话 / 工程的提案…') : !rows.length ? h('p', null, '暂无提案。可让智能体先读取时间线，再提出修改；读取本身不会保存。') : null,
-    ...rows.map(row => h('article', { key: row.proposal_id, style: { marginTop: 12, minWidth: 0 } },
+  const context = { tracks: result?.tracks, blocks: result?.blocks, sources: opened.snapshot.document.sources }
+  return h('section', { 'aria-label': '智能体提案', className: 'fv-edit-proposals' },
+    h('h3', null, '智能体提案'),
+    dead ? h('p', { role: 'alert', className: 'fv-edit-status' }, `${GRANT_DEAD_MESSAGE}（${dead}）`) : null,
+    !loaded ? h('p', { role: 'status', className: 'fv-edit-meta' }, '正在读取提案…') : !rows.length ? h('p', { className: 'fv-edit-meta' }, '暂无提案') : null,
+    ...rows.map(row => h('article', { key: row.proposal_id, className: 'fv-edit-proposal' },
       h('h4', null, labels[row.state] ?? row.state),
-      h('p', { style: { overflowWrap: 'anywhere' } }, `目标：${row.timeline}；基线：${row.base_revision}`),
-      h('details', { open: row.state === 'pending' }, h('summary', null, `冻结计划 / 回执 · ${row.proposal_id}`), h('pre', { style: pre }, stringifyJSON(row, 2))),
-      row.state === 'pending' ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 } },
+      h('p', { className: 'fv-edit-meta' }, row.timeline),
+      row.plan ? h('details', { open: row.state === 'pending' }, h('summary', null, '预检与冻结操作'), h(PlanReview, { plan: row.plan, context })) : null,
+      row.outcome ? h('p', { className: 'fv-edit-status' }, row.state === 'applied' ? '已保存' : editError(row.outcome)) : null,
+      row.state === 'pending' ? h('div', { className: 'fv-edit-actions' },
         h('button', { type: 'button', disabled: dead || !writeGrant || manualBlocked || busy || unknown || stale || opened.snapshot.content_version !== row.base_revision,
-          onClick: () => void act(row, 'proposal-confirm') }, '确认提交此智能体冻结提案'),
-        h('button', { type: 'button', disabled: dead || busy, onClick: () => void act(row, 'proposal-reject') }, '拒绝此提案（不保存）')) : null,
-      row.state === 'pending' && !writeGrant ? h('p', null, '确认前，先在上方明确授予本会话 / 工程写许可。') : null,
-      row.state === 'pending' && manualBlocked ? h('p', null, '请先清空手动未保存批次 / 草稿并等待当前命令结束，或拒绝此提案。') : null,
-      row.state === 'pending' && opened.snapshot.content_version !== row.base_revision ? h('p', null, '基线已变化：此提案不能自动重定基。请拒绝后让智能体重新读取。') : null,
-      row.state === 'outcome_unknown' || row.state === 'reconciled' ? h('p', null, '保留原操作 ID。上方 core status / recover 与重新读取只能恢复权威状态，不自动证明原操作已应用或回滚。') : null,
-      h('button', { type: 'button', onClick: () => void copy(row), style: { marginTop: 8 } }, '复制提案 / 确认回执'))),
-    stale ? h('p', { role: 'alert' }, '内核已确认上一次提案写入（applied），但权威视图刷新失败：旧视图已锁定，禁止再确认提案、手动写入与导帧。请刷新或重开预览；不会自动重试。') : null,
-    h('p', null, '提案和侧栏回执是有时限的内存状态，卸载或重启后消失；持久审计以 core 历史及原 op_id 为准。'),
-    h('p', { role: 'status', 'aria-live': 'polite', style: { overflowWrap: 'anywhere' } }, message))
+          title: '明确提交此智能体冻结提案', onClick: () => void act(row, 'proposal-confirm') }, '保存提案'),
+        h('button', { type: 'button', disabled: dead || busy, onClick: () => void act(row, 'proposal-reject') }, '拒绝提案')) : null,
+      row.state === 'pending' && !writeGrant ? h('p', { className: 'fv-edit-meta' }, '请先启用编辑。') : null,
+      row.state === 'pending' && manualBlocked ? h('p', { className: 'fv-edit-meta' }, '先清空手动草稿并等待当前操作结束，或拒绝提案。') : null,
+      row.state === 'pending' && opened.snapshot.content_version !== row.base_revision ? h('p', { role: 'alert', className: 'fv-edit-status' }, '基线已变化，请拒绝提案并重新读取。') : null,
+      row.state === 'outcome_unknown' || row.state === 'reconciled' ? h('p', { className: 'fv-edit-status' }, `保留原操作 ID：${row.plan?.submitted_request?.op_id ?? row.confirmation?.op_id ?? '见内核历史'}。读取状态 / 恢复不证明原操作已应用或回滚。`) : null,
+      h('button', { type: 'button', onClick: () => void copy(row) }, '复制回执'))),
+    stale ? h('p', { role: 'alert', className: 'fv-edit-status' }, '内核已确认写入（applied），但权威视图刷新失败。旧视图已锁定，请刷新或重开工程。') : null,
+    message ? h('p', { role: 'status', 'aria-live': 'polite', className: 'fv-edit-status' }, message) : null)
 }
