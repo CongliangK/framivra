@@ -905,7 +905,7 @@ def _media_geometry(c, cl):
     return windowed, 0, 0, None, None, [c.crop169(cl['src']), f'scale={c.w}:{c.h}:flags=lanczos']
 
 
-def prepare_layers(c: Ctx, *, run_tasks=None):
+def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None):
     """全部视频轨 clip 的图层预处理 + seg 预编码（缓存命中即跳过），返回 layers 列表
     （每项 {cl, seg|source, x, y, w2, h2, gfx, ti}，顺序=图层序）。
 
@@ -977,6 +977,11 @@ def prepare_layers(c: Ctx, *, run_tasks=None):
                 # Check even warm targets: a key collision must not select an
                 # arbitrary producer or certify incompatible consumers.
                 raise ValueError(f"conflicting seg producer for {seg}: {producer['label']} / {label}")
+            # Only materialization is windowed. Qualify every source and reject
+            # conflicting producer specifications even outside the requested span.
+            if native_window is not None and (cl['dst_in'] >= native_window[1]
+                    or cl['dst_in'] + cl['dur'] <= native_window[0]):
+                continue
             # Verify a successful decode's digest/frame record, or fully decode
             # legacy media. Container header counts alone cannot certify a hit.
             if media_cache_valid(seg, cl['dur'], allow_short_verified=True):
