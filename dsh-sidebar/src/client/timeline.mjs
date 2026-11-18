@@ -11,7 +11,7 @@ import { emptySelection, transitionSelection } from './selection.mjs'
 const h = React.createElement
 // Kept in the JS factory: no stylesheet asset or private DSH theme dependency.
 const css = `
-.fv-timeline{min-width:0;max-width:100%;font:inherit;color:inherit;overflow-wrap:anywhere;container:timeline/inline-size}
+.fv-timeline{position:relative;min-width:0;max-width:100%;font:inherit;color:inherit;overflow-wrap:anywhere;container:timeline/inline-size}
 .fv-timeline *{box-sizing:border-box}.fv-timeline button,.fv-timeline input{font:inherit;color:inherit;max-width:100%}
 .fv-timeline button{border:1px solid color-mix(in srgb,currentColor 45%,transparent);border-radius:5px;background:color-mix(in srgb,currentColor 6%,transparent);padding:3px 8px;font-size:12px;cursor:pointer;transition:background-color .12s ease,border-color .12s ease;display:inline-flex;align-items:center;justify-content:center;gap:4px;min-height:24px}
 .fv-timeline button:hover:not(:disabled){background:color-mix(in srgb,currentColor 15%,transparent)}
@@ -88,7 +88,6 @@ const css = `
 @container timeline (max-width:520px){.fv-timeline .fv-ruler-row,.fv-timeline .fv-track,.fv-timeline .fv-overview-row{grid-template-columns:var(--fv-tl-head-w-narrow,84px) minmax(0,1fr)}.fv-timeline .fv-clip{font-size:11px}.fv-timeline .fv-clip-len{display:none}.fv-timeline .fv-track-title{font-size:11px;padding:2px 4px}}
 `
 const laneCSS = `
-.fv-timeline{position:relative}
 .fv-timeline .fv-live-status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 @media(pointer:coarse){.fv-timeline .fv-disclosure summary{min-width:44px;min-height:44px}}
 .fv-timeline .fv-head>*{flex-shrink:0}.fv-timeline .fv-head h3{flex-shrink:1}
@@ -114,7 +113,7 @@ const trackKey = item => `${item.family}:${item.track_index}`
 const trackId = track => track.family === 'subtitles' ? 'subtitles' : track.data?.id
 const trackLabel = track => label(track.data, `${familyName(kindOfTrack(track))} ${track.track_index + 1}`)
 
-export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onUndo, compact = false, selectionTools, focusTool }) {
+export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onOpenHistory, editActionLabel = '启用编辑', onUndo, compact = false, selectionTools, focusTool }) {
   const extent = displayExtent(snapshot, result)
   const fps = snapshot.document?.project?.fps, clock = projectClock(fps)
   const time = value => formatTimecode(value, fps) ?? '时间码不可显示'
@@ -376,7 +375,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
       if (directOwner.current !== token) return
       directOwner.current = undefined
       setSaving(undefined)
-      setFeedback(error ? { problem: !error.applied, text: error.message, open: error.outcomeUnknown || error.applied || error.recoveryRequired } : { text: label })
+      setFeedback(error ? { problem: !error.applied, text: error.message, history: error.outcomeUnknown || error.recoveryRequired } : { text: label })
     }
   }
   function gapControl(track, range) {
@@ -413,7 +412,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
       focusTool,
       compact ? h('div', { className: 'fv-tools', role: 'group', 'aria-label': '直接剪辑' },
         h(ToolButton, { icon: 'magnet', label: '吸附', tooltip: '吸附到同轨片段边缘或播放头 · 按住 Alt 临时关闭', 'aria-pressed': snap, onClick: () => setSnap(value => !value) }),
-        h(ToolButton, { icon: 'undo', label: '撤销上次编辑', disabled: !onUndo || Boolean(saving), tooltip: '单步撤销最近一次保存', onClick: () => { setFeedback(undefined); void onUndo?.().then(answer => setFeedback(answer?.ok ? { text: '已撤销。' } : { problem: true, text: '未能确认撤销，请查看编辑状态。', open: true }), error => setFeedback({ problem: true, text: error.message, open: true })) } })) : null,
+        h(ToolButton, { icon: 'undo', label: '撤销上次编辑', disabled: !onUndo || Boolean(saving), tooltip: '单步撤销最近一次保存', onClick: () => { setFeedback(undefined); void onUndo?.().then(answer => setFeedback(answer?.ok ? { text: '已撤销。' } : { problem: true, text: '未能确认撤销，请查看历史与恢复。', history: true }), error => setFeedback({ problem: true, text: error.message, history: error.outcomeUnknown || error.recoveryRequired })) } })) : null,
       h('details', { className: 'fv-disclosure', name: disclosureGroup },
         h('summary', { 'aria-label': '轨道高度', title: '轨道高度与适配全部轨道' }, h(Icon, { name: 'settings', size: 15 })),
         h('div', { className: 'fv-popover fv-lane-controls' },
@@ -445,7 +444,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     h('span', { className: 'fv-live-status', role: 'status', 'aria-atomic': true }, `播放头 ${pinned === undefined ? '未固定' : time(pinned)} · 已选 ${selected.length}`),
     ghost || saving || feedback ? h('div', { className: 'fv-drag-feedback', 'aria-label': ghost ? '未保存拖动 ghost' : undefined },
       h('span', { role: ghost?.problem || (!ghost && feedback?.problem) ? 'alert' : 'status' }, ghost ? `${ghost.text}${safeFrame(ghost.snapFrame) && !ghost.problem ? ' · 已吸附' : ''}` : saving ? '正在保存…' : feedback.text),
-      !ghost && !saving && feedback?.open && onOpenEdits ? h('button', { type: 'button', onClick: onOpenEdits }, '打开编辑') : null) : null,
+      !ghost && !saving && feedback?.history && onOpenHistory ? h('button', { type: 'button', onClick: onOpenHistory }, '历史与恢复') : !ghost && !saving && feedback?.open && onOpenEdits ? h('button', { type: 'button', onClick: () => { setFeedback(undefined); onOpenEdits() } }, editActionLabel) : null) : null,
     h('div', { className: 'fv-scroll', ref: scrollport, tabIndex: 0, role: 'region', 'aria-label': '轨道垂直滚动区' },
       h('div', { className: 'fv-overview-row' },
         h('div', { className: 'fv-corner', 'aria-hidden': true }, '全片'),

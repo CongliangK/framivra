@@ -213,14 +213,14 @@ test('PreviewBody: a successful open recalibrates a previously failed file listi
       if (browseFailures-- > 0) return new Response(stringifyJSON({ ok: false, error: 'PREVIEW_FAILED', message: 'browse unavailable' }), { status: 500 })
       result = browseOK('', [file('', 'timeline.json')])
     }
-    else if (request.op === 'proposal-list') result = { ok: true, proposals: [] }
     else result = { ok: true }
     return new Response(stringifyJSON(result))
   }
   const observers = new Set()
   const sessions = { binding: id => ({ sessionId: id }), list: { getSnapshot: () => ({ byId: { one: '/w' } }), subscribe: fn => { observers.add(fn); return () => observers.delete(fn) } } }
   const uiSession = { adapter: { current: { getSnapshot: () => ({ key: 'one' }), subscribe: fn => { observers.add(fn); return () => observers.delete(fn) } } } }
-  const host = { getDraftServices: () => ({ active: true, conversation: {}, sessions, uiSession }), useTabInfo: () => ({ tab: { signal: new AbortController().signal } }) }
+  const tab = { signal: new AbortController().signal }
+  const host = { getDraftServices: () => ({ active: true, conversation: {}, sessions, uiSession }), useTabInfo: () => ({ tab }) }
   await act(async () => root.render(h(PreviewBody, { ...host, sessionId: 'one', inputActions: {}, useAccess: () => true })))
   await act(async () => label('浏览工作区打开时间线').click())
   await settle(() => document.querySelector('.fv-files [role="alert"]'))
@@ -357,7 +357,8 @@ test('build mismatch: open against a differently-built host fails closed — gra
   const observers = new Set()
   const sessions = { binding: id => ({ sessionId: id }), list: { getSnapshot: () => ({ byId: { one: '/w' } }), subscribe: fn => { observers.add(fn); return () => observers.delete(fn) } } }
   const uiSession = { adapter: { current: { getSnapshot: () => ({ key: 'one' }), subscribe: fn => { observers.add(fn); return () => observers.delete(fn) } } } }
-  const host = { getDraftServices: () => ({ active: true, conversation: {}, sessions, uiSession }), useTabInfo: () => ({ tab: { signal: new AbortController().signal } }) }
+  const tab = { signal: new AbortController().signal }
+  const host = { getDraftServices: () => ({ active: true, conversation: {}, sessions, uiSession }), useTabInfo: () => ({ tab }) }
   await act(async () => root.render(h(PreviewBody, { ...host, sessionId: 'one', inputActions: {}, useAccess: () => true })))
   await act(async () => document.querySelectorAll('form')[0].dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true })))
   await settle(() => document.body.textContent.includes('HOST_BUILD_MISMATCH'))
@@ -379,14 +380,14 @@ test('build mismatch: a matching host build never blocks the open', async t => {
     let result
     if (request.op === 'open') result = { ...opened, host: { plugin: '0.2.0', protocol: 1, ops: [], build: resolveBuildStamp() } }
     else if (request.op === 'query') result = full
-    else if (request.op === 'proposal-list') result = { ok: true, proposals: [] }
     else result = { ok: true }
     return new Response(stringifyJSON(result))
   }
   const observers = new Set()
   const sessions = { binding: id => ({ sessionId: id }), list: { getSnapshot: () => ({ byId: { one: '/w' } }), subscribe: fn => { observers.add(fn); return () => observers.delete(fn) } } }
   const uiSession = { adapter: { current: { getSnapshot: () => ({ key: 'one' }), subscribe: fn => { observers.add(fn); return () => observers.delete(fn) } } } }
-  const host = { getDraftServices: () => ({ active: true, conversation: {}, sessions, uiSession }), useTabInfo: () => ({ tab: { signal: new AbortController().signal } }) }
+  const tab = { signal: new AbortController().signal }
+  const host = { getDraftServices: () => ({ active: true, conversation: {}, sessions, uiSession }), useTabInfo: () => ({ tab }) }
   await act(async () => root.render(h(PreviewBody, { ...host, sessionId: 'one', inputActions: {}, useAccess: () => true })))
   await act(async () => document.querySelectorAll('form')[0].dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true })))
   await settle(() => document.querySelector('.fv-ruler'))
@@ -427,7 +428,8 @@ test('round 3: a stamped client blocks open against a host that reports NO build
   const observers = new Set()
   const sessions = { binding: id => ({ sessionId: id }), list: { getSnapshot: () => ({ byId: { one: '/w' } }), subscribe: fn => { observers.add(fn); return () => observers.delete(fn) } } }
   const uiSession = { adapter: { current: { getSnapshot: () => ({ key: 'one' }), subscribe: fn => { observers.add(fn); return () => observers.delete(fn) } } } }
-  const host = { getDraftServices: () => ({ active: true, conversation: {}, sessions, uiSession }), useTabInfo: () => ({ tab: { signal: new AbortController().signal } }) }
+  const tab = { signal: new AbortController().signal }
+  const host = { getDraftServices: () => ({ active: true, conversation: {}, sessions, uiSession }), useTabInfo: () => ({ tab }) }
   await act(async () => root.render(h(PreviewBody, { ...host, sessionId: 'one', inputActions: {}, useAccess: () => true })))
   await act(async () => document.querySelectorAll('form')[0].dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true })))
   await settle(() => document.body.textContent.includes('HOST_BUILD_UNVERIFIED'))
@@ -453,7 +455,8 @@ test('round 3: an unconfirmable grant close is reported honestly — unconfirmed
   const observers = new Set()
   const sessions = { binding: id => ({ sessionId: id }), list: { getSnapshot: () => ({ byId: { one: '/w' } }), subscribe: fn => { observers.add(fn); return () => observers.delete(fn) } } }
   const uiSession = { adapter: { current: { getSnapshot: () => ({ key: 'one' }), subscribe: fn => { observers.add(fn); return () => observers.delete(fn) } } } }
-  const host = { getDraftServices: () => ({ active: true, conversation: {}, sessions, uiSession }), useTabInfo: () => ({ tab: { signal: new AbortController().signal } }) }
+  const tab = { signal: new AbortController().signal }
+  const host = { getDraftServices: () => ({ active: true, conversation: {}, sessions, uiSession }), useTabInfo: () => ({ tab }) }
   await act(async () => root.render(h(PreviewBody, { ...host, sessionId: 'one', inputActions: {}, useAccess: () => true })))
   await act(async () => document.querySelectorAll('form')[0].dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true })))
   await settle(() => document.body.textContent.includes('未能确认回收'))

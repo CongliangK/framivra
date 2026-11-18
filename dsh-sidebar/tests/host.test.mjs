@@ -162,7 +162,21 @@ test('DSH mounting uses only exact authenticated Connection Fetch routes and rev
     ['/api/framivra/frame', ['POST'], 'streaming'],
     ['/api/framivra/media', ['GET', 'HEAD'], 'buffered'],
   ])
-  assert.deepEqual([...tools], ['framivra_timeline_read', 'framivra_timeline_propose', 'framivra_proposal_status'])
+  assert.deepEqual([...tools], ['framivra_timeline_read'])
   for (const dispose of cleanup.reverse()) await dispose()
   assert.equal(tools.size, 0)
+})
+
+test('retired proposal control operations reject without spawning or advertising authority', async t => {
+  const f = setup(); t.after(() => f.host.dispose())
+  const opened = await open(f)
+  const before = f.subprocess.calls.length
+  for (const op of ['proposal-list', 'proposal-reject', 'proposal-confirm']) {
+    assert.equal(opened.host.ops.includes(op), false)
+    const response = await f.control({ op, grant: opened.grant })
+    assert.equal(response.status, 400)
+    assert.equal((await response.json()).error, 'BAD_OPERATION')
+  }
+  assert.equal(f.subprocess.calls.length, before)
+  assert.deepEqual(Object.keys(f.host.agent), ['read'])
 })

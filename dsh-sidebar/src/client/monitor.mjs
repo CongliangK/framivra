@@ -106,7 +106,7 @@ export function RenderedPlayer({ opened, sessionId, frame, fps, duration, onFram
       status && usable ? h('span', { className: 'fv-monitor-status', role: 'status', title: status }, status) : null) : null)
 }
 
-export function ProgramMonitor({ owner, opened, sessionId, frame, blank = false, fps, duration, onFrame, selection, tabSignal, getDraftServices, call, transport, disclosureGroup, suspended = false }) {
+export function ProgramMonitor({ owner, opened, timeline, selectionDisplay, sessionId, frame, blank = false, fps, duration, onFrame, selection, tabSignal, getDraftServices, call, transport, disclosureGroup, suspended = false }) {
   const canRender = opened.capabilities?.capabilities?.frame?.inline_png?.flag === '--include-png'
   const [mode, setMode] = useState('live')
   function change(next) {
@@ -120,6 +120,6 @@ export function ProgramMonitor({ owner, opened, sessionId, frame, blank = false,
       h('div', { className: 'fv-preview-modes', role: 'group', 'aria-label': '预览模式' },
         canRender ? h(ToolButton, { icon: 'diagnostic', label: '实时真预览', tooltip: '实时真预览 · 当前时间线的完整合成帧', 'aria-pressed': mode === 'live', onClick: () => change('live') }) : null,
         h(ToolButton, { icon: 'film', label: '成片渲染', tooltip: '成片渲染 · 播放已有成片，不启动渲染', 'aria-pressed': !canRender || mode === 'rendered', onClick: () => change('rendered') }))),
-    canRender ? h(FrameTools, { key: opened.snapshot.content_version, owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call, disclosureGroup, active: mode === 'live', suspended }) : h('p', { className: 'fv-monitor-status' }, '当前宿主或内核不支持生成完整合成帧；仍可查看时间线和已有成片。'),
+    canRender ? h(FrameTools, { key: opened.snapshot.content_version, owner, opened: timeline ? { ...opened, timeline } : opened, selectionDisplay, sessionId, frame, selection, tabSignal, getDraftServices, call, disclosureGroup, active: mode === 'live', suspended }) : h('p', { className: 'fv-monitor-status' }, '当前宿主或内核不支持生成完整合成帧；仍可查看时间线和已有成片。'),
     !canRender || mode === 'rendered' ? h(RenderedPlayer, { opened, sessionId, frame, fps, duration, onFrame, disclosureGroup }) : null)
 }

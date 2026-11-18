@@ -50,11 +50,10 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
     let result
     if (request.op === 'open') result = { grant: 'grant', snapshot, media: [], capabilities: { capabilities: { frame: { inline_png: { flag: '--include-png' } } } } }
     else if (request.op === 'query') result = request.query.frame === undefined ? full : { ...filtered, content_version: nextVersion }
-    else if (request.op === 'proposal-list') result = { ok: true, proposals: [] }
     else if (request.op === 'reference') {
       const kind = request.query.block_addresses ? 'blocks' : 'tracks'
       const address = (request.query.block_addresses ?? request.query.track_addresses)[0]
-      result = { content_version: version, selection: { [kind]: [{ address, stable_id: address.endsWith('/0') ? 'stable-id' : null, raw: '{ "unsafe":9007199254740993 }' }] } }
+      result = { content_version: version, selection: { [kind]: [{ address, stable_id: address.endsWith('/0') ? 'stable-id' : null, range: [10, 40], raw: '{ "unsafe":9007199254740993 }' }] } }
     } else result = { ok: true }
     return new Response(stringifyJSON(result))
   }
@@ -96,7 +95,7 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
   await act(async () => root.render(h(PreviewBody, { useTabInfo, sessionId: 'one', getDraftServices: () => ({ active: true, conversation, sessions, uiSession }), inputActions, useAccess: () => true })))
   await submit(0)
   await settle(() => document.querySelector('.fv-ruler'))
-  assert.deepEqual(requests.map(x => x.op), ['open', 'query', 'proposal-list'])
+  assert.deepEqual(requests.map(x => x.op), ['open', 'query'])
   assert.equal(document.querySelectorAll('.fv-clip').length, blocks.length)
   assert.equal(document.querySelectorAll('.fv-track').length, tracks.length)
   assert.equal(document.querySelectorAll('.fv-gfx').length, 2, 'gfx track retains its semantic clip type')
@@ -144,6 +143,10 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
   assert.deepEqual(requests[beforeDraft].query, { block_addresses: ['/t/2/b/1'], expected_content_version: version }, 'stored reference is not scoped by the playhead')
   assert.equal(inserts.length, 1)
   const { text: insertedText, span } = inserts[0]
+  assert(insertedText.length <= 300, 'even a very long source name cannot bloat the draft')
+  assert.match(insertedText, /timeline=«timeline\.json»/)
+  assert.match(insertedText, /address=«\/t\/2\/b\/1».*range=\[10,40\)/)
+  assert(!insertedText.includes('unsafe'), 'raw JSON was not included in the draft')
   assert.ok(Object.isFrozen(span), 'official captured span is frozen')
   assert.equal(span.end, span.start, 'captured span is zero-width at the collapsed caret')
   assert.deepEqual(span, { start: PRE.length, end: PRE.length, draftRev: 3 }, 'span keeps the click-time caret location and the ORIGINAL draftRev, not the post-insert rev')
@@ -184,7 +187,7 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
   assert(document.querySelector('.fv-timeline') === null, "Expected absent DOM node: document.querySelector('.fv-timeline')")
   assert.equal(requests.at(-1).op, 'close')
   assert.equal(requests.at(-1).sessionId, 'one')
-  assert(requests.every(x => ['open', 'query', 'reference', 'proposal-list', 'close'].includes(x.op)))
+  assert(requests.every(x => ['open', 'query', 'reference', 'close'].includes(x.op)))
 })
 
 test('actual React DOM: references abort on selection/session/unmount, not playhead changes; late reads never publish or copy old raw', async t => {

@@ -13,14 +13,12 @@ const EXEC = Object.freeze({})
 
 /** Recording fake for the host.agent adapter. */
 function fakeAgent(results = {}) {
-  const calls = { read: [], propose: [], status: [] }
+  const calls = { read: [] }
   const defaults = {
     read: () => ({ schema: 'framivra.timeline.agent/v1', ok: true, view: 'inspect', content_version: 'sha256:' + 'a'.repeat(64) }),
-    propose: () => ({ schema: 'framivra.timeline.agent/v1', ok: true, proposal_id: 'p-1', zero_write: true }),
-    status: () => ({ schema: 'framivra.timeline.agent/v1', ok: true, proposals: [] }),
   }
   const agent = {}
-  for (const op of ['read', 'propose', 'status']) {
+  for (const op of ['read']) {
     agent[op] = async (exec, args) => { calls[op].push({ exec, args }); return (results[op] ?? defaults[op])() }
   }
   return { agent, calls }
@@ -45,7 +43,7 @@ test('snapshot pins names, descriptions, parameter schemas, output schema', () =
 test('no mutating tool names and no grant/session/cwd parameters exist', () => {
   const tools = createTimelineTools(fakeAgent().agent)
   assert.deepEqual(tools.map(t => t.name).sort(),
-    ['framivra_proposal_status', 'framivra_timeline_propose', 'framivra_timeline_read'])
+    ['framivra_timeline_read'])
   for (const tool of tools) {
     assert.ok(!/commit|adopt|undo|authorize|write|grant/i.test(tool.name), `${tool.name} leaks a write verb`)
     const keys = Object.keys(tool.parameters.properties)
@@ -64,10 +62,6 @@ test('argument validation rejects unknown, missing, mistyped, bad enum, non-obje
     [byName(tools, 'framivra_timeline_read'), { timeline: 7, view: 'inspect' }],
     [byName(tools, 'framivra_timeline_read'), { timeline: 't', view: 'mutations' }],
     [byName(tools, 'framivra_timeline_read'), null],
-    [byName(tools, 'framivra_timeline_propose'), { timeline: 't', expected_content_version: 'v' }],
-    [byName(tools, 'framivra_timeline_propose'), { timeline: 't', operations_json: '[]', expected_content_version: 'v', writeGrant: 'x' }],
-    [byName(tools, 'framivra_proposal_status'), {}],
-    [byName(tools, 'framivra_proposal_status'), { timeline: 't', proposal_id: 4 }],
   ]
   for (const [tool, args] of cases) {
     await assert.rejects(tool.execute(args, EXEC), error => error.code === 'BAD_ARGS')
@@ -80,7 +74,7 @@ test('empty strings rejected: timeline and json payloads', async () => {
     byName(tools, 'framivra_timeline_read').execute({ timeline: '', view: 'inspect' }, EXEC),
     error => error.code === 'BAD_ARGS')
   await assert.rejects(
-    byName(tools, 'framivra_timeline_propose').execute({ timeline: 't', expected_content_version: 'v', operations_json: '' }, EXEC),
+    byName(tools, 'framivra_timeline_read').execute({ timeline: 't', view: 'query', query_json: '' }, EXEC),
     error => error.code === 'BAD_ARGS')
 })
 
@@ -90,11 +84,7 @@ test('agent receives exactly the declared args, json payloads verbatim', async (
   const query = '{ "family": "video", "frames": [1e999, 9007199254740993] ,  "spaced":  0.30000000000000004 }'
   await byName(tools, 'framivra_timeline_read').execute({ timeline: 'demo.json', view: 'query', query_json: query }, EXEC)
   assert.deepEqual(calls.read[0].args, { timeline: 'demo.json', view: 'query', query_json: query })
-  const ops = '[ {"op":"block.trim","amount":1e999} ,  {"op":"track.add"} ]'
-  await byName(tools, 'framivra_timeline_propose').execute({ timeline: 'demo.json', expected_content_version: 'sha256:b', operations_json: ops }, EXEC)
-  assert.deepEqual(calls.propose[0].args, { timeline: 'demo.json', expected_content_version: 'sha256:b', operations_json: ops })
-  await byName(tools, 'framivra_proposal_status').execute({ timeline: 'demo.json' }, EXEC)
-  assert.deepEqual(calls.status[0].args, { timeline: 'demo.json', proposal_id: undefined })
+
 })
 
 test('envelope numbers keep original tokens; render never round-trips', async () => {
@@ -130,9 +120,9 @@ test('oversized json payloads fail MODEL_INPUT_TOO_LARGE before reaching the age
   const tools = createTimelineTools(agent)
   const big = '[' + '"a",'.repeat(AGENT_INPUT_LIMIT / 2 + 8) + '"a"]'
   await assert.rejects(
-    byName(tools, 'framivra_timeline_propose').execute({ timeline: 't', expected_content_version: 'v', operations_json: big }, EXEC),
+    byName(tools, 'framivra_timeline_read').execute({ timeline: 't', view: 'query', query_json: big }, EXEC),
     error => error.code === 'MODEL_INPUT_TOO_LARGE')
-  assert.equal(calls.propose.length, 0)
+  assert.equal(calls.read.length, 0)
 })
 
 test('bounds count UTF-8 bytes, not characters: multibyte input is rejected by byte size', async () => {
@@ -144,17 +134,15 @@ test('bounds count UTF-8 bytes, not characters: multibyte input is rejected by b
     byName(tools, 'framivra_timeline_read').execute({ timeline: mbTimeline, view: 'inspect' }, EXEC),
     error => error.code === 'MODEL_INPUT_TOO_LARGE' && /4096 UTF-8 bytes/.test(error.message))
   assert.equal(calls.read.length, 0)
-  const tooBigOps = '[{"op":"block.trim","备注":"' + '注'.repeat(50000) + '"}]' // 150000+ UTF-8 bytes > 131072
-  assert.ok(Buffer.byteLength(tooBigOps, 'utf8') > AGENT_INPUT_LIMIT)
+  const tooBigQuery = '{"备注":"' + '注'.repeat(50000) + '"}'
   await assert.rejects(
-    byName(tools, 'framivra_timeline_propose').execute({ timeline: 't', expected_content_version: 'sha256:' + 'a'.repeat(64), operations_json: tooBigOps }, EXEC),
+    byName(tools, 'framivra_timeline_read').execute({ timeline: 't', view: 'query', query_json: tooBigQuery }, EXEC),
     error => error.code === 'MODEL_INPUT_TOO_LARGE' && /131072 UTF-8 bytes/.test(error.message))
-  assert.equal(calls.propose.length, 0)
-  // Multibyte payloads within the byte bound pass through verbatim (agent stub accepts any string ≤ bound).
-  const okOps = JSON.stringify([{ op: 'track.rename', 备注: '中文备注保持原样' }])
-  await byName(tools, 'framivra_timeline_propose').execute({ timeline: '演示/timeline.json', expected_content_version: 'sha256:' + 'a'.repeat(64), operations_json: okOps }, EXEC)
-  assert.equal(calls.propose[0].args.operations_json, okOps)
-  assert.equal(calls.propose[0].args.timeline, '演示/timeline.json')
+  assert.equal(calls.read.length, 0)
+  const query = JSON.stringify({ family: 'video' })
+  await byName(tools, 'framivra_timeline_read').execute({ timeline: '演示/timeline.json', view: 'query', query_json: query }, EXEC)
+  assert.equal(calls.read[0].args.query_json, query)
+  assert.equal(calls.read[0].args.timeline, '演示/timeline.json')
 })
 
 test('oversized envelope counts UTF-8 bytes: multibyte output fails without truncation', async () => {
@@ -168,11 +156,11 @@ test('oversized envelope counts UTF-8 bytes: multibyte output fails without trun
     error => error.code === 'MODEL_OUTPUT_TOO_LARGE' && /UTF-8 bytes/.test(error.message))
 })
 
-test('createTimelineTools rejects an adapter without the three methods', () => {
-  assert.throws(() => createTimelineTools({ read() {} }), TypeError)
+test('createTimelineTools rejects an adapter without a read method', () => {
+  assert.throws(() => createTimelineTools({}), TypeError)
 })
 
-test('registerTimelineTools registers via ctx.effect and disposal removes all three', () => {
+test('registerTimelineTools registers via ctx.effect and disposal removes the read tool', () => {
   const registered = []
   const disposers = []
   const ctx = {
@@ -180,8 +168,8 @@ test('registerTimelineTools registers via ctx.effect and disposal removes all th
     tools: { register(definition) { registered.push(definition); return () => { registered.splice(registered.indexOf(definition), 1) } } },
   }
   registerTimelineTools(ctx, fakeAgent().agent)
-  assert.equal(registered.length, 3)
-  assert.equal(disposers.length, 3)
+  assert.equal(registered.length, 1)
+  assert.equal(disposers.length, 1)
   for (const dispose of disposers) dispose()
   assert.equal(registered.length, 0)
 })

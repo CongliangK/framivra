@@ -43,7 +43,7 @@ describe('sidebar -> real shipped public conversation service composition', () =
       let finish: (value: typeof envelope) => void
       const reading = new Promise<typeof envelope>(resolve => { finish = resolve })
       const controller = new AbortController()
-      const result = performReferenceAction({ action: 'draft', selection, contentVersion: version, signal: controller.signal, captured, read: () => reading })
+      const result = performReferenceAction({ action: 'draft', selection, contentVersion: version, timeline: 'timeline.json', signal: controller.signal, captured, read: () => reading })
       expect(stage).not.toHaveBeenCalled()
       if (change === 'revision') input.setDraft('typed while reading')
       if (change === 'navigation') {
@@ -68,7 +68,15 @@ describe('sidebar -> real shipped public conversation service composition', () =
       }
       expect(capture).toHaveBeenCalledOnce()
       const draft = input.state.getSnapshot().draft
-      if (change === 'none') { expect(draft.startsWith('existing draft')).toBe(true); expect(draft).toContain('9007199254740993') }
+      if (change === 'none') {
+        const prefix = 'existing draft'
+        expect(draft.startsWith(prefix)).toBe(true)
+        const inserted = draft.slice(prefix.length)
+        expect(inserted.length).toBeLessThanOrEqual(300)
+        expect(inserted).toContain('timeline=«timeline.json»')
+        expect(inserted).toContain(selection.address)
+        expect(inserted).not.toContain('9007199254740993')
+      }
       else expect(draft).toBe(change === 'revision' ? 'typed while reading' : 'existing draft')
       expect(mock.remote.session.prompt).not.toHaveBeenCalled()
     })

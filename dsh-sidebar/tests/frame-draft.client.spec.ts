@@ -67,7 +67,7 @@ describe('real core frame wire -> verified exact File -> actual public Conversat
       expect(capture).toHaveBeenCalledOnce()
       let release!: () => void
       b.holdDecode(new Promise<void>(resolve => { release = resolve }))
-      const controller = new AbortController(), text = frameDraftText(b.verified, { kind: 'block', address: '/video_tracks/1/clips/0' })
+      const controller = new AbortController(), text = frameDraftText(b.verified, { kind: 'block', address: '/video_tracks/1/clips/0' }, false, 'timeline.json')
       const pending = captured.conversation.stageDraft({ target: captured.target, text, files: [b.verified.file], signal: controller.signal })
       expect(stage).toHaveBeenCalledOnce()
       if (change === 'revision') b.shell.setDraft('typed while decoding')
@@ -83,9 +83,11 @@ describe('real core frame wire -> verified exact File -> actual public Conversat
         expect(b.shell.snapshot.draft).toBe(before.draft + text)
         expect(b.shell.snapshot.attachmentIds).toHaveLength(2)
         expect(b.shell.snapshot.attachmentIds[0]).toBe(before.attachmentIds[0])
-        expect(text).toContain(envelope.image.sha256)
-        expect(text).toContain('9007199254740993')
-        expect(text).toContain('"raw"')
+        expect(text.length).toBeLessThanOrEqual(300)
+        expect(text).toContain('timeline=«timeline.json»')
+        expect(text).toContain(`frame=${envelope.image.frame}`)
+        expect(text).not.toContain('9007199254740993')
+        expect(text).not.toContain('"raw"')
         expect(Buffer.from(await bytes(b.verified.file)).equals(Buffer.from(envelope.image.inline.data, 'base64'))).toBe(true)
         expect(b.urls.size).toBe(beforeURLs + 1)
       } else {

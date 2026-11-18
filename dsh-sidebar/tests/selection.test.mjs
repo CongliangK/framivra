@@ -1,112 +1,67 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { selectionEnvironment, skip } from './selection-env.mjs'
-import { stringifyJSON } from '../src/json.mjs'
-const address = index => `/video_tracks/0/clips/${index}`
-const clean = text => { const doc = JSON.parse(text); delete doc._vtx; return doc }
-const ids = async ui => (await ui.queue()).map(op => op.id)
-for (const kind of ['source', 'zip']) {
-  const options = { skip: skip || (kind === 'zip' && !process.env.SIDEBAR_MANUAL_ZIP && 'Set SIDEBAR_MANUAL_ZIP'), timeout: 120000 }
-  test(`${kind}: empty-queue visual A -> selected B and reverse delete only reference target; exact business undo`, options, async t => {
-    const ui = await selectionEnvironment(t, kind), before = await ui.read()
-    await ui.save('before-timeline.json', before)
-    for (const [visual, next, target, untouched] of [[0, 1, 'c2', 'c'], [1, 0, 'c', 'c2']]) {
-      assert.deepEqual(await ui.queue(), [])
-      await ui.click(ui.clip(visual)); await ui.click(ui.clip(next))
-      assert.deepEqual(await ui.queue(), [])
-      const raw = await ui.referenceRaw()
-      assert.equal(JSON.parse(raw).id, target)
-      await ui.save(`reference-${target}-before-edit.json`, { raw, queue: await ui.queue() })
-      await ui.change('编辑操作', 'block.remove'); await ui.click('加入批次')
-      // Save and commit even on OLD code: disk is an oracle, not just a renderer assertion.
-      const queued = await ui.queue(); await ui.planCommit()
-      const after = await ui.read(), doc = JSON.parse(after), clips = doc.video_tracks[0].clips
-      await ui.save(`after-${target}.json`, { queued, doc, removed: target, untouched })
-      assert.deepEqual(queued, [{ op: 'block.remove', id: target }])
-      assert(!clips.some(c => c.id === target)); assert.deepEqual(clips.find(c => c.id === untouched), clean(before).video_tracks[0].clips.find(c => c.id === untouched))
-      await ui.undo(); assert.deepEqual(clean(await ui.read()), clean(before))
-    }
-  })
-
-  test(`${kind}: track selection clears block group; selected-derived properties/relink/source cascade/move use current target; queued A stays frozen`, options, async t => {
-    const ui = await selectionEnvironment(t, kind), before = await ui.read(), controls = []
-    await ui.click(ui.clip(0)); await ui.click(ui.clip(1), { ctrlKey: true })
-    await ui.click('选择轨道 /video_tracks/1')
-    assert.equal(ui.button('选择轨道 /video_tracks/1').getAttribute('aria-pressed'), 'true')
-    assert.equal(document.querySelectorAll('.fv-clip[aria-pressed="true"]').length, 0)
-    await ui.change('编辑操作', 'track.rename'); await ui.change('轨道新名称', 'renamed'); await ui.click('加入批次')
-    assert.deepEqual(await ui.queue(), [{ op: 'track.rename', id: 'g', name: 'renamed' }])
-    await ui.planCommit(); assert.equal(JSON.parse(await ui.read()).video_tracks[1].name, 'renamed')
-    await ui.undo(); assert.deepEqual(clean(await ui.read()), clean(before))
-    await ui.click(ui.clip(0)); await ui.change('编辑操作', 'block.remove'); await ui.click('加入批次')
-    assert.deepEqual(await ids(ui), ['c'])
-    await ui.click(ui.clip(1))
-    assert.deepEqual(await ids(ui), ['c'], 'selection must not retarget an already queued intent')
-    await ui.planCommit()
-    const queuedDisk = JSON.parse(await ui.read())
-    assert(!queuedDisk.video_tracks[0].clips.some(c => c.id === 'c')); assert(queuedDisk.video_tracks[0].clips.some(c => c.id === 'c2'))
-    controls.push({ queuedAThenSelectionB: queuedDisk })
-    await ui.undo(); assert.deepEqual(clean(await ui.read()), clean(before))
-    await ui.click(ui.clip(0)); await ui.change('编辑操作', 'block.remove'); await ui.click('加入批次')
-    await ui.click(ui.clip(1)); await ui.click('加入批次'); assert.deepEqual(await ids(ui), ['c', 'c2'])
-    await ui.click('清空')
-    for (const [op, values, expected] of [
-      ['block.relink', [['新 source ID / gfx 文件路径', 's']], { op: 'block.relink', id: 'c2', src: 's' }],
-      ['block.move', [['首选块新起点帧（多选保持相对位置）', '65']], { op: 'block.move', id: 'c2', track_id: 'v', at: 65 }],
-      ['parameters.update', [['属性值（text 为文本，其余单个 JSON 值）', '0.5']], { op: 'parameters.update', id: 'c2', path: ['opacity'], value: 0.5 }],
-    ]) {
-      await ui.change('编辑操作', op); for (const [label, value] of values) await ui.change(label, value)
-      await ui.click('加入批次'); assert.equal(stringifyJSON(await ui.queue()), stringifyJSON([expected]), 'exact queued wire value'); await ui.planCommit()
-      const doc = JSON.parse(await ui.read()), clips = doc.video_tracks[0].clips
-      assert.deepEqual(clips.find(c => c.id === 'c'), clean(before).video_tracks[0].clips.find(c => c.id === 'c'))
-      const current = clips.find(c => c.id === 'c2')
-      if (op === 'block.move') assert.equal(current.dst_in, 65)
-      if (op === 'parameters.update') assert.equal(current.opacity, 0.5)
-      if (op === 'block.relink') assert.equal(current.src, 's')
-      controls.push({ op, expected, doc }); await ui.undo(); assert.deepEqual(clean(await ui.read()), clean(before))
-    }
-    await ui.change('编辑操作', 'source.remove'); await ui.change('素材 ID', 's')
-    const cascade = [...document.querySelectorAll('label')].find(n => n.textContent.includes('确认 cascade')).querySelector('input')
-    await ui.click(cascade); await ui.click('加入批次'); assert.deepEqual(await ui.queue(), [{ op: 'source.remove', id: 's', cascade: ['c2'] }])
-    const diskBeforeRejectedCascade = await ui.read()
-    await ui.click('预检'); assert(ui.button('保存更改') === undefined, "Expected absent DOM node")
-    assert.equal(await ui.read(), diskBeforeRejectedCascade, 'kernel must reject incomplete explicit source user set without writing')
-    controls.push({ cascade: await ui.queue(), plan: ui.wire.filter(x => x.request.op === 'plan').at(-1) }); await ui.click('清空')
-    // Ripple's selection-derived split checkboxes must not retain hidden old A IDs.
-    await ui.click(ui.clip(0)); await ui.change('编辑操作', 'range.ripple'); await ui.change('ripple 模式', 'delete'); await ui.change('跨界策略', 'cut')
-    const split = document.querySelectorAll('[aria-label="手动语义编辑"] fieldset fieldset')[1].querySelector('input')
-    await ui.click(split); await ui.click(ui.clip(1)); await ui.click('加入批次')
-    assert.deepEqual((await ui.queue())[0].split_ids, {}); await ui.click('清空')
-    await ui.change('编辑操作', 'parameters.update'); await ui.change('属性目标', 'track'); await ui.click('选择轨道 /video_tracks/1'); await ui.click('加入批次')
-    assert.equal((await ui.queue())[0].id, 'g'); await ui.save('target-controls.json', { queue: await ui.queue(), controls, noImplicitSourceRetarget: true })
-  })
-
-  test(`${kind}: Ctrl/Shift, keyboard focus and authoritative refresh retain one selection; stale reference/frame/ghost cannot retarget`, options, async t => {
-    const ui = await selectionEnvironment(t, kind), before = await ui.read()
-    await ui.click(ui.clip(0)); await ui.click(ui.clip(1), { ctrlKey: true })
-    assert.equal(document.querySelectorAll('.fv-clip[aria-pressed="true"]').length, 2)
-    await ui.change('编辑操作', 'project.resize'); await ui.change('工程新时长帧（不改 FPS/分辨率）', '130'); await ui.click('加入批次'); await ui.planCommit()
-    assert.equal(document.querySelectorAll('.fv-clip[aria-pressed="true"]').length, 2, 'visual must retain same stable-ID group as manual after refresh')
-    document.querySelector('.fv-ruler').getBoundingClientRect = () => ({ left: 0, width: 1300 })
-    document.querySelectorAll('.fv-track').forEach((n, i) => { n.getBoundingClientRect = () => ({ top: i * 100, bottom: (i + 1) * 100 }) })
-    await ui.event(ui.clip(0), 'pointerdown', { button: 0, clientX: 0, clientY: 10 }); await ui.event(ui.clip(0), 'pointermove', { clientX: 10, clientY: 10 })
-    assert(document.querySelector('[aria-label="未保存拖动 ghost"]'))
-    await ui.click(ui.clip(1))
-    assert(document.querySelector('[aria-label="未保存拖动 ghost"]') === null, "Expected absent DOM node")
-    await ui.event(ui.clip(0), 'pointerup', { clientX: 10, clientY: 10 }); assert.deepEqual(await ui.queue(), [])
-    await ui.click(ui.clip(0)); await ui.click(ui.clip(1), { shiftKey: true }); assert.equal(document.querySelectorAll('.fv-clip[aria-pressed="true"]').length, 2)
-    await ui.click(ui.clip(1), { ctrlKey: true }); assert.equal(document.querySelectorAll('.fv-clip[aria-pressed="true"]').length, 1)
-    await ui.change('编辑操作', 'block.remove'); await ui.click('加入批次'); assert.deepEqual(await ids(ui), ['c']); await ui.click('清空')
-    ui.clip(1).focus(); await ui.event(ui.clip(1), 'keydown', { key: 'Enter' }); await ui.event(ui.clip(1), 'keyup', { key: 'Enter' }); await ui.click(document.activeElement, { detail: 0 }) // JSDOM lacks the browser's default button activation; native click is its explicit adapter.
-    await ui.click('加入批次'); assert.deepEqual(await ids(ui), ['c2']); await ui.click('清空')
-    // Hold A's real reference answer across a B transition; never poke React state.
-    ui.faults.hold = request => request.op === 'reference' && request.query.block_addresses?.[0] === address(0)
-    await ui.click(ui.clip(0)); await ui.settle(() => ui.held.length === 1)
-    await ui.click(ui.clip(1)); await ui.settle(() => ui.wire.some(item => item.request.op === 'reference' && item.request.query.block_addresses?.[0] === address(1)))
-    ui.faults.hold = undefined; ui.held.splice(0).forEach(resolve => resolve()); await ui.flush()
-    assert.equal(JSON.parse(await ui.referenceRaw()).id, 'c2')
-    await ui.change('帧（留空为全部） ', '70'); assert(document.querySelector('[aria-label="选中对象 raw JSON"]') === null, 'playhead never renders raw')
-    await ui.click('复制 raw JSON'); assert.equal(JSON.parse(ui.copies.at(-1)).id, 'c2')
-    await ui.save('retained-selection.json', { queue: await ui.queue(), copies: ui.copies, before: clean(before), saved: clean(await ui.read()), keyboard: 'native key events + explicit native default-click adapter; not Chrome' })
-  })
+const address=index=>`/video_tracks/0/clips/${index}`
+const clean=text=>{const doc=JSON.parse(text);delete doc._vtx;return JSON.stringify(doc)}
+const clips=async ui=>JSON.parse(await ui.read()).video_tracks[0].clips
+const remove=()=>document.querySelector('[aria-label="移除选中片段"]')
+const split=()=>document.querySelector('[aria-label="在播放头分割选中片段"]')
+function geometry(){
+ document.querySelector('.fv-ruler').getBoundingClientRect=()=>({left:0,width:1200})
+ document.querySelectorAll('.fv-track').forEach((node,i)=>{node.getBoundingClientRect=()=>({top:i*100,bottom:(i+1)*100})})
+}
+for(const kind of ['source','zip']){
+ const options={skip:skip||(kind==='zip'&&!process.env.SIDEBAR_MANUAL_ZIP&&'Set SIDEBAR_MANUAL_ZIP'),timeout:120000}
+ test(`${kind}: visual A -> B and reverse direct removal use only current reference target; exact business undo`,options,async t=>{
+  const ui=await selectionEnvironment(t,kind),before=await ui.read()
+  for(const [visual,next,target,untouched] of [[0,1,'c2','c'],[1,0,'c','c2']]){
+   await ui.click(ui.clip(visual));await ui.click(ui.clip(next));assert.equal(JSON.parse(await ui.referenceRaw()).id,target)
+   await ui.saved(()=>ui.click(remove()))
+   const plan=ui.wire.filter(row=>row.request.op==='plan').at(-1),saved=await clips(ui)
+   assert.equal(plan.request.operations.length,1);assert.equal(plan.request.operations[0].op,'block.remove');assert.equal(plan.request.operations[0].id,target)
+   assert.equal(saved.some(clip=>clip.id===target),false);assert.equal(JSON.stringify(saved.find(clip=>clip.id===untouched))===JSON.stringify(JSON.parse(before).video_tracks[0].clips.find(clip=>clip.id===untouched)),true)
+   await ui.undo();assert.equal(clean(await ui.read())===clean(before),true,'undo restores all business fields')
+  }
+  assert.equal(ui.wire.some(row=>row.request.op.startsWith('proposal-')),false)
+  await ui.save('selection-removal.json',{wire:ui.wire,saved:JSON.parse(await ui.read())})
+ })
+ test(`${kind}: track selection clears group; multi-block direct move retains stable group through authoritative refresh`,options,async t=>{
+  const ui=await selectionEnvironment(t,kind),before=await ui.read()
+  await ui.click(ui.clip(0));await ui.click(ui.clip(1),{ctrlKey:true});assert.equal(document.querySelectorAll('.fv-clip[aria-pressed="true"]').length,2)
+  await ui.click('选择轨道 /video_tracks/1');assert.equal(document.querySelectorAll('.fv-clip[aria-pressed="true"]').length,0)
+  assert.equal(ui.button('选择轨道 /video_tracks/1').getAttribute('aria-pressed'),'true');assert.equal(remove().disabled,true)
+  await ui.click(ui.clip(0));await ui.click(ui.clip(1),{ctrlKey:true});geometry()
+  await ui.saved(async()=>{await ui.event(ui.clip(0),'pointerdown',{button:0,clientX:0,clientY:10});await ui.event(ui.clip(0),'pointerup',{clientX:10,clientY:10})})
+  const operations=ui.wire.filter(row=>row.request.op==='plan').at(-1).request.operations
+  assert.equal(operations.length,2);assert.equal(operations[0].id,'c');assert.equal(operations[0].at,1);assert.equal(operations[1].id,'c2');assert.equal(operations[1].at,61)
+  assert.equal(document.querySelectorAll('.fv-clip[aria-pressed="true"]').length,2)
+  const moved=await clips(ui);assert.equal(moved.find(clip=>clip.id==='c').dst_in,1);assert.equal(moved.find(clip=>clip.id==='c2').dst_in,61)
+  await ui.undo();assert.equal(clean(await ui.read())===clean(before),true)
+  await ui.click(ui.clip(1));await ui.change('帧（留空为全部） ','70');await ui.saved(()=>ui.click(split()))
+  const saved=await clips(ui);assert.equal(saved.length,3);assert.equal(saved.find(clip=>clip.id==='c').dur,30);assert.equal(saved.find(clip=>clip.id==='c2').dur,10)
+  assert.equal(ui.wire.filter(row=>row.request.op==='plan').at(-1).request.operations[0].id,'c2')
+  await ui.undo();assert.equal(clean(await ui.read())===clean(before),true)
+  await ui.save('retained-group.json',{operations,saved:JSON.parse(await ui.read())})
+ })
+ test(`${kind}: Ctrl/Shift, keyboard focus, late raw answer and cancelled ghost cannot retarget; path draft survives selection`,options,async t=>{
+  const ui=await selectionEnvironment(t,kind),before=await ui.read()
+  await ui.click(ui.clip(0));await ui.click(ui.clip(1),{shiftKey:true});assert.equal(document.querySelectorAll('.fv-clip[aria-pressed="true"]').length,2)
+  await ui.click(ui.clip(1),{ctrlKey:true});assert.equal(document.querySelectorAll('.fv-clip[aria-pressed="true"]').length,1)
+  geometry();const commits=ui.wire.filter(row=>row.request.op==='commit').length
+  await ui.event(ui.clip(0),'pointerdown',{button:0,clientX:0,clientY:10});await ui.event(ui.clip(0),'pointermove',{clientX:10,clientY:10})
+  assert.equal(document.querySelector('[aria-label="未保存拖动 ghost"]')!==null,true)
+  await ui.click(ui.clip(1));assert.equal(document.querySelector('[aria-label="未保存拖动 ghost"]') === null, true)
+  await ui.event(ui.clip(0),'pointerup',{clientX:10,clientY:10});assert.equal(ui.wire.filter(row=>row.request.op==='commit').length,commits)
+  ui.clip(1).focus();await ui.event(ui.clip(1),'keydown',{key:'Enter'});await ui.event(ui.clip(1),'keyup',{key:'Enter'});await ui.click(document.activeElement,{detail:0})
+  assert.equal(JSON.parse(await ui.referenceRaw()).id,'c2')
+  await ui.change('时间线路径 ','draft-path.json')
+  ui.faults.hold=request=>request.op==='reference'&&request.query.block_addresses?.[0]===address(0)
+  await ui.click(ui.clip(0));await ui.settle(()=>ui.held.length===1)
+  await ui.click(ui.clip(1));await ui.settle(()=>ui.wire.some(row=>row.request.op==='reference'&&row.request.query.block_addresses?.[0]===address(1)))
+  ui.faults.hold=undefined;ui.held.splice(0).forEach(resolve=>resolve());await ui.flush()
+  assert.equal(JSON.parse(await ui.referenceRaw()).id,'c2');assert.equal(document.querySelector('input[name="framivra-timeline"]').value,'draft-path.json')
+  await ui.change('帧（留空为全部） ','70');assert.equal(document.querySelector('[aria-label="选中对象 raw JSON"]') === null, true)
+  await ui.click('复制 raw JSON');assert.equal(JSON.parse(ui.copies.at(-1)).id,'c2');assert.equal(clean(await ui.read())===clean(before),true)
+  await ui.save('retained-selection.json',{copies:ui.copies,wire:ui.wire,keyboard:'native key events + explicit native default-click adapter; not Chrome'})
+ })
 }

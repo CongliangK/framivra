@@ -1,287 +1,57 @@
-import { domTextExcerpt } from './dom-diagnostics.mjs'
-// R3 regression (F2): a kernel receipt that already confirmed a WRITE
-// (commit/adopt/undo ok) must never be relabeled outcome_unknown when only
-// the display refresh (onCommitted) fails — but a status/recover receipt is
-// NOT write proof: it must never clear a prior unknown verdict. In both
-// cases the stale view stays fail-closed (writes, quick edits, gestures,
-// frame export, further proposal confirms disabled) with no automatic retry.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import React, { act } from 'react'
 import { JSDOM } from 'jsdom'
 import { ManualEditor } from '../src/client/manual.mjs'
-import { AgentProposals } from '../src/client/proposals.mjs'
 
-const h = React.createElement
-const version = `sha256:${'b'.repeat(64)}`
-const opened = { grant: 'g1', snapshot: { content_version: version, document: { project: { fps: 30, width: 1920, height: 1080, duration_frames: 120 }, _vtx: { protocol: 1, head: 'h1' }, sources: [] } }, media: [] }
-const result = { tracks: [{ family: 'video', track_index: 0, address: '/t/0', data: { name: 'MAIN', id: 'trk' } }], blocks: [] }
-
-async function mount(t) {
-  const dom = new JSDOM('<div id="root"></div>', { url: 'http://owner/' })
-  globalThis.window = dom.window
-  globalThis.document = dom.window.document
-  globalThis.IS_REACT_ACT_ENVIRONMENT = true
-  const { createRoot } = await import('react-dom/client')
-  const root = createRoot(document.getElementById('root'))
-  t.after(async () => { await act(async () => root.unmount()); dom.window.close(); delete globalThis.window; delete globalThis.document })
-  const button = text => [...document.querySelectorAll('button')].find(b => b.textContent.includes(text))
-  const settle = async predicate => { for (let i = 0; i < 400; i++) { if (predicate()) return; await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)) }) } assert.fail(`DOM did not settle: ${domTextExcerpt(document)}`) }
-  return { root, dom, button, settle }
+// A confirmed write and a failed display refresh are different verdicts.
+// No stale view may issue another write; status/recover are not write proof.
+const h=React.createElement,version=`sha256:${'b'.repeat(64)}`
+const opened={grant:'g1',snapshot:{content_version:version,document:{project:{duration_frames:120},_vtx:{protocol:1,head:'h1'},sources:[]}}}
+const result={tracks:[{family:'video',track_index:0,address:'/t/0',data:{id:'trk'}}],blocks:[{family:'video',track_index:0,address:'/t/0/b/0',range:[0,30],data:{id:'c'}}]}
+const operations=[{op:'block.move',id:'c',track_id:'trk',at:10}]
+const button=text=>[...document.querySelectorAll('button')].find(node=>node.textContent===text)
+async function mount(t,call,onCommitted,extra={}){
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://owner/'})
+ globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+ const {createRoot}=await import('react-dom/client'),root=createRoot(document.getElementById('root'))
+ t.after(async()=>{await act(async()=>root.unmount());dom.window.close();delete globalThis.window;delete globalThis.document})
+ const reports=[];let gesture,quick,undo
+ const props={sessionId:'one',opened,result,frame:15,tabSignal:new AbortController().signal,call,onCommitted,onEditState:state=>reports.push(state),onGestureReady:callback=>{gesture=callback},onQuickReady:callback=>{quick=callback},onUndoReady:callback=>{undo=callback},...extra}
+ await act(async()=>root.render(h(ManualEditor,props)));await act(async()=>button('启用编辑').click())
+ return {reports,gesture:()=>gesture,quick:()=>quick,undo:()=>undo,render:async next=>act(async()=>root.render(h(ManualEditor,{...props,...next})))}
 }
-const lastSettled = reports => reports.filter(r => !r.busy).at(-1)
+const settled=ui=>ui.reports.filter(state=>!state.busy).at(-1)
 
-test('manual: real plan→commit ok with failed onCommitted reports a KNOWN applied write, not outcome_unknown; stale view fail-closed, no auto retry', async t => {
-  const requests = [], reports = [], gestures = []
-  let commits = 0
-  const call = async (_sessionId, payload) => {
-    requests.push(payload.op)
-    if (payload.op === 'authorize-write') return { ok: true, writeGrant: 'wg' }
-    if (payload.op === 'plan') return { ok: true, submitted_request: { op_id: 'op-9' }, planToken: 'tok' }
-    if (payload.op === 'commit') return { ok: true, content_version: `sha256:${'c'.repeat(64)}` }
-    return { ok: true }
-  }
-  const onCommitted = async () => { commits++; throw new Error('TRANSPORT_GONE') }
-  const { root, dom, button, settle } = await mount(t)
-  await act(async () => root.render(h(ManualEditor, { sessionId: 'one', opened, result, selection: undefined, selected: [], frame: undefined, tabSignal: new AbortController().signal, call, onCommitted, onEditState: next => reports.push(next), onGestureReady: callback => gestures.push(callback), onQuickReady: () => {} })))
-  // Grant the permit, enqueue a resize intent, plan, then commit whose
-  // receipt is ok while the authoritative refresh fails.
-  await act(async () => button('启用编辑').click())
-  await settle(() => requests.includes('authorize-write'))
-  const opSelect = [...document.querySelectorAll('label')].find(l => l.textContent.includes('编辑操作'))?.querySelector('select')
-  const { Simulate } = await import('react-dom/test-utils')
-  await act(async () => Simulate.change(opSelect, { target: { value: 'project.resize' } }))
-  await act(async () => button('加入批次').click())
-  await settle(() => button('预检').disabled === false)
-  await act(async () => button('预检').click())
-  await settle(() => document.body.textContent.includes('操作 ID：op-9'), 'plan accepted')
-  await act(async () => button('保存更改').click())
-  await settle(() => document.querySelector('[role=alert]')?.textContent.includes('旧视图已锁定'))
-  // 1. Known applied: last settled report keeps unknown:false and locks dirty.
-  assert.equal(lastSettled(reports).unknown, false, `reports=${JSON.stringify(reports)}`)
-  assert.equal(lastSettled(reports).dirty, true)
-  assert.equal(requests.filter(op => op === 'commit').length, 1)
-  assert.equal(commits, 1)
-  // 2. Message claims the confirmed write, never "outcome unknown".
-  assert(document.body.textContent.includes('内核已确认本次写入'), domTextExcerpt(document))
-  assert(!document.body.textContent.includes('结果可能未知'), 'must not claim the outcome is unknown')
-  // 3. Stale view fail-closed; read-only recovery stays usable.
-  assert(button('撤销当前版本').disabled)
-  assert(button('预检').disabled)
-  assert(button('读取状态').disabled === false)
-  assert(gestures.at(-1) === undefined, 'gesture entry revoked on the locked view')
-  // StaleLock locks the dedicated form too — the batch-clear button must not
-  // be able to clear the stale-owned dirty (frame-export lock).
-  assert(document.querySelector('fieldset[disabled]'), 'staleLock disables the dedicated form fieldset')
-  assert(button('加入批次').matches(':disabled'), 'fieldset disables enqueue even without a button disabled attribute')
-  assert(button('清空').disabled)
-  // 4. No automatic retry of any write-bearing operation.
-  const before = requests.length
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)) })
-  assert.equal(requests.length, before, `no auto retry; requests=${requests.join(',')}`)
+for(const write of ['commit','undo','adopt'])test(`${write}: confirmed receipt survives failed refresh; stale view is locked without auto retry`,async t=>{
+ const calls=[];let refreshes=0
+ const call=async(_session,payload)=>{calls.push(payload.op);if(payload.op==='authorize-write')return {ok:true,writeGrant:'wg'};if(payload.op==='plan')return {ok:true,planToken:'tok',submitted_request:{op_id:'op-9'}};return {ok:true}}
+ const extra=write==='adopt'?{opened:{...opened,snapshot:{...opened.snapshot,document:{project:{duration_frames:120}}}}}:{}
+ const ui=await mount(t,call,async()=>{refreshes++;throw Error('REFRESH_GONE')},extra)
+ if(write==='commit')await act(async()=>assert.rejects(ui.gesture()(operations),error=>error.applied===true&&error.outcomeUnknown!==true))
+ else await act(async()=>button(write==='undo'?'撤销当前版本':'确认接管旧工程').click())
+ assert.equal(settled(ui).unknown,false);assert.equal(settled(ui).dirty,true);assert.equal(ui.gesture(),undefined);assert.equal(ui.quick(),undefined);assert.equal(ui.undo(),undefined)
+ assert.equal(document.body.textContent.includes('刷新保存版本'),true);assert.equal(document.body.textContent.includes('结果未知'),false)
+ assert.equal(button('读取状态').disabled,false);assert.equal(calls.filter(op=>op===write).length,1);assert.equal(refreshes,1)
+ const before=calls.length;await act(async()=>{await new Promise(resolve=>setTimeout(resolve,60))});assert.equal(calls.length,before)
 })
 
-test('manual: status ok + failed onCommitted does NOT clear a prior outcome_unknown verdict', async t => {
-  const reports = []
-  const call = async (_sessionId, payload) => {
-    if (payload.op === 'authorize-write') return { ok: true, writeGrant: 'wg' }
-    if (payload.op === 'undo') return { ok: false, code: 'outcome_unknown' } // prior write verdict becomes unknown
-    if (payload.op === 'status') return { ok: true, history: [] }            // receipt ok, refresh fails below
-    return { ok: true }
-  }
-  const onCommitted = async () => { throw new Error('REFRESH_GONE') }
-  const { root, button, settle } = await mount(t)
-  await act(async () => root.render(h(ManualEditor, { sessionId: 'one', opened, result, selection: undefined, selected: [], frame: undefined, tabSignal: new AbortController().signal, call, onCommitted, onEditState: next => reports.push(next), onGestureReady: () => {}, onQuickReady: () => {} })))
-  await act(async () => button('启用编辑').click())
-  await act(async () => button('撤销当前版本').click())
-  await settle(() => lastSettled(reports)?.unknown === true, 'undo receipt sets unknown')
-  await act(async () => button('读取状态').click())
-  await settle(() => document.querySelector('[role=alert]')?.textContent.includes('旧视图已锁定'))
-  // The status receipt is NOT write proof: unknown survives, view locked.
-  assert.equal(lastSettled(reports).unknown, true, `reports=${JSON.stringify(reports)}`)
-  assert.equal(lastSettled(reports).dirty, true)
-  assert(!document.body.textContent.includes('内核已确认本次写入'), 'status path must not claim a confirmed write')
-  assert(document.body.textContent.includes('原未知结果判定保持不变'))
-  assert(button('撤销当前版本').disabled)
-  assert(button('读取状态').disabled === false, 'read-only recovery stays usable')
+test('status ok with failed refresh does not clear a prior unknown write verdict',async t=>{
+ const calls=[]
+ const call=async(_session,payload)=>{calls.push(payload.op);if(payload.op==='authorize-write')return {ok:true,writeGrant:'wg'};if(payload.op==='undo')return {ok:false,code:'outcome_unknown'};return {ok:true,history:[],pending:false}}
+ const ui=await mount(t,call,async()=>{throw Error('REFRESH_GONE')})
+ await act(async()=>button('撤销当前版本').click());assert.equal(settled(ui).unknown,true)
+ await act(async()=>button('读取状态').click());assert.equal(settled(ui).unknown,true);assert.equal(settled(ui).dirty,true)
+ assert.equal(document.body.textContent.includes('原写入结果未重新判定'),true);assert.equal(document.body.textContent.includes('内核已确认本次写入'),false)
+ assert.equal(button('读取状态').disabled,false);assert.equal(ui.gesture(),undefined);assert.equal(calls.filter(op=>op==='undo').length,1)
 })
 
-test('proposals: applied receipt + failed onCommitted keeps unknown false, locks further confirms, no auto retry', async t => {
-  const requests = []
-  const reports = []
-  const row = id => ({ proposal_id: id, state: 'pending', timeline: 'timeline.json', base_revision: version, plan: { submitted_request: { op_id: `op-${id}` } } })
-  const call = async (_sessionId, payload) => {
-    requests.push(payload.op)
-    if (payload.op === 'proposal-list') return { ok: true, proposals: [row('p1'), row('p2')] }
-    if (payload.op === 'proposal-confirm') return { ok: true, proposal: { ...row(payload.proposalId), state: 'applied' } }
-    return { ok: true }
-  }
-  const onCommitted = async () => { throw new Error('REFRESH_GONE') }
-  const { root, button, settle } = await mount(t)
-  await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened, tabSignal: new AbortController().signal, call, writeGrant: 'wg', manualBlocked: false, onCommitted, onEditState: next => reports.push(next) })))
-  await settle(() => [...document.querySelectorAll('article')].length === 2)
-  const confirm = () => button('保存提案')
-  assert(!confirm().disabled)
-  await act(async () => confirm().click())
-  await settle(() => document.body.textContent.includes('旧视图已锁定'))
-  // The confirmed row keeps its applied receipt; unknown is never reported.
-  assert(document.body.textContent.includes('内核已保存'), domTextExcerpt(document))
-  assert(!document.body.textContent.includes('结果未知'))
-  const settled = reports.filter(r => !r.busy)
-  assert.equal(settled[settled.length - 1].unknown, false, `reports=${JSON.stringify(reports)}`)
-  assert.equal(settled[settled.length - 1].dirty, true, 'stale view reported dirty: fail-closed')
-  // The other pending proposal can no longer be confirmed on the stale snapshot.
-  assert(confirm().disabled, 'confirm disabled on locked stale view')
-  // No automatic retry or resubmission.
-  const before = requests.filter(op => op === 'proposal-confirm').length
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)) })
-  assert.equal(requests.filter(op => op === 'proposal-confirm').length, before)
-})
-
-test('manual: stale-owned dirty is cleared by a later SUCCESSFUL refresh (positive ownership)', async t => {
-  const reports = []
-  let refreshes = 0
-  const call = async (_sessionId, payload) => {
-    if (payload.op === 'authorize-write') return { ok: true, writeGrant: 'wg' }
-    if (payload.op === 'plan') return { ok: true, submitted_request: { op_id: 'op-9' }, planToken: 'tok' }
-    if (payload.op === 'commit') return { ok: true, content_version: `sha256:${'c'.repeat(64)}` }
-    if (payload.op === 'status') return { ok: true, history: [] }
-    return { ok: true }
-  }
-  // First refresh (after commit receipt ok) fails → staleLock; the second
-  // (status with good transport) must release the stale-owned dirty lock.
-  const onCommitted = async () => { refreshes++; if (refreshes === 1) throw new Error('TRANSPORT_GONE') }
-  const { root, button, settle } = await mount(t)
-  await act(async () => root.render(h(ManualEditor, { sessionId: 'one', opened, result, selection: undefined, selected: [], frame: undefined, tabSignal: new AbortController().signal, call, onCommitted, onEditState: next => reports.push(next), onGestureReady: () => {}, onQuickReady: () => {} })))
-  await act(async () => button('启用编辑').click())
-  await settle(() => button('加入批次').disabled === false)
-  const opSelect = [...document.querySelectorAll('label')].find(l => l.textContent.includes('编辑操作'))?.querySelector('select')
-  const { Simulate } = await import('react-dom/test-utils')
-  await act(async () => Simulate.change(opSelect, { target: { value: 'project.resize' } }))
-  await act(async () => button('加入批次').click())
-  await settle(() => button('预检').disabled === false)
-  await act(async () => button('预检').click())
-  await settle(() => document.body.textContent.includes('操作 ID：op-9'))
-  await act(async () => button('保存更改').click())
-  await settle(() => document.querySelector('[role=alert]')?.textContent.includes('旧视图已锁定'))
-  assert.equal(lastSettled(reports).dirty, true, 'stale lock owns dirty')
-  assert(button('清空').disabled)
-  // Now the authoritative refresh succeeds: the stale-owned dirty must be
-  // released (no queue, no draft edits) and the view unlocked.
-  await act(async () => button('读取状态').click())
-  await settle(() => document.querySelector('[role=alert]') === null)
-  assert.equal(lastSettled(reports).dirty, false, `stale dirty released on refresh success; reports=${JSON.stringify(reports)}`)
-  assert.equal(lastSettled(reports).unknown, false)
-  assert(document.querySelector('fieldset[disabled]') === null, 'form usable again')
-  assert(button('加入批次').disabled === false, 'editing is available after refresh')
-  assert(button('清空').disabled, 'confirmed write already emptied the queue and draft')
-  assert.equal(refreshes, 2)
-})
-
-test('manual: user draft/queue dirty is NOT cleared by a successful status refresh (negative ownership)', async t => {
-  const reports = [], queues = [[]]
-  const call = async (_sessionId, payload) => {
-    if (payload.op === 'authorize-write') return { ok: true, writeGrant: 'wg' }
-    if (payload.op === 'status') return { ok: true, history: [] }
-    return { ok: true }
-  }
-  const onCommitted = async () => {} // refresh succeeds
-  const { root, button, settle } = await mount(t)
-  await act(async () => root.render(h(ManualEditor, { sessionId: 'one', opened, result, selection: undefined, selected: [], frame: undefined, tabSignal: new AbortController().signal, call, onCommitted, onQueueChange: queue => queues.push(queue), onEditState: next => reports.push(next), onGestureReady: () => {}, onQuickReady: () => {} })))
-  await act(async () => button('启用编辑').click())
-  await settle(() => button('加入批次').disabled === false)
-  const opSelect = [...document.querySelectorAll('label')].find(l => l.textContent.includes('编辑操作'))?.querySelector('select')
-  const { Simulate } = await import('react-dom/test-utils')
-  await act(async () => Simulate.change(opSelect, { target: { value: 'project.resize' } }))
-  await act(async () => button('加入批次').click())
-  await settle(() => lastSettled(reports)?.dirty === true && queues.at(-1)[0]?.op === 'project.resize')
-  // status ok + successful refresh: user queue dirty must survive.
-  await act(async () => button('读取状态').click())
-  await settle(() => document.body.textContent.includes('最近内核状态'))
-  assert.equal(lastSettled(reports).dirty, true, `queue dirty preserved; reports=${JSON.stringify(reports)}`)
-  assert.equal(lastSettled(reports).unknown, false)
-  assert.deepEqual(queues.at(-1), [{ op: 'project.resize', duration_frames: 10 }], 'queue intact')
-  assert(button('预检').disabled === false, 'plan still available')
-  assert(button('保存更改') === undefined)
-})
-
-test('manual: explicit clear resets draftDirty, so a later stale→recovered refresh releases dirty (clear ownership reset)', async t => {
-  const reports = [], queues = [[]]
-  let refreshes = 0
-  const call = async (_sessionId, payload) => {
-    if (payload.op === 'authorize-write') return { ok: true, writeGrant: 'wg' }
-    if (payload.op === 'status') return { ok: true, history: [] }
-    return { ok: true }
-  }
-  // Refresh 1 (after a status ok) fails → staleLock owns dirty; refresh 2
-  // succeeds and must release it, because the user's earlier draft dirty was
-  // explicitly cleared via 清空 (draftDirty reset with it).
-  const onCommitted = async () => { refreshes++; if (refreshes === 1) throw new Error('TRANSPORT_GONE') }
-  const { root, button, settle } = await mount(t)
-  await act(async () => root.render(h(ManualEditor, { sessionId: 'one', opened, result, selection: undefined, selected: [], frame: undefined, tabSignal: new AbortController().signal, call, onCommitted, onQueueChange: queue => queues.push(queue), onEditState: next => reports.push(next), onGestureReady: () => {}, onQuickReady: () => {} })))
-  await act(async () => button('启用编辑').click())
-  await settle(() => button('加入批次').disabled === false)
-  const opSelect = [...document.querySelectorAll('label')].find(l => l.textContent.includes('编辑操作'))?.querySelector('select')
-  const { Simulate } = await import('react-dom/test-utils')
-  await act(async () => Simulate.change(opSelect, { target: { value: 'project.resize' } }))
-  await act(async () => button('加入批次').click())
-  await settle(() => lastSettled(reports)?.dirty === true)
-  // Explicit clear: reported dirty false AND draft ownership released.
-  await act(async () => button('清空').click())
-  await settle(() => lastSettled(reports).dirty === false && queues.at(-1).length === 0)
-  assert.deepEqual(queues.at(-1), [])
-  // status ok with failing refresh: staleLock owns dirty now.
-  await act(async () => button('读取状态').click())
-  await settle(() => document.querySelector('[role=alert]')?.textContent.includes('旧视图已锁定'))
-  assert.equal(lastSettled(reports).dirty, true, 'stale lock owns dirty')
-  // Refresh succeeds: stale-owned dirty must be released (queue cleared earlier).
-  await act(async () => button('读取状态').click())
-  await settle(() => document.querySelector('[role=alert]') === null)
-  assert.equal(lastSettled(reports).dirty, false, `stale dirty released after recovery; reports=${JSON.stringify(reports)}`)
-  assert.equal(lastSettled(reports).unknown, false)
-  assert(document.querySelector('fieldset[disabled]') === null, "Expected absent DOM node: document.querySelector('fieldset[disabled]')")
-  assert.equal(refreshes, 2)
-})
-
-test('proposals: same-grant new authoritative snapshot object releases stale; applied receipt kept, pending old base stays CAS-blocked, no resubmit', async t => {
-  const requests = []
-  const reports = []
-  const row = id => ({ proposal_id: id, state: 'pending', timeline: 'timeline.json', base_revision: version, plan: { submitted_request: { op_id: `op-${id}` } } })
-  let appliedId
-  const call = async (_sessionId, payload) => {
-    requests.push(payload.op)
-    if (payload.op === 'proposal-list') return { ok: true, proposals: [row('p1'), row('p2')].map(r => r.proposal_id === appliedId ? { ...r, state: 'applied' } : r) }
-    if (payload.op === 'proposal-confirm') { appliedId = payload.proposalId; return { ok: true, proposal: { ...row(payload.proposalId), state: 'applied' } } }
-    return { ok: true }
-  }
-  const onCommitted = async () => { throw new Error('REFRESH_GONE') }
-  const { root, button, settle } = await mount(t)
-  const props = extra => ({ sessionId: 'one', opened, tabSignal: new AbortController().signal, call, writeGrant: 'wg', manualBlocked: false, onCommitted, onEditState: next => reports.push(next), ...extra })
-  await act(async () => root.render(h(AgentProposals, props())))
-  await settle(() => [...document.querySelectorAll('article')].length === 2)
-  const confirm = () => button('保存提案')
-  await act(async () => confirm().click())
-  await settle(() => document.body.textContent.includes('旧视图已锁定'))
-  assert(document.body.textContent.includes('内核已保存'))
-  // Simulate the parent's successful authoritative refresh: SAME grant, but a
-  // NEW opened.snapshot OBJECT (with an advanced content_version — no remount,
-  // no new grant). This must release the proposals' own stale lock only.
-  const refreshed = `sha256:${'d'.repeat(64)}`
-  const opened2 = { ...opened, snapshot: { ...opened.snapshot, content_version: refreshed } }
-  await act(async () => root.render(h(AgentProposals, props({ opened: opened2 }))))
-  await settle(() => ![...document.querySelectorAll('[role=alert]')].some(node => node.textContent.includes('旧视图已锁定')), 'stale alert released by new snapshot object; CAS mismatch alert remains')
-  // Own stale released: reported dirty now comes only from the still-pending
-  // row (rows.some(active)); unknown stays false; no applied→unknown relabel.
-  const settled = reports.filter(r => !r.busy)
-  assert.equal(settled[settled.length - 1].unknown, false, `reports=${JSON.stringify(reports)}`)
-  assert.equal(settled[settled.length - 1].dirty, true, 'pending row keeps blocking dirty')
-  // The applied receipt is preserved; the pending row keeps its old base —
-  // original CAS base mismatch blocks confirmation on the fresh snapshot.
-  assert(document.body.textContent.includes('内核已保存'), 'applied receipt retained')
-  assert(confirm().disabled, 'pending old-base proposal not confirmable (CAS)')
-  assert(document.body.textContent.includes('基线已变化'), 'base mismatch surfaced')
-  // No automatic resubmission of anything.
-  const before = requests.filter(op => op === 'proposal-confirm').length
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)) })
-  assert.equal(requests.filter(op => op === 'proposal-confirm').length, before)
+test('successful explicit status refresh releases stale-owned dirty and callbacks, without resubmitting the write',async t=>{
+ const calls=[];let refreshes=0
+ const call=async(_session,payload)=>{calls.push(payload.op);if(payload.op==='authorize-write')return {ok:true,writeGrant:'wg'};if(payload.op==='plan')return {ok:true,planToken:'tok',submitted_request:{op_id:'op-9'}};return {ok:true,history:[],pending:false}}
+ const ui=await mount(t,call,async()=>{if(++refreshes===1)throw Error('REFRESH_GONE')})
+ await act(async()=>assert.rejects(ui.gesture()(operations),error=>error.applied===true));assert.equal(settled(ui).dirty,true)
+ await act(async()=>button('读取状态').click());assert.equal(settled(ui).dirty,false);assert.equal(settled(ui).unknown,false);assert.equal(typeof ui.gesture(),'function');assert.equal(typeof ui.undo(),'function')
+ assert.equal(refreshes,2);assert.equal(calls.filter(op=>op==='plan').length,1);assert.equal(calls.filter(op=>op==='commit').length,1)
+ assert.equal(calls.some(op=>op.startsWith('proposal-')),false)
 })

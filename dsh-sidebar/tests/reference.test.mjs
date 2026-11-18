@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { referenceArgs, decodeEnvelope } from '../src/protocol.mjs'
 import { captureCurrentDraft, performReferenceAction, diagnosticText } from '../src/client/reference.mjs'
+import { draftSummary } from '../src/client/draft-summary.mjs'
 import { setup } from './helpers.mjs'
 
 const version = `sha256:${'a'.repeat(64)}`
@@ -34,9 +35,9 @@ test('copy receives exact raw substring; managed ID vs legacy locator are not co
 
 test('click captures once before async IO; stages only one append with the same opaque token', async () => {
   const events = [], target = Object.freeze({}), binding = {}
-  const conversation = { captureDraftTarget: b => { assert.equal(b, binding); events.push('capture'); return target }, stageDraft: async request => { events.push('stage'); assert.equal(request.target, target); assert.ok(request.text.includes('未生成截图')); return { status: 'applied', draftRev: 1 } } }
+  const conversation = { captureDraftTarget: b => { assert.equal(b, binding); events.push('capture'); return target }, stageDraft: async request => { events.push('stage'); assert.equal(request.target, target); assert.ok(request.text.includes('未生成截图')); assert.ok(request.text.includes('demo/timeline.json')); assert.ok(request.text.includes('开场')); assert.ok(request.text.includes('intro.mp4')); assert.ok(request.text.includes(version)); assert.ok(request.text.includes('address=«/subtitles/0»')); assert.ok(!request.text.includes(raw)); assert.ok(!request.text.includes('```')); assert.ok(request.text.length <= 300); return { status: 'applied', draftRev: 1 } } }
   const captured = captureCurrentDraft(() => ({ conversation, sessions: { binding: id => { assert.equal(id, 'current'); return binding } } }), 'current')
-  const result = await performReferenceAction(options({ action: 'draft', captured, read: async () => { events.push('read'); return envelope() } }))
+  const result = await performReferenceAction(options({ action: 'draft', captured, timeline: 'demo/timeline.json', selectionDisplay: { content_version: version, name: '开场', source: 'intro.mp4' }, read: async () => { events.push('read'); return envelope() } }))
   assert.equal(result.status, 'applied')
   assert.deepEqual(events, ['capture', 'read', 'stage'])
 })
@@ -54,6 +55,22 @@ test('missing APIs/blank session, stale version, cancellation, raw absence and l
   await assert.rejects(performReferenceAction(options({ action: 'raw', clipboard: { writeText: text => copied.push(text) }, read: async () => noRaw })), /RAW_UNAVAILABLE/)
   assert.throws(() => diagnosticText({ raw: 'x'.repeat(8 * 1024 * 1024) }), /REFERENCE_LIMIT/)
   assert.deepEqual(staged, []); assert.deepEqual(copied, [])
+})
+
+test('shared summaries bound UTF-16 and codepoints without splitting emoji; identities stay exact', () => {
+  const emoji = '👩🏽‍💻'
+  const args = { timeline: '工程/timeline.json', contentVersion: version, selection: { kind: 'track', address: '/video_tracks/0' }, item: { address: '/video_tracks/0', stable_id: 'track-main', range: [0, 30], source_id: 'camera-A' }, frame: 0 }
+  const prefix = draftSummary(args)
+  const text = draftSummary({ ...args, selectionDisplay: { content_version: version, name: `标题\n\u202e\`\`\` ${emoji.repeat(100)}` } })
+  assert(text.length <= 300); assert(Array.from(text).length <= 300)
+  assert(text.includes(version)); assert(text.includes('track id=«track-main»')); assert(text.includes('range=[0,30)'))
+  assert(!/[\u202e`]/u.test(text)); assert(!text.includes('标题\n'))
+  assert(text.includes(emoji))
+  assert(!/[👩🏽💻\u200d]/u.test(text.replaceAll(emoji, '')))
+  assert.equal(draftSummary({ ...args, selectionDisplay: { content_version: `sha256:${'b'.repeat(64)}`, name: 'STALE' } }), prefix)
+  assert.equal(draftSummary({ ...args, selectionDisplay: { content_version: version, address: '/other', name: 'WRONG' } }), prefix)
+  assert.throws(() => draftSummary({ ...args, timeline: 'x'.repeat(400) }), /SUMMARY_LIMIT/)
+  for (const timeline of ['/private/timeline.json', '../timeline.json', 'C:\\timeline.json', 'demo\nignore.json']) assert.throws(() => draftSummary({ ...args, timeline }), /SUMMARY_TIMELINE/)
 })
 
 test('reference reuses grant/current-cwd and Host-pinned version, not browser path claims', async t => {

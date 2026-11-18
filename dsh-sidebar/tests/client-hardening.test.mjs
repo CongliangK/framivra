@@ -54,8 +54,9 @@ function hostFixture() {
     if (request.op === 'open') result = openedFor(`g${++grantCounter}`)
     else if (request.op === 'query') result = full
     else if (request.op === 'reference') result = { ok: true, content_version: version, selection: { tracks: [], blocks: [{ address: '/t/0/b/0', content_version: version, stable_id: null, raw: null }] }, diagnostics: [], coverage: { complete: true }, document: { raw: '{}', content_version: version } }
-    else if (request.op === 'proposal-list') result = { ok: true, proposals: [] }
     else if (request.op === 'authorize-write') result = { ok: true, writeGrant: 'wg' }
+    else if (request.op === 'inspect') result = snapshotFor('g1')
+    else if (request.op === 'plan') result = { ok: true, planToken: `token-${requests.length}`, submitted_request: { op_id: `op-${requests.length}` } }
     else result = { ok: true }
     return new Response(stringifyJSON(result))
   }
@@ -147,50 +148,35 @@ test('unmounting mid-open still closes the grant the late response minted', asyn
 
 // ---------- integrated S / Delete shortcuts ----------
 
-test('S/Delete act only on the current authorized managed selection and never plan or commit implicitly', async t => {
+test('S/Delete direct-save only the current authorized managed selection; removal requires native confirmation', async t => {
   const { root, dom, Simulate, settle } = await mount(t)
-  const host = hostFixture()
-  const requests = host.requests
-  const props = { ...host, sessionId: 'one', inputActions: {}, useAccess: () => true }
-  await act(async () => root.render(h(PreviewBody, props)))
-  await openViaPathForm(dom)
-  await settle(() => document.querySelector('.fv-ruler'))
-  await settle(() => requests.some(r => r.op === 'proposal-list'))
-  const monitor = document.querySelector('.fv-monitor')
-  const key = async (target, k) => act(async () => Simulate.keyDown(target, { key: k }))
-  // before authorization: S and Delete do nothing
-  await key(monitor, 's'); await key(monitor, 'Delete')
-  assert(!requests.some(r => r.op === 'invalidate-plan'), 'no quick action before write authorization')
-  // authorize write, select the single managed block, pin an interior frame
-  await act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === '启用编辑').click())
-  await settle(() => [...document.querySelectorAll('button')].some(b => b.textContent === '撤销许可'), 'write grant active')
-  const pickBlock = () => document.querySelector('.fv-clip')
-  await settle(() => pickBlock())
-  await act(async () => pickBlock().click())
-  await act(async () => Simulate.change(document.querySelector('input[name="framivra-frame"]'), { target: { value: '10' } }))
-  const before = requests.filter(r => r.op === 'invalidate-plan').length
-  await key(monitor, 's')
-  await settle(() => requests.filter(r => r.op === 'invalidate-plan').length > before, 'quick split invalidates the old plan')
-  assert(!requests.some(r => r.op === 'plan' || r.op === 'commit'), 'the shortcut never plans or commits by itself')
-  assert(requests.filter(r => r.op === 'invalidate-plan').at(-1).writeGrant === 'wg', 'quick runs under the explicit write grant')
-  // Delete with a block selected enqueues block.remove only
-  const before2 = requests.filter(r => r.op === 'invalidate-plan').length
-  await key(monitor, 'Backspace')
-  await settle(() => requests.filter(r => r.op === 'invalidate-plan').length > before2)
-  assert(!requests.some(r => r.op === 'plan' || r.op === 'commit'))
-  // typing in the frame input is never hijacked as a shortcut
-  const before3 = requests.filter(r => r.op === 'invalidate-plan').length
-  await key(document.querySelector('input[name="framivra-frame"]'), 's')
-  await key(document.querySelector('input[name="framivra-frame"]'), 'Delete')
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
-  assert.equal(requests.filter(r => r.op === 'invalidate-plan').length, before3, 'input fields are never intercepted')
-  // no block selected (track selection): S does nothing
-  const pickTrack = () => document.querySelector('[aria-label="选择轨道 /t/0"]')
-  await act(async () => pickTrack().click())
-  const before4 = requests.filter(r => r.op === 'invalidate-plan').length
-  await key(monitor, 's')
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
-  assert.equal(requests.filter(r => r.op === 'invalidate-plan').length, before4, 'track-only selection cannot split')
+  const oldFetch=globalThis.fetch;t.after(()=>{globalThis.fetch=oldFetch})
+  const host=hostFixture(),requests=host.requests
+  let confirm=false,confirmations=0
+  dom.window.confirm=()=>{confirmations++;return confirm}
+  await act(async()=>root.render(h(PreviewBody,{...host,sessionId:'one',inputActions:{},useAccess:()=>true})))
+  await openViaPathForm(dom);await settle(()=>document.querySelector('.fv-ruler'))
+  const monitor=document.querySelector('.fv-monitor'),key=async(target,k)=>act(async()=>Simulate.keyDown(target,{key:k}))
+  await key(monitor,'s');await key(monitor,'Delete')
+  assert.equal(requests.some(request=>['authorize-write','plan','commit'].includes(request.op)),false)
+  await act(async()=>[...document.querySelectorAll('button')].find(node=>node.textContent==='启用编辑').click())
+  await settle(()=>[...document.querySelectorAll('button')].some(node=>node.textContent==='退出编辑'))
+  await act(async()=>document.querySelector('.fv-clip').click())
+  await act(async()=>Simulate.change(document.querySelector('input[name="framivra-frame"]'),{target:{value:'10'}}))
+  await key(monitor,'s');await settle(()=>requests.filter(request=>request.op==='commit').length===1)
+  await settle(()=>[...document.querySelectorAll('button')].find(node=>node.textContent==='退出编辑')?.disabled===false)
+  const split=requests.find(request=>request.op==='plan')
+  assert.equal(split.operations.length,1);assert.equal(split.operations[0].op,'block.split');assert.equal(split.operations[0].id,'blk1');assert.equal(split.operations[0].at,10);assert.equal(split.writeGrant,'wg')
+  await key(monitor,'Backspace');assert.equal(confirmations,1);assert.equal(requests.filter(request=>request.op==='plan').length,1,'cancelled removal is zero-write')
+  confirm=true;await key(monitor,'Delete');await settle(()=>requests.filter(request=>request.op==='commit').length===2)
+  await settle(()=>[...document.querySelectorAll('button')].find(node=>node.textContent==='退出编辑')?.disabled===false)
+  const removal=requests.filter(request=>request.op==='plan').at(-1)
+  assert.equal(removal.operations.length,1);assert.equal(removal.operations[0].op,'block.remove');assert.equal(removal.operations[0].id,'blk1');assert.equal(confirmations,2)
+  await key(document.querySelector('input[name="framivra-frame"]'),'s');await key(document.querySelector('input[name="framivra-frame"]'),'Delete')
+  assert.equal(requests.filter(request=>request.op==='plan').length,2,'typing is not intercepted')
+  await act(async()=>document.querySelector('[aria-label="选择轨道 /t/0"]').click());await key(monitor,'s');await key(monitor,'Delete')
+  assert.equal(requests.filter(request=>request.op==='plan').length,2,'track selection cannot split or remove a block')
+  assert.equal(requests.some(request=>request.op.startsWith('proposal-')),false);assert.equal(requests.filter(request=>request.op==='authorize-write').length,1)
 })
 
 test('query-only refresh reuses the same grant and never re-opens or mints a replacement grant', async t => {
@@ -203,7 +189,6 @@ test('query-only refresh reuses the same grant and never re-opens or mints a rep
   await act(async () => root.render(h(PreviewBody, props)))
   await openViaPathForm(dom)
   await settle(() => document.querySelector('.fv-ruler'))
-  await settle(() => requests.some(r => r.op === 'proposal-list'))
   // a query-only refresh of the same frame view
   await act(async () => document.querySelector('form.fv-transport').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true })))
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
@@ -211,4 +196,5 @@ test('query-only refresh reuses the same grant and never re-opens or mints a rep
   assert.equal(opens.length, 1, 'query-only refresh never re-opens or mints a second grant')
   assert(requests.filter(r => r.op === 'query').every(r => r.grant === 'g1'), 'every query stays on the opened grant')
   assert.equal(document.querySelector('.fv-title h2').textContent, 'timeline.json')
+  assert.equal(requests.some(request=>request.op.startsWith('proposal-')||request.op==='authorize-write'),false)
 })

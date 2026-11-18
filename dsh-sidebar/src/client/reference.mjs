@@ -1,4 +1,5 @@
 import { stringifyJSON } from '../json.mjs'
+import { draftSummary } from './draft-summary.mjs'
 
 const LIMIT = 8 * 1024 * 1024
 export function referenceQuery(selection, contentVersion, frame) {
@@ -32,7 +33,7 @@ export function captureCurrentDraft(getServices, sessionId) {
 }
 
 /** Only stages append-only text. Never calls prompt/send or captures a replacement token. */
-export async function performReferenceAction({ action, selection, contentVersion, frame, signal, read, clipboard, captured, onReference }) {
+export async function performReferenceAction({ action, selection, contentVersion, frame, timeline, selectionDisplay, signal, read, clipboard, captured, onReference }) {
   signal.throwIfAborted()
   const envelope = await read(referenceQuery(selection, contentVersion, frame), signal)
   signal.throwIfAborted()
@@ -40,7 +41,7 @@ export async function performReferenceAction({ action, selection, contentVersion
   onReference?.(envelope, item)
   if (action === 'read') return { status: 'ready' }
   if (action === 'draft') {
-    const text = `\nFramivra 时间线引用（仅 stored reference；未生成截图，不是帧精确画面）：\n\`\`\`json\n${diagnosticText(envelope)}\n\`\`\`\n`
+    const text = draftSummary({ timeline, contentVersion, selection, item, reference: envelope, frame, selectionDisplay })
     signal.throwIfAborted()
     return captured.conversation.stageDraft({ target: captured.target, text, signal })
   }
