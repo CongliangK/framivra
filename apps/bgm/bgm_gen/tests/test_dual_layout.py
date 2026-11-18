@@ -14,8 +14,12 @@
 """
 
 import json
+import ntpath
 import os
+import posixpath
+from unittest.mock import patch
 import shutil
+import subprocess
 import sys
 
 import pytest
@@ -24,8 +28,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import helpers                                              # noqa: E402
 
 helpers.in_proc_env()
-from bgm_gen.core.project import (ProjectError, load_project, merge_layout,  # noqa: E402
-                                  save_project, split_layout)
+from bgm_gen.core.project import (ProjectError, _read_ref_track, _ref_has_anchor,  # noqa: E402
+                                  load_project, merge_layout, save_project, split_layout)
 
 MINIMAL = os.path.join(helpers.EXAMPLES_DIR, "minimal.json")
 ANCHOR_MIX = os.path.join(helpers.OUT_DIR, "minimal", "mix.flac")
@@ -132,6 +136,104 @@ def test_ref_reject_absolute_path():
     with pytest.raises(ProjectError) as ei:
         load_project(ppath)
     assert "tracks[2].$ref" in str(ei.value) and "绝对路径" in str(ei.value)
+
+
+@pytest.mark.fast
+@pytest.mark.parametrize("ref", [r"\foo", "/foo", r"C:\foo", "C:/foo",
+                                 "C:foo", r"\\server\share\x.json",
+                                 r"\\?\C:\foo", r"\\.\device"])
+def test_ref_windows_anchor_logic(ref):
+    assert _ref_has_anchor(ref, ntpath)
+    # A backslash and colon are ordinary POSIX filename characters.
+    assert _ref_has_anchor(ref, posixpath) == ref.startswith("/")
+
+
+@pytest.mark.fast
+def test_ref_relative_logic():
+    for path in (ntpath, posixpath):
+        assert not _ref_has_anchor("tracks/vla.json", path)
+        assert not _ref_has_anchor("../outside.json", path)  # containment decides
+    assert not _ref_has_anchor(r"\foo", posixpath)
+
+
+@pytest.mark.fast
+def test_ref_native_preopen_containment(tmp_path):
+    base = tmp_path / "project"
+    base.mkdir()
+    (base / "track.json").write_text('{"name":"ok"}', encoding="utf-8")
+    track, err = _read_ref_track(str(base), "track.json")
+    assert err is None and track["name"] == "ok"
+    refs = ["/foo", "../outside.json", "../project-other/track.json"]
+    if os.name == "nt":
+        refs += [r"\foo", r"C:\foo", "C:foo", r"\\server\share\x",
+                 r"\\?\C:\foo", r"\\.\device"]
+    with patch("builtins.open", side_effect=AssertionError("unexpected read")):
+        for ref in refs:
+            track, err = _read_ref_track(str(base), ref)
+            assert track is None and err
+            if ref.startswith("../"):
+                assert "越出工程目录" in err
+            elif os.path.isabs(ref):
+                assert err == f"{ref!r} 不允许绝对路径（仅相对工程文件所在目录）"
+            else:
+                assert "根相对或带盘符路径" in err
+
+
+@pytest.mark.fast
+def test_ref_realpath_cross_drive_preopen(tmp_path, monkeypatch):
+    base = str(tmp_path)
+    realpath = os.path.realpath
+    # Simulate a junction resolving to another drive (and a sibling on the same drive).
+    for target in (base + "-other" + os.sep + "track.json",
+                   ("Z:\\outside\\track.json" if os.name == "nt" else "/outside/track.json")):
+        monkeypatch.setattr(os.path, "realpath", lambda p: realpath(base) if p == base else target)
+        with patch("builtins.open", side_effect=AssertionError("unexpected read")):
+            track, err = _read_ref_track(base, "link/track.json")
+        assert track is None and "越出工程目录" in err
+    monkeypatch.setattr(os.path, "realpath", realpath)
+
+
+@pytest.mark.fast
+def test_ref_link_escape_preopen(tmp_path):
+    base = tmp_path / "project"
+    outside = tmp_path / "outside"
+    base.mkdir()
+    outside.mkdir()
+    (outside / "track.json").write_text('{"name":"outside"}', encoding="utf-8")
+    link = base / "link"
+    if os.name == "nt":
+        # Directory junctions do not require the symlink privilege.
+        # Fixed relative arguments avoid feeding temporary-directory names to cmd.
+        subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", "link", r"..\outside"],
+                       cwd=str(base), check=True, capture_output=True)
+    else:
+        link.symlink_to(outside, target_is_directory=True)
+    with patch("builtins.open", side_effect=AssertionError("unexpected read")):
+        track, err = _read_ref_track(str(base), "link/track.json")
+    assert track is None and "越出工程目录" in err
+
+
+@pytest.mark.fast
+def test_merge_rejects_native_windows_anchors_preopen(tmp_path):
+    if os.name != "nt":
+        pytest.skip("Windows native path semantics")
+    for ref in (r"\foo", "/foo", "C:foo", r"C:\foo", r"\\server\share\x",
+                r"\\?\C:\foo", r"\\.\device"):
+        project = {"_ref_base_dir": str(tmp_path), "tracks": [{"$ref": ref}]}
+        with patch("builtins.open", side_effect=AssertionError("unexpected read")):
+            with pytest.raises(ProjectError, match=r"tracks\[0\]\.\$ref"):
+                merge_layout(project)
+        assert project["tracks"] == [{"$ref": ref}]
+
+
+@pytest.mark.fast
+def test_ref_posix_backslash_filename(tmp_path):
+    if os.name == "nt":
+        pytest.skip("POSIX literal backslash filename")
+    name = r"\track.json"
+    (tmp_path / name).write_text('{"name":"ok"}', encoding="utf-8")
+    track, err = _read_ref_track(str(tmp_path), name)
+    assert err is None and track["name"] == "ok"
 
 
 @pytest.mark.fast

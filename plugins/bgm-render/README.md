@@ -37,16 +37,16 @@ python3 apps/bgm/bgm.py show structure --json /绝对路径/音乐工程.json
 ## 运行配置
 
 ```json
-{"bgm": {"enabled": true, "python": null, "runtime": null}}
+{"bgm": {"python": null, "runtime": null}}
 ```
 
-固定调用仓内 `apps/bgm/bgm.py`；`bgm.python` 可指定已有 Python 解释器（不是命令串），缺省从系统环境解析。`bgm.runtime` 可指定用户运行配置；相对路径以生效的 VTX_CONFIG 文件目录为基准，子进程通过 `MUSIC_RUNTIME` 接收。否则遵循音乐组件的环境变量/默认数据根规则：`$XDG_DATA_HOME/framivra/music`，缺省 `~/.local/share/framivra/music`，其中 `runtime.json` 为可选运行配置、`assets/` 为用户资产。旧 `bgm.repo` / `bgm.cli` 已退役，不再改变调用目标。
+官方插件启停由 [registry](<../registry.json>) 管理；`bgm.enabled` 不是配置开关，不能用它证明禁用失败分支。固定调用仓内 `apps/bgm/bgm.py`；`bgm.python` 可指定已有 Python 解释器（不是命令串），缺省从系统环境解析。`bgm.runtime` 可指定用户运行配置；相对路径以生效的 VTX_CONFIG 文件目录为基准，子进程通过 `MUSIC_RUNTIME` 接收。否则遵循音乐组件的环境变量/默认数据根规则：`$XDG_DATA_HOME/framivra/music`，缺省 `~/.local/share/framivra/music`，其中 `runtime.json` 为可选运行配置、`assets/` 为用户资产。旧 `bgm.repo` / `bgm.cli` 已退役，不再改变调用目标。
 
 未安装音乐组件或配置的解释器不可执行会明确失败；没有音乐源的普通视频不要求音乐环境。基础音乐依赖、可选引擎和本机资产搬迁见 [应用 README](../../apps/bgm/README.md)。health 的帮助探针仅证明 CLI 可启动，不等于实际渲染通过。
 
 ## 身份、缓存与失败
 
-- 整工程共享缓存为 `cache/bgm/<render_digest>/`；render 身份不含 output/stem，包含工程字节、`$ref`、extra_deps、插件代码和仓内音乐执行身份。
+- 整工程共享缓存为 `cache/bgm/<render_digest>/`；render 身份不含 output/stem，包含工程字节、`$ref`、extra_deps、插件代码和仓内音乐执行身份。同一会话多源共享不受档位影响；跨会话保留/复用媒体须显式 `cache.mode: aggressive`，默认 core 在会话后回收音乐中间件，不能以缺目录判定共享渲染失败。
 - 音乐执行身份包含业务 Python/JSON 描述符/schema/工作流内容、有效运行配置摘要、解释器/FFmpeg/配置工具文件身份、NumPy 安装记录。配置原文与凭据不写入回执。工具为 stat 身份、NumPy 为安装记录，不是完整动态库或任意外部服务的闭包证明。
 - 标准 sample 根、SF2 引用文件、SFZ 根与绝对 SFZ 的所在目录自动参与；超出这些目录的 SFZ include/sample 等仍须 `extra_deps` 声明。显式依赖会同时影响缓存和回执，不必另手工重复填写 project.cache_dependencies。
 - 目录依赖保留有界策略：排序的相对路径与文件内容签名；排除 `__pycache__`、`.lock`、`.tmp`。超过 5000 文件或 2 GiB 时使用 `(相对路径,size,mtime_ns)` 清单，`DIRL:` 区分 `DIRC:`，不承诺超限库恢复 mtime 后的中间字节变动检测。

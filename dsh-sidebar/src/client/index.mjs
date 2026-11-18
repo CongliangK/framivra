@@ -14,6 +14,7 @@ import { ToolButton, ToolSummary } from './icon-controls.mjs'
 import { boundedText, CONTROL_REQUEST_LIMIT } from '../bounded.mjs'
 import { LayoutDivider, SelectionSummary, Transport, editingTarget, stepFrame } from './editor-controls.mjs'
 import { terminalGrantFailure, GRANT_DEAD_MESSAGE } from './grant-lifecycle.mjs'
+import { StoragePanel } from './storage.mjs'
 
 const h = React.createElement
 const ID = 'framivra-dsh-sidebar'
@@ -210,6 +211,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   // unmounted: no polling, no frame render, no draft, no manual write, no
   // proposal confirm. Only a NEW grant (explicit refresh / reopen) clears it.
   const [grantDead, setGrantDead] = useState()
+  const [storageBusy, setStorageBusy] = useState(false)
   const grantDeadlines = useRef(new Map())
   const grantDied = (code, grantId) => { if (grantId === grant.current) setGrantDead(previous => previous ?? code) }
   let frameValue, frameError
@@ -424,7 +426,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
         h('div', { className: 'fv-upper' },
           filesVisible ? h(FileBrowser, { key: `${sessionId}:${browserEpoch}`, sessionId, tabSignal: tab.signal, call: control, selectedPath: ready ? activePath : undefined, onChoose: path => void load(false, path), onClose: closeFiles, recalibrate: browserRecalibrate, hostOps: state.opened?.host?.ops }) : null,
           h('main', { className: 'fv-monitor', 'aria-label': ready ? '画面预览' : '时间线启动区' },
-            ready ? (valid && !grantDead ? h(ProgramMonitor, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, blank: frame === '', fps, duration, onFrame: pin, selection, tabSignal: tab.signal, getDraftServices, call: control, transport, disclosureGroup }) : h('div', { className: 'fv-monitor-toolbar' }, transport)) :
+            ready ? (valid && !grantDead ? h('fieldset', { disabled: storageBusy, style: { display: 'contents' } }, h(ProgramMonitor, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, suspended: storageBusy, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, blank: frame === '', fps, duration, onFrame: pin, selection, tabSignal: tab.signal, getDraftServices, call: control, transport, disclosureGroup })) : h('div', { className: 'fv-monitor-toolbar' }, transport)) :
               h('div', { className: 'fv-empty' }, h(Icon, { name: 'film', size: 32 }), h('h3', null, '从一条时间线开始'), h('p', null, '选择当前工作区中的时间线 JSON 文件，开始预览与剪辑。'),
                 h('div', { className: 'fv-start-actions' },
                   h('button', { className: 'fv-primary', type: 'button', onClick: browseWorkspace }, h(Icon, { name: 'folder', size: 17 }), '浏览工作区'),
@@ -434,8 +436,9 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
             valid && !grantDead && !frameError ? h('details', { className: 'fv-inspector-section', open: true }, h('summary', null, '选区与引用'),
               h(ReferenceTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}:${selection?.kind}:${selection?.address}`, selection, sessionId, opened: state.opened, frame: frameValue, tabSignal: tab.signal, getDraftServices,
                 onStale: () => { clearSelection(); setState(previous => ({ ...previous, stale: true })) } })) : null,
+            valid && !grantDead ? h(StoragePanel, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, sessionId, opened: state.opened, tabSignal: tab.signal, call: control, active: inspectorVisible, disabled: !!(frameOwner.edit.dirty || frameOwner.edit.busy || frameOwner.edit.unknown || frameOwner.ghost), onBusyChange: setStorageBusy, onGrantDead: grantDied }) : null,
             valid && !grantDead ? h('details', { className: 'fv-inspector-section', ref: manualPane }, h('summary', null, '剪辑编辑与提交'),
-              h(ManualEditor, { key: state.opened.grant, sessionId, opened: state.opened, result: state.result, selection, selected, frame: frameValue, tabSignal: tab.signal, call: control, onCommitted: refreshCommitted, onEditState: editState, onGrantDead: grantDied, onGestureReady: callback => setGesture(() => callback), onQuickReady: callback => setQuickEdit(() => callback) })) : null,
+              h('fieldset', { disabled: storageBusy, style: { border: 0, padding: 0, margin: 0, minWidth: 0 } }, h(ManualEditor, { key: state.opened.grant, sessionId, opened: state.opened, result: state.result, selection, selected, frame: frameValue, tabSignal: tab.signal, call: control, onCommitted: refreshCommitted, onEditState: editState, onGrantDead: grantDied, onGestureReady: callback => setGesture(() => callback), onQuickReady: callback => setQuickEdit(() => callback) }))) : null,
              valid ? timelineData({ snapshot: state.opened.snapshot, result: state.result, hits: state.hits, onSelect: pick }) : null,
              valid ? h(TimelineHelp, { result: state.result, onGesture: gesture }) : null) : null),
         ready ? h(LayoutDivider, { value: timelineShare, onChange: setTimelineShare }) : null,

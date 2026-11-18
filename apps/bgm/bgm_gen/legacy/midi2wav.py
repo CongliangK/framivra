@@ -16,9 +16,14 @@ def main(argv=None):
         print("用法: python3 midi2wav.py in.mid out.wav", file=sys.stderr)
         return 2
     mid, wav = argv
-    from bgm_gen.engines.sf2 import fluidsynth_render
+    from bgm_gen.engines.base import load_runtime
+    from bgm_gen.engines.sf2 import fluidsynth_render, resolve_sf2
+    runtime = load_runtime()
+    sf2 = resolve_sf2("FluidR3_GM" if "FluidR3_GM" in runtime.get("sf2", {})
+                      else SF2, runtime)
     # bank/program=None：音色沿用 MIDI 文件内的 program change（与旧版渲染路径一致）
-    fluidsynth_render(mid, wav, SF2, sr=44100, bank=None, program=None, channel=0)
+    fluidsynth_render(mid, wav, sf2, sr=44100, bank=None, program=None,
+                      channel=0, runtime=runtime)
     print("ok:", wav)
     return 0
 

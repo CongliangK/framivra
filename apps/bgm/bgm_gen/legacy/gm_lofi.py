@@ -64,10 +64,17 @@ def build_tracks():
 
 def main():
     from bgm_gen.engines.midi_util import write_smf
-    from bgm_gen.engines.sf2 import fluidsynth_render
+    from bgm_gen.engines.base import load_runtime
+    from bgm_gen.engines.sf2 import fluidsynth_render, resolve_sf2
+    runtime = load_runtime()
+    # Keep the historical Linux default, but honor the user's external font
+    # mapping on macOS/other platforms. A broken explicit mapping must fail.
+    sf2 = resolve_sf2("FluidR3_GM" if "FluidR3_GM" in runtime.get("sf2", {})
+                      else SF2, runtime)
     write_smf(OUT_MID, build_tracks(), bpm=BPM)
     # bank/program=None：音色沿用 MIDI 文件内的 program change（与旧版渲染路径一致）
-    fluidsynth_render(OUT_MID, OUT_WAV, SF2, sr=44100, bank=None, program=None, channel=0)
+    fluidsynth_render(OUT_MID, OUT_WAV, sf2, sr=44100, bank=None, program=None,
+                      channel=0, runtime=runtime)
     print(f"ok: {OUT_WAV}  (MIDI: {OUT_MID})")
 
 

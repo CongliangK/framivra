@@ -863,6 +863,13 @@ def _int(d, key, errs, path=None, lo=None, hi=None, default=None):
 
 # ------------------------------------------------------------ $ref / 写回 / 双布局
 
+def _ref_has_anchor(ref, path):
+    # Windows 的单根分隔符在 Python 3.13 的 isabs 中不再算绝对路径；
+    # drive-relative 也不以工程目录为基准。POSIX 的反斜杠仍是普通字符。
+    separators = tuple(s for s in (path.sep, path.altsep) if s)
+    return bool(path.splitdrive(ref)[0]) or ref.startswith(separators) or path.isabs(ref)
+
+
 def _read_ref_track(base_dir, ref):
     """读 $ref 外部轨文件 → (track_dict, None) 或 (None, 错误消息)。
 
@@ -874,6 +881,8 @@ def _read_ref_track(base_dir, ref):
         return None, f"必须是相对路径字符串，得到 {ref!r}"
     if os.path.isabs(ref):
         return None, f"{ref!r} 不允许绝对路径（仅相对工程文件所在目录）"
+    if _ref_has_anchor(ref, os.path):
+        return None, f"{ref!r} 不允许绝对路径、根相对或带盘符路径（仅相对工程文件所在目录）"
     ext_path = os.path.normpath(os.path.join(base_dir, ref))
     base_real = os.path.realpath(base_dir)
     if not os.path.realpath(ext_path).startswith(base_real + os.sep):
@@ -1337,12 +1346,12 @@ def render_project(project_path, out_dir=None, quiet=False, incremental=False, r
             print(f"· stems 并行计划：{len(pool_items)} 任务 workers={workers}"
                   f" per_task≈{per_task:g}GB（cpu×{_res.DEFAULT_CPU_CAP_FACTOR:g}"
                   f" 地板 {_res.mem_floor_gb():.0f}GB 上限 {_res.DEFAULT_HARD_CAP}）")
-        for name, res in _res.run_pool(pool_items, _render_stem,
-                                       per_task_gb=per_task, workers=workers):
-            stem_results[name] = res
+        for track_name, res in _res.run_pool(pool_items, _render_stem,
+                                             per_task_gb=per_task, workers=workers):
+            stem_results[track_name] = res
     for it in seq_items:                          # GPU 引擎顺序兜底（理论不可达）
-        name, res = _render_stem(it)
-        stem_results[name] = res
+        track_name, res = _render_stem(it)
+        stem_results[track_name] = res
 
     # 2) BG-D5 归一 + 混音总线 + 母带（mixer 内完成 adelay 平移/apad/atrim 定长）
     if not quiet:

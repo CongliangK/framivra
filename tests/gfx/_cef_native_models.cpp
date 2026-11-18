@@ -51,6 +51,10 @@ namespace vtx_cef {
   static std::vector<CefRefPtr<CefBrowser>> browsers;
   static std::vector<std::string> trace;
   static std::function<void(RunState&)> fence_hook;
+  // Test-only seam inserted after the ACTUAL callback classifier returns false.
+  // Simulates differing observations, not an asserted upstream CEF mechanism.
+  static std::function<void(RunState*, const uint8_t*)> negative_classification_hook;
+  static int mutate_negative_phase = 0, negative_mutations = 0;
   static bool withhold_unsigned_second=false, stale_same_url_load=false, wrong_unsigned_ready=false, unsigned_content_mismatch=false;
   // 抖动容忍契约正例：unsigned 样本带稳定预算内低差（1px、Δ1、签名
   // 冻结）——按 frame_sync_machine.hpp:199-224 契约必须在连续相同签名
@@ -330,7 +334,27 @@ else if (browser->ready && browser->name == "unsigned" && transient_unsigned_mis
       p[0] ^= 1;
 if(browser->ready&&browser->name=="unsigned"&&withhold_unsigned_second&&browser->postready_paints++>0)return;
 if(browser->name=="signed"&&browser->ready)Draw(p,browser->f,browser->req,browser->relocated);
-SimPaint(&s,p);
+if (browser->name == "signed" && s.sync_machine &&
+    s.sync_machine->state() == fsync::State::S4_COMPOSITOR_PUMPING &&
+    !s.sync_machine->needs_baseline_veto() && negative_mutations == 0 &&
+    mutate_negative_phase == (s.sync_machine->needs_relocation() ? 2 : 1)) {
+  const bool second = s.sync_machine->needs_relocation();
+  const auto valid = p;
+  p[(second ? 24 : 0) * 4] ^= 0xff;  // Stale classifier observation.
+  negative_classification_hook = [&](RunState* state, const uint8_t* pixels) {
+    ck(state == &s, "mutation seam identifies actual signed callback state");
+    std::memcpy(const_cast<uint8_t*>(pixels), valid.data(), valid.size());
+    ++negative_mutations;  // Accounting reread now sees a valid signed phase.
+  };
+  SimPaint(&s, p);
+  negative_classification_hook = nullptr;
+  ck(negative_mutations == 1, "stale-to-valid mutation occurs after negative classification");
+  ck(s.sync_machine->needs_relocation() == second &&
+     !s.sync_machine->needs_baseline_veto() && !s.js_paint_pending,
+     "actual callback negative path cannot advance either signed phase");
+} else {
+  SimPaint(&s,p);
+}
     }
     );
   }
@@ -416,6 +440,8 @@ struct Fixture {
     browsers.clear();
     trace.clear();
     fence_hook=nullptr;
+    negative_classification_hook = nullptr;
+    mutate_negative_phase = negative_mutations = 0;
     withhold_unsigned_second=stale_same_url_load=wrong_unsigned_ready=unsigned_content_mismatch=false;
     unsigned_stable_low_delta_jitter=false;
     fail_context_creation = fail_browser_creation = false;
@@ -805,7 +831,20 @@ int tests(){
     }
     x.close();
   }
+  for (int phase : {1, 2}) {
+    Fixture x;
+    mutate_negative_phase = phase;
+    const auto r = x.run(1, 7);
+    ck(negative_mutations == 1, "mutation regression exercises requested signed phase");
+    ck(r.status == kStatusOk && x.dst == Original(7),
+       "stale-to-valid callback recovers through later owned fenced exact proof");
+    ck(x.state.js_error.sent >= 5, "mutation cannot bypass any of five signed fences");
+    ck(x.machine.counters().requests_accepted == 1,
+       "callback mutation still admits exactly one fully proved request");
+    x.close();
+  }
   std::printf("EXTRACTED_NATIVE_MODEL_PASS checks=%d scenarios=49 (fake CEF events, actual production orchestration/FSM)\n",check_count);
+  std::printf("NONADVANCING_CALLBACK_MUTATION_PASS phases=2 all-five-signed-fences byte-exact-recovery\n");
   std::printf("BUDGET_CHECKS_OK stable_in_budget_low_delta_accepts + over_budget_or_unstable_rejects (jitter tolerance contract regression)\n");
   return 0;
 }

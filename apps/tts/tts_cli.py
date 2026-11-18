@@ -32,7 +32,9 @@ import spec as spec_mod  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(HERE))  # v2 迁移后 tts 在 apps/ 下，仓根 = 上两级
 DEFAULT_REPO = os.path.expanduser("~/AI/IndexTTS/repo")
-DEFAULT_TTS_PY = os.path.expanduser("~/miniconda3/envs/indextts/bin/python")
+_CONDA_PY = ("python.exe",) if os.name == "nt" else ("bin", "python")
+_VENV_PY = ("Scripts", "python.exe") if os.name == "nt" else ("bin", "python")
+DEFAULT_TTS_PY = os.path.join(os.path.expanduser("~/miniconda3/envs/indextts"), *_CONDA_PY)
 DEFAULT_VOICE_REF = os.path.expanduser("~/音乐/5_G_Resemble仅降噪.wav")
 DEFAULT_EDGE_BIN = os.path.expanduser("~/miniconda3/bin/edge-tts")
 EXIT_ENGINE_FAIL = 3  # indextts_worker 同款（OOM 等），触发 edge 降级提示
@@ -50,6 +52,12 @@ def tts_cfg(key: str, default):
     """tts.<key> 容错读取（spec.cfg_get 同款，~ 展开）。"""
     v = spec_mod.cfg_get(load_config(), f"tts.{key}", default)
     return os.path.expanduser(v) if isinstance(v, str) else v
+
+
+def _indextts_python(repo):
+    configured = tts_cfg("python", DEFAULT_TTS_PY)
+    fallback = os.path.join(repo, ".venv", *_VENV_PY)
+    return next((py for py in (configured, fallback) if os.path.isfile(py)), None)
 
 
 def new_runid() -> str:
@@ -125,18 +133,15 @@ def cmd_gen(a):
                         voice=a.edge_voice, only_missing=a.only_missing)
         print_followups(project)
     elif engine == "indextts":
-        py = tts_cfg("python", DEFAULT_TTS_PY)
-        if not os.path.exists(py):
-            alt = os.path.join(tts_cfg("repo", DEFAULT_REPO), ".venv/bin/python")
-            py = alt if os.path.exists(alt) else py
-        if not os.path.exists(py):
+        repo = tts_cfg("repo", DEFAULT_REPO)
+        py = _indextts_python(repo)
+        if py is None:
             raise SystemExit("✗ indextts 解释器未找到（config tts.python / "
-                             "conda env / repo/.venv），跑 bash apps/tts/init.sh；"
-                             "或先兜底：--engine edge")
+                             "conda env / repo/.venv）；或选择 --engine edge")
         cmd = [py, os.path.join(HERE, "indextts_worker.py"),
                "--spec", a.spec, "--project", project, "--runid", runid,
                "--voice-ref", tts_cfg("voice_ref", DEFAULT_VOICE_REF),
-               "--repo", tts_cfg("repo", DEFAULT_REPO)]
+               "--repo", repo]
         if a.ids:
             cmd += ["--ids", a.ids]
         if a.only_missing:
@@ -174,12 +179,9 @@ def cmd_probe(a):
     rec("repo", not missing,
         f"{repo}" if not missing else f"checkpoints 缺 {missing}（跑 bash apps/tts/init.sh）")
 
-    py = tts_cfg("python", DEFAULT_TTS_PY)
-    if not os.path.exists(py):
-        alt = os.path.join(repo, ".venv/bin/python")
-        py = f"{py} → {alt}" if os.path.exists(alt) else py
-    rec("解释器", os.path.exists(py), py if os.path.exists(py)
-        else f"{py} 不存在（跑 bash apps/tts/init.sh）")
+    py = _indextts_python(repo)
+    rec("解释器", py is not None, py if py is not None
+        else "未找到（config tts.python / conda env / repo/.venv）")
 
     vr = tts_cfg("voice_ref", DEFAULT_VOICE_REF)
     rec("音色参考", os.path.exists(vr),
@@ -201,8 +203,8 @@ def cmd_probe(a):
     else:
         rec("GPU", False, "无 nvidia-smi → 建议 --engine edge")
     n_ok = sum(1 for x in checks if x)
-    print(f"--- 结果：{n_ok}/{len(checks)} 项就绪"
-          f"{'（indextts 可用）' if all(checks[:3]) and checks[-1] else '（缺项见上；edge 兜底随时可用）'} ---")
+    print(f"--- 结果：{n_ok}/{len(checks)} 项就绪（仅资产检查） ---")
+    print("IndexTTS 推理仍受许可策略阻断；edge 需客户端和在线服务可用。")
 
 
 def main():

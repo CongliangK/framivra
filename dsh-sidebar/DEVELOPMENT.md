@@ -6,11 +6,17 @@ This optional DSH integration lives in `dsh-sidebar/`, the source home for an ex
 
 ## Implementation and evidence boundaries
 
-The current target is **unmodified npm DSH `0.2.2-rc.1`**, plugin version `0.2.4`. This is the installed prerelease, **not a compatibility claim for a future stable `0.2.2`**. The adapter requires no DSH source modification, no Host edits, no installer extension and no `@deepseek-ai/dsh-client-modules/build` dependency: its own builder uses the public `tsdown` API. The Host checks the selected installed core's actual capabilities; prior supplier identities remain attached to their historical acceptance below. Engines: Node `>=24.9.0`, DSH exactly `0.2.2-rc.1`; five client-bundle injection declarations. Cordis `4.1.0` and Schemastery `3.19.0` match the tested SDK. Published `dsh-client-ui-slots` remains a development/test supplier; it is not a standalone client-bundle injection.
+The current target is **unmodified npm DSH `0.2.2-rc.1`**, plugin version `0.2.5`. This is the installed prerelease, **not a compatibility claim for a future stable `0.2.2`**. The adapter requires no DSH source modification, no Host edits, no installer extension and no `@deepseek-ai/dsh-client-modules/build` dependency: its own builder uses the public `tsdown` API. The Host checks the selected installed core's actual capabilities; prior supplier identities remain attached to their historical acceptance below. Engines: Node `>=24.9.0`, DSH exactly `0.2.2-rc.1`; five client-bundle injection declarations. Cordis `4.1.0` and Schemastery `3.19.0` match the tested SDK. Published `dsh-client-ui-slots` remains a development/test supplier; it is not a standalone client-bundle injection.
 
 The conversation-draft bridge uses official `InputActions` plus public `ConversationController` methods. `createDrafts(sessionId, files, false)` explicitly disables service-owned image uploads. The Guide retains the **tab-scoped boolean** `replaceTab: true`; the separate controller-level API takes a TabId. The builder rejects undeclared DSH/React-family runtime imports before resolution, even when a development dependency could otherwise be silently inlined. The release includes exported English/Chinese metadata and an SVG icon.
 
 Evidence remains supplier- and artifact-specific. Acceptance sections dated before this upgrade are preserved historical evidence for their original DSH and ZIP, **not certificates for the current release**. Agent-loop fixtures use a clearly labelled deterministic scripted model, not an external AI service or billing account.
+
+### Project storage controls (#362)
+
+The additive `storage/v1` protocol and stopped-writer/delete authority live in the [kernel storage contract](<../docs/reference/storage-api.md>). The owner-only control endpoint consumes an immutable one-use preview token; it never accepts deletion paths or exposes storage operations to model tools. Existing three-way cache settings remain the only tier control. The visible inspector samples bounded logical project space; it is not a process-memory monitor. Cancellation does not undo deletions, and unknown cleanup outcomes remain visible across later reads.
+
+Artifact-specific Before/After and owner workflow evidence is maintained in [PR #366](<https://github.com/CongliangK/framivra/pull/366>); the [original synthetic-project record](<https://github.com/CongliangK/framivra/blob/501e6a0a8b4fcd56c7a9fd1f4859989c1ed4e5fd/docs/reports/resource-management-362/README.md>) remains recoverable at its immutable revision. Process captures are not release payload or a sustained-leak certificate. Current observations and limits belong in the [resource investigation](<../docs/reports/development-history.md#资源生命周期排查362>); historical acceptance below does not certify this panel.
 
 ### npm 0.2.2-rc.1 migration verification (2026-11-13, Linux x64)
 
@@ -64,6 +70,8 @@ Open the Framivra guide card, then **打开时间线** to browse the current Ses
 ### Visual workbench (read-only unless separately authorized)
 
 The sidebar has a compact project entry and **展开工作台** opens the same live DOM in a native modal dialog: project files at the left, a program monitor in the center, optional **属性与编辑** at the right, and a multitrack timeline below. Collapse/Escape retains selection, queued edits and verified-frame state; it does not reopen the project or grant writes. Narrow containers stack these regions. Track-family colors and stored clip ranges are visual navigation, not invented thumbnails or waveforms. Technical help, raw fields and certificates are collapsed but remain available; **实时真预览 / 成片渲染** switch a single visible program stage. Both modes, the timecode input and timeline share one canonical global integer frame. A generated PNG is shown from its verified `File`; its temporary URL is revoked on replacement, invalidation or unmount. Live generation requires independent cache-write consent and either an explicit generation click or separately enabled follow; merely opening or navigating does not grant writes. Source-checkout product scope and visual decisions are recorded in [PRODUCT](PRODUCT.md) and [DESIGN](DESIGN.md).
+
+Workbench chrome, guide cards, native top-layer controls and code fields follow the official host's live theme/font aliases; only the actual image/video canvas stays dark. Primary fill/foreground, error and tooltip colors are paired host tokens, with standalone supplier fallbacks. In the wide expanded view the one-row monitor controls stick inside the monitor scrollport. Opening advanced positioning restores non-sticky flow for the toolbar while its bounded overlay is open, without adding a layout row. Closing that disclosure restores sticking. Image details do not change that state.
 
 Frequent topbar, transport, selection, timeline-window, reference and image actions are **icon-only** native controls, with full accessible names and hover/focus tooltips. Escape dismisses an open tooltip first; blur, scrolling, hidden tabs and unmount retire its listeners and short hover-travel timer. Browsers without Popover retain native title help. Write permission, preflight/confirmation, cache-write acknowledgement, file names and actual frame/range information remain explicit text. Icons are an offline vendored subset of **lucide-static 1.70.0** (no runtime dependency or second React); [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES.md) ships the exact upstream ISC license plus Feather-derived MIT appendix, pinned provenance and icon mapping in both source and ZIP.
 
@@ -213,13 +221,13 @@ The own builder receives this package directory, `src/client/index.mjs` and an o
 From `dsh-sidebar/`, install the locked build/test dependencies with `npm ci --ignore-scripts` (**writes node_modules**). Build with this package's bundler, not an ambient DSH checkout (**writes fresh artifacts**, not an install):
 
 ```sh
-env -u SIDEBAR_DSH_ROOT NODE_ENV=production npm run package -- --out /absolute/new/framivra-dsh-sidebar-0.2.4.tgz
+env -u SIDEBAR_DSH_ROOT NODE_ENV=production npm run package -- --out /absolute/new/framivra-dsh-sidebar-0.2.5.tgz
 env -u SIDEBAR_DSH_ROOT NODE_ENV=production npm run package -- --out /absolute/new/framivra-dsh-sidebar-candidate.zip
 ```
 
 The output must not already exist. The packager allowlists release metadata and omits source scripts/dependencies/node_modules. The source manifest stays `private: true`; only the freshly staged release manifest omits that guard. `.tgz` uses `npm pack --ignore-scripts --offline` in that stage, with standard `package/` layout. All stages complete before atomic, no-overwrite creation of the final archive pathname; build/archive failure leaves it absent. Hidden staging directories remain beside the output as build evidence; do not edit their archive aliases after acceptance. Reusing an existing pathname fails without modifying its bytes. `--client` injection is not supported. Packaging reports bytes, full SHA-256 and the Host/Client code stamp; the latter is not a whole-archive integrity digest. ZIP timestamps are not normalized, so rebuilding is not a promise of identical ZIP bytes. Record Node/npm/bundler versions and verify the **exact final tarball**.
 
-For maintainers, inspect the tarball with `npm publish /absolute/new/framivra-dsh-sidebar-0.2.4.tgz --dry-run --ignore-scripts --access public --registry=https://registry.npmjs.org/`. This is a publication preview, not proof of account permission. Only after artifact acceptance and explicit publishing authorization, remove `--dry-run` to publish **that tarball**, never the source directory. Use npm login/2FA as required; do not store tokens in the repository. Upload the same verified bytes plus SHA-256 to a plugin-specific GitHub Release, without changing the core's latest release. Publish source through the normal review/PR process and pin the plugin tag to that reviewed commit. npm version bytes and released tags must not be replaced; fixes require a new version.
+For maintainers, inspect the tarball with `npm publish /absolute/new/framivra-dsh-sidebar-0.2.5.tgz --dry-run --ignore-scripts --access public --registry=https://registry.npmjs.org/`. This is a publication preview, not proof of account permission. Only after artifact acceptance and explicit publishing authorization, remove `--dry-run` to publish **that tarball**, never the source directory. Use npm login/2FA as required; do not store tokens in the repository. Upload the same verified bytes plus SHA-256 to a plugin-specific GitHub Release, without changing the core's latest release. Publish source through the normal review/PR process and pin the plugin tag to that reviewed commit. npm version bytes and released tags must not be replaced; fixes require a new version.
 
 The package tests build/load the actual SDK output; no dummy Client archive is generated. A successful build/package test does **not** certify clean-profile installation or authentication.
 
@@ -231,16 +239,16 @@ Needed from the read CLI: `vtx -t PATH capabilities|inspect|query`, the `framivr
 
 Requires **Node >=24.9.0 and DSH exactly 0.2.2-rc.1**; other DSH versions are not certified. The owner-only management page can install an explicitly trusted local Python `framivra` wheel in a new independent venv. It does **not** install Python, FFmpeg, browsers, models or other render dependencies. Prepare those separately before using a timeline. No official wheel download or PyPI installation is offered without an actual verified distribution source.
 
-Once the version is published, enter `framivra-dsh-sidebar@0.2.4` in DSH's existing plugin-install input. No DSH interface changes, source checkout, download/extract step or local path are needed. If a registry mirror has not synchronized, choose the official registry `https://registry.npmjs.org/`. The equivalent CLI command below **writes the selected profile** (requires `pnpm`):
+Once the version is published, enter `framivra-dsh-sidebar@0.2.5` in DSH's existing plugin-install input. No DSH interface changes, source checkout, download/extract step or local path are needed. If a registry mirror has not synchronized, choose the official registry `https://registry.npmjs.org/`. The equivalent CLI command below **writes the selected profile** (requires `pnpm`):
 
 ```sh
-dsh plugin --profile web add framivra-dsh-sidebar@0.2.4 --registry=https://registry.npmjs.org/
+dsh plugin --profile web add framivra-dsh-sidebar@0.2.5 --registry=https://registry.npmjs.org/
 ```
 
-The same input also accepts the standard `.tgz` asset URL from this repository's **`dsh-sidebar-v0.2.4`** GitHub Release, once published. Use the actual asset download URL, not the Python repository URL, GitHub's generated source archive or a ZIP. Plugin releases have their own tag namespace and must not replace the core's latest stable release. For an already downloaded and SHA-256-verified tarball, install directly (**writes the profile**, no extraction required):
+The same input also accepts the standard `.tgz` asset URL from this repository's **`dsh-sidebar-v0.2.5`** GitHub Release, once published. Use the actual asset download URL, not the Python repository URL, GitHub's generated source archive or a ZIP. Plugin releases have their own tag namespace and must not replace the core's latest stable release. For an already downloaded and SHA-256-verified tarball, install directly (**writes the profile**, no extraction required):
 
 ```sh
-dsh plugin --profile web add /absolute/download/framivra-dsh-sidebar-0.2.4.tgz
+dsh plugin --profile web add /absolute/download/framivra-dsh-sidebar-0.2.5.tgz
 ```
 
 Legacy ZIP delivery remains supported via **extract → official local-directory installation**, not native ZIP upload (**writes the extraction directory and profile**):

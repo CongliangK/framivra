@@ -5,12 +5,18 @@
 - timeline.json/素材→帧精确视频/混音/QC/缓存；[内核](<vtx/>)永不可关
 - [应用](<apps/>)产素材/辅助结果；[插件](<plugins/>)扩时间线，启用不忽略依赖/失败。
 - [侧栏](<dsh-sidebar/README.md>)独立发行：完整合成非单页，预览共用整数播放头、成片联动非合成证书；单行工具栏，帧步进与轨道高度在时间线；轨高/专注视图只改显示；宽屏文件列表独立滚动；生效插件在身份/钩子前拒绝；HTML信任≠沙箱；写态走内核事务，帧率/预览限制不变。
+- [空间管理](<docs/reference/storage-api.md>)删除权归内核；清理须独立确认停写，不向模型开放。
 - macOS授权见接口；目录fd≠proc-fd Path；单帧须全输入前后复核；环境文件批查仅复用本次目录前缀并前后核验，仍重枚举/哈希/查链接；Linux缺RECORD只认元数据所属RPM清单。
 - 制作读[技能](<docs/skill/SKILL.md>)；范本[工作流](<templates/README.md>)、组件[目录](<docs/catalog.md>)。
 - 开发读[架构](<docs/ARCHITECTURE.md>)/[开发](<docs/DEV.md>)；API/事务见[接口](<docs/reference/timeline-api.md>)。
 - 环境见[依赖](<README.md#依赖矩阵>)：Python≥3.9，工具按路径配置；模型默认关；空依赖≠仅需标准库。
 - [安装](<docs/guides/installation.md>)：独立venv/固定身份缓存/内核锁，验收后ready；Win主进程不提权，厂商包UAC；DSH显式连接；登记≠验收。
 - 安装验收：BGM发现不可依赖POSIX，目录发布对部分Windows绝对路径兼容混合斜杠、不改运行数据；GPU用原生锁；Windows并发内存门须实测且探测失败时拒派；hue素材先规范RGB色域，不松QC。
+- BGM v2 轨 `$ref` 装载/merge 仅接受工程内相对路径：Windows 根相对、带盘符及设备路径先拒绝，仍须 realpath 越界检查；POSIX 反斜杠为普通文件名字符。插件签名与 asset_dependencies 共用标准库筛选及静态路径检查，仅展开 v2 直接纯非空字符串引用；以工程词法父目录为基准拒绝越界及非普通文件，按 loader 先 normpath 后 realpath 取文件，缺失记 MISSING；沿用 loader 根目录 base 的严格前缀限制；不证明原始文本逐组件不越界，检查与打开非原子，不能防 TOCTOU 或工程内硬链接指向外部内容。
+- 侧栏沿用[宿主主题](<dsh-sidebar/DESIGN.md>)，切换不重建输入或触发写态；保留黑舞台/轨道语义色，失效不留可用成功提示；高级定位浮层展开时工具栏暂停吸顶，折叠恢复。
+- [音乐原生验收](<apps/bgm/README.md#macos-原生验收>)用隔离配置与原创输入走完整链；基础、可选引擎、人工听审分别记账，缺资产不算通过。
+- IndexTTS 的 `probe` 和 `gen` 共用原生解释器发现；找到解释器不代表许可允许推理。
+- [CDP 启动诊断](<vtx/render/gfx_render.py>)区分 DevTools HTTP 就绪前进程退出与页面 CDP 握手后初始化 `Page.enable` 超时；退出只报告有界状态，不泄露 argv/profile，超时不证明页面域状态或 renderer/token 根因，不改 strict/CLI 回退。
 
 ## 常用命令
 
@@ -43,7 +49,10 @@
 ## 基线与性能
 
 - 唯一主基线：30秒/900帧/1080p30 SVG；禁用退役12秒基线，探针不替主片。
+- Windows SVG 先校验原始项目相对声明，再用 `/` 序列化依赖并集并复核解析路径；不放行 Windows SVG 运行时。
+- [SVG shell](<vtx/render/gfx_svg_stage.py>) 即使退出成功也拒收明确的 Fontconfig error / Pango-CRITICAL，不发布完成凭据；该诊断只报告固定短错误，不回显日志，普通警告不拒收。
 - 准备/核验仅用 `scripts/demo.py prepare/verify`；portable-v2锁字体/标准库音频，禁混旧输入，见[Demo](<templates/demo-timeline-svg/README.md>)。
 - 同输入/质量/环境/后端/配置分冷暖测全链；留身份/哈希/证据；未测UNRUN，探针非整体提速；SVG有界调度/串行回退见[缓存](<docs/cache-provenance.md#产物身份>)。
 - [事件](<docs/reference/execution-events.md>)跨阶段回执绑定实际嵌套任务，区间不相加冒充墙钟。
 - 帧率由[constraints](<vtx/pipeline/constraints.py>)统一；FFmpeg用精确时基，音频按绝对帧端点取采样；正式/区间concat共用端点，不以容器或总帧数替代时钟判据。
+- [CEF 帧证明](<experiments/gfx_cef_worker/README.md>)的拒收/非推进回调只能计账，不得推进 signed 阶段、冻结候选或写输出；推进须 owned 快照及对应绘制后 JS 围栏，保留完整见证/字节 veto；修复须重编并绑定 worker 二进制身份。

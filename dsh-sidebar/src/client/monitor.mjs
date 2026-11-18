@@ -106,7 +106,7 @@ export function RenderedPlayer({ opened, sessionId, frame, fps, duration, onFram
       status && usable ? h('span', { className: 'fv-monitor-status', role: 'status', title: status }, status) : null) : null)
 }
 
-export function ProgramMonitor({ owner, opened, sessionId, frame, blank = false, fps, duration, onFrame, selection, tabSignal, getDraftServices, call, transport, disclosureGroup }) {
+export function ProgramMonitor({ owner, opened, sessionId, frame, blank = false, fps, duration, onFrame, selection, tabSignal, getDraftServices, call, transport, disclosureGroup, suspended = false }) {
   const [mode, setMode] = useState('live')
   function change(next) {
     if (next === mode) return
@@ -119,6 +119,6 @@ export function ProgramMonitor({ owner, opened, sessionId, frame, blank = false,
       h('div', { className: 'fv-preview-modes', role: 'group', 'aria-label': '预览模式' },
         h(ToolButton, { icon: 'diagnostic', label: '实时真预览', tooltip: '实时真预览 · 当前时间线的完整合成帧', 'aria-pressed': mode === 'live', onClick: () => change('live') }),
         h(ToolButton, { icon: 'film', label: '成片渲染', tooltip: '成片渲染 · 播放已有成片，不启动渲染', 'aria-pressed': mode === 'rendered', onClick: () => change('rendered') }))),
-    h(FrameTools, { owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call, disclosureGroup, active: mode === 'live' }),
+    h(FrameTools, { owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call, disclosureGroup, active: mode === 'live', suspended }),
     mode === 'rendered' ? h(RenderedPlayer, { opened, sessionId, frame, fps, duration, onFrame, disclosureGroup }) : null)
 }

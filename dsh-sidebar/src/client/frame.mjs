@@ -168,7 +168,10 @@ export function frameDraftText(generated, selection, positionOnly = false) {
   return text
 }
 
-export function FrameTools({ owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call, disclosureGroup, active = true }) {
+export function FrameTools({ owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call, disclosureGroup, active = true, suspended = false }) {
+  const scheduling = useRef({ suspended, revision: 0, intent: 0 })
+  if (scheduling.current.suspended !== suspended) scheduling.current.revision++
+  scheduling.current.suspended = suspended
   const [state, setState] = useState({}), [consent, setConsent] = useState(false), [positionOnly, setPositionOnly] = useState(false)
   const [prepareGfx, setPrepareGfx] = useState(false), [htmlTrust, setHTMLTrust] = useState(false)
   const [follow, setFollow] = useState(false)
@@ -208,10 +211,10 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       // Validate association before making either stage/copy available.
       if (!automatic) frameDraftText(verified, selection, positionOnly)
       owner.generated = verified
-      setState({ message: '已验证 PNG，未发送。复制与入稿请展开图片工具。' })
+      setState({ previewEpoch: owner.epoch, message: '已验证 PNG，未发送。复制与入稿请展开图片工具。' })
     } catch (error) {
       if (sequence === generation.current) {
-        if (!operation?.signal.aborted) { setState({ message: `错误：${error.message}` }); if (automatic) setFollow(false) }
+        if (!operation?.signal.aborted) { setState({ message: `错误：${error.message}` }); if (automatic) { scheduling.current.intent++; setFollow(false) } }
         else setState({ message: '操作已失效/取消；未加入草稿。' })
       }
     } finally {
@@ -260,11 +263,14 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       setState({ message: operation.signal.aborted ? '剪贴板写入可能已完成；OS 无法撤回，当前选择已变化。' : 'PNG 已复制；OS 可能重新编码，不承诺剪贴板字节恒等。' })
     } catch (error) { setState({ message: `图片未确认复制：${error.message}；无自动文本降级。` }) }
   }
-  const blocked = !whole(frame) || !!owner.ghost || owner.edit.dirty || owner.edit.busy || owner.edit.unknown
+  const blocked = suspended || !whole(frame) || !!owner.ghost || owner.edit.dirty || owner.edit.busy || owner.edit.unknown
   function enqueue(automatic = false) {
+    const revision = scheduling.current.revision, intent = ++scheduling.current.intent
     const start = () => {
-      // A superseded debounced intent must not begin work or abort a newer one.
-      if (owner.epoch !== viewEpoch || !active || tabSignal.aborted) return
+      // Suspension invalidates old intents even if it ends before cleanup;
+      // a newer queued intent or automatic failure also supersedes this one.
+      const current = scheduling.current
+      if (owner.epoch !== viewEpoch || !active || current.suspended || current.revision !== revision || current.intent !== intent || tabSignal.aborted) return
       return generate(automatic)
     }
     const task = serial.current ? serial.current.then(start) : start()
@@ -291,6 +297,10 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
     return () => { URL.revokeObjectURL(url); setPreview(undefined) }
   }, [verifiedFile])
   const shownPreview = generated && preview && preview.file === generated.file ? preview.url : null
+  // Only availability text expires; observed draft/copy and cleanup outcomes remain visible.
+  const message = state.previewEpoch !== undefined && (state.previewEpoch !== viewEpoch || !generated)
+    ? '旧画面已失效；请解决当前拒绝原因后显式重新生成。'
+    : state.message
   const cancel = () => { owner.invalidate(); setFollow(false); setState({ busy: true, message: '取消并等待实际进程退出…' }); void frameRequest(sessionId, { op: 'cancel', grant: opened.grant }, tabSignal).then(() => { cleanupFailed.current = false; setState({ message: '已回收；未自动重试。' }) }, error => setState({ message: error.message })) }
   const cancelButton = () => h(ToolButton, { icon: 'cancel', variant: 'danger', label: '显式取消帧并等待回收', tooltip: '取消当前帧操作并等待实际进程回收', onClick: cancel })
   const imageTools = h('details', { className: 'fv-monitor-disclosure fv-monitor-disclosure-up fv-frame-tools-details', name: disclosureGroup },
@@ -338,6 +348,6 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       )),
       imageTools,
       cancelButton(),
-      blocked ? h('span', { className: 'fv-monitor-status', role: 'alert', title: '当前未固定帧，或编辑/队列/计划/写结果未解决；拒绝生成和加入草稿。', 'aria-label': '当前未固定帧，或编辑/队列/计划/写结果未解决；拒绝生成和加入草稿。' }, whole(frame) ? '编辑或写结果未解决；拒绝生成。' : '拒绝生成；请固定帧。') : null,
-      state.message ? h('span', { className: 'fv-monitor-status', role: 'status', title: state.message, 'aria-label': state.message }, state.message) : null))
+      blocked ? h('span', { className: 'fv-monitor-status', role: 'alert', title: '当前未固定帧，或编辑/队列/计划/写结果未解决；拒绝生成和加入草稿。', 'aria-label': '当前未固定帧，或编辑/队列/计划/写结果未解决；拒绝生成和加入草稿。' }, whole(frame) ? '编辑或写结果未解决；拒绝生成和加入草稿。' : '拒绝生成和加入草稿；请固定帧。') : null,
+      message ? h('span', { className: 'fv-monitor-status', role: 'status', title: message, 'aria-label': message }, message) : null))
 }

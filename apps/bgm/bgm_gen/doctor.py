@@ -238,21 +238,24 @@ def _check_fluidsynth_lib(val):
     """tools.fluidsynth_lib 校验（M-1，与 sf2._load_lib 三级解析同口径）：
     记录了值 → ctypes.CDLL 试载该值成功才算绿（find_library 真值不算——
     系统里探测得到库不代表 runtime 记录的路径/soname 可载）；
-    未记录 → find_library 探测后提示可写入 runtime.json 固定解析。"""
+    未记录 → 与渲染器共用平台候选，实际试载后提示可固定解析。"""
     import ctypes
-    import ctypes.util
+    from bgm_gen.engines.sf2 import _fluidsynth_candidates
     if val:
         try:
             ctypes.CDLL(val)
             return True, val
         except OSError as e:
             return False, f"{val}（ctypes.CDLL 试载失败：{e}）"
-    found = ctypes.util.find_library("fluidsynth")
-    if found:
-        return True, (f"未记录（find_library 探测到 {found}；"
+    for name in _fluidsynth_candidates():
+        try:
+            ctypes.CDLL(name)
+        except OSError:
+            continue
+        return True, (f"未记录（ctypes.CDLL 试载成功 {name}；"
                       "可写入 runtime.json tools.fluidsynth_lib 固定解析）")
-    return False, ("未记录且 find_library 未探测到 libfluidsynth；可在 runtime.json "
-                   "tools.fluidsynth_lib 填 so/DLL 全路径")
+    return False, ("未记录且系统候选均无法加载 libfluidsynth；可在 runtime.json "
+                   "tools.fluidsynth_lib 填动态库全路径（macOS 为 .dylib）")
 
 
 def doctor_report():

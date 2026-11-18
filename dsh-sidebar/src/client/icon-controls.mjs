@@ -12,9 +12,10 @@ export const iconControlCSS = `
 :is(.fv-workbench,.fv-timeline,.fv-frame-tools) .fv-icon-button:disabled{opacity:.4;cursor:default}
 :is(.fv-workbench,.fv-timeline,.fv-frame-tools) .fv-icon-button:focus-visible{outline:2px solid var(--fv-accent,#8ecab6);outline-offset:2px}
 :is(.fv-workbench,.fv-timeline,.fv-frame-tools) .fv-icon-button[aria-pressed=true],:is(.fv-workbench,.fv-timeline,.fv-frame-tools) details[open]>.fv-icon-button{background:color-mix(in srgb,var(--fv-accent,#8ecab6) 16%,transparent);color:var(--fv-accent,#8ecab6);border-color:color-mix(in srgb,var(--fv-accent,#8ecab6) 40%,transparent)}
-:is(.fv-workbench,.fv-timeline,.fv-frame-tools) .fv-icon-button[data-variant=primary]{background:var(--fv-accent,#8ecab6);color:#14251f;border-color:var(--fv-accent,#8ecab6)}
-:is(.fv-workbench,.fv-timeline,.fv-frame-tools) .fv-icon-button[data-variant=danger]:hover:not(:disabled){color:#f3aaa4;border-color:#88544e}
-.fv-icon-tooltip[popover]{position:fixed;inset:auto;margin:0;padding:7px 10px;max-width:min(320px,calc(100vw - 16px));border:1px solid var(--fv-line,#454a54);border-radius:5px;background:var(--fv-raised,#2b2e35);color:var(--fv-text,#eceef2);font:12px/1.5 system-ui,sans-serif;white-space:normal;overflow-wrap:anywhere;box-shadow:0 3px 10px #0005;z-index:1;pointer-events:auto}
+:is(.fv-workbench,.fv-timeline,.fv-frame-tools) .fv-icon-button[data-variant=primary]{background:var(--fv-primary,var(--dsw-alias-button-primary-fill,#8ecab6));color:var(--fv-primary-text,var(--dsw-alias-label-primary-foreground,#14251f));border-color:transparent}
+:is(.fv-workbench,.fv-timeline,.fv-frame-tools) .fv-icon-button[data-variant=primary]:hover:not(:disabled){background:var(--fv-primary-hover,var(--dsw-alias-button-primary-hover,#b3dec9))}
+:is(.fv-workbench,.fv-timeline,.fv-frame-tools) .fv-icon-button[data-variant=danger]:hover:not(:disabled){color:var(--dsw-alias-state-error-primary,#f3aaa4);border-color:currentColor}
+.fv-icon-tooltip[popover]{position:fixed;inset:auto;margin:0;padding:7px 10px;max-width:min(320px,calc(100vw - 16px));border:1px solid var(--fv-line,#454a54);border-radius:5px;background:var(--dsw-alias-tooltip-bg,#2b2e35);color:var(--dsw-alias-toast-label,#eceef2);font:12px/1.5 var(--dsw-font-family,system-ui,sans-serif);white-space:normal;overflow-wrap:anywhere;box-shadow:0 3px 10px #0005;z-index:1;pointer-events:auto}
 .fv-icon-tooltip[hidden]{display:none!important}
 @media(pointer:coarse){:is(.fv-workbench,.fv-timeline,.fv-frame-tools) .fv-icon-button{width:44px;min-width:44px;height:44px;min-height:44px}}
 `

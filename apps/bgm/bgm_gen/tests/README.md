@@ -14,6 +14,7 @@ python3 -m pytest apps/bgm/bgm_gen/tests -q -ra -m "fast or slow or service"
 ## 分档与前置
 
 - **fast**：工程/schema、show/edit、MIDI/MusicXML、描述符、资源调度、合成、混音与 QC。numpy/pytest/FFmpeg 是基础测试依赖。新增[迁移集成测试](<test_integration.py>)隔离 XDG 数据根，不读取本机 runtime，实跑独立 cwd 的 synth 全链与双渲音频一致性，并验证外置配置、显式空 runtime、无 torch 导入及 demucs 无权重不启动子进程。
+- **legacy fast**：`test_gm_lofi` / `test_midi2wav` 实际调用 SF2，仍须同架构 libfluidsynth 与 `sf2.FluidR3_GM`；缺依赖是 FAIL，不是基础 synth 失败，也不自动改成 skip。Mac 库发现/外置配置的无资源回归见 [SF2 兼容测试](<test_sf2_portability.py>)，真实音乐到视频手动验收见 [app 入口](<../../README.md#macos-原生验收>)。
 - **stock 资产回归**：保留旧 SF2/SFZ/sample、库大小/计数/许可断言。未提供外置 runtime/资产或某可选引擎时明确 skip，不制造假音源替代旧断言；用户提供配置后仍按原标准严格执行。自包含代码测试和新 synth 全链不因缺这些可选资产而跳过。
 - **历史冻结样本**：旧 `out/` 中未 tracked 的 spec、音频、完整工程不随源码迁入；缺失时明确 skip。不会把 freshly rendered 文件冒充历史位级锚点。历史样本及旧版本测试结果由[固定提交](https://github.com/CongliangK/scoreweft/tree/804c24ecf2d3e0a55fbd5b2225d3b09da7e86f87/bgm_gen/tests)溯源。
 - **slow**：demucs、matchering、外部音色/完整工程等环境测试；需用户本地模型/工具，demucs 必须有 `demucs.repo` 的本地 YAML 与 `.th` 权重。

@@ -105,6 +105,20 @@ test('program monitor switches one visible stage without auto rendering; live co
   assert.deepEqual(f.requests, [])
 })
 
+test('storage suspension reaches live follow without hiding its stage or losing consent', async t => {
+  const f = await fixture(t, ProgramMonitor)
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const inputs = () => [...document.querySelectorAll('.fv-frame-tools input')]
+  const follow = () => inputs().find(node => node.parentElement.textContent.includes('随播放头实时生成'))
+  await act(async () => inputs()[0].click())
+  await act(async () => follow().click())
+  await f.render({ suspended: true, frame: 10 })
+  await act(async () => t.mock.timers.tick(1000))
+  assert.deepEqual(f.requests, [])
+  assert.equal(follow().checked, true)
+  assert.equal(visible(document.querySelector('.fv-frame-tools')), true)
+})
+
 test('canonical integer frame seeks its rational project-frame midpoint, pauses, and latest rapid seek wins without feedback', async t => {
   const f = await fixture(t, RenderedPlayer, { frame: 30, fps: '30000/1001', duration: 300 })
   const node = f.video()

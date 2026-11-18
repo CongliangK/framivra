@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import React, { useState } from 'react'
 import { JSDOM } from 'jsdom'
 import { FrameEpoch, FrameTools } from '../src/client/frame.mjs'
@@ -8,7 +9,9 @@ import { FrameEpoch, FrameTools } from '../src/client/frame.mjs'
 // objectURL lifecycle, folded prose/certificate, preserved test-facing labels.
 // Generate/stage/copy semantics also stay covered by frame-ghost.test.mjs;
 // follow opt-in and serialized cleanup are exercised below with held HTTP replies.
-const snapshot = { content_version: 'sha256:' + 'a'.repeat(64), document: { project: { duration_frames: 100 } } }
+const raw = '{"project":{"duration_frames":100}}'
+const hash = bytes => createHash('sha256').update(bytes).digest('hex')
+const snapshot = { content_version: `sha256:${hash(raw)}`, document: { project: { duration_frames: 100 } } }
 const cleanResult = () => ({
   file: new File(['png-bytes'], 'framivra-frame-10-0000.png', { type: 'image/png' }),
   certificate: { kind: 'current-composite', frame: 10, content_version: snapshot.content_version, width: 1920, height: 1080 },
@@ -32,14 +35,14 @@ async function fixture(t, { withObjectURL = false } = {}) {
     urlBase.revokeObjectURL = url => { calls.push({ op: 'revoke', url }) }
     t.after(() => { if (savedCreate) urlBase.createObjectURL = savedCreate; else delete urlBase.createObjectURL; if (savedRevoke) urlBase.revokeObjectURL = savedRevoke; else delete urlBase.revokeObjectURL })
   }
-  let frame = 10, refresh
+  let frame = 10, suspended = false, refresh
   function Harness() {
     const [, update] = useState(0); refresh = () => update(n => n + 1)
-    return React.createElement(FrameTools, { owner, opened: { snapshot, grant: 'grant' }, sessionId: 'one', frame, tabSignal: tab.signal, getDraftServices: () => ({}), call: async () => ({}) })
+    return React.createElement(FrameTools, { owner, opened: { snapshot, grant: 'grant' }, sessionId: 'one', frame, suspended, tabSignal: tab.signal, getDraftServices: () => ({}), call: async () => ({}) })
   }
   await act(async () => root.render(React.createElement(Harness)))
   const section = () => document.querySelector('[aria-label="当前合成帧与草稿"]')
-  const rerender = async next => { if (next !== undefined) frame = next; await act(async () => refresh()) }
+  const rerender = async (next, paused) => { if (next !== undefined) frame = next; if (paused !== undefined) suspended = paused; await act(async () => refresh()) }
   t.after(async () => { await act(async () => { tab.abort(); root.unmount(); await Promise.resolve() }); dom.window.close(); for (const [key, descriptor] of Object.entries(saved)) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key] } })
   return { owner, root, section, rerender, calls, act }
 }
@@ -170,6 +173,37 @@ test('frame visual: verified objectURL only from owner.generated.file, revoked o
   assert.deepEqual(f.calls.at(-1), { op: 'revoke', url: 'blob:frame-3' })
 })
 
+test('verified availability status expires with a dirty preview, without hiding later errors', async t => {
+  const f = await fixture(t, { withObjectURL: true })
+  const previousFetch = globalThis.fetch, previousImage = globalThis.Image
+  t.after(() => { globalThis.fetch = previousFetch; if (previousImage) globalThis.Image = previousImage; else delete globalThis.Image })
+  let decoded
+  const decoding = new Promise(resolve => { decoded = resolve })
+  // Explicit image-decoder adapter; this test checks UI state, not native PNG decoding.
+  globalThis.Image = class { naturalWidth = 1; naturalHeight = 1; async decode() { decoded() } }
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aCioAAAAASUVORK5CYII=', 'base64')
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    schema: 'framivra.timeline.frame/v1', operation: 'frame', ok: true, content_version: snapshot.content_version, diagnostics: [],
+    image: { state: 'generated', kind: 'current-composite', approximate: false, mime_type: 'image/png', width: 1, height: 1, frame: 10, fps: { num: 30, den: 1 }, content_version: snapshot.content_version, input_fingerprint: 'a'.repeat(64), identity_semantics: 'Fast media stat identity', render_key: 'b'.repeat(64), cache_hit: false, bytes: png.length, sha256: hash(png), inline: { encoding: 'base64', data: png.toString('base64') } },
+    reference: { schema: 'framivra.timeline.reference/v1', operation: 'reference', ok: true, content_version: snapshot.content_version, diagnostics: [], document: { raw, content_version: snapshot.content_version }, selection: { global_frame: 10, fps: 30, tracks: [], blocks: [] }, coverage: { complete: true } },
+  }))
+  const generate = () => f.section().querySelector('[aria-label="显式生成并验证固定帧 PNG"]')
+  await f.act(async () => f.section().querySelector('input').click())
+  await f.act(async () => { generate().click(); await decoding })
+  assert(f.section().querySelector('img'))
+  assert.match(f.section().querySelector('[role=status]').textContent, /已验证 PNG/)
+  f.owner.editChanged({ dirty: true }); await f.rerender()
+  assert.equal(f.section().querySelector('img'), null)
+  assert(generate().disabled)
+  assert.match(f.section().querySelector('[role=alert]').textContent, /拒绝生成和加入草稿/)
+  assert.match(f.section().querySelector('[role=status]').textContent, /旧画面已失效/)
+  assert(!f.section().textContent.includes('已验证 PNG，未发送'))
+  f.owner.editChanged({ dirty: false }); await f.rerender()
+  globalThis.fetch = async () => stopReply()
+  await f.act(async () => generate().click())
+  assert.match(f.section().querySelector('[role=status]').textContent, /FIXTURE_STOP/)
+})
+
 function followControls(f) {
   const input = label => [...f.section().querySelectorAll('input')].find(node => node.parentElement.textContent.includes(label))
   return { consent: () => input('允许写入预览缓存'), follow: () => input('随播放头实时生成') }
@@ -193,7 +227,11 @@ test('live follow requires both opt-ins, supersession waits for confirmed cleanu
   await tick(); assert.deepEqual(requests, [], 'mount never auto-renders')
   await f.act(async () => controls.consent().click())
   await tick(); assert.deepEqual(requests, [], 'cache consent alone is not follow consent')
-  await f.act(async () => controls.follow().click()); await tick()
+  await f.act(async () => controls.follow().click())
+  await f.rerender(undefined, true); await tick()
+  assert.deepEqual(requests, [], 'storage suspension cancels the pending follow timer')
+  assert.equal(controls.follow().checked, true, 'suspension preserves the explicit follow choice')
+  await f.rerender(undefined, false); await tick()
   assert.deepEqual(requests.map(item => [item.op, item.frame]), [['render', 10]])
   f.owner.invalidate(); await f.rerender(11)
   assert(requests[0].signal.aborted)
@@ -201,8 +239,12 @@ test('live follow requires both opt-ins, supersession waits for confirmed cleanu
   await tick()
   f.owner.invalidate(); await f.rerender(12); await tick()
   assert.deepEqual(requests.map(item => item.op), ['render', 'cancel'], 'no render may race a pending managed-child cleanup')
+  await f.rerender(undefined, true)
+  await f.rerender(undefined, false); await tick()
+  assert.deepEqual(requests.map(item => item.op), ['render', 'cancel'], 'resumed follow must still wait for managed cleanup')
+  assert.equal(controls.follow().checked, true)
   await f.act(async () => releaseCleanup())
-  assert.deepEqual(requests.map(item => [item.op, item.frame]), [['render', 10], ['cancel', undefined], ['render', 12]], 'superseded queued frame 11 is dropped, not rendered')
+  assert.deepEqual(requests.map(item => [item.op, item.frame]), [['render', 10], ['cancel', undefined], ['render', 12]], 'suspension and resume before cleanup cannot duplicate the queued frame or retry its failure')
   assert.equal(controls.follow().checked, false, 'automatic render error stops follow')
   f.owner.invalidate(); await f.rerender(13); await tick()
   assert.equal(requests.length, 3, 'pin changes after an error never retry without a new opt-in')

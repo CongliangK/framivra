@@ -116,7 +116,10 @@ class _Base(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name)
+        # macOS tempfile may use /var -> /private/var. Choose a canonical
+        # fixture root before writing, rather than weakening cleanup's refusal
+        # of symlink ancestors (the production safety rule remains unchanged).
+        self.root = Path(self._tmp.name).resolve()
         (self.root / "music").mkdir()
         # 伪 bgm CLI + 调用日志
         self.log = self.root / "bgm_calls.log"
@@ -142,12 +145,15 @@ class _Base(unittest.TestCase):
             self.addCleanup(command.stop)
         # 音乐工程（含 $ref 拆分件）+ 时长标记
         self.ref_file = self.root / "music" / "strings_part.json"
-        self.ref_file.write_text('{"notes": [1, 2, 3]}', encoding="utf-8")
+        self.ref_file.write_text(json.dumps({"name": "strings", "engine": "synth",
+                                             "instrument": "lead", "notes": [[60, 0, 1, 90]]}),
+                                 encoding="utf-8")
         self.proj = self.root / "music" / "ep.json"
         self.proj.write_text(json.dumps({
             "name": "ep", "meta": {"spec_version": "2", "bpm": 120},
-            "tracks": [{"name": "strings", "$ref": "strings_part.json"},
-                       {"name": "kick", "engine": "synth"}],
+            "tracks": [{"$ref": "strings_part.json"},
+                       {"name": "kick", "engine": "synth", "instrument": "kick",
+                        "notes": [[36, 0, 1, 90]]}],
         }, ensure_ascii=False), encoding="utf-8")
         (self.root / "music" / "duration.txt").write_text("4.0", encoding="utf-8")
         # 桩 render 的分轨清单（对齐伪工程 tracks：strings/kick）
@@ -393,7 +399,9 @@ class DigestIdentity(_Base):
 
     def test_digest_flips_on_ref_content(self):
         d1 = _bgm.param_digest(self._ctx(True), "bgm_main")
-        self.ref_file.write_text('{"notes": [1, 2, 3, 4]}', encoding="utf-8")
+        track = json.loads(self.ref_file.read_text(encoding="utf-8"))
+        track["notes"].append([64, 1, 1, 90])
+        self.ref_file.write_text(json.dumps(track), encoding="utf-8")
         d2 = _bgm.param_digest(self._ctx(True), "bgm_main")
         self.assertNotEqual(d1, d2, "$ref 件内容必须翻转产物键")
 
@@ -429,6 +437,88 @@ class DigestIdentity(_Base):
                              encoding="utf-8")
         d2 = _bgm.render_digest(self._ctx(True), "bgm_main")
         self.assertNotEqual(d1, d2, "工程字节变化须翻转 render_digest（重渲）")
+
+
+class RefDependencySlots(_Base):
+    def test_v1_and_unrelated_slots_never_open_sentinel(self):
+        from apps.bgm.bgm_gen.core.project import load_project
+
+        sentinel = self.root / "sentinel"
+        sentinel.write_text("controlled sentinel", encoding="utf-8")
+        v1 = json.loads((REPO / "apps/bgm/examples/synth.json").read_text(encoding="utf-8"))
+        v1["arbitrary"] = {"$ref": "../sentinel"}
+        self.proj.write_text(json.dumps(v1), encoding="utf-8")
+        # The runtime loader accepts this root field (the documentation schema is stricter).
+        self.assertEqual(load_project(str(self.proj))["meta"]["spec_version"], "1")
+        cases = [v1,
+                 {"meta": {"spec_version": "1"}, "tracks": [{"$ref": "../sentinel"}]},
+                 {"meta": [], "tracks": [{"$ref": "../sentinel"}]},
+                 {"meta": {"spec_version": "2"}, "tracks": [
+                     {"name": "bad", "$ref": "../sentinel"},
+                     {"nested": [{"$ref": "../sentinel"}]},
+                     {"$ref": {"$ref": "../sentinel"}}, {"$ref": None},
+                     {"$ref": ["../sentinel"]}, {"$ref": 42},
+                     {"$ref": ""}, {"$ref": "  \t"}],
+                  "other": [{"$ref": "../sentinel"}]}]
+        original_open = Path.open
+        opened = []
+        def record_open(path, *args, **kwargs):
+            opened.append(path.resolve())
+            return original_open(path, *args, **kwargs)
+        for project in cases:
+            with self.subTest(project=project):
+                self.proj.write_text(json.dumps(project), encoding="utf-8")
+                with mock.patch.object(Path, "open", record_open), \
+                     mock.patch.object(_bgm, "_dir_sig", side_effect=AssertionError("unexpected directory scan")):
+                    self.assertEqual(_bgm._dep_sigs(None, {"bgm": True}, self.proj), {})
+                self.assertNotIn(sentinel.resolve(), opened)
+
+    def test_numeric_v2_loader_and_both_digests(self):
+        from apps.bgm.bgm_gen.core.project import load_project
+
+        project = json.loads(self.proj.read_text(encoding="utf-8"))
+        project["meta"]["spec_version"] = 2
+        self.proj.write_text(json.dumps(project), encoding="utf-8")
+        self.assertEqual(load_project(str(self.proj))["meta"]["spec_version"], "2")
+        c = self._ctx(True)
+        before = (_bgm.param_digest(c, "bgm_main"), _bgm.render_digest(c, "bgm_main"))
+        track = json.loads(self.ref_file.read_text(encoding="utf-8"))
+        track["notes"].append([64, 1, 1, 90])
+        self.ref_file.write_text(json.dumps(track), encoding="utf-8")
+        self.assertEqual(len(load_project(str(self.proj))["tracks"]), 2)
+        self.assertNotEqual(before[0], _bgm.param_digest(c, "bgm_main"))
+        self.assertNotEqual(before[1], _bgm.render_digest(c, "bgm_main"))
+
+    def test_v2_references_and_extras_preserve_identity(self):
+        from apps.bgm.bgm_gen.core.project import load_project
+
+        self.assertEqual(len(load_project(str(self.proj))["tracks"]), 2)
+        second = self.root / "music" / " second.json"
+        track = json.loads(self.ref_file.read_text(encoding="utf-8"))
+        track["name"] = "lead2"
+        second.write_text(json.dumps(track), encoding="utf-8")
+        project = json.loads(self.proj.read_text(encoding="utf-8"))
+        project["tracks"].append({"$ref": " second.json"})
+        self.proj.write_text(json.dumps(project), encoding="utf-8")
+        self.assertEqual(len(load_project(str(self.proj))["tracks"]), 3)
+        extra = self.root / "music" / "extra.bin"
+        extra.write_bytes(b"extra")
+        source = {"bgm": {"extra_deps": ["extra.bin"]}}
+        before = _bgm._dep_sigs(None, source, self.proj)
+        self.assertEqual(set(before), {str(p.resolve()) for p in (self.ref_file, second, extra)})
+        c = self._ctx(source["bgm"])
+        digests = (_bgm.param_digest(c, "bgm_main"), _bgm.render_digest(c, "bgm_main"))
+        for path in (self.ref_file, second, extra):
+            old = path.read_bytes()
+            path.write_bytes(old + b" ")
+            after = _bgm._dep_sigs(None, source, self.proj)
+            self.assertNotEqual(before[str(path.resolve())], after[str(path.resolve())])
+            self.assertNotEqual(digests[0], _bgm.param_digest(c, "bgm_main"))
+            self.assertNotEqual(digests[1], _bgm.render_digest(c, "bgm_main"))
+            path.write_bytes(old)
+            self.assertEqual(_bgm._dep_sigs(None, source, self.proj), before)
+            self.assertEqual(digests, (_bgm.param_digest(c, "bgm_main"),
+                                       _bgm.render_digest(c, "bgm_main")))
 
 
 class SharedRenderCache(_Base):
@@ -936,6 +1026,15 @@ class InvariantsAndBranches(_Base):
             _scan_plugin_keys(c, errs)
         self.assertTrue(any("未安装" in e and "bgm" in e for e in errs))
 
+    def test_three_branch_disabled(self):
+        from vtx.pipeline.stages import _scan_plugin_keys
+        c = self._ctx(True)
+        errs = []
+        with mock.patch("vtx.pluginlib.registry.plugin_state", return_value="disabled"):
+            _scan_plugin_keys(c, errs)
+        self.assertTrue(any("禁用" in e and "bgm" in e for e in errs))
+        self.assertEqual(self._calls(), [])
+
     def test_bus_dispatch_probe_prepare(self):
         c = self._ctx(True)
         f = pl_hooks.run_probe_source(c, "bgm_main")
@@ -972,9 +1071,12 @@ class RealChainIntegration(_Base):
         src = REPO / "apps/bgm/examples/synth.json"
         self.assertTrue(src.is_file(), "仓内原创 synth 示例必须存在")
         proj = self.root / "minimal.json"
-        proj.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
-        first_track = next(t["name"] for t in json.loads(
-            src.read_text(encoding="utf-8"))["tracks"] if isinstance(t, dict))
+        value = json.loads(src.read_text(encoding="utf-8"))
+        value["meta"].update(sr=48000, channels=2)
+        track = value["tracks"][0]
+        track.update(gain_db=-6, pan=-.6)
+        first_track = track["name"]
+        proj.write_text(json.dumps(value), encoding="utf-8")
         tl = {"version": 2,
               "project": {"fps": 30, "duration_frames": 120,
                           "width": 640, "height": 360},
@@ -990,8 +1092,36 @@ class RealChainIntegration(_Base):
             self.assertEqual((w.getframerate(), w.getnchannels(),
                               w.getsampwidth()), (48000, 2, 2))
         shared = _bgm.render_cache_dir(c, "bgm_stem")
-        self.assertTrue((shared / "stems" / f"{first_track}.bus.wav").is_file(),
-                        "总线分轨须落共享渲染缓存")
+        bus = shared / "stems" / f"{first_track}.bus.wav"
+        self.assertTrue(bus.is_file(), "总线分轨须落共享渲染缓存")
+        import numpy as np
+        def decode(path, codec):
+            result = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path),
+                "-ar", "48000", "-ac", "2", "-c:a", "pcm_" + codec,
+                "-f", codec, "pipe:1"], capture_output=True, check=True)
+            return result.stdout
+        raw = np.frombuffer(decode(shared / "stems" / f"{first_track}.synth.wav", "f32le"),
+                            dtype="<f4").reshape(-1, 2)
+        mixed = np.frombuffer(decode(bus, "f32le"), dtype="<f4").reshape(-1, 2)
+        self.assertEqual(len(mixed), 4 * 48000)
+        expected = raw[:len(mixed)] * np.array([1.3, .7]) * round(10 ** (-6 / 20), 6)
+        self.assertLess(float(np.max(np.abs(mixed - expected))), 2e-6)
+        self.assertGreater(float(np.max(np.abs(mixed - raw[:len(mixed)]))), .01)
+        marker = shared / "_complete.json"
+        before = (marker.read_bytes(), marker.stat().st_mtime_ns)
+        # Bind each source ID to its actual PCM, not an unordered set of files.
+        for sid, choice, reference in (("bgm_stem", f"stem:{first_track}", bus),
+                ("bgm_master", "master", shared / "mix_master.wav"),
+                ("bgm_premaster", "premaster", shared / "mix_premaster.wav")):
+            if sid != "bgm_stem":
+                tl["sources"].append({"id": sid, "path": "minimal.json", "bgm": {"output": choice}})
+                c = _context(self.root, tl)
+            selected = _bgm.prepare_source(c, sid)
+            with wave.open(str(selected), "rb") as w:
+                self.assertEqual(w.readframes(w.getnframes()), decode(reference, "s16le"), sid)
+            self.assertEqual(_bgm.render_cache_dir(c, sid), shared)
+            self.assertEqual((marker.read_bytes(), marker.stat().st_mtime_ns), before)
+        self.assertEqual(len(list((self.root / "cache/bgm").glob("*/_complete.json"))), 1)
 
 
 if __name__ == "__main__":

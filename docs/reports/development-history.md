@@ -69,6 +69,34 @@ A臂冷态中位：启动覆盖0.289s；608次截图（600目标帧+8探针）�
 
 最终12次 `all` 均exit0、事件完整、无失败/回落；6个项目的冷暖pack字节及mtime均未变。逐件解码全部600帧PNG、完整视频/PTS、48k双声道音频/连续PTS；跨臂/轮次/冷暖的PNG字节与RGBA、视频帧/时间戳、音频采样/时间戳全部相等，12件无黑帧；6次额外strict QC通过。抽看f60/300/540字体/图表正常，不等于独立艺术审查或用户成片确认。主SVG、透明叠层/多页/真实整期及其他平台仍 **UNRUN**。此次给出的是明确的负收益决策与可复现取舍，不宣称产品加速。
 
+### CEF 非推进绘制正确性（#368）
+
+本轮 [PR #368](<https://github.com/CongliangK/framivra/pull/368>)按[维护者取舍](<https://github.com/CongliangK/framivra/pull/368#issuecomment-6963084388>)收敛为非推进绘制路径的正确性修复，不交付 CDP 动态领项或 renderer 优先级原型，也不改变默认并发、就绪门、质量或公开契约；**#365 / #361 两后端默认全链减时30%目标仍未完成**。
+
+旧候选附加核验曾发现 signed 计数不足及5次拒收回调直接推进第一或第二 signed 阶段，缺少对应绘制后 JS 围栏；使两次读取判定不同的上游原因仍未知。修复将拒收入口隔离为只能计账，负读变正读也无权推进、冻结候选或写输出；合法 owned 快照仍须对应 post-paint JS 围栏及完整见证/字节 veto。累计围栏数不代替逐阶段授权；必须重编并绑定实际 native worker 身份。旧实机次数不是当前 main 的新复现或最终组合验收，实际部署与复验资格须由本轮回执另证。
+
+历史性能及失败原件固定在清理前 `9623d064aebcb2d37728a0f3ad8d6b1ba2a5c367`：[PNG 局部校验](<https://github.com/CongliangK/framivra/blob/9623d064aebcb2d37728a0f3ad8d6b1ba2a5c367/docs/reports/png-validation-evidence.json>)、[CEF 并发与拒收反例](<https://github.com/CongliangK/framivra/blob/9623d064aebcb2d37728a0f3ad8d6b1ba2a5c367/docs/reports/cef-concurrency-evidence.json>)、[受扰样本](<https://github.com/CongliangK/framivra/blob/9623d064aebcb2d37728a0f3ad8d6b1ba2a5c367/docs/reports/browser-cold-chain-screens.json>)和[锁下补测](<https://github.com/CongliangK/framivra/blob/9623d064aebcb2d37728a0f3ad8d6b1ba2a5c367/docs/reports/browser-cold-chain-repeats.json>)。旧 HTML 派生输入不替代唯一 SVG 主片；已有三块配置相对默认约6%、相对单worker档33.1%分母不同，不是本轮新增算法或默认30%达标。导航预取/预热更慢、四块增内存、两原型收益不足及GUI未取锁污染等负结果不改判；旧帧时钟/回执失败与报告器误判亦保留在[原历史](<https://github.com/CongliangK/framivra/blob/9623d064aebcb2d37728a0f3ad8d6b1ba2a5c367/docs/reports/development-history.md>)。无当前代码/测试消费者的过程 JSON 经引用审计、逐件 SHA256 原字节保全及固定提交恢复核验后退出交付树，不删除原生 worker 源码或改写冻结证据。
+
+### 资源生命周期排查（#362）
+
+原静态审查以 `908064d` 为起点；接续在 main `fa5d28d` 的生产实现上（测量源码 `99fd603`），以已安装候选 wheel 验证唯一 portable-v2 30秒/900帧/1080p30 SVG。三档共7次正式 `all` 及另行7次strict QC通过（aggressive响度/TP复用有效回执），core连续3次；三档末次完整解码的视频、PCM及音频时序摘要相同。详细包身份、逐轮资源、实际宿主与清理证据统一见 [PR #366](<https://github.com/CongliangK/framivra/pull/366>)。有限样本不证明永久无泄漏，也不宣称整体提速。
+
+| 链路 / 空间归属 | 已确认机制与待验风险 |
+| --- | --- |
+| prepare / audio | 源抽音频、插件派生及混音交接件，保留取决于[缓存档位](../cache-provenance.md#全局缓存档位)；模型服务、外部素材与共享资产不属于项目 cache，未实测其生命周期。 |
+| gfx | 本机core保留约56.76MB认证PNG/证据，aggressive约66.18MB，off仅约1–2KB账本/锁；macOS未冒充Linux压缩包支持。[文件事务](../../vtx/runtime/fstxn.py)原强引用锁表为每个唯一加锁路径保留 Python 锁，[CLI 截图](../../vtx/render/gfx_cli.py)的逐帧 `locked_staging` 等调用会持续增加条目（CDP 的无锁 `atomic_write` 本身不经过该表）；改为弱引用注册表，所有持有者/等待者仍强引用同一锁。不删除磁盘锁文件、不改变跨进程锁协议。 |
+| video / mux / qc | seg、逐层无损 pass、交接音视频与最终成片性质不同；不能按扩展名统一删除。`core/off` 用后回收媒体，`aggressive` 的保留属于策略而非泄漏；失败/截断链保留必要交接件。本轮采样树RSS峰值约1.00–1.37GiB；共享页重复计数、短命进程及漏峰限制保留，非独占物理内存。 |
+| audit / df | [体积检查](../../vtx/cache/hygiene.py)的 quiet 路径原先仍全量排序 cache 路径、扫描孤儿并读取账本，仅丢弃打印。本轮跳过这些展示专用步骤，verbose top-20 改为有界候选选择，保留排序/同尺寸顺序及返回值。逻辑字节统计仍需遍历，不能当物理独占空间或原子快照。 |
+| 缓存回收 / DSH | 历史键、预览、报告、实验缓存与事务锁各有不同保留边界；[清理约束](../cache-provenance.md#容量与保留)要求停写。本次新增[空间接口](<../reference/storage-api.md>)与侧栏采样、冻结预演及独立确认，复用原 GC 与参与者策略锁；不把文本 `gc` 输出冒充绑定确认，也不承诺排斥任意外部写入者。 |
+
+另有未修复的静态风险：[CDP 接收器](../../vtx/render/gfx_render.py)逐 WebSocket 帧限长，但分片消息累计未限长，握手头也无总字节上限；小上限内存探针可由两个合法分片组成超限消息，不等于已观测真实浏览器内存泄漏。[媒体执行](../../vtx/pipeline/infra.py)的 `capture_output` 保留完整子进程日志，普通 FFmpeg 不具备浏览器同等的进程树监管；正常退出会回收直接子进程，不能据此断言正常路径有僵尸泄漏。分片上限应验证合法截图尺寸，媒体取消须明确等待/收尾与跨平台语义，均未在本轮改写。
+
+[回归](../../tests/cache/test_storage_diagnostics.py)检查 quiet 不做展示遍历/账本读取、verbose top-20 与稳定全排序一致和缺失布局零写态；[锁生命周期回归](../../tests/safety/test_fstxn_lock_lifetime.py)检查闲置路径回收、活动持有者/等待者共享锁。这些是机制证明，不是 RSS 上限或整片提速证明。
+
+用户已明确本次档位仅指既有 `off/core/aggressive`。DSH 复用原全局三档确认/CAS 保存，不新增 CPU/RAM/并发档位；[资源预算](../reference/resource-budget.md)仍是未接入渲染 CLI 的 Linux 协作记账原语，不是 OS 限制。空间管理实现与有界响应、过期/替换/失败等机制回归见[接口](<../reference/storage-api.md>)、[内核测试](<../../tests/cache/test_storage_api.py>)和[侧栏记录](<../../dsh-sidebar/DEVELOPMENT.md#project-storage-controls-362>)。最终已安装组合以完整主片副本核对显示、可见采样、三档原生保存与下一操作、取消/失败恢复及工程切换；维护者明确批准原冻结范围后，自动化通过正式界面执行一次清理，所有未删文件身份/哈希不变，源件、成片及历史/回执保留。当前对比、精确字节和有限观测限制见[PR #366](<https://github.com/CongliangK/framivra/pull/366>)；[旧合成图例](<https://github.com/CongliangK/framivra/blob/501e6a0a8b4fcd56c7a9fd1f4859989c1ed4e5fd/docs/reports/resource-management-362/README.md>)只作历史溯源，不冒充当前整片或所有平台验收。
+
+每档新建项目经官方prepare/verify，不混旧cache/out；core三次`all`约73.46/61.73/61.07秒，off两次72.31/73.62秒，aggressive两次73.88/35.75秒，不作跨版本性能配对。均按实际探测回落x264/原生AAC，不称无回落；三档源容器900帧整数PTS乘时基逐帧等于n/30，非仅归一解码帧数通过。每次结束已观测的命令子进程均退出，观察器返回1个Python线程/3个FD；其all结束即时RSS约21–60MB、后续端点最高约81MB，不是渲染器残留。0.5秒目标采样的单轮调用成本约0.77–1.64秒，完整空间inspect约102–225ms（含启动），没有扣减计时。逻辑字节与st_blocks分账；后者含硬链接/共享extent重复，不是独占物理占用。core账本每轮约增491B，但既有4000/5000条轮转有界；out增长来自受保护历史成片，不当作缓存泄漏去删。未使用的CEF、模型/音乐服务、其他平台及长期存活仍UNRUN，既有[小型三档机制集成](<../../tests/cache/test_cache_modes_integration.py>)不替代主片。
+
 ### DSH 单帧预览研究（#363）
 
 **结论：图像接入 DSH 已有实现；缺的是“冷 HTML 临时单帧”的公开内核入口，以及可预测的交互延迟，而不是再造一个图片上传器。** 本研究固定源码 `741f74b466605df310334461b9c74e4ec735d0ed`，只提交分析与证据，不实现下面的候选、不修改 UI、默认配置或 CI。[原始需求](<https://github.com/CongliangK/framivra/issues/363>)没有授予接口改造或视觉重设计。
