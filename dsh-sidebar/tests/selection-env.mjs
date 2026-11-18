@@ -1,3 +1,4 @@
+import { domTextExcerpt } from './dom-diagnostics.mjs'
 /** Native React DOM events + actual public local fs/subprocess; JSDOM, not Chrome. */
 import assert from 'node:assert/strict'
 import { readFile, writeFile, mkdir, mkdtemp } from 'node:fs/promises'
@@ -71,7 +72,7 @@ export async function selectionEnvironment(t, kind) {
   }
   const { createRoot } = require('react-dom/client'), reactRoot = createRoot(document.getElementById('root')), tab = new AbortController()
   const button = text => [...document.querySelectorAll('button')].find(node => node.textContent === text)
-  async function settle(predicate) { for (let i = 0; i < 1000; i++) { if (predicate()) return; await act(async () => { await new Promise(r => setTimeout(r, 5)) }) } assert.fail(document.body.textContent) }
+  async function settle(predicate) { for (let i = 0; i < 1000; i++) { if (predicate()) return; await act(async () => { await new Promise(r => setTimeout(r, 5)) }) } assert.fail(`DOM did not settle: ${domTextExcerpt(document)}`) }
   async function flush() { for (let i = 0; i < 12; i++) { await act(async () => { if (pending.size && !faults.hold) await Promise.allSettled([...pending]); await new Promise(r => setImmediate(r)) }); if (!pending.size && i > 1) break } }
   async function click(node, init = {}) { if (typeof node === 'string') node = button(node); assert(node, 'missing click target'); assert(!node.disabled, node.textContent); await act(async () => node.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true, ...init }))); if (!faults.hold) await flush() }
   async function change(title, value) { const node = [...document.querySelectorAll('label')].find(n => n.firstChild?.textContent === title)?.querySelector('input,select'); assert(node, title); await act(async () => { Object.getOwnPropertyDescriptor(node.tagName === 'SELECT' ? dom.window.HTMLSelectElement.prototype : dom.window.HTMLInputElement.prototype, 'value').set.call(node, value); node.dispatchEvent(new dom.window.Event('input', { bubbles: true })); node.dispatchEvent(new dom.window.Event('change', { bubbles: true })) }); await flush() }

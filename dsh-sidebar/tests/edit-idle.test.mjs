@@ -29,7 +29,7 @@ test('empty proposal-list polls never abort an in-flight frame render; a real di
   globalThis.fetch = async (url, init = {}) => {
     if (url === '/api/framivra/frame') { renderSignal = init.signal; return new Promise(() => {}) }
     const body = JSON.parse(init.body ?? '{}')
-    if (body.op === 'open') return respond({ grant: 'read', snapshot, media: [] })
+    if (body.op === 'open') return respond({ grant: 'read', snapshot, media: [], capabilities: { capabilities: { frame: { inline_png: { flag: '--include-png' } } } } })
     if (body.op === 'query') return respond(result)
     if (body.op === 'proposal-list') return respond({ ok: true, proposals })
     return respond({ ok: true })

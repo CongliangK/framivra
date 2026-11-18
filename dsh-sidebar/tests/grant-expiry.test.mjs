@@ -1,3 +1,4 @@
+import { domTextExcerpt } from './dom-diagnostics.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import React, { act } from 'react'
@@ -47,7 +48,7 @@ test('BAD_GRANT stops the proposal poll permanently: one banner, lifted death, d
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor('read'), tabSignal: new AbortController().signal, call, writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {}, onEditState: () => {}, onGrantDead: (code, grant) => deaths.push({ code, grant }) })))
   assert(text().includes('等待您确认 · 尚未保存'), 'first poll rendered the pending row')
   await wait(1700) // second poll (1.5s cadence) now answered BAD_GRANT
-  assert.match(text(), /预览授权已失效（BAD_GRANT）：BAD_GRANT: Preview grant expired[^\n]*已停止轮询/, 'terminal banner explains the death and the stopped poll')
+  assert(/预览授权已失效（BAD_GRANT）：BAD_GRANT: Preview grant expired[^\n]*已停止轮询/.test(text()), 'terminal banner explains the death and the stopped poll')
   assert.deepEqual(deaths, [{ code: 'BAD_GRANT', grant: 'read' }], 'death lifted exactly once with the exact grant id')
   assert.equal(button('确认提交此智能体冻结提案').disabled, true, 'confirm invalidated after terminal death')
   assert.equal(button('拒绝此提案（不保存）').disabled, true, 'reject invalidated after terminal death')
@@ -63,7 +64,7 @@ test('non-terminal failures keep the ordinary retry cadence and never lift a gra
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor('read'), tabSignal: new AbortController().signal, call, writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {}, onEditState: () => {}, onGrantDead: (...args) => deaths.push(args) })))
   await wait(3200)
   assert.ok(calls.filter(op => op === 'proposal-list').length >= 3, 'transport errors still retry on cadence')
-  assert.match(text(), /无法读取智能体提案：连接已断开。请检查连接；不会自动提交。/)
+  assert(/无法读取智能体提案：连接已断开。请检查连接；不会自动提交。/.test(text()), "Body text must match /无法读取智能体提案：连接已断开。请检查连接；不会自动提交。/")
   assert.deepEqual(deaths, [], 'no death lifted for a non-terminal failure')
 })
 
@@ -89,7 +90,7 @@ test('host expires_in_ms deadline: banner, tool teardown, stopped proposal poll;
     const request = JSON.parse(init.body)
     requests.push(request)
     let result
-    if (request.op === 'open') result = { grant: `g${++grantCounter}`, snapshot: snapshotFor(`g${grantCounter}`), expires_in_ms: grantCounter === 1 ? 400 : 400000, media: [] }
+    if (request.op === 'open') result = { grant: `g${++grantCounter}`, snapshot: snapshotFor(`g${grantCounter}`), expires_in_ms: grantCounter === 1 ? 400 : 400000, media: [], capabilities: { capabilities: { frame: { inline_png: { flag: '--include-png' } } } } }
     else if (request.op === 'query') result = full
     else if (request.op === 'proposal-list') result = { ok: true, proposals: [] }
     else result = { ok: true }
@@ -105,7 +106,7 @@ test('host expires_in_ms deadline: banner, tool teardown, stopped proposal poll;
   assert(document.body.textContent.includes('剪辑编辑与提交'), 'manual editor mounted on the live grant')
   assert(document.querySelector('[aria-label="当前合成帧与草稿"]'), 'frame tools mounted on the live grant')
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 3000)) }) // past the 400ms TTL
-  assert(document.body.textContent.includes('预览授权已失效'), 'expiry banner is visible: ' + document.body.textContent.slice(0, 200))
+  assert(document.body.textContent.includes('预览授权已失效'), 'expiry banner is visible: ' + domTextExcerpt(document))
   assert(document.body.textContent.includes('（EXPIRED）'), 'banner carries the expiry code')
   assert(!document.body.textContent.includes('剪辑编辑与提交'), 'manual editor (and its proposal poller) torn down')
   assert(document.querySelector('[aria-label="当前合成帧与草稿"]') === null, 'frame tools torn down — no stale verified PNG stays actionable')

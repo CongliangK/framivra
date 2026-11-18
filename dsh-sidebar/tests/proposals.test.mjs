@@ -36,12 +36,12 @@ test('first poll is immediate: empty list and read failure are both visible', { 
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal: new AbortController().signal, call, writeGrant: undefined, manualBlocked: false, onCommitted: () => {}, onEditState: () => {} })))
   assert.equal(calls.length, 1, 'exactly one immediate poll, no interval wait needed')
   assert(text().includes('暂无提案'))
-  assert.equal(button('确认提交此智能体冻结提案'), undefined)
+  assert(button('确认提交此智能体冻结提案') === undefined, "Expected absent DOM node: button('确认提交此智能体冻结提案')")
 
   const failing = []
   const failCall = async () => { failing.push(1); throw new Error('连接已断开') }
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal: new AbortController().signal, call: failCall, writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {}, onEditState: () => {} })))
-  assert.match(text(), /无法读取智能体提案：连接已断开。请检查连接；不会自动提交。/)
+  assert(/无法读取智能体提案：连接已断开。请检查连接；不会自动提交。/.test(text()), "Body text must match /无法读取智能体提案：连接已断开。请检查连接；不会自动提交。/")
   assert.equal(failing.length, 1)
 })
 
@@ -50,9 +50,9 @@ test('malformed proposal response is a visible protocol failure, never an invent
   for (const response of [undefined, { ok: true }, { proposals: [null] }, { proposals: [{ proposal_id: 'p1' }] }]) {
     await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal: new AbortController().signal,
       call: async () => response, writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {}, onEditState: () => {} })))
-    assert.match(text(), /无法读取智能体提案：提案响应格式不完整/)
+    assert(/无法读取智能体提案：提案响应格式不完整/.test(text()), "Body text must match /无法读取智能体提案：提案响应格式不完整/")
     assert.equal(text().includes('暂无提案'), false)
-    assert.equal(button('确认提交此智能体冻结提案'), undefined)
+    assert(button('确认提交此智能体冻结提案') === undefined, "Expected absent DOM node: button('确认提交此智能体冻结提案')")
   }
 })
 
@@ -113,7 +113,7 @@ test('confirm sends grant/writeGrant/proposalId exactly once; applied awaits onC
   await act(async () => resolveConfirm({ proposal: { ...pendingRow, state: 'applied', outcome: { op_id: opId } } }))
   assert(text().includes('内核已保存'))
   assert.equal(commits.length, 1, 'applied awaits onCommitted exactly once')
-  assert.match(text(), /已保存并重新读取权威时间线。智能体可用 proposal_status 读取此回执；不会自动发送消息。/)
+  assert(/已保存并重新读取权威时间线。智能体可用 proposal_status 读取此回执；不会自动发送消息。/.test(text()), "Body text must match /已保存并重新读取权威时间线。智能体可用 proposal_status 读取此回执；不会自动发送消息。/")
   assert.equal(calls.filter(c => !['proposal-list', 'proposal-confirm'].includes(c.op)).length, 0, 'no auto messages or extra ops')
   const last = states.at(-1)
   assert.deepEqual({ dirty: last.dirty, busy: last.busy, unknown: last.unknown }, { dirty: false, busy: false, unknown: false }, 'applied proposal clears dirty/busy/unknown')
@@ -151,7 +151,7 @@ test('unknown confirm outcome surfaces the original op_id and fail-closes; no au
   const states = []
   await act(async () => root.render(h(AgentProposals, { sessionId: 'one', opened: openedFor(version), tabSignal: new AbortController().signal, call, writeGrant: 'explicit', manualBlocked: false, onCommitted: () => {}, onEditState: s => states.push(s) })))
   await act(async () => button('确认提交此智能体冻结提案').click())
-  assert.match(text(), /提交回执未取得。提交回执未取得不代表失败；保留原 op_id 11111111-2222-4333-8444-555555555555，读取提案回执及 core status \/ recover，不自动重试。/)
+  assert(/提交回执未取得。提交回执未取得不代表失败；保留原 op_id 11111111-2222-4333-8444-555555555555，读取提案回执及 core status \/ recover，不自动重试。/.test(text()), "Body text must match /提交回执未取得。提交回执未取得不代表失败；保留原 op_id 11111111-2222-4333-8444-555555555555，读取提案回执及 core status \\/ recover，不自动重试。/")
   assert.equal(button('确认提交此智能体冻结提案').disabled, true, 'unknown outcome fail-closes every later confirm')
   assert.equal(calls.filter(op => op !== 'proposal-list').length, 1, 'exactly one confirm; the component never calls status/recover by itself')
   assert(states.some(s => s.unknown === true), 'unknown outcome reports unknown edit state')

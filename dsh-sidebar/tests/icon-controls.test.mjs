@@ -52,7 +52,7 @@ test('icon button: native type, accessible hidden name, no visible text, pressed
   assert(button.querySelector('span.fv-sr-only'), 'persistent label is visually hidden, not removed from assistive tech')
   assert.equal(button.getAttribute('aria-pressed'), 'true')
   assert.equal(button.getAttribute('aria-describedby'), f.tip().id)
-  assert.equal(ref.current, button)
+  assert(ref.current === button, "Expected same DOM node: ref.current")
   assert.deepEqual(calls, [])
   await act(async () => button.click())
   assert.deepEqual(calls, ['open'])
@@ -131,6 +131,6 @@ test('icon disclosure: stays a native first summary with an accessible name, not
   await f.render(h('details', null, h(ToolSummary, { icon: 'path', label: '通过路径打开' }), h('p', null, '路径表单')))
   const details = document.querySelector('details'), summary = details.firstElementChild
   assert.equal(summary.tagName, 'SUMMARY'); assert.equal(summary.getAttribute('aria-label'), '通过路径打开')
-  assert.equal(summary.querySelector('button'), null); assert(summary.querySelector('svg'))
+  assert(summary.querySelector('button') === null, "Expected absent DOM node: summary.querySelector('button')"); assert(summary.querySelector('svg'))
   assert.equal(summary.querySelector('span').className, 'fv-sr-only')
 })

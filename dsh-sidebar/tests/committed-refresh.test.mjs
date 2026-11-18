@@ -1,3 +1,4 @@
+import { domTextExcerpt } from './dom-diagnostics.mjs'
 // R3 regression (F2): a kernel receipt that already confirmed a WRITE
 // (commit/adopt/undo ok) must never be relabeled outcome_unknown when only
 // the display refresh (onCommitted) fails — but a status/recover receipt is
@@ -25,7 +26,7 @@ async function mount(t) {
   const root = createRoot(document.getElementById('root'))
   t.after(async () => { await act(async () => root.unmount()); dom.window.close(); delete globalThis.window; delete globalThis.document })
   const button = text => [...document.querySelectorAll('button')].find(b => b.textContent.includes(text))
-  const settle = async predicate => { for (let i = 0; i < 400; i++) { if (predicate()) return; await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)) }) } assert.fail(`DOM did not settle: ${document.body.textContent.slice(0, 300)}`) }
+  const settle = async predicate => { for (let i = 0; i < 400; i++) { if (predicate()) return; await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)) }) } assert.fail(`DOM did not settle: ${domTextExcerpt(document)}`) }
   return { root, dom, button, settle }
 }
 const lastSettled = reports => reports.filter(r => !r.busy).at(-1)
@@ -62,7 +63,7 @@ test('manual: real plan→commit ok with failed onCommitted reports a KNOWN appl
   assert.equal(requests.filter(op => op === 'commit').length, 1)
   assert.equal(commits, 1)
   // 2. Message claims the confirmed write, never "outcome unknown".
-  assert(document.body.textContent.includes('内核已确认本次写入'), document.body.textContent.slice(0, 200))
+  assert(document.body.textContent.includes('内核已确认本次写入'), domTextExcerpt(document))
   assert(!document.body.textContent.includes('结果可能未知'), 'must not claim the outcome is unknown')
   // 3. Stale view fail-closed; read-only recovery stays usable.
   assert(button('撤销当前 core head').disabled)
@@ -124,7 +125,7 @@ test('proposals: applied receipt + failed onCommitted keeps unknown false, locks
   await act(async () => confirm().click())
   await settle(() => document.body.textContent.includes('旧视图已锁定'))
   // The confirmed row keeps its applied receipt; unknown is never reported.
-  assert(document.body.textContent.includes('内核已保存'), document.body.textContent.slice(0, 200))
+  assert(document.body.textContent.includes('内核已保存'), domTextExcerpt(document))
   assert(!document.body.textContent.includes('结果未知'))
   const settled = reports.filter(r => !r.busy)
   assert.equal(settled[settled.length - 1].unknown, false, `reports=${JSON.stringify(reports)}`)
@@ -171,7 +172,7 @@ test('manual: stale-owned dirty is cleared by a later SUCCESSFUL refresh (positi
   await settle(() => document.querySelector('[role=alert]') === null)
   assert.equal(lastSettled(reports).dirty, false, `stale dirty released on refresh success; reports=${JSON.stringify(reports)}`)
   assert.equal(lastSettled(reports).unknown, false)
-  assert.equal(document.querySelector('fieldset[disabled]'), null, 'form usable again')
+  assert(document.querySelector('fieldset[disabled]') === null, 'form usable again')
   assert(button('清空未保存批次').disabled === false)
   assert.equal(refreshes, 2)
 })
@@ -236,7 +237,7 @@ test('manual: explicit clear resets draftDirty, so a later stale→recovered ref
   await settle(() => document.querySelector('[role=alert]') === null)
   assert.equal(lastSettled(reports).dirty, false, `stale dirty released after recovery; reports=${JSON.stringify(reports)}`)
   assert.equal(lastSettled(reports).unknown, false)
-  assert.equal(document.querySelector('fieldset[disabled]'), null)
+  assert(document.querySelector('fieldset[disabled]') === null, "Expected absent DOM node: document.querySelector('fieldset[disabled]')")
   assert.equal(refreshes, 2)
 })
 

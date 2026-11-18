@@ -1,3 +1,4 @@
+import { domTextExcerpt } from './dom-diagnostics.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import React, { act } from 'react'
@@ -34,7 +35,7 @@ async function settle(predicate) {
     if (predicate()) return
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)) })
   }
-  assert.fail(`DOM did not settle: ${document.body.textContent}`)
+  assert.fail(`DOM did not settle: ${domTextExcerpt(document)}`)
 }
 
 test('actual React DOM: full projection persists, hover is local, ruler/keys set canonical input and selection references click-time frame', async t => {
@@ -47,7 +48,7 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
   globalThis.fetch = async (_url, init) => {
     const request = JSON.parse(init.body); requests.push(request); order.push(request.op)
     let result
-    if (request.op === 'open') result = { grant: 'grant', snapshot, media: [] }
+    if (request.op === 'open') result = { grant: 'grant', snapshot, media: [], capabilities: { capabilities: { frame: { inline_png: { flag: '--include-png' } } } } }
     else if (request.op === 'query') result = request.query.frame === undefined ? full : { ...filtered, content_version: nextVersion }
     else if (request.op === 'proposal-list') result = { ok: true, proposals: [] }
     else if (request.op === 'reference') {
@@ -153,7 +154,7 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
   await submit(1)
   assert.equal(requests.length, beforeInvalid)
   assert.equal(input.value, '1.0')
-  assert.equal(button('复制 raw JSON'), undefined)
+  assert(button('复制 raw JSON') === undefined, "Expected absent DOM node: button('复制 raw JSON')")
   assert(document.body.textContent.includes('不会暗用旧帧'))
   assert.equal(document.querySelectorAll('.fv-clip').length, blocks.length)
   await act(async () => Simulate.keyDown(ruler, { key: 'Home', preventDefault() {} }))
@@ -167,17 +168,17 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
   assert.equal(document.querySelectorAll('.fv-clip').length, blocks.length)
   assert(document.body.textContent.includes('external.srt'))
   assert(document.body.textContent.includes('9007199254740993'))
-  assert.equal(document.querySelector('video'), null)
+  assert(document.querySelector('video') === null, "Expected absent DOM node: document.querySelector('video')")
   await act(async () => button('成片渲染').click())
   assert(document.body.textContent.includes('暂无成片；不会自动启动整片渲染。'))
   await act(async () => button('实时真预览').click())
   nextVersion = `sha256:${'b'.repeat(64)}`
   await submit(1)
   await settle(() => document.body.textContent.includes('旧块已隐藏'))
-  assert.equal(document.querySelector('.fv-clip'), null)
-  assert.equal(button('复制 raw JSON'), undefined)
+  assert(document.querySelector('.fv-clip') === null, "Expected absent DOM node: document.querySelector('.fv-clip')")
+  assert(button('复制 raw JSON') === undefined, "Expected absent DOM node: button('复制 raw JSON')")
   await act(async () => root.render(h(PreviewBody, { useTabInfo, sessionId: 'two' })))
-  assert.equal(document.querySelector('.fv-timeline'), null)
+  assert(document.querySelector('.fv-timeline') === null, "Expected absent DOM node: document.querySelector('.fv-timeline')")
   assert.equal(requests.at(-1).op, 'close')
   assert.equal(requests.at(-1).sessionId, 'one')
   assert(requests.every(x => ['open', 'query', 'reference', 'proposal-list', 'close'].includes(x.op)))
@@ -224,7 +225,7 @@ test('actual React DOM: pending references abort on selection/frame/session/unmo
   await act(async () => root.render(null))
   assert.equal(reads[3].signal.aborted, true)
   await act(async () => reads[3].finish('AFTER_UNMOUNT'))
-  assert.equal(document.body.textContent, '')
+  assert(document.body.textContent === '', 'body remains empty after unmount and a late response')
 })
 
 test('actual React DOM: empty and unsafe displays retain diagnostics/raw; component CSS is self-contained and scoped', async t => {
@@ -232,10 +233,10 @@ test('actual React DOM: empty and unsafe displays retain diagnostics/raw; compon
   await act(async () => root.render(h(TimelineView, { snapshot, result: { ...full, tracks: [], blocks: [] } })))
   assert(document.body.textContent.includes('空项目'))
   assert(document.querySelector('.fv-timeline style').textContent.includes('.fv-timeline'))
-  assert.equal(document.querySelector('link[rel="stylesheet"]'), null)
+  assert(document.querySelector('link[rel="stylesheet"]') === null, "Expected absent DOM node: document.querySelector('link[rel=\"stylesheet\"]')")
   await act(async () => root.render(h(TimelineView, { snapshot: { ...snapshot, document: { ...snapshot.document, project: { duration_frames: JSON.rawJSON('9007199254740993') } } }, result: full })))
   assert(document.querySelector('[role="alert"]').textContent.length > 0)
   assert(document.body.textContent.includes('DISPLAY_PRECISION'))
   assert(document.body.textContent.includes('9007199254740993'))
-  assert.equal(document.querySelector('.fv-ruler'), null)
+  assert(document.querySelector('.fv-ruler') === null, "Expected absent DOM node: document.querySelector('.fv-ruler')")
 })

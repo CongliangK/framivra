@@ -194,8 +194,10 @@ From the repository root, enter `dsh-sidebar/` (`cd dsh-sidebar`), with those bu
 
 ```sh
 npm run build:client
-npm test
+npm run test:local
 ```
+
+Use the [local memory guard](../CONTRIBUTING.md#本机-linux先隔离再运行) for Linux/systemd development, including single-file DOM reruns. On other platforms `npm test` remains the portable unguarded entry. In DOM assertions, compare presence/identity as booleans and report only bounded diagnostic excerpts, never the live node.
 
 Opt-in real integrations (writes only test evidence and isolated fixtures, never changes a user's timeline or live GUI):
 
@@ -203,9 +205,9 @@ Opt-in real integrations (writes only test evidence and isolated fixtures, never
 SIDEBAR_DSH_ROOT=/absolute/npm-install/node_modules/@deepseek-ai/dsh \
 SIDEBAR_REAL_VTX=/absolute/trusted/venv/bin/vtx \
 SIDEBAR_MANUAL_ZIP=/absolute/fresh/framivra-dsh-sidebar-candidate.zip \
-SIDEBAR_EVIDENCE_DIR=/absolute/existing/evidence node --test tests/*.test.mjs
+SIDEBAR_EVIDENCE_DIR=/absolute/existing/evidence npm run test:local
 SIDEBAR_DSH_ROOT=/absolute/reviewed/conversation-draft-checkout \
-SIDEBAR_EVIDENCE_DIR=/absolute/existing/evidence node scripts/verify-conversation.mjs
+SIDEBAR_EVIDENCE_DIR=/absolute/existing/evidence python3 ../scripts/run_local_tests.py -- node scripts/verify-conversation.mjs
 ```
 
 Conversation verification requires the supplied checkout's installed dev dependencies; it only writes an evidence-local Vite config/cache, reads that checkout's public-source test assembly and runs this app's test file. It is not a source checkout runtime requirement, CI gate/selection change, DSH source modification or replacement server. Historical note: the recorded run used custom-host conversation candidate `76f288c3833f5db951087d469b87d3dff69ac2ae`; the current official contract (`InputActions` + `ConversationController`) is covered by the targeted draft-bridge suite instead.

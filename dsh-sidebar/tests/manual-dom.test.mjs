@@ -29,8 +29,8 @@ test('actual pointer handlers: pure ghost, multi move one batch, vertical-only c
   const handle=document.querySelector(`[aria-label="${side} trim 手柄 ${blocks[0].address}"]`),origin=side==='左'?0:300
   await act(async()=>Simulate.pointerDown(handle,{pointerId:3,button:0,clientX:origin,clientY:10}));await act(async()=>Simulate.pointerUp(handle,{pointerId:3,clientX:origin+x,clientY:10}));assert.deepEqual(batches.pop(),[{op:'block.trim',id:'c',...expected,fade_policy:'preserve-content'}])
  }
- await act(async()=>Simulate.pointerDown(clip(0),{pointerId:4,button:0,clientX:0,clientY:10}));await act(async()=>Simulate.pointerMove(clip(0),{pointerId:4,clientX:30,clientY:10}));await act(async()=>Simulate.pointerCancel(clip(0),{}));assert.equal(document.querySelector('[aria-label="未保存拖动 ghost"]'),null);assert.equal(batches.length,0)
- await act(async()=>render(undefined));assert.equal(document.querySelector('[aria-label^="左 trim"]'),null)
+ await act(async()=>Simulate.pointerDown(clip(0),{pointerId:4,button:0,clientX:0,clientY:10}));await act(async()=>Simulate.pointerMove(clip(0),{pointerId:4,clientX:30,clientY:10}));await act(async()=>Simulate.pointerCancel(clip(0),{}));assert(document.querySelector('[aria-label="未保存拖动 ghost"]') === null, "Expected absent DOM node: document.querySelector('[aria-label=\"未保存拖动 ghost\"]')");assert.equal(batches.length,0)
+ await act(async()=>render(undefined));assert(document.querySelector('[aria-label^="左 trim"]') === null, "Expected absent DOM node: document.querySelector('[aria-label^=\"左 trim\"]')")
  await act(async()=>Simulate.pointerDown(clip(0),{pointerId:5,button:0,clientX:0,clientY:10}));await act(async()=>Simulate.pointerUp(clip(0),{pointerId:5,clientX:30,clientY:10}));assert.equal(batches.length,0)
 })
 
@@ -41,9 +41,9 @@ test('all dedicated forms exist, explicit write auth; in-flight plan cannot surv
  const render=selection=>root.render(h(ManualEditor,{sessionId:'one',opened:{grant:'read',snapshot},result,selection,selected,frame:15,tabSignal:new AbortController().signal,call,onCommitted:()=>{}}))
  await act(async()=>render(selected[0]));assert.equal(document.querySelector('fieldset').disabled,true);assert.deepEqual(calls.map(c=>c.op),['proposal-list'])
  await act(async()=>button('明确允许本会话向此工程及 core 历史写入').click());assert.equal(document.querySelector('fieldset').disabled,false)
- for(const op of EDIT_OPERATIONS){const select=[...document.querySelectorAll('label')].find(n=>n.firstChild?.textContent==='编辑操作').querySelector('select');await act(async()=>Simulate.change(select,{target:{value:op}}));assert.equal(select.value,op);assert(document.querySelector('[aria-label="未保存 typed intents"]'));assert.equal(document.querySelector('textarea'),null)}
+ for(const op of EDIT_OPERATIONS){const select=[...document.querySelectorAll('label')].find(n=>n.firstChild?.textContent==='编辑操作').querySelector('select');await act(async()=>Simulate.change(select,{target:{value:op}}));assert.equal(select.value,op);assert(document.querySelector('[aria-label="未保存 typed intents"]'));assert(document.querySelector('textarea') === null, "Expected absent DOM node: document.querySelector('textarea')")}
  const select=[...document.querySelectorAll('label')].find(n=>n.firstChild?.textContent==='编辑操作').querySelector('select');await act(async()=>Simulate.change(select,{target:{value:'project.resize'}}));await act(async()=>button('加入未保存批次').click());await act(async()=>button('内核预检计划（零写）').click());assert(resolvePlan)
- const duration=[...document.querySelectorAll('label')].find(n=>n.firstChild?.textContent==='工程新时长帧（不改 FPS/分辨率）').querySelector('input');await act(async()=>Simulate.change(duration,{target:{value:'130'}}));await act(async()=>resolvePlan({ok:true,planToken:'obsolete',submitted_request:{op_id:'old'}}));assert.equal(button('确认提交此冻结计划（一次 revision）'),undefined)
+ const duration=[...document.querySelectorAll('label')].find(n=>n.firstChild?.textContent==='工程新时长帧（不改 FPS/分辨率）').querySelector('input');await act(async()=>Simulate.change(duration,{target:{value:'130'}}));await act(async()=>resolvePlan({ok:true,planToken:'obsolete',submitted_request:{op_id:'old'}}));assert(button('确认提交此冻结计划（一次 revision）') === undefined, "Expected absent DOM node: button('确认提交此冻结计划（一次 revision）')")
  assert.equal(calls.filter(c=>c.op==='commit').length,0);assert(calls.some(c=>c.op==='invalidate-plan'))
  await act(async()=>button('撤销本会话/工程写许可').click());assert.equal(document.querySelector('fieldset').disabled,true)
 })
@@ -61,5 +61,5 @@ test('plan waits for every previous invalidation acknowledgement and fails close
  await act(async()=>acks[0].resolve({ok:true}));assert.equal(calls.filter(c=>c.op==='plan').length,1);assert(button('确认提交此冻结计划（一次 revision）'))
  await act(async()=>button('清空未保存批次').click());await act(async()=>acks.at(-1).reject(Error('lost acknowledgement')))
  await act(async()=>button('加入未保存批次').click());await act(async()=>acks.at(-1).resolve({ok:true}));await act(async()=>button('内核预检计划（零写）').click())
- assert.equal(calls.filter(c=>c.op==='plan').length,1);assert(document.body.textContent.includes('PLAN_INVALIDATION_FAILED'));assert.equal(button('确认提交此冻结计划（一次 revision）'),undefined)
+ assert.equal(calls.filter(c=>c.op==='plan').length,1);assert(document.body.textContent.includes('PLAN_INVALIDATION_FAILED'));assert(button('确认提交此冻结计划（一次 revision）') === undefined, "Expected absent DOM node: button('确认提交此冻结计划（一次 revision）')")
 })
