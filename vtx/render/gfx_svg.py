@@ -89,19 +89,31 @@ def input_path(c, name):
     relative = Path(name)
     if relative.is_absolute() or '..' in relative.parts or not relative.parts:
         raise ValueError('SVG inputs require project-relative paths without parent traversal')
+    if os.name == 'nt':
+        is_reserved = getattr(os.path, 'isreserved', lambda part: Path(part).is_reserved())
+        if (relative.anchor or ':' in name
+                or any(part.endswith((' ', '.')) or is_reserved(part) for part in relative.parts)):
+            raise ValueError('SVG inputs require ordinary project-relative Windows paths')
     root = Path(c.root).resolve()
     path = (root / relative).resolve()
-    if root not in path.parents:
+    if os.name == 'nt':
+        # Windows Path equality folds case even on case-sensitive directories.
+        inside = len(path.parts) > len(root.parts) and path.parts[:len(root.parts)] == root.parts
+    else:
+        inside = root in path.parents
+    if not inside:
         raise ValueError('SVG input must resolve inside the project root')
     return path
 
 
-def read_input(c, name, *, limit=None):
+def read_input(c, name, *, limit=None, expected_path=None):
     """Bound the read itself, rather than allocating first and checking later."""
     limit = MAX_INPUT_BYTES if limit is None else limit
     if limit < 0:
         raise ValueError('SVG input exceeds byte budget')
     path = input_path(c, name)
+    if expected_path is not None and path.parts != expected_path.parts:
+        raise ValueError('SVG dependency identity changed while resolving its relative name')
     fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_BINARY', 0))
     try:
         info = os.fstat(fd)
@@ -557,6 +569,34 @@ def fontconfig_identity():
             'version': _fontconfig_version(executable, sha256, digest(canonical(libraries)))}
 
 
+def _dependency_members(c, clip):
+    from ..cache.cache_state import _declaration_inputs, declared_dependencies
+
+    if os.name != 'nt':
+        for name in declared_dependencies(c, clip):
+            path = Path(name)
+            name = str(path.relative_to(Path(c.root).resolve())) if path.is_absolute() else name
+            yield name, None
+        return
+
+    project, local = _declaration_inputs(c, clip)
+    if not local:
+        for name in project:
+            yield name, None
+        return
+
+    # Validate original declarations before building the canonical union: a
+    # resolved absolute path by itself loses the spelling in the timeline.
+    root = Path(c.root).resolve()
+    paths = {str(path): path for path in (input_path(c, name) for name in project + local)}
+    for _, path in sorted(paths.items()):
+        # input_path checked this boundary against the resolved root; check
+        # against our snapshot too, without WindowsPath's case folding.
+        if len(path.parts) <= len(root.parts) or path.parts[:len(root.parts)] != root.parts:
+            raise ValueError('SVG dependency must resolve inside the project root')
+        yield '/'.join(path.parts[len(root.parts):]), path
+
+
 def resolve(c, clip):
     """Re-read every declared input; returned record carries full file hashes."""
     if route(c) != 'svg-sequence' or not is_svg(clip):
@@ -584,10 +624,14 @@ def resolve(c, clip):
         raise ValueError('SVG manifest.fonts must be a list of project-relative files')
     files = {clip['src']: digest(raw)}
     total_bytes = len(raw)
-    def add(name, *, limit=None):
+    def add(name, *, limit=None, expected_path=None):
         nonlocal total_bytes
         remaining = MAX_INPUT_BYTES if name in files else MAX_INPUT_BYTES - total_bytes
-        data = read_input(c, name, limit=min(remaining, MAX_INPUT_BYTES if limit is None else limit))
+        budget = min(remaining, MAX_INPUT_BYTES if limit is None else limit)
+        if expected_path is None:
+            data = read_input(c, name, limit=budget)
+        else:
+            data = read_input(c, name, limit=budget, expected_path=expected_path)
         if name not in files:
             total_bytes += len(data)
         if total_bytes > MAX_INPUT_BYTES:
@@ -606,12 +650,8 @@ def resolve(c, clip):
         font_faces[font] = _font_faces(fontconfig['executable'], str(input_path(c, font)), files[font], digest(canonical(fontconfig)))
     if 'generator' in manifest:
         add(manifest['generator'])
-    from ..cache.cache_state import declared_dependencies
-    for name in declared_dependencies(c, clip):
-        # Existing adapter may canonicalize clip-local unions to absolute names.
-        path = Path(name)
-        relative = path.relative_to(Path(c.root).resolve()).as_posix() if path.is_absolute() else name
-        add(relative)
+    for name, expected_path in _dependency_members(c, clip):
+        add(name, expected_path=expected_path)
     families = {family.strip() for faces in font_faces.values() for face in faces
                 for family in face['family'].split(',')}
     seen = set()
