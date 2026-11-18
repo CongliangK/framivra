@@ -958,6 +958,67 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
             run.assert_called_once()
             self.assertEqual(list(scratch.iterdir()), [])
 
+    def test_fixed_sequence_exact_outputs_and_index_pixels(self):
+        from PIL import Image, ImageDraw
+        from vtx.render import gfx_svg_win_shell as shell, gfx_svg_win_snapshot as snapshot
+
+        root = self.scratch_fixture(snapshot)
+        entry = root / 'inkscape/bin/inkscape.com'
+        entry.parent.mkdir(parents=True)
+        (root / 'inkscape/share').mkdir()
+        entry.write_bytes(b'sample')  # validated data fixture, never executed
+        expected = 'd6d2fef7359bebd313ce33a0e1e68a0ba295112ce886be28446833c0b8755ee0'
+        rendered = []
+        for i in range(180):
+            row, column = divmod(i, 30)
+            im = Image.new('RGBA', (64, 48), (32 + i, 64 + row * 16, 155, 255))
+            x, y = 2 * column, 2 + 7 * row
+            ImageDraw.Draw(im).rectangle((x, y, x + 4, y + 5), fill=(245, 218, 91, 255))
+            rendered.append(png(64, 48, rgba=im.tobytes()))
+
+        for failure, rejection in ((None, None), ('missing', 'missing output frames'),
+                                   ('extra', 'unexpected output entry'),
+                                   ('reordered', 'frame 35 pixels differ')):
+            with self.subTest(failure=failure):
+                scratch = root / ('accepted' if failure is None else failure)
+                scratch.mkdir()
+                job = mock.Mock()
+                job._pump.return_value = True
+                job.proc.returncode = 0
+                job._output.return_value = (b'', b'')
+
+                def launch(args, stdout, stderr, *, cwd, **kwargs):
+                    cwd = Path(cwd)
+                    actions = (cwd / 'actions.txt').read_bytes().splitlines()
+                    self.assertEqual(len(actions), 181)
+                    self.assertEqual(actions[-1], b'quit')
+                    self.assertEqual(len(list(cwd.glob('*.svg'))), 180)
+                    for i, action in enumerate(actions[:-1]):
+                        self.assertTrue(action.startswith(f'file-open:f{i:04d}.svg;'.encode('ascii')))
+                        self.assertIn(f'export-filename:frames/f{i:04d}.png;'.encode('ascii'), action)
+                    frames = cwd / 'frames'
+                    for i in reversed(range(180)):
+                        if failure == 'missing' and i == 179:
+                            continue
+                        source = 71 - i if failure == 'reordered' and i in (35, 36) else i
+                        (frames / f'f{i:04d}.png').write_bytes(rendered[source])
+                    if failure == 'extra':
+                        (frames / 'f0180.png').write_bytes(rendered[0])
+
+                job._launch.side_effect = launch
+                with mock.patch.multiple(snapshot, _MAX_FILES=1, _MAX_DIRS=2, _MAX_BYTES=6,
+                                         _TREE_SHA256=expected), \
+                        mock.patch.object(shell.native, '_OwnedJob', return_value=job) as own:
+                    if rejection is None:
+                        self.assertEqual(shell._accept_sequence(root, scratch=scratch), tuple(rendered))
+                    else:
+                        with self.assertRaisesRegex(ValueError, rejection):
+                            shell._accept_sequence(root, scratch=scratch)
+                own.assert_called_once()
+                job._launch.assert_called_once()
+                job._close.assert_called_once()
+                self.assertEqual(list(scratch.iterdir()), [])
+
     def test_handle_reparse_metadata_refuses_even_with_ordinary_lstat(self):
         from vtx.render import gfx_svg_win_snapshot as snapshot
         root = temporary_root(self)
