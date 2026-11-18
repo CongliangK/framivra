@@ -350,6 +350,47 @@ def _append_gfx_dependency_identity(c, h, gfx_inputs):
             h.update(b'gfx-dependencies-v1|' + identity(record))
 
 
+def _is_svg_only_receipt(timeline, tracks):
+    # Recognize the supported gfx_svg.route shape in plain JSON without moving
+    # route validation or calling methods on opaque containers.
+    if type(timeline) is not dict or type(tracks) not in (list, tuple):
+        return False
+    has_svg = False
+    for track in tracks:
+        if type(track) is not dict:
+            return False
+        kind = track.get('kind')
+        clips = track.get('clips', [])
+        if type(kind) not in _NATIVE_VALUES or type(clips) not in (list, tuple):
+            return False
+        for clip in clips:
+            if type(clip) is not dict:
+                return False
+            if kind != 'gfx':
+                if 'format' in clip:
+                    return False
+                continue
+            fmt = clip.get('format')
+            if type(fmt) is not str or fmt != 'svg-sequence':
+                return False
+            has_svg = True
+    project = timeline.get('project', {})
+    if not has_svg or type(project) is not dict:
+        return False
+    policy = project.get('gfx_dependency_policy', 'legacy')
+    return type(policy) is str and policy == 'legacy'
+
+
+def _svg_receipt_digest(c, name, *, manifest=False):
+    from ..render import gfx_svg
+
+    # Use the caller-authorized stable absolute root as supplied: no recovery
+    # via resolve/stat or a legacy read. A missing SVG manifest already failed
+    # in the suffix; now it fails here. No read error stands in for MISSING.
+    limit = gfx_svg.MAX_MANIFEST_BYTES if manifest else gfx_svg.MAX_INPUT_BYTES
+    return hashlib.sha256(gfx_svg.read_input(c, name, limit=limit)).hexdigest()
+
+
 def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     """唯一当前回执身份：timeline/源/gfx/声明依赖/字幕/插件及音频实现。
 
@@ -380,7 +421,9 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
             digest = media_stat_digest(p) if p.is_file() else 'MISSING'
         h.update(_encode(c, prefix + digest + '\n', origin + '.path'))
     gfx_inputs = []
-    tracks = _get(c, c.tl, 'video_tracks', '$', [])
+    timeline = c.tl
+    tracks = _get(c, timeline, 'video_tracks', '$', [])
+    windows_svg = os.name == 'nt' and _is_svg_only_receipt(timeline, tracks)
     for ti, tr in _indexed(c, tracks, '$.video_tracks'):
         track_origin = f'$.video_tracks[{ti}]'
         if _get(c, tr, 'kind', track_origin) != "gfx":
@@ -388,16 +431,21 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
         clips = _get(c, tr, 'clips', track_origin, [])
         for ci, cl in _indexed(c, clips, track_origin + '.clips'):
             origin = f'{track_origin}.clips[{ci}]'
-            p = _path(c, _field(c, cl, 'src', origin), origin + '.src')
+            name = _field(c, cl, 'src', origin)
+            p = None if windows_svg else _path(c, name, origin + '.src')
             prefix = _text(c, _field(c, cl, 'src', origin), origin + '.src') + ':'
-            exists = p.is_file()
-            digest = file_digest(p) if exists else 'MISSING'
+            if windows_svg:
+                digest, exists = _svg_receipt_digest(c, name, manifest=True), True
+            else:
+                exists = p.is_file()
+                digest = file_digest(p) if exists else 'MISSING'
             h.update(_encode(c, prefix + digest + '\n', origin + '.src'))
             gfx_inputs.append((cl, p, origin, exists))
     for index, item in enumerate(declared_dependencies(c)):
         origin = f'$.project.cache_dependencies[{index}]'
         prefix = item + ':'
-        digest = file_digest(_path(c, item, origin))
+        digest = (_svg_receipt_digest(c, item) if windows_svg else
+                  file_digest(_path(c, item, origin)))
         h.update(_encode(c, prefix + digest + '\n', origin))
     for ti, track in _indexed(c, _get(c, c.tl, 'video_tracks', '$', []), '$.video_tracks'):
         track_origin = f'$.video_tracks[{ti}]'
@@ -409,7 +457,8 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
             for index, item in enumerate(_dependency_list(clip, 'clip', c=c, origin=origin)):
                 location = f'{origin}.cache_dependencies[{index}]'
                 prefix = f"clip_dependency:{ti}:{ci}:" + item + ":"
-                digest = file_digest(_path(c, item, location))
+                digest = (_svg_receipt_digest(c, item) if windows_svg and track.get('kind') == 'gfx' else
+                          file_digest(_path(c, item, location)))
                 h.update(_encode(c, prefix + digest + "\n", location))
     # v2 §1.1 条目 6：subtitles_src 文件内容并入（缺失记 MISSING——validate 侧 FAIL）
     src = _get(c, c.tl, 'subtitles_src', '$')

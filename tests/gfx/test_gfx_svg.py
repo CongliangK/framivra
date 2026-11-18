@@ -15,6 +15,7 @@ from unittest import mock
 
 from vtx.render import gfx_svg, gfx_svg_stage
 from vtx.runtime import fstxn
+from vtx.cache import cache_state
 from vtx.cache.cache_state import InputIdentityError, verify_input_identity
 from vtx.render.frame_source import png_source
 from vtx.render.gfx_cache_reader import resolve_frames
@@ -132,6 +133,56 @@ class SvgContract(unittest.TestCase):
         with mock.patch.object(kernel, 'ReadFile', side_effect=read_error), self.assertRaises(OSError) as error:
             gfx_svg.read_input(c, name)
         self.assertEqual(error.exception.winerror, 30)
+
+    @unittest.skipUnless(os.name == 'nt', 'native Windows receipt reads')
+    def test_windows_receipt_reads_raw_declarations_in_order(self):
+        names = ['second.txt', 'first.txt', 'second.txt']
+        for name in names:
+            (self.root / name).write_bytes(name.encode())
+        self.timeline['project']['cache_dependencies'] = names
+        self.clip['cache_dependencies'] = ['first.txt', 'first.txt']
+        self.timeline['video_tracks'][0]['clips'].append(dict(self.clip, dst_in=0))
+        self.save()
+        c = SimpleNamespace(root=self.root, tl=self.timeline, tl_path=self.root / 'timeline.json',
+                            fps=30, w=1920, h=1080)
+        manifest_call = mock.call(c, 'manifest.json', limit=gfx_svg.MAX_MANIFEST_BYTES)
+        expected = [manifest_call, manifest_call] + [
+            mock.call(c, name, limit=gfx_svg.MAX_INPUT_BYTES)
+            for name in names + ['first.txt'] * 4]
+        with mock.patch.object(gfx_svg, 'read_input', wraps=gfx_svg.read_input) as read, \
+                mock.patch.object(cache_state, '_path', side_effect=AssertionError('legacy path lookup')), \
+                mock.patch.object(cache_state, 'file_digest', wraps=cache_state.file_digest) as legacy:
+            cache_state.receipt_fingerprint(c)
+        self.assertEqual(read.call_args_list[:len(expected)], expected)
+        self.assertEqual([call.args[0].name for call in legacy.call_args_list],
+                         ['stages.py', 'audio_filters.py'])
+
+    @unittest.skipUnless(os.name == 'nt', 'native Windows receipt reads')
+    def test_windows_receipt_missing_refused_and_unavailable_fail_before_suffix(self):
+        c = SimpleNamespace(root=self.root, tl=self.timeline, tl_path=self.root / 'timeline.json')
+        error = AssertionError('receipt fell back to a legacy read or ran the suffix')
+        with mock.patch.object(cache_state, '_path', side_effect=error), \
+                mock.patch.object(cache_state, 'file_digest', side_effect=error), \
+                mock.patch.object(gfx_svg, 'resolve', side_effect=error):
+            for owner, key in ((self.clip, 'src'), (self.timeline['project'], 'cache_dependencies'),
+                               (self.clip, 'cache_dependencies')):
+                with self.subTest(owner=owner, key=key), mock.patch.dict(
+                        owner, {key: 'absent.json' if key == 'src' else ['absent.txt']}):
+                    with self.assertRaises(FileNotFoundError):
+                        cache_state.receipt_fingerprint(c)
+            for refusal in (PermissionError('access denied'), OSError('read unavailable'),
+                            FileNotFoundError('cannot establish an input handle'),
+                            ValueError('input refused')):
+                with self.subTest(refusal=refusal), mock.patch.object(gfx_svg, 'read_input', side_effect=refusal):
+                    with self.assertRaises(type(refusal)) as caught:
+                        cache_state.receipt_fingerprint(c)
+                    self.assertIs(caught.exception, refusal)
+            with mock.patch.object(gfx_svg, 'MAX_MANIFEST_BYTES', 1), \
+                    self.assertRaisesRegex(ValueError, 'byte budget'):
+                cache_state.receipt_fingerprint(c)
+            with mock.patch.object(c, 'root', Path('.')), \
+                    self.assertRaisesRegex(ValueError, 'absolute Windows project root'):
+                cache_state.receipt_fingerprint(c)
 
     def test_dependency_read_requires_expected_resolved_member(self):
         c = self.ctx()
