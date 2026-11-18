@@ -1,4 +1,4 @@
-"""Internal Windows acceptance of fixed fixtures and one pinned canonical demo frame.
+"""Internal Windows acceptance of fixed fixtures and pinned canonical demo raster.
 
 The verified vendor copy, staged fonts and isolated profile belong to one
 operation. A Job controls our process tree, not the OS loader or arbitrary SVG;
@@ -15,6 +15,7 @@ from pathlib import Path
 import stat
 import subprocess
 import time
+from typing import NamedTuple
 from xml.sax.saxutils import escape
 
 from ..runtime import windows_browser as native
@@ -44,6 +45,16 @@ _STANDARD_STEM, _STANDARD_SIZE = 'f0135', (1920, 1080)
 _STANDARD_SVG_BYTES = 3419
 _STANDARD_SVG_SHA256 = '7f6ef5e87080ad55248052ebd5857d2fd1be84aca2ad7f28a2edc06cdcc6cc86'
 _STANDARD_RGBA_SHA256 = '3b245999b54791dcc7be240418965d8c91445a758bfc9450afbe5227c70edfd5'
+# Full portable-v2 reference: original prepared checker; independent verified
+# Inkscape 1.4.4 x64 CLI export and FFmpeg 9.0.2 RGBA framehash reopen.
+_RASTER_FRAMES = 900
+_RASTER_SVG_LIMIT, _RASTER_SVG_TOTAL = 5 * 1024, 2326452
+_RASTER_PNG_LIMIT = 72 * 1024  # reference max 73,707 bytes; f0135 retains its own 64 KiB limit
+_RASTER_CAPTURE_LIMIT = 1024 * 1024  # combined streams, including the full shell transcript
+_RASTER_TIMEOUT, _RASTER_VERIFY_RESERVE = 360, 75  # staging through verification; Job reserve is separate
+_RASTER_SVG_SHA256 = '70ddd6d89d21e9051c4479364cc69003c6612c9da3b3c7caaaa11f25b77c79bc'
+_RASTER_PNG_SHA256 = '30cad9d17b086500d6a15ed285bad63449dc5816806bb3744b68f941b1f0db4b'
+_RASTER_RGBA_SHA256 = '6884a426e5fa0a51cdf0d1b23975c883b69e626bd73a76aa864e9e12b804787f'
 _DEMO = Path(__file__).resolve().parents[2] / 'templates/demo-timeline-svg'
 _FONT_NAMES = ('NotoSansCJK-Regular.ttc', 'NotoSansCJK-Bold.ttc', 'DejaVuSans.ttf', 'DejaVuSans-Bold.ttf')
 _FONT_LIMIT = 24 * 1024 * 1024  # Per file; four fixed inputs, no font directory scan.
@@ -153,11 +164,13 @@ def _settle(operation, job, deadline):
     operation.keep = False
 
 
-def _run(operation, executable, cwd, environment, stdin, *, deadline=None):
+def _run(operation, executable, cwd, environment, stdin, *, deadline=None, capture_limit=None):
     argv = [str(executable), '--shell']
     if deadline is not None and time.monotonic() >= deadline - _SETTLE_RESERVE:
         raise TimeoutError('Windows SVG sequence did not stage in time')
-    job = native._OwnedJob(argv, capture_limit=_LIMIT if deadline is None else _SEQUENCE_CAPTURE_LIMIT)
+    if capture_limit is None:
+        capture_limit = _LIMIT if deadline is None else _SEQUENCE_CAPTURE_LIMIT
+    job = native._OwnedJob(argv, capture_limit=capture_limit)
     if deadline is None:
         deadline = time.monotonic() + _TIMEOUT
     operation.keep = True  # revoke cleanup authority before CreateProcessW can run a writer
@@ -222,10 +235,10 @@ def _fixed_stdin(cwd, actions):
         yield handle
 
 
-def _read_png(operation, path):
+def _read_png(operation, path, *, limit=_LIMIT):
     try:
         with _pin_entry(path) as (handle, info, _, directory):
-            return _read_pinned(handle, info, directory, _LIMIT)
+            return _read_pinned(handle, info, directory, limit)
     except OSError as error:
         if getattr(error, 'winerror', None) in (32, 33):  # sharing or lock violation
             operation.keep = True
@@ -307,6 +320,117 @@ def _accept_standard_frame(portable_root, *, scratch, project_root):
         return data
 
 
+class _StandardRasterEvidence(NamedTuple):
+    frames: int
+    dimensions: tuple[int, int]
+    svg_sha256: str
+    png_sha256: str
+    rgba_sha256: str
+
+
+def _raster_fold(kind):
+    return hashlib.sha256(b'framivra:portable-v2:' + kind + b':v1\0')
+
+
+def _fold_frame(fold, index, data):
+    # Big-endian u32 index and u64 payload length, followed by the payload.
+    # The RGBA payload is the raw 32-byte SHA256 of a fully decoded frame.
+    fold.update(index.to_bytes(4, 'big') + len(data).to_bytes(8, 'big'))
+    fold.update(data)
+
+
+def _raster_time(deadline):
+    if time.monotonic() >= deadline:
+        raise TimeoutError('Windows SVG canonical raster deadline expired')
+
+
+def _accept_standard_raster(portable_root, *, scratch, project_root):
+    """Attest only the fixed portable-v2 raster, not project or render eligibility.
+
+    Use an authorized stable NTFS project root and an exclusive disjoint
+    scratch parent. No project declarations or caller expectation is consumed.
+    """
+    from PIL import Image
+
+    deadline = time.monotonic() + _RASTER_TIMEOUT
+    launch_deadline = deadline - _RASTER_VERIFY_RESERVE
+    project_root = os.fspath(project_root)  # anchored reader checks the original spelling
+    stems = tuple(f'f{i:04d}' for i in range(_RASTER_FRAMES))
+    outputs = tuple(stem + '.png' for stem in stems)
+    width, height = _STANDARD_SIZE
+    svg = _raster_fold(b'svg')
+    sources, remaining = [], _RASTER_SVG_TOTAL
+    for i, stem in enumerate(stems):
+        _raster_time(launch_deadline)
+        data = win_input.read(project_root, f'gfx/frames-svg/{stem}.svg',
+                              limit=min(remaining, _RASTER_SVG_LIMIT), expected_path=None)
+        if not data:
+            raise ValueError('Windows SVG canonical raster has an empty source frame')
+        remaining -= len(data)
+        _fold_frame(svg, i, data)
+        sources.append(data)
+    if remaining or svg.hexdigest() != _RASTER_SVG_SHA256:
+        raise ValueError('Windows SVG canonical raster source byte identity mismatch')
+
+    actions = (''.join(_EXPORT.format(stem=stem, width=width, height=height, png='frames/' + png)
+                       for stem, png in zip(stems, outputs)) + 'quit\n').encode('ascii')
+    with ExitStack() as roots:
+        project_ids = _pin_dirs(roots, _local_path(project_root))
+        scratch_ids = _pin_dirs(roots, _local_path(scratch))
+        if project_ids[-1] in scratch_ids or scratch_ids[-1] in project_ids:
+            raise ValueError('Windows SVG canonical raster scratch overlaps the project')
+        _raster_time(launch_deadline)
+        with _fixed_shell(portable_root, scratch) as (operation, executable, cwd, environment, pins):
+            frames, fonts = cwd / 'frames', cwd / 'fonts'
+            frames.mkdir()
+            pins.enter_context(_pin_dir(frames))
+            pins.enter_context(_pin_dir(fonts))
+            for i, (name, expected) in enumerate(zip(_FONT_NAMES, _locked_font_digests())):
+                _raster_time(launch_deadline)
+                data = win_input.read(project_root, 'assets/fonts/' + name, limit=_FONT_LIMIT, expected_path=None)
+                _stage_font(data, expected, name, fonts / f'font{i}{Path(name).suffix}', pins)
+            for stem, data in zip(stems, sources):
+                _raster_time(launch_deadline)
+                target = cwd / (stem + '.svg')
+                with target.open('xb') as stream:
+                    stream.write(data)
+                handle, info, _, directory = pins.enter_context(_pin_entry(target))
+                if _read_pinned(handle, info, directory, len(data)) != data:
+                    raise ValueError('Windows SVG staged canonical raster source changed')
+            with _fixed_stdin(cwd, actions) as stdin:
+                _run(operation, executable, cwd, environment, stdin, deadline=launch_deadline,
+                     capture_limit=_RASTER_CAPTURE_LIMIT)
+
+            # _run can return only after confirmed Job settlement. No directory
+            # enumeration or PNG reads occur on its failure path.
+            _raster_time(deadline)
+            _require_outputs(frames, outputs)
+            png, rgba = _raster_fold(b'png'), _raster_fold(b'rgba')
+            for i, name in enumerate(outputs):
+                _raster_time(deadline)
+                data = _read_png(operation, frames / name, limit=_RASTER_PNG_LIMIT)
+                _fold_frame(png, i, data)
+                pixels = _png_pixels(data, width, height, Image.open, static_only=True)
+                _fold_frame(rgba, i, hashlib.sha256(pixels).digest())
+            if rgba.hexdigest() != _RASTER_RGBA_SHA256:
+                raise ValueError('Windows SVG canonical raster ordered pixels differ')
+            if png.hexdigest() != _RASTER_PNG_SHA256:
+                raise ValueError('Windows SVG canonical raster ordered PNG bytes differ')
+    _raster_time(deadline)
+    return _StandardRasterEvidence(len(outputs), _STANDARD_SIZE, svg.hexdigest(), png.hexdigest(), rgba.hexdigest())
+
+
+def _require_outputs(frames, outputs):
+    missing = set(outputs)
+    with os.scandir(frames) as entries:
+        for entry in entries:
+            if entry.name not in missing:
+                raise ValueError('Windows SVG sequence has an unexpected output entry')
+            missing.remove(entry.name)
+    if missing:
+        raise ValueError('Windows SVG sequence is missing output frames')
+
+
 def _sequence_marker(index):
     phase, column = divmod(index, 30)  # six rows, thirty positions per row
     return bytes((32 + index, 64 + phase * 16, 155, 255)), column * 2, 2 + phase * 7
@@ -349,14 +473,7 @@ def _accept_sequence(portable_root, *, scratch):
         with _fixed_stdin(cwd, actions) as stdin:
             _run(operation, executable, cwd, environment, stdin, deadline=deadline - _VERIFY_RESERVE)
 
-        missing = set(outputs)
-        with os.scandir(frames) as entries:
-            for entry in entries:
-                if entry.name not in missing:
-                    raise ValueError('Windows SVG sequence has an unexpected output entry')
-                missing.remove(entry.name)
-        if missing:
-            raise ValueError('Windows SVG sequence is missing output frames')
+        _require_outputs(frames, outputs)
 
         accepted = []
         for i, name in enumerate(outputs):
