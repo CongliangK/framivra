@@ -197,6 +197,9 @@ class TestPipelineIntegration(unittest.TestCase):
         # —— 第一遍：冷跑（全链渲染）——
         r1 = self._all()
         self.assertEqual(r1.returncode, 0, r1.stdout + r1.stderr)
+        # Match the task batch, not the unrelated NVENC fallback diagnostic.
+        preencode_batch = "seg 预编码："
+        self.assertIn(preencode_batch, r1.stdout)
         self._assert_receipt_all_ok()
         fp = shutil.which("ffprobe")
         self.assertIsNotNone(fp)
@@ -218,7 +221,7 @@ class TestPipelineIntegration(unittest.TestCase):
         for i in (2, 3):
             rw = self._all()
             self.assertEqual(rw.returncode, 0, rw.stdout + rw.stderr)
-            self.assertNotIn("seg 预编码", rw.stdout,
+            self.assertNotIn(preencode_batch, rw.stdout,
                              "温态不应再有 seg 预编码任务行（段缓存全命中）")
             self.assertNotIn(": 渲染 ", rw.stdout,
                              "温态不应再有 gfx「渲染」行（页缓存全命中）")
