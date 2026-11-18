@@ -1307,6 +1307,18 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                     'fonts': ['assets/fonts/' + name for name in shell._FONT_NAMES],
                     'frames': [f'gfx/frames-svg/{stem}.svg' for stem in stems]}
         raw = json.dumps(manifest).encode('utf-8')
+        timeline_path = project / 'timeline.json'
+        timeline = json.loads((shell._DEMO / 'timeline.json').read_bytes())
+        timeline['project'].update(width=6, height=4, duration_frames=4)
+        clip = timeline['video_tracks'][0]['clips'][0]
+        clip['dur'] = 4
+        timeline_raw = json.dumps(timeline).encode('utf-8')
+        runtime_digests = shell._locked_runtime_digests()
+        runtime_digests['timeline.json'] = sha256(timeline_raw).hexdigest()
+        for name in clip['cache_dependencies'][:-4]:
+            target = project / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((shell._DEMO / name).read_bytes())
         sources = [f'<svg xmlns="http://www.w3.org/2000/svg" width="6" height="4" viewBox="0 0 6 4">'
                    f'<text id="{stem}" font-family="{family}">Demo</text></svg>'.encode()
                    for stem, family in zip(stems, ('Noto Sans CJK SC', 'DejaVu Sans') * 2)]
@@ -1338,6 +1350,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                                  _RASTER_PNG_SHA256=png_sha, _RASTER_RGBA_SHA256=rgba_sha), \
                 mock.patch.multiple(snapshot, _MAX_FILES=1, _MAX_DIRS=3, _MAX_BYTES=6,
                                     _TREE_SHA256='a576aafef70b8fd83cdbdf9f581c6734fee849138f38018f824b1ad332bc64a5'), \
+                mock.patch.object(shell, '_locked_runtime_digests', return_value=runtime_digests), \
                 mock.patch.object(shell, '_locked_font_digests', return_value=font_digests), \
                 mock.patch.object(shell.fontconfig, '_inspect_face') as inspect_face, \
                 mock.patch.object(shell.fontconfig, '_inspect_catalog') as inspect_catalog, \
@@ -1346,6 +1359,48 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                 return shell._accept_standard_raster(root, scratch=where, project_root=project)
 
             with mock.patch.object(shell, '_fixed_shell') as staging:
+                with self.assertRaises(FileNotFoundError):
+                    accept()  # no timeline; must fail before any manifest/staging work
+                timeline_path.write_bytes(timeline_raw + b'\n')  # same JSON, different bytes
+                with self.assertRaisesRegex(ValueError, 'timeline byte identity mismatch'):
+                    accept()
+                timeline_path.write_bytes(b'?' + timeline_raw[1:])
+                with self.assertRaisesRegex(ValueError, 'timeline byte identity mismatch'):
+                    accept()  # identity checked before JSON parsing
+                for field, wrong in [('src', 'gfx/other.frames.json'), ('dst_in', False), ('dur', 3),
+                                     ('cache_dependencies', clip['cache_dependencies'][::-1])]:
+                    with self.subTest(timeline_clip_field=field):
+                        original = clip[field]
+                        clip[field] = wrong
+                        wrong_raw = json.dumps(timeline).encode('utf-8')
+                        clip[field] = original
+                        timeline_path.write_bytes(wrong_raw)
+                        # Model even a trusted source lock drifting from the fixed relationship.
+                        with mock.patch.dict(runtime_digests, {'timeline.json': sha256(wrong_raw).hexdigest()}), \
+                                mock.patch.object(shell.win_input, 'read', wraps=shell.win_input.read) as read:
+                            with self.assertRaisesRegex(ValueError, 'timeline fields mismatch'):
+                                accept()
+                        self.assertEqual([call.args[1] for call in read.call_args_list], ['timeline.json'])
+                timeline_path.write_bytes(timeline_raw)
+
+                dep_name = clip['cache_dependencies'][-5]  # last non-font dependency
+                dep = project / dep_name
+                dep_data = dep.read_bytes()
+                dep.unlink()
+                with self.assertRaises(FileNotFoundError):
+                    accept()
+                dep.write_bytes(dep_data[:-1] + b' ')  # inert same-size change
+                with self.assertRaisesRegex(ValueError, 'dependency byte identity mismatch') as rejected:
+                    accept()
+                self.assertTrue(str(rejected.exception).endswith(dep_name))
+                dep.write_bytes(dep_data)
+                total = sum((project / name).stat().st_size for name in clip['cache_dependencies'][:-4])
+                with mock.patch.object(shell, '_RASTER_DEP_TOTAL', total - 1):
+                    with self.assertRaisesRegex(ValueError, 'exceeds byte budget'):
+                        accept()
+
+                # With the canonical relationship and sources restored, prove the
+                # independent existing manifest byte/field vetoes still apply.
                 with self.assertRaises(FileNotFoundError):
                     accept()
                 alternate = manifest_path.with_suffix('.JSON')
