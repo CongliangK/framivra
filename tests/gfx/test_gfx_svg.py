@@ -1288,6 +1288,113 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'requires a static PNG'):
             shell._png_pixels(animated.getvalue(), width, height, Image.open, static_only=True)
 
+    def test_standard_raster_anchors_all_sources_and_proves_closed_ordered_output(self):
+        from hashlib import sha256
+        from struct import pack
+        from tests.gfx._png import chunk
+        from vtx.render import gfx_svg_win_shell as shell, gfx_svg_win_snapshot as snapshot
+
+        root = self.scratch_fixture(snapshot)
+        project, scratch = root / '工程 #', root / 'scratch'
+        inputs, fonts = project / 'gfx/frames-svg', project / 'assets/fonts'
+        for directory in (inputs, fonts, scratch, root / 'inkscape/bin', root / 'inkscape/share'):
+            directory.mkdir(parents=True)
+        (root / 'inkscape/bin/inkscape.com').write_bytes(b'sample')  # never executed
+        (inputs.parent / 'demo.frames.json').write_bytes(b'not a trusted input')
+        stems = [f'f{i:04d}' for i in range(4)]
+        sources = [f'<svg id="{stem}"/>'.encode() for stem in stems]
+        font_data = [name.encode() for name in shell._FONT_NAMES]
+        for stem, data in zip(stems, sources):
+            (inputs / (stem + '.svg')).write_bytes(data)
+        for name, data in zip(shell._FONT_NAMES, font_data):
+            (fonts / name).write_bytes(data)
+        pixels = [bytes((23, 87, i, 255)) * 24 for i in range(4)]
+        outputs = [png(6, 4, rgba=data) for data in pixels]
+
+        def fold(kind, payloads):
+            framed = b''.join(pack('>IQ', i, len(data)) + data for i, data in enumerate(payloads))
+            return sha256(f'framivra:portable-v2:{kind}:v1\0'.encode() + framed).hexdigest()
+
+        svg_sha, png_sha = fold('svg', sources), fold('png', outputs)
+        rgba_sha = fold('rgba', [sha256(data).digest() for data in pixels])
+        with mock.patch.multiple(shell, _RASTER_FRAMES=4, _STANDARD_SIZE=(6, 4),
+                                 _RASTER_SVG_TOTAL=sum(map(len, sources)), _RASTER_SVG_SHA256=svg_sha,
+                                 _RASTER_PNG_SHA256=png_sha, _RASTER_RGBA_SHA256=rgba_sha), \
+                mock.patch.multiple(snapshot, _MAX_FILES=1, _MAX_DIRS=2, _MAX_BYTES=6,
+                                    _TREE_SHA256='d6d2fef7359bebd313ce33a0e1e68a0ba295112ce886be28446833c0b8755ee0'), \
+                mock.patch.object(shell, '_locked_font_digests',
+                                  return_value=tuple(sha256(data).hexdigest() for data in font_data)), \
+                mock.patch.object(shell.native, '_OwnedJob') as own:
+            def accept(where=scratch):
+                return shell._accept_standard_raster(root, scratch=where, project_root=project)
+
+            later = inputs / 'f0003.svg'
+            later.write_bytes(sources[-1].replace(b'f0003', b'f0002'))  # same-size late source change
+            with self.assertRaisesRegex(ValueError, 'source byte identity mismatch'):
+                accept()
+            later.write_bytes(sources[-1])
+            with self.assertRaisesRegex(ValueError, 'scratch overlaps the project'):
+                accept(project)
+            last_font = fonts / shell._FONT_NAMES[-1]
+            last_font.unlink()
+            with self.assertRaises(FileNotFoundError):
+                accept()
+            last_font.write_bytes(font_data[-1])
+            own.assert_not_called()
+            self.assertEqual(list(scratch.iterdir()), [])
+
+            for failure, rejection in ((None, None), ('missing', 'missing output frames'),
+                                       ('extra', 'unexpected output entry'), ('reordered', 'ordered pixels differ'),
+                                       ('later', 'ordered pixels differ'), ('encoding', 'ordered PNG bytes differ'),
+                                       ('settlement', 'settlement unconfirmed')):
+                with self.subTest(failure=failure):
+                    own.reset_mock()
+                    job = mock.Mock()
+                    own.return_value = job
+                    job._pump.return_value = True
+                    job.proc.returncode = 0
+                    job._output.return_value = (b'', b'')
+                    if failure == 'settlement':
+                        job._close.side_effect = OSError('injected accounting failure')
+
+                    def launch(args, stdout, stderr, *, cwd, **kwargs):
+                        cwd = Path(cwd)
+                        self.assertEqual([p.read_bytes() for p in sorted((cwd / 'fonts').iterdir())], font_data)
+                        self.assertEqual([(cwd / (stem + '.svg')).read_bytes() for stem in stems], sources)
+                        actions = (cwd / 'actions.txt').read_bytes().splitlines()
+                        self.assertEqual(len(actions), len(stems) + 1)
+                        self.assertEqual(actions[-1], b'quit')
+                        for stem, action in zip(stems, actions):
+                            self.assertTrue(action.startswith(f'file-open:{stem}.svg;'.encode()))
+                            self.assertIn(f'export-filename:frames/{stem}.png;'.encode(), action)
+                        frames = cwd / 'frames'
+                        for i in reversed(range(4)):  # disk order is not the acceptance order
+                            if failure == 'missing' and i == 3:
+                                continue
+                            data = outputs[3 - i] if failure == 'reordered' and i in (1, 2) else outputs[i]
+                            if i == 3 and failure == 'later':
+                                data = png(6, 4, rgba=b'\0' + pixels[i][1:])
+                            if i == 3 and failure == 'encoding':
+                                data = data[:-12] + chunk(b'tEXt', b'proof\0test') + data[-12:]
+                            (frames / (stems[i] + '.png')).write_bytes(data)
+                        if failure == 'extra':
+                            (frames / 'f0004.png').write_bytes(outputs[0])
+
+                    job._launch.side_effect = launch
+                    with mock.patch.object(shell, '_require_outputs', wraps=shell._require_outputs) as check_names, \
+                            mock.patch.object(shell, '_read_png', wraps=shell._read_png) as read_png:
+                        if rejection is None:
+                            self.assertEqual(accept(), (4, (6, 4), svg_sha, png_sha, rgba_sha))
+                        else:
+                            with self.assertRaisesRegex((ValueError, OSError), rejection):
+                                accept()
+                        self.assertEqual(check_names.call_count, 0 if failure == 'settlement' else 1)
+                        self.assertEqual(read_png.call_count, 0 if failure in ('settlement', 'missing', 'extra') else 4)
+                    own.assert_called_once()
+                    job._launch.assert_called_once()
+                    job._close.assert_called_once()
+                    self.assertEqual(bool(list(scratch.iterdir())), failure == 'settlement')
+
     def test_fixed_sequence_exact_outputs_and_index_pixels(self):
         from PIL import Image, ImageDraw
         from vtx.render import gfx_svg_win_shell as shell, gfx_svg_win_snapshot as snapshot
