@@ -83,5 +83,6 @@ test('empty proposal-list polls never abort an in-flight frame render; a real di
   await act(async () => { await polls[2]() })
   await settle()
   assert.equal(renderSignal.aborted, true, 'dirty proposal must abort the in-flight render')
-  assert([...document.querySelectorAll('[role=alert]')].some(node => node.textContent.includes('编辑/队列/计划/写结果未解决')), 'frame tools must be blocked while a proposal is pending')
+  assert(document.querySelector('button[aria-label="显式生成并验证固定帧 PNG"]').disabled, 'frame tools must be blocked while a proposal is pending')
+  assert([...document.querySelectorAll('[role=alert]')].some(node => node.getAttribute('aria-label')?.includes('编辑/队列/计划/写结果未解决')), 'blocked state must explain why generation is unavailable')
 })

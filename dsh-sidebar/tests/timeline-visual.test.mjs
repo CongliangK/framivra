@@ -315,8 +315,8 @@ test('compact mode: inline help suppressed and class applied; exported TimelineH
   const css = compactSection.querySelector('style').textContent
   assert(css.includes('.fv-timeline.fv-compact .fv-track{padding:0 6px}'), 'compact tightens track padding only')
   assert(css.includes('.fv-timeline.fv-compact .fv-row{margin:0}'), 'compact zeroes row margins only')
-  assert(css.includes('height:46px'), 'lane height 46 preserved in compact')
-  assert(css.includes('height:40px'), 'clip height 40 preserved in compact')
+  assert.equal(compactSection.style.getPropertyValue('--fv-lane-height'), '46px', 'default lane geometry preserved in compact')
+  assert.equal(compactSection.style.getPropertyValue('--fv-clip-height'), '40px', 'default clip geometry preserved in compact')
   // The exported TimelineHelp mounts the identical content for the inspector.
   await act(async () => root.render(h('div', null, h(TimelineHelp, { result }), h(TimelineHelp, { result, onGesture: () => {} }))))
   const [readOnlyHelp, editableHelp] = [...document.querySelectorAll('details.fv-help')]
@@ -327,4 +327,52 @@ test('compact mode: inline help suppressed and class applied; exported TimelineH
   assert(readOnlyHelp.textContent.includes('未授写许可'), 'read-only variant copy preserved')
   assert.equal(readOnlyHelp.textContent, defaultText, 'exported help text matches the former inline default verbatim')
   assert(editableHelp.textContent.includes('未保存 batch'), 'editable variant copy preserved')
+})
+
+
+test('lane height: header slot, measured overlap-row fit, resize bounds and manual override stay UI-only', async t => {
+  const { root, dom } = await mount(t)
+  const { Simulate } = await import('react-dom/test-utils')
+  let resized, disconnected = 0
+  dom.window.ResizeObserver = class {
+    constructor(callback) { resized = callback }
+    observe() {}
+    disconnect() { disconnected++ }
+  }
+  const overlap = { ...blocks[0], address: '/overlap', range: [0, 30] }
+  const projection = { ...result, blocks: [...blocks, overlap] }
+  const unchanged = JSON.stringify(projection)
+  const calls = []
+  await act(async () => root.render(h(VisualTimeline, { snapshot, result: projection, compact: true,
+    selectionTools: h('button', { 'data-selection-slot': true }, '选择工具'),
+    onFrame: () => calls.push('frame'), onSelect: () => calls.push('select'), onGesture: () => calls.push('gesture') })))
+  const timeline = document.querySelector('.fv-timeline')
+  assert(document.querySelector('.fv-head > [data-selection-slot]'))
+  assert(document.querySelector('.fv-head .fv-status'))
+  assert(!document.querySelector('.fv-live-status').closest('details'), 'live announcements survive a closed disclosure')
+  const scroll = document.querySelector('.fv-scroll')
+  let height = 200
+  Object.defineProperty(scroll, 'clientHeight', { get: () => height })
+  scroll.style.padding = '4px 0'
+  for (const row of document.querySelectorAll('.fv-overview-row,.fv-ruler-row')) row.getBoundingClientRect = () => ({ height: 31 })
+  for (const track of document.querySelectorAll('.fv-track')) { track.style.padding = '0'; track.style.borderBottom = '1px solid' }
+  for (const row of document.querySelectorAll('.fv-row')) row.style.margin = '0'
+  const fit = [...document.querySelectorAll('button')].find(node => node.textContent === '适配全部轨道')
+  await act(async () => fit.click())
+  // 200 - 62 ruler/overview - 8 padding - 4 track borders, divided by 5 visual rows.
+  assert.equal(timeline.style.getPropertyValue('--fv-lane-height'), '25px')
+  assert.equal(fit.getAttribute('aria-pressed'), 'true')
+  height = 90
+  await act(async () => resized())
+  assert.equal(timeline.style.getPropertyValue('--fv-lane-height'), '14px', 'impossible fit retains safe minimum and scrollport')
+  assert(scroll.getAttribute('tabindex') === '0')
+  height = 900
+  await act(async () => resized())
+  assert.equal(timeline.style.getPropertyValue('--fv-lane-height'), '46px')
+  await act(async () => Simulate.change(document.querySelector('input[aria-label="轨道高度"]'), { target: { value: '18' } }))
+  assert.equal(timeline.style.getPropertyValue('--fv-lane-height'), '18px')
+  assert.equal(fit.getAttribute('aria-pressed'), 'false')
+  assert(disconnected > 0)
+  assert.deepEqual(calls, [])
+  assert.equal(JSON.stringify(projection), unchanged)
 })

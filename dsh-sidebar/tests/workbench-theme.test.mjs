@@ -67,33 +67,27 @@ test('monitor chrome and diagnostics follow the host while output canvas remains
   assert.equal(danger['border-color'], 'currentcolor')
 })
 
-test('wide modal transport sticks only while its own advanced positioning groups are collapsed', () => {
+test('wide modal monitor toolbar sticks except while its advanced positioning overlay is open', () => {
   const dom = new JSDOM(`<style>${workbenchCSS}</style>`)
   try {
     const rules = [...dom.window.document.querySelector('style').sheet.cssRules]
     const wide = rules.find(rule => rule.conditionText === 'fv-workbench (min-width:860px)')
     assert(wide, 'wide workbench container rule exists')
-    const transport = [...wide.cssRules].find(rule => rule.selectorText === '.fv-workbench[open] .fv-transport')
-    assert(transport)
-    assert.equal(transport.style.position, 'sticky')
-    assert.equal(transport.style.top, '0px')
-    assert.equal(transport.style.background, 'var(--fv-bg)', 'sticky controls require opaque theme-matched backing')
-    const expanded = [...wide.cssRules].find(rule => rule.selectorText === '.fv-workbench[open] .fv-transport:has(> details[open])')
+    const toolbar = [...wide.cssRules].find(rule => rule.selectorText === '.fv-workbench[open] .fv-monitor-toolbar')
+    assert(toolbar)
+    assert.equal(toolbar.style.position, 'sticky')
+    assert.equal(toolbar.style.top, '0px')
+    assert.equal(toolbar.style.background, 'var(--fv-bg)', 'sticky controls require opaque theme-matched backing')
+    const expanded = [...wide.cssRules].find(rule => rule.selectorText === '.fv-workbench[open] .fv-monitor-toolbar:has(.fv-transport > details[open])')
     assert(expanded)
-    assert.equal(expanded.style.position, 'static', 'expanded positioning fields must not paint over modes and canvas')
-    assert.equal(expanded.style.zIndex, 'auto')
-    dom.window.document.body.innerHTML = '<dialog open class="fv-workbench"><form class="fv-transport"><details></details><details></details></form><section class="fv-frame-tools"><details open></details></section></dialog>'
-    const form = dom.window.document.querySelector('form'), groups = [...form.querySelectorAll('details')]
-    assert(!form.matches(expanded.selectorText), 'image verification details must not disable compact transport sticking')
-    for (const group of groups) {
-      group.open = true
-      assert(form.matches(expanded.selectorText), 'either positioning group opts the form into normal flow')
-      group.open = false
-    }
-    groups.forEach(group => { group.open = true })
-    assert(form.matches(expanded.selectorText))
-    groups.forEach(group => { group.open = false })
-    assert(!form.matches(expanded.selectorText), 'collapsing both groups restores the ordinary sticky rule')
-    assert(!rules.some(rule => rule.selectorText === '.fv-transport' && rule.style.position), 'narrow stacked layout is unchanged')
+    assert.equal(expanded.style.position, 'relative', 'keep the advanced overlay anchored without sticking it over the canvas when scrolling')
+    dom.window.document.body.innerHTML = '<dialog open class="fv-workbench"><div class="fv-monitor-toolbar"><form class="fv-transport"><details></details></form></div><section class="fv-frame-tools"><details open></details></section></dialog>'
+    const row = dom.window.document.querySelector('.fv-monitor-toolbar'), group = row.querySelector('details')
+    assert(!row.matches(expanded.selectorText), 'image verification details must not disable compact toolbar sticking')
+    group.open = true
+    assert(row.matches(expanded.selectorText), 'the advanced positioning disclosure alone suspends sticking')
+    group.open = false
+    assert(!row.matches(expanded.selectorText), 'closing the disclosure restores sticking')
+    assert(!rules.some(rule => rule.selectorText === '.fv-monitor-toolbar' && rule.style.position === 'sticky'), 'narrow stacked layout does not stick')
   } finally { dom.window.close() }
 })

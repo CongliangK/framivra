@@ -16,10 +16,10 @@ const css = `
 .fv-timeline button:active:not(:disabled){transform:scale(.97)}
 .fv-timeline button:disabled{opacity:.45;cursor:default}
 .fv-timeline :focus-visible{outline:2px solid var(--fv-tl-accent,#579deb);outline-offset:2px}
-.fv-timeline .fv-head{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;margin:6px 0}
-.fv-timeline .fv-head h3{margin:0;font-size:13px;font-weight:600;min-width:0;flex:1 1 110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fv-timeline .fv-head{display:flex;flex-wrap:nowrap;gap:4px;align-items:center;margin:0 0 4px;overflow-x:auto;min-height:32px;scrollbar-width:thin}
+.fv-timeline .fv-head h3{margin:0;font-size:12px;font-weight:600;min-width:3em;flex:0 1 auto;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fv-timeline .fv-badge{font-size:11px;font-weight:500;white-space:nowrap;color:color-mix(in srgb,currentColor 72%,transparent);border:1px solid color-mix(in srgb,currentColor 32%,transparent);border-radius:99px;padding:1px 8px}
-.fv-timeline .fv-tools{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.fv-timeline .fv-tools{display:flex;flex:none;flex-wrap:nowrap;gap:4px;align-items:center}
 .fv-timeline .fv-tools svg{flex:none;opacity:.85}
 .fv-timeline .fv-status{display:flex;flex-wrap:wrap;gap:2px 12px;margin:3px 0;font-size:11.5px;font-variant-numeric:tabular-nums;color:color-mix(in srgb,currentColor 80%,transparent)}
 .fv-timeline .fv-help{margin:4px 0;font-size:12px}
@@ -44,8 +44,8 @@ const css = `
 .fv-timeline .fv-track-title svg{flex:none;opacity:.8}
 .fv-timeline .fv-track-name{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .fv-timeline .fv-empty-note{font-size:10px;padding-left:6px;color:color-mix(in srgb,currentColor 55%,transparent);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fv-timeline .fv-row{position:relative;height:46px;margin:2px 0;background:color-mix(in srgb,currentColor 6%,transparent);border-radius:4px;background-image:repeating-linear-gradient(90deg,transparent 0,transparent calc(25% - 1px),color-mix(in srgb,currentColor 9%,transparent) 25%)}
-.fv-timeline .fv-clip{position:absolute;top:3px;height:40px;min-width:3px;padding:2px 6px!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;font-size:12px;align-items:center;border:1px solid color-mix(in srgb,var(--fv-tl-video,#6f8fad) 60%,transparent);background:color-mix(in srgb,var(--fv-tl-video,#6f8fad) 26%,transparent)}
+.fv-timeline .fv-row{position:relative;height:var(--fv-lane-height,46px);margin:2px 0;background:color-mix(in srgb,currentColor 6%,transparent);border-radius:4px;background-image:repeating-linear-gradient(90deg,transparent 0,transparent calc(25% - 1px),color-mix(in srgb,currentColor 9%,transparent) 25%)}
+.fv-timeline .fv-clip{position:absolute;top:var(--fv-clip-top,3px);height:var(--fv-clip-height,40px);min-height:0;min-width:3px;padding:2px 6px!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;font-size:12px;align-items:center;border:1px solid color-mix(in srgb,var(--fv-tl-video,#6f8fad) 60%,transparent);background:color-mix(in srgb,var(--fv-tl-video,#6f8fad) 26%,transparent)}
 .fv-timeline .fv-clip:hover{filter:brightness(1.12)}
 .fv-timeline .fv-gfx{border-color:color-mix(in srgb,var(--fv-tl-gfx,#a678d9) 60%,transparent);background:color-mix(in srgb,var(--fv-tl-gfx,#a678d9) 26%,transparent)}
 .fv-timeline .fv-audio{border-color:color-mix(in srgb,var(--fv-tl-audio,#4fae87) 60%,transparent);background:color-mix(in srgb,var(--fv-tl-audio,#4fae87) 26%,transparent)}
@@ -69,8 +69,30 @@ const css = `
 /* Compact embedding (monitor pane): only tighter track/row vertical rhythm.
    Lane height 46 / clip 40 / coarse title minimums stay untouched. */
 .fv-timeline.fv-compact .fv-track{padding:0 6px}
+.fv-timeline.fv-compact .fv-overview-row .fv-overview{height:22px}
+.fv-timeline.fv-compact .fv-overview-row :is(.fv-ov,.fv-ov-window){transform:translateY(-2px)}
+.fv-timeline.fv-compact .fv-ruler{height:24px}
 .fv-timeline.fv-compact .fv-row{margin:0}
 @container timeline (max-width:520px){.fv-timeline .fv-ruler-row,.fv-timeline .fv-track,.fv-timeline .fv-overview-row{grid-template-columns:var(--fv-tl-head-w-narrow,84px) minmax(0,1fr)}.fv-timeline .fv-clip{font-size:11px}.fv-timeline .fv-clip-len{display:none}.fv-timeline .fv-track-title{font-size:11px;padding:2px 4px}}
+`
+const laneCSS = `
+.fv-timeline{position:relative}
+.fv-timeline .fv-live-status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+@media(pointer:coarse){.fv-timeline .fv-disclosure summary{min-width:44px;min-height:44px}}
+.fv-timeline .fv-head>*{flex-shrink:0}.fv-timeline .fv-head h3{flex-shrink:1}
+.fv-timeline .fv-disclosure summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid color-mix(in srgb,currentColor 32%,transparent);border-radius:5px}
+.fv-timeline .fv-disclosure summary::-webkit-details-marker{display:none}
+.fv-timeline .fv-disclosure[open] .fv-popover{position:absolute;z-index:12;right:8px;margin-top:4px;padding:10px;border:1px solid color-mix(in srgb,currentColor 35%,transparent);border-radius:6px;background:var(--fv-tl-surface,var(--fv-surface,#202125));box-shadow:0 4px 16px #0005;max-width:min(440px,90vw)}
+.fv-timeline .fv-lane-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.fv-timeline .fv-lane-controls input[type=range]{width:100px;min-height:0;padding:0;accent-color:var(--fv-tl-accent,#579deb)}
+.fv-timeline .fv-lane-controls output{font-variant-numeric:tabular-nums}
+.fv-timeline[data-sized-lanes=true] .fv-track-title{min-height:0;height:var(--fv-lane-height);padding:0 4px}
+.fv-timeline[data-sized-lanes=true] .fv-empty-note{display:none}
+.fv-timeline[data-small-lanes=true] .fv-track-title{font-size:10px}
+.fv-timeline[data-small-lanes=true] .fv-track-title svg{width:10px;height:10px}
+.fv-timeline[data-small-lanes=true] .fv-clip{font-size:10px;padding:0 3px!important}
+.fv-timeline[data-small-lanes=true] .fv-clip-len{display:none}
+.fv-timeline .fv-trim{min-height:0}
 `
 const label = (data, fallback) => typeof data?.name === 'string' ? data.name : typeof data?.text === 'string' ? data.text : typeof data?.src === 'string' ? data.src : fallback
 const trackIcon = kind => kind === 'audio' ? 'audio' : kind === 'subtitles' ? 'text' : kind === 'gfx' ? 'clip' : 'film'
@@ -85,12 +107,46 @@ export function TimelineHelp({ result, onGesture }) {
     h('p', null, '帧标尺：点击/拖动固定播放头；聚焦标尺用 ←/→、Home/End。全片导航条：点击/拖动或 ←/→/Home/End 只平移缩放显示窗口，不查询、不渲染、不改选择。像素仅概览（1/1024 CSS px 采样），高帧/细块请放大或用整数输入精确定位。Ctrl/⌘ 点击切换多选，Shift 点击按 kernel 查询顺序选择同类区间；引用是组内最后激活的一项，引用不批量；写授权后可用多选批次。'))
 }
 
-export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, compact = false }) {
+export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, compact = false, selectionTools, focusTool }) {
   const extent = displayExtent(snapshot, result)
   const fps = snapshot.document?.project?.fps, clock = projectClock(fps)
   const time = value => formatTimecode(value, fps) ?? '时间码不可显示'
   const [window, setWindow] = useState()
   const [hover, setHover] = useState()
+  const minLaneHeight = globalThis.window?.matchMedia?.('(pointer:coarse)').matches ? 24 : 14
+  const [requestedLaneHeight, setLaneHeight] = useState(46)
+  const laneHeight = Math.max(minLaneHeight, requestedLaneHeight)
+  const [fitLanes, setFitLanes] = useState(false)
+  const scrollport = useRef()
+  const disclosureGroup = React.useId()
+  // Measure the actual visual rows, including overlap lanes and empty tracks.
+  // Border is excluded by clientHeight; padding, ruler and overview are not.
+  useLayoutEffect(() => {
+    if (!fitLanes || !scrollport.current) return
+    const node = scrollport.current
+    const measure = () => {
+      const style = node.ownerDocument.defaultView.getComputedStyle(node)
+      const fixed = [...node.children].filter(child => child.matches('.fv-overview-row,.fv-ruler-row')).reduce((n, child) => n + child.getBoundingClientRect().height, 0)
+      let rows = 0, overhead = 0
+      for (const track of node.querySelectorAll('.fv-track')) {
+        const ts = node.ownerDocument.defaultView.getComputedStyle(track)
+        overhead += (parseFloat(ts.paddingTop) || 0) + (parseFloat(ts.paddingBottom) || 0) + (parseFloat(ts.borderBottomWidth) || 0)
+        const lanes = track.querySelectorAll('.fv-row')
+        rows += Math.max(1, lanes.length)
+        for (const lane of lanes) {
+          const ls = node.ownerDocument.defaultView.getComputedStyle(lane)
+          overhead += (parseFloat(ls.marginTop) || 0) + (parseFloat(ls.marginBottom) || 0)
+        }
+      }
+      const available = node.clientHeight - fixed - (parseFloat(style.paddingTop) || 0) - (parseFloat(style.paddingBottom) || 0) - overhead
+      if (node.clientHeight && rows) setLaneHeight(Math.max(minLaneHeight, Math.min(46, Math.floor(available / rows))))
+    }
+    measure()
+    const Observer = node.ownerDocument.defaultView.ResizeObserver ?? globalThis.ResizeObserver
+    const observer = Observer ? new Observer(measure) : undefined
+    observer?.observe(node)
+    return () => observer?.disconnect()
+  }, [fitLanes, result, compact, minLaneHeight])
   // Standalone presentation consumers can remain uncontrolled. PreviewBody always
   // supplies its single intent; this fallback is never a second product selection.
   const [localIntent, setLocalIntent] = useState(emptySelection())
@@ -262,17 +318,24 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     pinned !== undefined && pinned >= view.start && pinned < view.end ? h('span', { key: 'pin', className: 'fv-line', style: { left: `${framePercent(pinned, view)}%` }, 'aria-hidden': true }) : null,
     hover !== undefined && hover >= view.start && hover < view.end ? h('span', { key: 'hover', className: 'fv-line fv-hover', style: { left: `${framePercent(hover, view)}%` }, 'aria-hidden': true }) : null,
   ]
-  return h('section', { className: compact ? 'fv-timeline fv-compact' : 'fv-timeline', 'aria-label': '完整只读可视时间轴',
+  return h('section', { className: compact ? 'fv-timeline fv-compact' : 'fv-timeline', 'data-small-lanes': laneHeight < 30, 'data-sized-lanes': fitLanes || laneHeight < 46, style: { '--fv-lane-height': `${laneHeight}px`, '--fv-clip-top': `${Math.min(3, Math.floor(laneHeight / 10))}px`, '--fv-clip-height': `${laneHeight - 2 * Math.min(3, Math.floor(laneHeight / 10))}px` }, 'aria-label': '完整只读可视时间轴',
     onPointerDownCapture: event => pointerTails.current.delete(event.pointerId),
     onClickCapture: event => {
       if (event.detail === 0 || !pointerTails.current.delete(event.nativeEvent.pointerId)) return
       event.preventDefault(); event.stopPropagation()
     },
   },
-    h('style', null, css + iconControlCSS),
+    h('style', null, css + laneCSS + iconControlCSS),
     h('div', { className: 'fv-head' },
       h('h3', { title: label(snapshot.document?.project, '时间线') }, label(snapshot.document?.project, '时间线')),
-      h('span', { className: 'fv-badge' }, onGesture ? '可拖拽 · 未保存 intents' : '只读'),
+      focusTool,
+      h('details', { className: 'fv-disclosure', name: disclosureGroup },
+        h('summary', { 'aria-label': '轨道高度', title: '轨道高度与适配全部轨道' }, h(Icon, { name: 'settings', size: 15 })),
+        h('div', { className: 'fv-popover fv-lane-controls' },
+          h('label', null, '轨道高度 ', h('input', { type: 'range', min: minLaneHeight, max: 46, value: laneHeight, 'aria-label': '轨道高度', onChange: event => { setFitLanes(false); setLaneHeight(Number(event.target.value)) } })),
+          h('output', null, `${laneHeight}px`),
+          h('button', { type: 'button', 'aria-pressed': fitLanes, onClick: () => setFitLanes(true) }, '适配全部轨道'))),
+      selectionTools,
       h('div', { className: 'fv-tools', role: 'group', 'aria-label': '显示范围' },
         h(ToolButton, { icon: 'fit', label: '适配全片', tooltip: '窗口回到全片', onClick: () => setWindow(undefined) }),
         h(ToolButton, { icon: 'zoomIn', label: '放大', tooltip: '窗口放大一倍精度', disabled: view.end - view.start <= 1, onClick: () => setWindow(zoomWindow(view, extent.end, true)) }),
@@ -282,7 +345,11 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
         h(ToolButton, { icon: 'clip', label: '缩放到选区', tooltip: '窗口缩放到已选块的存储帧范围（只改显示）', disabled: !selectionZoom, onClick: () => selectionZoom && setWindow(selectionZoom) })),
       h('div', { className: 'fv-tools', role: 'group', 'aria-label': '播放头步进' },
         h(ToolButton, { icon: 'previous', label: '前一帧', tooltip: '播放头后退一帧', disabled: !onFrame || pinned === undefined, onClick: () => step(-1) }),
-        h(ToolButton, { icon: 'next', label: '后一帧', tooltip: '播放头前进一帧', disabled: !onFrame || pinned === undefined, onClick: () => step(1) }))),
+        h(ToolButton, { icon: 'next', label: '后一帧', tooltip: '播放头前进一帧', disabled: !onFrame || pinned === undefined, onClick: () => step(1) })),
+      h('details', { className: 'fv-disclosure', name: disclosureGroup },
+        h('summary', { 'aria-label': '时间线状态', title: '时间线状态与诊断' }, h(Icon, { name: 'info', size: 15 })),
+        h('div', { className: 'fv-popover' },
+          h('span', { className: 'fv-badge' }, onGesture ? '可拖拽 · 未保存 intents' : '只读'),
     h('div', { className: 'fv-status', role: 'status' },
       h('span', { 'aria-label': '可见帧范围' }, `时间码窗口 [${time(view.start)}, ${time(view.end)}) / 全片 [${time(0)}, ${time(extent.end)})`),
       h('span', null, `播放头 ${pinned === undefined ? '未固定' : time(pinned)}`),
@@ -292,10 +359,12 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
       h('span', { 'aria-label': '活动引用' }, `活动引用：${activeSelection ? `${activeSelection.kind} ${activeSelection.address}` : '无'}`)),
     ghost ? h('p', { role: 'status', 'aria-label': '未保存拖动 ghost', style: { margin: '4px 0', fontSize: '12px' } }, `未保存 ghost · ${ghost.mode} 偏移 ${ghost.delta} 帧 → ${ghost.target.data?.name ?? ghost.target.address}（未改文件/引用）`) : null,
     gestureError ? h('p', { role: 'status', style: { margin: '4px 0', fontSize: '12px' } }, gestureError) : null,
+    ))),
+    h('span', { className: 'fv-live-status', role: 'status', 'aria-atomic': true }, `播放头 ${pinned === undefined ? '未固定' : time(pinned)} · 已选 ${selected.length}${ghost ? ` · 未保存 ghost 偏移 ${ghost.delta} 帧` : ''}${gestureError ? ` · ${gestureError}` : ''}`),
     // Compact mode (monitor-pane embedding) suppresses only the inline help; the
     // inspector mounts the identical TimelineHelp content separately.
     compact ? null : h(TimelineHelp, { result, onGesture }),
-    h('div', { className: 'fv-scroll', tabIndex: 0, role: 'region', 'aria-label': '轨道垂直滚动区' },
+    h('div', { className: 'fv-scroll', ref: scrollport, tabIndex: 0, role: 'region', 'aria-label': '轨道垂直滚动区' },
       h('div', { className: 'fv-overview-row' },
         h('div', { className: 'fv-corner', 'aria-hidden': true }, '全片'),
         h('div', { className: 'fv-overview', ref: overview, role: 'slider', tabIndex: 0, 'aria-label': '全片导航条（只平移/缩放显示窗口）', 'aria-valuemin': 0, 'aria-valuemax': Math.max(0, extent.end - span), 'aria-valuenow': view.start, 'aria-valuetext': `窗口 [${time(view.start)}, ${time(view.end)}) / 全片 [${time(0)}, ${time(extent.end)})`,
@@ -375,8 +444,8 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
                   'aria-pressed': selected.includes(`block:${block.address}`), 'data-hit': hitSet?.has(block.address) ?? false,
                   onClick: event => pick({ kind: 'block', address: block.address }, event), ...events('move'),
                 }, h('span', { className: 'fv-clip-name' }, text), Number.isSafeInteger(duration) && duration >= 0 ? h('span', { className: 'fv-clip-len' }, time(duration)) : null)
-                const handles = onGesture && block.data?.id ? ['left','right'].map(mode => h('button',{ key:mode,type:'button',className:'fv-trim','aria-label':`${mode === 'left' ? '左' : '右'} trim 手柄 ${block.address}`,title:'仅 inward trim；拖动后内核预检。触控请用下方精确帧表单。',style:{position:'absolute',top:3,left:`${mode === 'left' ? geometry.left : geometry.left+geometry.width}%`,transform:mode==='right'?'translateX(-100%)':undefined,width:7,height:40,padding:0,zIndex:3,touchAction:'none',cursor:'ew-resize'},...events(mode)})) : []
+                const handles = onGesture && block.data?.id ? ['left','right'].map(mode => h('button',{ key:mode,type:'button',className:'fv-trim','aria-label':`${mode === 'left' ? '左' : '右'} trim 手柄 ${block.address}`,title:'仅 inward trim；拖动后内核预检。触控请用下方精确帧表单。',style:{position:'absolute',top:'var(--fv-clip-top)',left:`${mode === 'left' ? geometry.left : geometry.left+geometry.width}%`,transform:mode==='right'?'translateX(-100%)':undefined,width:7,height:'var(--fv-clip-height)',padding:0,zIndex:3,touchAction:'none',cursor:'ew-resize'},...events(mode)})) : []
                 return h(React.Fragment,{key:block.address},button,...handles)
-              }), ghost && index === 0 && ghost.target.address === track.address ? (() => { const range = ghost.mode === 'move' ? ghost.block.range.map(f => f + ghost.delta) : [ghost.block.range[0] + (ghost.mode === 'left' ? ghost.delta : 0), ghost.block.range[1] + (ghost.mode === 'right' ? ghost.delta : 0)]; const geometry = clipGeometry(range, view); return geometry ? h('span', { 'aria-hidden':true, style:{position:'absolute',left:`${geometry.left}%`,width:`${geometry.width}%`,height:40,top:3,border:'2px dashed var(--fv-tl-hit,#e1ae50)',borderRadius:4,pointerEvents:'none',zIndex:4,opacity:.8} }) : null })() : null, lines()))))
+              }), ghost && index === 0 && ghost.target.address === track.address ? (() => { const range = ghost.mode === 'move' ? ghost.block.range.map(f => f + ghost.delta) : [ghost.block.range[0] + (ghost.mode === 'left' ? ghost.delta : 0), ghost.block.range[1] + (ghost.mode === 'right' ? ghost.delta : 0)]; const geometry = clipGeometry(range, view); return geometry ? h('span', { 'aria-hidden':true, style:{position:'absolute',left:`${geometry.left}%`,width:`${geometry.width}%`,height:'var(--fv-clip-height)',top:'var(--fv-clip-top)',border:'2px dashed var(--fv-tl-hit,#e1ae50)',borderRadius:4,pointerEvents:'none',zIndex:4,opacity:.8} }) : null })() : null, lines()))))
       }), result.blocks.length === 0 ? h('p', { style: { margin: '6px' } }, '空项目：没有存储块；外部字幕是否展开见 coverage。') : null))
 }

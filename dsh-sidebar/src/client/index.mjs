@@ -6,7 +6,6 @@ import { ManualEditor } from './manual.mjs'
 import { emptySelection, transitionSelection, preserveSelection } from './selection.mjs'
 import { FrameEpoch } from './frame.mjs'
 import { ProgramMonitor } from './monitor.mjs'
-import { formatTimecode } from './timecode.mjs'
 import { registerBundleConfig } from './settings.mjs'
 import { createOfficialDraftServices, draftResultMessage } from './draft-services.mjs'
 import { WorkbenchStyles, FileBrowser, buildMismatchMessage } from './workbench.mjs'
@@ -57,10 +56,10 @@ async function control(sessionId, payload, signal) {
 }
 
 /** Pure presentation: all addresses, ranges, selection and raw fields come from vtx. */
-export function TimelineView({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, compact = false }) {
+export function TimelineView({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, selectionTools, focusTool, compact = false }) {
   if (snapshot.content_version !== result.content_version) return h('p', { role: 'alert' }, 'Timeline changed between reads. Reopen preview; mixed-version selection is not displayed.')
   return h(React.Fragment, null,
-    h(VisualTimeline, { key: snapshot.content_version, snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, compact }),
+    h(VisualTimeline, { key: snapshot.content_version, snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, selectionTools, focusTool, compact }),
     compact ? null : timelineData({ snapshot, result, hits, onSelect }))
 }
 function timelineData({ snapshot, result, hits, onSelect }) {
@@ -157,6 +156,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   const [inspectorVisible, setInspectorVisible] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [timelineShare, setTimelineShare] = useState(38)
+  const [timelineFocus, setTimelineFocus] = useState(false)
   const [quickEdit, setQuickEdit] = useState()
   const inspector = useRef()
   const workbench = useRef()
@@ -165,7 +165,8 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   const pathDisclosure = useRef()
   const pendingFileFocus = useRef(false)
   function browseWorkspace() {
-    if (filesVisible) { workbench.current?.querySelector('.fv-file-search')?.focus(); return }
+    if (filesVisible && !timelineFocus) { workbench.current?.querySelector('.fv-file-search')?.focus(); return }
+    setTimelineFocus(false)
     pendingFileFocus.current = true
     setFilesVisible(true)
   }
@@ -174,7 +175,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       pendingFileFocus.current = false
       workbench.current?.querySelector('.fv-file-search')?.focus()
     }
-  }, [filesVisible])
+  }, [filesVisible, timelineFocus])
   function closeFiles() {
     pendingFileFocus.current = false
     setFilesVisible(false)
@@ -374,6 +375,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   const fps = state.opened?.snapshot.document?.project?.fps
   const manualPane = useRef()
   function showProperties(edit = false) {
+    setTimelineFocus(false)
     setInspectorVisible(true)
     if (edit && manualPane.current) manualPane.current.open = true
   }
@@ -382,7 +384,13 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
     try { quickEdit(operation); showProperties(true) }
     catch (error) { setState(previous => ({ ...previous, message: error.message })) }
   }
+  const disclosureGroup = React.useId()
+  const transport = ready ? h(Transport, { disclosureGroup, frameText: frame, frameError, duration, fps, onFrame: pin, onText: pin, onQuery: () => void load(true) }) : null
   function editorKey(event) {
+    if (event.key === 'Escape' && !event.defaultPrevented) {
+      const disclosure = event.target.closest?.('.fv-monitor-disclosure[open],.fv-disclosure[open]')
+      if (disclosure) { event.preventDefault(); event.stopPropagation(); disclosure.open = false; disclosure.querySelector('summary')?.focus(); return }
+    }
     if (!ready || event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey || editingTarget(event.target) || (!event.target.closest?.('.fv-monitor,.fv-timeline-pane') || event.target.closest?.('video'))) return
     if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
       if (event.target.closest?.('[role=slider],[role=separator]')) return
@@ -395,15 +403,15 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   }
   return h('article', { className: 'fv-shell', 'aria-label': 'Framivra read-only preview' },
     h(WorkbenchStyles),
-    h('dialog', { className: 'fv-workbench', ref: workbench, 'data-view': ready ? 'editor' : 'start', 'data-files': filesVisible, role: expanded ? 'dialog' : 'region', 'aria-label': 'Framivra 工作台', 'aria-modal': expanded ? true : undefined,
+    h('dialog', { className: 'fv-workbench', ref: workbench, 'data-view': ready ? 'editor' : 'start', 'data-files': filesVisible, 'data-timeline-focus': ready && valid && !state.stale && timelineFocus, role: expanded ? 'dialog' : 'region', 'aria-label': 'Framivra 工作台', 'aria-modal': expanded ? true : undefined,
       onClose: () => { setExpanded(false); expandButton.current?.focus() }, onKeyDown: editorKey,
       style: { '--fv-files-column': filesVisible ? '248px' : '0px', '--fv-inspector-column': ready && inspectorVisible ? '300px' : '0px', '--fv-timeline-share': `${timelineShare}%` } },
       h('header', { className: 'fv-topbar' },
         h('span', { className: 'fv-brand' }, h(Icon, { name: 'film', size: 22 })),
-        h('div', { className: 'fv-title' }, h('h2', { title: ready ? activePath : 'Framivra' }, ready ? filename : 'Framivra'), h('span', { className: 'fv-subtitle' }, ready ? '已保存视图 · 精确帧定位' : '时间线工作台')),
-        h(ToolButton, { icon: 'folder', label: '浏览工作区打开时间线', tooltip: '浏览工作区，打开时间线', 'aria-pressed': filesVisible, elementRef: filesButton, onClick: () => filesVisible ? closeFiles() : browseWorkspace() }),
+        h('div', { className: 'fv-title' }, h('h2', { title: ready ? activePath : 'Framivra' }, ready ? filename : 'Framivra'), h('span', { className: 'fv-subtitle', title: ready ? '已保存视图 · 精确帧定位' : '时间线工作台' }, ready ? '已保存视图' : '时间线工作台')),
+        h(ToolButton, { icon: 'folder', label: '浏览工作区打开时间线', tooltip: '浏览工作区，打开时间线', 'aria-pressed': filesVisible, elementRef: filesButton, onClick: () => filesVisible && !timelineFocus ? closeFiles() : browseWorkspace() }),
         ready ? h(ToolButton, { icon: 'refresh', label: '刷新保存版本', onClick: () => void load(), disabled: state.loading }) : null,
-        ready ? h(ToolButton, { icon: 'settings', label: '属性与编辑', 'aria-pressed': inspectorVisible, onClick: () => setInspectorVisible(value => !value) }) : null,
+        ready ? h(ToolButton, { icon: 'settings', label: '属性与编辑', 'aria-pressed': inspectorVisible, onClick: () => { setTimelineFocus(false); setInspectorVisible(value => !value) } }) : null,
         h('details', { className: 'fv-path', ref: pathDisclosure, onKeyDown: event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus() } } },
           h(ToolSummary, { icon: 'path', label: '通过路径打开', tooltip: '通过工作区内的相对路径打开' }),
           h('form', { onSubmit: event => { event.preventDefault(); event.currentTarget.closest('details').open = false; void load() } },
@@ -418,12 +426,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
         h('div', { className: 'fv-upper' },
           filesVisible ? h(FileBrowser, { key: `${sessionId}:${browserEpoch}`, sessionId, tabSignal: tab.signal, call: control, selectedPath: ready ? activePath : undefined, onChoose: path => void load(false, path), onClose: closeFiles, recalibrate: browserRecalibrate, hostOps: state.opened?.host?.ops }) : null,
           h('main', { className: 'fv-monitor', 'aria-label': ready ? '画面预览' : '时间线启动区' },
-            ready ? h(React.Fragment, null,
-              h('div', { className: 'fv-monitor-title' }, h('span', null, '节目监视器'), h('span', null, frameValue === undefined ? '尚未定位' : formatTimecode(frameValue, fps) ?? '时间码不可显示')),
-              h(Transport, { frame: frameValue, frameText: frame, frameError, duration, fps, onFrame: pin, onText: pin, onQuery: () => void load(true) }),
-              frameError ? h('p', { role: 'alert' }, `${frameError} 引用已暂停；不会暗用旧帧。`) : null,
-              valid && !grantDead ? h('fieldset', { disabled: storageBusy, style: { display: 'contents' } },
-                h(ProgramMonitor, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, suspended: storageBusy, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, blank: frame === '', fps, duration, onFrame: pin, selection, tabSignal: tab.signal, getDraftServices, call: control })) : null) :
+            ready ? (valid && !grantDead ? h('fieldset', { disabled: storageBusy, style: { display: 'contents' } }, h(ProgramMonitor, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, suspended: storageBusy, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, blank: frame === '', fps, duration, onFrame: pin, selection, tabSignal: tab.signal, getDraftServices, call: control, transport, disclosureGroup })) : h('div', { className: 'fv-monitor-toolbar' }, transport)) :
               h('div', { className: 'fv-empty' }, h(Icon, { name: 'film', size: 32 }), h('h3', null, '从一条时间线开始'), h('p', null, '选择当前工作区中的时间线 JSON 文件，开始预览与剪辑。'),
                 h('div', { className: 'fv-start-actions' },
                   h('button', { className: 'fv-primary', type: 'button', onClick: browseWorkspace }, h(Icon, { name: 'folder', size: 17 }), '浏览工作区'),
@@ -440,8 +443,9 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
              valid ? h(TimelineHelp, { result: state.result, onGesture: gesture }) : null) : null),
         ready ? h(LayoutDivider, { value: timelineShare, onChange: setTimelineShare }) : null,
         ready ? h('section', { className: 'fv-timeline-pane', 'aria-label': '工程时间线' },
-          valid ? h(SelectionSummary, { selection, selected, result: state.result, frame: frameValue, fps, onFrame: pin, onClear: clearSelection, onProperties: () => showProperties(true), quick: quickEdit ? runQuick : undefined }) : null,
-          state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请刷新保存版本。') : h(TimelineView, { compact: true, snapshot: state.opened.snapshot, result: state.result, hits: state.hits, frame: frameValue, onFrame: value => pin(String(value)), onSelect: pick, activeSelection: selection, selectionIntent, onGesture: gesture, onGestureState: gestureState })) : null)))
+          state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请刷新保存版本。') : h(TimelineView, { compact: true, snapshot: state.opened.snapshot, result: state.result, hits: state.hits, frame: frameValue, onFrame: value => pin(String(value)), onSelect: pick, activeSelection: selection, selectionIntent, onGesture: gesture, onGestureState: gestureState,
+             focusTool: h(ToolButton, { icon: timelineFocus ? 'collapse' : 'expand', label: '轨道专注视图', tooltip: timelineFocus ? '恢复画面和时间线' : '暂时隐藏画面和侧栏，为轨道腾出整个工作区', 'aria-pressed': timelineFocus, onClick: () => setTimelineFocus(value => !value) }),
+             selectionTools: valid ? h(SelectionSummary, { selection, selected, result: state.result, frame: frameValue, fps, onFrame: pin, onClear: clearSelection, onProperties: () => showProperties(true), quick: quickEdit ? runQuick : undefined }) : null })) : null)))
 }
 // DSH 0.2.2-rc.1: this is the tab-scoped action, not ISidebarRight.
 // Its boolean replaceTab:true is translated to this occurrence's TabId by

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Icon } from './icons.mjs'
-import { iconControlCSS } from './icon-controls.mjs'
+import { iconControlCSS, ToolButton } from './icon-controls.mjs'
 export { Icon } from './icons.mjs'
 
 const h = React.createElement
@@ -33,23 +33,33 @@ export const workbenchCSS = `
 .fv-workbench [role=alert]{color:var(--dsw-alias-state-error-primary,#f0bc91)}
 .fv-workbench [role=status]{color:var(--fv-muted)}
 .fv-workbench :is(.fv-body,.fv-inspector,.fv-files,.fv-timeline pre){scrollbar-color:var(--fv-scrollbar) transparent;scrollbar-width:thin;overscroll-behavior:contain}
-.fv-topbar{display:flex;gap:10px;align-items:center;padding:12px;border-bottom:1px solid var(--fv-line);flex:none;min-width:0;position:relative;z-index:3}
+.fv-topbar{display:flex;gap:8px;align-items:center;padding:6px 12px;border-bottom:1px solid var(--fv-line);flex:none;min-width:0;position:relative;z-index:3}
 .fv-topbar>.fv-path{padding:0;border:0;flex:none}.fv-topbar>.fv-path>summary{list-style:none;white-space:nowrap;min-height:34px;padding:6px 10px;border:1px solid var(--fv-line);border-radius:5px;background:var(--fv-surface);color:var(--fv-text)}.fv-topbar>.fv-path>summary::-webkit-details-marker{display:none}.fv-topbar>.fv-path[open]>summary{border-color:var(--fv-accent)}
 .fv-topbar>.fv-path>form{position:absolute;right:12px;top:calc(100% + 4px);width:min(500px,calc(100% - 24px));padding:12px;background:var(--fv-raised);border:1px solid var(--fv-line);border-radius:5px;box-shadow:0 8px 20px #0006;z-index:5}
 .fv-brand{color:var(--fv-accent);display:flex;flex:none}
-.fv-title{flex:1;min-width:0}
-.fv-title h2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fv-subtitle{display:block;color:var(--fv-muted);font-size:11px}
+.fv-title{display:flex;align-items:baseline;gap:10px;flex:1;min-width:0;overflow:hidden;white-space:nowrap}
+.fv-title h2{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fv-subtitle{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fv-muted);font-size:11px}
 .fv-topbar .fv-icon-button{width:34px;flex:none;padding:6px}
 .fv-topbar button[aria-pressed=true]{background:color-mix(in srgb,var(--fv-accent) 12%,var(--fv-surface));border-color:var(--fv-accent)}
 .fv-body{flex:1;min-height:0;overflow:auto}
 .fv-upper{display:flex;flex-direction:column;min-width:0}
 .fv-monitor{min-width:0;background:var(--fv-bg);padding:12px;position:relative}
-.fv-monitor-title{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;color:var(--fv-muted);font-size:12px}
-.fv-frame-query{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
-.fv-frame-query label{font-size:11px;color:var(--fv-muted);flex:1;flex-wrap:wrap}
-.fv-frame-query input{width:88px;font-variant-numeric:tabular-nums}
-.fv-frame-query button{font-size:11px;min-height:30px}
+.fv-monitor-toolbar,.fv-monitor-footer{position:relative;display:flex;align-items:center;gap:4px;min-width:0;flex:none}
+.fv-monitor-toolbar{justify-content:space-between;z-index:2}
+.fv-monitor-footer{z-index:1}
+.fv-transport,.fv-preview-modes{display:flex;align-items:center;gap:4px;min-width:0}
+.fv-preview-modes{flex:none}
+.fv-transport .fv-frame-input{display:block;min-width:0}
+.fv-transport .fv-frame-input input{width:112px;text-align:center;font:500 13px/1.3 var(--ds-font-family-code,ui-monospace,SFMono-Regular,Consolas,monospace);font-variant-numeric:tabular-nums}
+.fv-transport-error{flex:none;color:var(--dsw-alias-state-error-primary,#f0bc91);font-weight:700;padding-inline:2px}
+.fv-duration,.fv-output-provenance{font-size:12px;color:var(--fv-muted);white-space:nowrap}
+.fv-duration{font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.fv-monitor-status{display:block;min-width:0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fv-monitor-disclosure>.fv-monitor-popover{position:absolute;right:0;top:calc(100% + 4px);width:min(360px,100%);max-height:min(245px,45dvh);overflow:auto;overscroll-behavior:contain;padding:10px 12px;background:var(--fv-raised);border:1px solid var(--fv-line);border-radius:6px;box-shadow:0 4px 16px #0006}
+.fv-monitor-disclosure-up>.fv-monitor-popover{left:0;right:auto;top:auto;bottom:calc(100% + 4px)}
+.fv-monitor-popover>*+*,.fv-seconds-helper>*+*{margin-top:6px}
+.fv-seconds-helper{border-top:1px solid var(--fv-line);padding-top:6px}
 .fv-empty{display:flex;flex:none;flex-direction:column;align-items:flex-start;gap:16px;width:min(100%,480px);color:var(--fv-muted);text-align:left}
 .fv-empty>svg{color:var(--fv-muted)}
 .fv-empty h3{color:var(--fv-text);font-size:24px;line-height:1.35;text-wrap:balance}
@@ -59,7 +69,10 @@ export const workbenchCSS = `
 .fv-workbench .fv-primary{background:var(--fv-primary);color:var(--fv-primary-text);border-color:transparent;font-weight:600}
 .fv-workbench .fv-primary:hover:not(:disabled){background:var(--fv-primary-hover);border-color:transparent}
 .fv-files{display:flex;flex-direction:column;background:var(--fv-surface);border-bottom:1px solid var(--fv-line);padding:12px;min-width:0;min-height:0;overflow:hidden;max-height:330px}
-.fv-file-toolbar{flex:none}
+.fv-file-toolbar{display:flex;align-items:center;gap:4px;flex:none;min-width:0;margin-bottom:4px}
+.fv-file-toolbar>.fv-file-search{flex:1;min-width:0;width:0;margin:0}
+.fv-file-toolbar>.fv-file-location{display:flex;flex:none;margin:0}
+.fv-file-location .fv-icon-button svg{transform:rotate(90deg)}
 .fv-file-scroll{flex:1;min-height:0;overflow:auto;padding:4px;margin:0 -4px -4px;scrollbar-color:var(--fv-scrollbar) transparent;scrollbar-width:thin;overscroll-behavior:contain}
 .fv-file-scroll:focus-visible{outline:2px solid var(--fv-accent);outline-offset:-2px}
 .fv-panel-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
@@ -86,7 +99,7 @@ export const workbenchCSS = `
 .fv-inspector fieldset :is(input:not([type=checkbox]),select){display:block;width:100%;margin-top:4px}
 .fv-inspector p{font-size:12px;color:var(--fv-muted)}
 .fv-inspector legend{font-size:11px;color:var(--fv-muted)}
-.fv-timeline-pane{border-top:1px solid var(--fv-line);background:var(--fv-surface);padding:12px;min-width:0}
+.fv-timeline-pane{border-top:1px solid var(--fv-line);background:var(--fv-surface);padding:4px 8px 8px;min-width:0}
 .fv-data{border-top:1px solid var(--fv-line);margin-top:12px;color:var(--fv-muted);font-size:12px}
 .fv-data p{margin:8px 0}
 .fv-notice{padding:8px 12px;font-size:12px;border-bottom:1px solid var(--fv-line);white-space:pre-wrap}
@@ -95,77 +108,63 @@ export const workbenchCSS = `
 .fv-path label{flex:1;min-width:160px;flex-wrap:wrap}
 .fv-path input{width:100%}
 .fv-program-monitor{display:flex;flex-direction:column;min-width:0;min-height:0;gap:8px}
-.fv-preview-modes{display:flex;gap:4px;flex-wrap:wrap;flex:none}
-.fv-preview-modes button{font-size:12px;flex:1}
-.fv-preview-modes button[aria-pressed=true]{background:color-mix(in srgb,var(--fv-accent) 12%,var(--fv-surface));border-color:var(--fv-accent);color:var(--fv-text)}
 .fv-rendered{display:flex;flex-direction:column;gap:6px;min-height:0}
 .fv-program-stage{position:relative;width:100%;aspect-ratio:16/9;max-height:320px;min-height:100px;background:#000;border-radius:6px;overflow:hidden}
 .fv-program-stage video{display:block;width:100%;height:100%;object-fit:contain;background:#000}
+.fv-preview-modes button[aria-pressed=true]{background:color-mix(in srgb,var(--fv-accent) 12%,var(--fv-surface));border-color:var(--fv-accent);color:var(--fv-text)}
 .fv-program-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:16px;text-align:center;font-size:12px;color:#b1b8c4}
-.fv-output-provenance,.fv-rendered [role=status]{font-size:11px;color:var(--fv-muted)}
-.fv-output-choice{font-size:12px}
-.fv-frame-query .fv-timecode-input{width:116px;font-variant-numeric:tabular-nums}
 .fv-guide{display:flex;width:100%;align-items:center;gap:12px;padding:12px 16px;min-height:48px;border:1px solid var(--fv-line);background:var(--fv-surface);border-radius:12px;text-align:left;transition:background-color .15s}
 .fv-guide:hover{background:var(--fv-raised)}
 .fv-guide svg{color:var(--fv-accent)}
 .fv-guide strong{font-size:14px;font-weight:500}
 .fv-guide small{font-size:11px;color:var(--fv-muted);margin-left:auto}
 .fv-layout-divider{display:none}
-.fv-transport{justify-content:center;gap:8px;margin:0;padding:8px 0}
-.fv-transport-buttons{display:flex;align-items:center;gap:4px;min-width:0}
-.fv-transport .fv-frame-input{display:block;flex:none;text-align:center;font-size:12px}
-.fv-transport .fv-frame-input>span{position:absolute;width:1px;height:1px;padding:0;margin:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-.fv-transport .fv-frame-input input{width:92px;text-align:center;font:500 14px/1.3 var(--ds-font-family-code,ui-monospace,SFMono-Regular,Consolas,monospace);letter-spacing:.03em}
-.fv-transport-buttons>button{width:32px;height:32px;min-height:32px;padding:5px}
-.fv-duration{font-size:12px;color:var(--fv-muted);font-variant-numeric:tabular-nums;white-space:nowrap}
-.fv-frame-query .fv-query-button{font-size:12px;margin-inline-start:auto}
-.fv-selection-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;padding:8px 0;border-bottom:1px solid var(--fv-line);margin-bottom:4px}
-.fv-selection-description{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
+.fv-selection-bar,.fv-selection-actions{display:flex;align-items:center;gap:2px;flex:none}
+.fv-selection-bar{border-inline-start:1px solid var(--fv-line);padding-inline-start:6px}
+.fv-selection-description{display:flex;align-items:center;gap:4px;min-width:0;max-width:130px}
 .fv-selection-kind{display:flex;flex:none;color:var(--fv-tl-accent)}
 .fv-selection-kind[data-family=audio]{color:#93cfba}.fv-selection-kind[data-family=gfx]{color:#bf9cdd}.fv-selection-kind[data-family=subtitles]{color:#e1be7c}
-.fv-selection-description>div{min-width:0}.fv-selection-description strong{display:block;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;font-size:12px;font-weight:500}
-.fv-selection-description div>span{display:block;color:var(--fv-muted);font-size:11px;font-variant-numeric:tabular-nums}
-.fv-selection-actions{display:flex;align-items:center;gap:4px;flex:none}
-.fv-selection-actions button{min-height:32px;padding:5px 7px;font-size:12px}
-.fv-frame-tools .fv-frame-tools-tools>.fv-frame-tools-details{margin:0 0 0 auto}.fv-frame-tools .fv-frame-tools-tools>.fv-frame-tools-details>summary{padding:6px 0;min-height:32px}.fv-frame-tools .fv-frame-tools-tools>.fv-frame-tools-details[open]{flex-basis:100%;margin-left:0}
-.fv-workbench[open] .fv-frame-tools-details[open]{max-height:160px;overflow:auto}
+.fv-selection-description strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:500}
 @media(pointer:coarse){.fv-workbench[open] .fv-layout-divider{min-height:32px}}
-@container fv-workbench (max-width:600px){.fv-selection-bar{flex-wrap:wrap;gap:8px}.fv-selection-actions{width:100%;justify-content:flex-end}.fv-frame-query .fv-query-button{margin-inline-start:0}.fv-transport{gap:6px}.fv-duration{display:none}}
+@container fv-workbench (max-width:600px){.fv-duration{display:none}}
 @container fv-workbench (min-width:860px){
- .fv-selection-bar{padding:4px 0}.fv-selection-description>div{display:flex;align-items:baseline;gap:10px;overflow:hidden}.fv-selection-description strong{flex:0 1 auto}.fv-selection-description div>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
  /* Bound the inline grid as well as the modal: otherwise a long file list
     grows its own scrollport, and overscroll containment traps the wheel. */
  .fv-upper{display:grid;grid-template-columns:var(--fv-files-column,0px) minmax(0,1fr) var(--fv-inspector-column,0px);grid-template-rows:minmax(0,1fr);align-items:stretch;min-height:0;max-height:100%}
+ /* Side panels stretch to the monitor row without contributing their intrinsic height. */
+ .fv-workbench[data-view=editor] :is(.fv-files,.fv-inspector){contain:size}
+ .fv-workbench[data-view=editor]:not([open]) .fv-body{display:flex;flex-direction:column}
+ .fv-workbench[data-view=editor]:not([open]) .fv-timeline-pane{flex:1 0 min(300px,42%);min-height:0}
+ .fv-workbench[data-view=editor] .fv-timeline-pane{display:flex;flex-direction:column}
+ .fv-workbench[data-view=editor] .fv-timeline{display:flex;flex-direction:column;flex:1;min-height:0}
+ .fv-workbench[data-view=editor] .fv-timeline .fv-scroll{flex:1;min-height:70px;max-height:none}
  .fv-files{grid-column:1;border:0;border-right:1px solid var(--fv-line);max-height:none}
  .fv-monitor{grid-column:2;padding:16px 24px;overflow:auto}
  .fv-inspector{grid-column:3;border:0;border-left:1px solid var(--fv-line);max-height:none}
- .fv-topbar{padding:12px 20px}
+ .fv-topbar{padding:6px 16px}
  .fv-workbench[open] .fv-body{display:flex;flex-direction:column;overflow:hidden}
  .fv-workbench[open] .fv-upper{flex:1;min-height:0;overflow:hidden}
  .fv-workbench[open] .fv-monitor{display:flex;flex-direction:column;padding:10px 16px;overflow:auto;min-height:0}
- .fv-workbench[open] .fv-monitor-title{flex:none;margin-bottom:4px}
- .fv-workbench[open] .fv-frame-query{flex:none;font-size:12px}
- .fv-workbench[open] .fv-transport{position:sticky;top:0;z-index:2;background:var(--fv-bg)}
- /* Expanded positioning fields scroll normally instead of pinning a tall form over the stage. */
- .fv-workbench[open] .fv-transport:has(> details[open]){position:static;z-index:auto}
- .fv-workbench[open] .fv-frame-query button{font-size:12px}
- .fv-workbench[open] .fv-frame-tools{display:flex;flex-direction:column;flex:1;min-height:200px}
- .fv-workbench[open] .fv-frame-tools-head{display:none}
+  .fv-workbench[open] .fv-monitor-toolbar{position:sticky;top:0;background:var(--fv-bg)}
+  .fv-workbench[open] .fv-monitor-toolbar:has(.fv-transport > details[open]){position:relative}
+ .fv-workbench[open] .fv-frame-tools{display:flex;flex-direction:column;flex:1;min-height:0}
  .fv-workbench[open] .fv-frame-tools-stage{flex:1;min-height:100px;max-height:none;aspect-ratio:auto}
  .fv-workbench[open] .fv-frame-tools-stage img{width:100%;height:100%;object-fit:contain}
- .fv-workbench[open] .fv-frame-tools-tools,.fv-workbench[open] .fv-frame-tools>details,.fv-workbench[open] .fv-frame-tools>[role=status],.fv-workbench[open] .fv-frame-tools>[role=alert]{flex:none}
- .fv-workbench[open] .fv-program-monitor{flex:1;min-height:200px}
+ .fv-workbench[open] .fv-program-monitor{flex:1;min-height:185px}
  .fv-workbench[open] .fv-rendered{flex:1;min-height:0}
  .fv-workbench[open] .fv-program-stage{flex:1;aspect-ratio:auto;max-height:none}
  .fv-workbench[open] .fv-layout-divider{display:flex;align-items:center;justify-content:center;height:12px;flex:none;border-top:1px solid var(--fv-line);cursor:row-resize;color:var(--fv-muted);background:var(--fv-bg);touch-action:none;user-select:none}
  .fv-workbench[open] .fv-layout-divider:hover,.fv-workbench[open] .fv-layout-divider:focus-visible{color:var(--fv-accent);background:var(--fv-raised);outline:2px solid var(--fv-accent);outline-offset:-2px}
- .fv-workbench[open] .fv-timeline-pane{display:flex;flex-direction:column;flex:0 0 var(--fv-timeline-share,38%);min-height:300px;overflow:hidden;padding-top:4px}
- .fv-workbench[open] .fv-timeline{display:flex;flex-direction:column;flex:1;min-height:0}
- .fv-workbench[open] .fv-timeline .fv-scroll{flex:1;min-height:70px;max-height:none}
+ .fv-workbench[open] .fv-timeline-pane{flex:0 0 var(--fv-timeline-share,38%);min-height:300px;overflow:hidden;padding-top:4px}
  .fv-workbench[open] .fv-timeline .fv-help summary,.fv-workbench[open] .fv-data>summary{padding:3px 0;min-height:24px}
  .fv-workbench[open] .fv-data{flex:none}
  .fv-workbench[open] .fv-data[open]{max-height:45%;overflow:auto}
 }
+.fv-workbench[data-timeline-focus=true] .fv-body{display:flex;flex-direction:column}
+.fv-workbench[data-timeline-focus=true] :is(.fv-upper,.fv-layout-divider){display:none}
+.fv-workbench[data-timeline-focus=true] :is(.fv-timeline-pane,.fv-timeline){display:flex;flex-direction:column;flex:1;min-height:0}
+.fv-workbench[data-timeline-focus=true] .fv-timeline .fv-scroll{flex:1;min-height:70px;max-height:none}
 /* Startup is a workspace chooser, not an empty video frame. The 248px file
    column and flexible main share the available height, without a media ratio. */
 .fv-workbench[data-view=start] .fv-body{display:flex;flex-direction:column;overflow:hidden}
@@ -175,7 +174,7 @@ export const workbenchCSS = `
  .fv-workbench[data-view=start] .fv-files{flex:1;max-height:none}
  .fv-workbench[data-view=start][data-files=true] .fv-monitor{display:none}
 }
-@container fv-workbench (max-width:420px){.fv-topbar{gap:7px;padding:10px}.fv-subtitle{display:none}.fv-topbar .fv-open-label{display:none}.fv-monitor{padding:10px}.fv-empty h3{font-size:22px}.fv-timeline-pane{padding:10px}.fv-frame-query label{flex-basis:100%}}
+@container fv-workbench (max-width:420px){.fv-topbar{gap:7px;padding:6px 10px}.fv-subtitle{display:none}.fv-topbar .fv-open-label{display:none}.fv-monitor{padding:10px}.fv-empty h3{font-size:22px}.fv-timeline-pane{padding:4px 6px 6px}}
 @media(prefers-reduced-motion:reduce){.fv-workbench *,.fv-guide{transition:none!important}}
 .fv-reference-actions{display:flex;align-items:center;flex-wrap:wrap;gap:4px}
 ${iconControlCSS}
@@ -285,14 +284,13 @@ export function FileBrowser({ sessionId, tabSignal, call, onChoose, selectedPath
   const parent = state.path.split('/').slice(0, -1).join('/')
   return h('aside', { className: 'fv-files', 'aria-label': '工作区文件选择器' },
     h('div', { className: 'fv-file-toolbar' },
-      h('div', { className: 'fv-panel-heading' }, h('h3', null, '项目文件'),
-        h('div', null,
-          h('button', { type: 'button', title: '刷新文件列表', 'aria-label': '刷新文件列表', onClick: () => void browse(state.path, true), disabled: state.phase === 'loading' }, h(Icon, { name: 'refresh', size: 15 })),
-          h('button', { type: 'button', title: '收起项目文件', 'aria-label': '收起项目文件', onClick: onClose }, h(Icon, { name: 'close', size: 15 })))),
+      h('h3', { className: 'fv-sr-only' }, '项目文件'),
       h('div', { className: 'fv-file-location' },
-        h('button', { type: 'button', title: '上一级文件夹', 'aria-label': '上一级文件夹', disabled: !state.path || state.phase === 'loading', onClick: () => void browse(parent) }, h(Icon, { name: 'back', size: 14 })),
-        h('span', { title: state.path || '当前会话工作区' }, state.path || '当前会话工作区')),
-      h('input', { className: 'fv-file-search', type: 'search', value: search, 'aria-label': '筛选当前文件夹', name: 'framivra-file-filter', autoComplete: 'off', placeholder: '筛选文件…', onChange: event => setSearch(event.target.value) })),
+        h('span', { className: 'fv-sr-only', title: state.path || '当前会话工作区' }, state.path || '当前会话工作区'),
+        h(ToolButton, { icon: 'back', size: 14, label: '上一级文件夹', tooltip: `上一级文件夹 · 当前目录：${state.path || '当前会话工作区'}`, disabled: !state.path || state.phase === 'loading', onClick: () => void browse(parent) })),
+      h('input', { className: 'fv-file-search', type: 'search', value: search, 'aria-label': '筛选当前文件夹', title: `筛选当前文件夹 · ${state.path || '当前会话工作区'}`, name: 'framivra-file-filter', autoComplete: 'off', placeholder: '筛选文件…', onChange: event => setSearch(event.target.value) }),
+      h(ToolButton, { icon: 'refresh', size: 15, label: '刷新文件列表', onClick: () => void browse(state.path, true), disabled: state.phase === 'loading' }),
+      h(ToolButton, { icon: 'close', size: 15, label: '收起项目文件', onClick: onClose })),
     h('div', { className: 'fv-file-scroll', role: 'region', 'aria-label': '文件列表', tabIndex: 0 },
     state.phase === 'loading' ? h('p', { className: 'fv-file-status', role: 'status' }, '正在读取文件夹…') : null,
     state.phase === 'failed' ? h('div', { className: 'fv-file-status', role: 'alert' }, state.message,
