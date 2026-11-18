@@ -1086,6 +1086,81 @@ class WindowsFontconfigCheck(unittest.TestCase):
 
 @unittest.skipUnless(os.name == 'nt' and sysconfig.get_platform() == 'win-amd64', 'native Windows x64')
 class WindowsRuntimeSnapshot(unittest.TestCase):
+    def test_system_scope_declarations_and_name_set(self):
+        from hashlib import sha256
+        from vtx.render import gfx_svg_win_shell as shell
+
+        one = ('system32/a.dll', 1, 'a' * 64, 2)
+        two = ('winsxs/assembly/b.dll', 2, 'b' * 64, 1)
+        scope = shell.win_system._validate_scope
+        digest = sha256(b'framivra:windows-svg:system-pathname-set:v1\nsystem32/a.dll\nwinsxs/assembly/b.dll\n')
+        self.assertEqual(scope((2, (two, one))), digest.hexdigest())
+        self.assertEqual(scope((2, (one, two))), digest.hexdigest())
+        self.assertNotEqual(scope((2, (one, ('winsxs/assembly/c.dll', *two[1:])))), digest.hexdigest())
+        invalid = [(1, (one, two)), (True, (one,)), (1, [one]), (2, (one, one)),
+                   (1, (('system32/a.dll', True, one[2], 2),)),
+                   (1, (('system32/a.dll', 1, one[2].upper(), 2),)),
+                   (1, (('system32/a.dll', 1, one[2], False),)),
+                   (9, tuple((f'system32/{i}.dll', 32 * 1024**2, one[2], 2) for i in range(9))),
+                   (17, tuple((f'winsxs/{i}/a.dll', *two[1:]) for i in range(17))),
+                   (97, tuple((f'system32/{i}.dll', *one[1:]) for i in range(97)))]
+        invalid += [(1, ((name, *one[1:]),)) for name in (
+            'system32/A.dll', 'system32/é.dll', 'system32/a.dll:ads', 'system32/a.dll.',
+            'system32/nul.dll', 'system32/a\n.dll', 'system32/foo/a.dll', 'system32//a.dll',
+            'winsxs/b.dll', 'winsxs/../b.dll', 'winsxs/a/b/c.dll', 'winsxs/a\\b.dll', 'x:/a.dll')]
+        with mock.patch.object(shell, '_locked_runtime_digests') as opened:
+            for malformed in invalid:
+                with self.subTest(scope=malformed), self.assertRaises(ValueError):
+                    shell._accept_standard_raster(None, scratch=None, project_root=None, expected_system_scope=malformed)
+            opened.assert_not_called()
+
+    def test_system_scope_native_same_handle_lifetime_and_reparse(self):
+        from hashlib import sha256
+        import time
+        from vtx.render import gfx_svg_win_shell as shell
+
+        root = temporary_root(self)
+        system32, winsxs = root / 'System32', root / 'WinSxS'
+        system32.mkdir()
+        winsxs.mkdir()
+        first = system32 / 'MiXeD.dll'
+        first.write_bytes(b'system')
+        alias = root / 'alias.dll'
+        os.link(first, alias)
+        second = winsxs / 'Assembly' / 'Child.dll'
+        second.parent.mkdir()
+        second.write_bytes(b'component')
+        rows = (('system32/mixed.dll', 6, sha256(b'system').hexdigest(), 2),
+                ('winsxs/assembly/child.dll', 9, sha256(b'component').hexdigest(), 1))
+        def hold(pins, rows=rows):
+            shell.win_system._validate_scope((len(rows), rows))
+            return shell.win_system._hold_under_roots(pins, root, system32, winsxs, rows,
+                                                       time.monotonic() + 5, shell._image_device)
+
+        with contextlib.ExitStack() as pins:
+            held = hold(pins)
+            self.assertEqual(alias.read_bytes(), b'system')
+            with self.assertRaises(PermissionError):
+                with alias.open('r+b'):
+                    pass
+            with self.assertRaises(PermissionError):
+                first.rename(first.with_suffix('.new'))
+            held.verify(time.monotonic() + 5)
+        with alias.open('r+b') as stream:
+            stream.write(b'bad!!!')  # equal length, same name, and same file ID
+        with self.assertRaisesRegex(ValueError, 'identity mismatch'), contextlib.ExitStack() as pins:
+            hold(pins)
+        with self.assertRaisesRegex(ValueError, 'metadata mismatch'), contextlib.ExitStack() as pins:
+            hold(pins, ((rows[0][0], 6, sha256(b'bad!!!').hexdigest(), 1),))
+
+        junction = winsxs / 'junction'
+        cmd = shell._system_windows_path() / 'System32/cmd.exe'
+        subprocess.run([str(cmd), '/d', '/c', 'mklink', '/j', str(junction), str(second.parent)],
+                       capture_output=True, check=True, timeout=5)
+        self.addCleanup(junction.rmdir)
+        with self.assertRaisesRegex(ValueError, 'non-reparse'), contextlib.ExitStack() as pins:
+            hold(pins, (('winsxs/junction/child.dll', *rows[1][1:]),))
+
     def scratch_fixture(self, snapshot):
         parent = Path(tempfile.gettempdir())
         if not str(parent).isascii() or ';' in str(parent):

@@ -21,6 +21,7 @@ from xml.sax.saxutils import escape
 
 from ..runtime import windows_browser as native
 from . import gfx_svg, gfx_svg_win_fontconfig as fontconfig, gfx_svg_win_input as win_input
+from . import gfx_svg_win_system as win_system
 from .gfx_cli import _png_stream_invalid_reason
 from .gfx_svg_stage import _FONT_ERROR
 from .gfx_svg_win_snapshot import (_local_path, _normalized_dos_name, _ordinary, _pin_dir, _pin_dirs,
@@ -368,10 +369,8 @@ def _query_image_origins(job, executable, roots, deadline):
         raise ValueError('Windows SVG root image missing from module sample')
     # Version header, then sorted, LF-terminated literal records. The DOS
     # name check excludes control characters, so LF cannot occur in a tail.
-    system_sha = hashlib.sha256(b'framivra:windows-svg:system-pathname-set:v1\n')
-    for record in sorted(system_names):
-        system_sha.update(record + b'\n')
-    origins = _ImageOrigins(root.relative_to(package.parent).as_posix(), *counts, system_sha.hexdigest())
+    origins = _ImageOrigins(root.relative_to(package.parent).as_posix(), *counts,
+                            win_system._pathname_set_sha256(system_names))
     if job.proc.poll() is not None:
         raise ValueError('Windows SVG shell root exited during image sample')
     _image_sample_time(deadline)
@@ -699,14 +698,20 @@ def _require_staged_font_faces(operation, executable, cwd, staged, pins, launch_
     return counts
 
 
-def _accept_standard_raster(portable_root, *, scratch, project_root):
+def _accept_standard_raster(portable_root, *, scratch, project_root, expected_system_scope=None):
     """Attest only the fixed portable-v2 raster, not project or render eligibility.
 
     Use an authorized stable NTFS project root and an exclusive disjoint
     scratch parent. The timeline, manifest and declared source bytes are checked
     against fixed identities; declarations never select inputs. These reads are
     not an atomic project snapshot.
+
+    Only a trusted internal audit harness may supply expected_system_scope:
+    (count, tuple of (relative name, size, stream SHA-256, recorded link count)).
+    This joins held disk streams to sampled names; it is not loader or trust evidence.
     """
+    expected_system_sha = (None if expected_system_scope is None else
+                           win_system._validate_scope(expected_system_scope))
     from PIL import Image
 
     deadline = time.monotonic() + _RASTER_TIMEOUT
@@ -750,6 +755,10 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
         if project_ids[-1] in scratch_ids or scratch_ids[-1] in project_ids:
             raise ValueError('Windows SVG canonical raster scratch overlaps the project')
         _raster_time(launch_deadline)
+        held_system = None
+        if expected_system_sha is not None:
+            held_system, system32, winsxs = win_system._hold_scope(
+                roots, _system_windows_path(), expected_system_scope[1], launch_deadline, _image_device)
         with _fixed_shell(portable_root, scratch, retain_package_images=True) as context:
             operation, executable, cwd, environment, pins = context
             frames, fonts = cwd / 'frames', cwd / 'fonts'
@@ -774,7 +783,8 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
                 if _read_pinned(handle, info, directory, len(data)) != data:
                     raise ValueError('Windows SVG staged canonical raster source changed')
             _require_runtime_facts(operation, executable, cwd, environment, pins, launch_deadline)
-            image_roots = _raster_image_roots(pins, operation.package_images)
+            image_roots = (_raster_image_roots(pins, operation.package_images) if held_system is None else
+                           (operation.package_images, system32, winsxs))
             with _fixed_stdin(cwd, actions) as stdin:
                 image_origins = _run(operation, executable, cwd, environment, stdin, deadline=launch_deadline,
                                      capture_limit=_RASTER_CAPTURE_LIMIT, image_roots=image_roots)
@@ -782,6 +792,8 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
             # _run can return only after confirmed Job settlement. No directory
             # enumeration or PNG reads occur on its failure path.
             _raster_time(deadline)
+            if held_system is not None and image_origins.system_pathname_set_sha256 != expected_system_sha:
+                raise ValueError('Windows SVG sampled system pathname set differs from the held scope')
             _require_outputs(frames, outputs)
             png, rgba = _raster_fold(b'png'), _raster_fold(b'rgba')
             for i, name in enumerate(outputs):
@@ -794,6 +806,8 @@ def _accept_standard_raster(portable_root, *, scratch, project_root):
                 raise ValueError('Windows SVG canonical raster ordered pixels differ')
             if png.hexdigest() != _RASTER_PNG_SHA256:
                 raise ValueError('Windows SVG canonical raster ordered PNG bytes differ')
+            if held_system is not None:
+                held_system.verify(deadline)
     _raster_time(deadline)
     return _StandardRasterEvidence(len(outputs), _STANDARD_SIZE, svg.hexdigest(), png.hexdigest(), rgba.hexdigest(),
                                    image_origins, font_catalog_faces)
