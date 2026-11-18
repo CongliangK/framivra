@@ -1104,6 +1104,64 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
             self.assertEqual(list(scratch.iterdir()), [])
             self.assertEqual(entry.read_bytes(), b'Sample')
 
+    def test_snapshot_retains_only_authenticated_package_images_when_opted_in(self):
+        from hashlib import sha256
+        from vtx.render import gfx_svg_win_snapshot as snapshot
+
+        root = self.scratch_fixture(snapshot)
+        scratch, vendor = root / 'scratch', root / 'inkscape'
+        scratch.mkdir()
+        (vendor / 'bin/sub').mkdir(parents=True)
+        eligible = ('bin/inkscape.com', 'bin/Mixed.DLL', 'bin/tool.exe')
+        other = ('bin/help.txt', 'bin/other.com', 'bin/sub/nested.dll')
+        data = b'inert'
+        for name in (*eligible, *other):
+            (vendor / name).write_bytes(data)
+        manifest = {'schema': 'framivra-audit/inkscape-vendor-tree/1', 'directories': ['bin', 'bin/sub'],
+                    'files': {name: [len(data), sha256(data).hexdigest()] for name in (*eligible, *other)}}
+        expected = sha256(json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode('ascii')).hexdigest()
+        with mock.patch.multiple(snapshot, _MAX_FILES=6, _MAX_DIRS=2, _MAX_BYTES=30, _TREE_SHA256=expected):
+            with snapshot._runtime_snapshot(root, scratch=scratch) as inputs:
+                with (inputs.vendor / eligible[1]).open('r+b') as stream:
+                    self.assertEqual(stream.read(), data)  # standalone route retains no image leaves
+            self.assertEqual(list(scratch.iterdir()), [])
+
+            with self.assertRaisesRegex(RuntimeError, 'unwind'):
+                with snapshot._snapshot_operation(root, scratch=scratch, retain_package_images=True) as op:
+                    stage = op.inputs.executable.parent.parent
+                    self.assertEqual(op.package_images, frozenset(str(stage / name) for name in eligible))
+                    for name in eligible:
+                        target = stage / name
+                        self.assertEqual(target.read_bytes(), data)
+                        with self.assertRaises(PermissionError), target.open('r+b'):
+                            self.fail('authenticated package image was writable')
+                        with self.assertRaises(PermissionError):
+                            target.rename(target.with_suffix('.tmp'))
+                    for name in other:
+                        with (stage / name).open('r+b') as stream:
+                            self.assertEqual(stream.read(), data)
+                    for directory in (stage / 'bin', stage):
+                        with self.assertRaises(PermissionError):
+                            directory.rename(directory.with_name('renamed'))
+                    op.keep = True
+                    raise RuntimeError('unwind')
+            self.assertEqual(list(scratch.iterdir()), [stage.parent])
+            for name in eligible:
+                with (stage / name).open('r+b') as stream:
+                    self.assertEqual(stream.read(), data)  # handles released, not scratch
+            (stage / 'bin').rename(stage / 'renamed-bin')
+            stage.rename(stage.with_name('renamed-vendor'))
+
+            for attr, ceiling, message in (('_MAX_IMAGES', 2, 'handle bound'),
+                                           ('_MAX_IMAGE_BYTES', 4, 'byte bound'),
+                                           ('_MAX_IMAGES_BYTES', 14, 'byte bound'),
+                                           ('_TREE_SHA256', '0' * 64, 'tree identity mismatch')):
+                with self.subTest(attr=attr), mock.patch.object(snapshot, attr, ceiling):
+                    with self.assertRaisesRegex(ValueError, message):
+                        with snapshot._snapshot_operation(root, scratch=scratch, retain_package_images=True):
+                            self.fail('failed image authentication yielded a snapshot')
+                    self.assertEqual(list(scratch.iterdir()), [stage.parent])
+
     def test_overlapping_directory_chains_refuse_before_mkdtemp(self):
         from vtx.render import gfx_svg_win_snapshot as snapshot
         root = self.scratch_fixture(snapshot)
@@ -1452,6 +1510,8 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                 i = int(target.stem.removeprefix('font'))
                 self.assertEqual(scratch, bundle)
                 self.assertEqual(bundle / 'inkscape', operation.inputs.vendor)
+                with self.assertRaises(PermissionError), operation.inputs.executable.open('r+b'):
+                    self.fail('package entry lost its pin before a face worker')
                 self.assertEqual(target, bundle / 'shell/fonts' / f'font{i}{Path(shell._FONT_NAMES[i]).suffix}')
                 self.assertEqual(target.read_bytes(), font_data[i])
                 self.assertEqual((sha256, index), (font_digests[i], face_values[i][2]))
@@ -1664,6 +1724,8 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                                 settings[:] = [args[0], cwd, environment]
                             cwd = Path(cwd)
                             self.assertEqual(Path(args[0]), cwd.parent / 'inkscape/bin/inkscape.com')
+                            with self.assertRaises(PermissionError), Path(args[0]).open('r+b'):
+                                self.fail('package entry lost its pin at launch')
                             self.assertEqual([p.read_bytes() for p in sorted((cwd / 'fonts').iterdir())], font_data)
                             self.assertFalse(list((cwd / 'font-cache').iterdir()))
                             with self.assertRaises(PermissionError), (cwd / 'fonts.conf').open('r+b'):
@@ -1727,14 +1789,24 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                         self.assertEqual(job._pump.call_count, 2)
                         job._close.assert_not_called()
                         self.assertEqual(executable, Path(settings[0]))
-                        self.assertEqual(roots[0], executable.parent)
+                        self.assertEqual(roots[0], frozenset((str(executable),)))
+                        with self.assertRaises(PermissionError), executable.open('r+b'):
+                            self.fail('package entry lost its pin before the image sample')
                         self.assertEqual([path.name for path in roots[1:]], ['System32', 'WinSxS'])
                         if failure in ('image-rejected', 'image-unconfirmed'):
                             raise ValueError('injected image rejection')
                         return origins
 
+                    real_require_outputs = shell._require_outputs
+
+                    def check_outputs(directory, names):
+                        jobs[-1]._close.assert_called_once()
+                        with self.assertRaises(PermissionError), Path(settings[0]).open('r+b'):
+                            self.fail('package entry lost its pin before output verification')
+                        real_require_outputs(directory, names)
+
                     own.side_effect = job_for
-                    with mock.patch.object(shell, '_require_outputs', wraps=shell._require_outputs) as check_names, \
+                    with mock.patch.object(shell, '_require_outputs', side_effect=check_outputs) as check_names, \
                             mock.patch.object(shell, '_read_png', wraps=shell._read_png) as read_png, \
                             mock.patch.object(shell, '_query_image_origins', side_effect=query) as observe:
                         if rejection is None:
@@ -1775,13 +1847,19 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
         from vtx.render import gfx_svg_win_shell as shell
 
         exe = Path(r'C:\private\inkscape\bin\inkscape.com')
-        roots = (exe.parent, Path(r'C:\Windows\System32'), Path(r'C:\Windows\WinSxS'))
-        good_names = [str(exe), r'c:\WINDOWS\SYSTEM32\ntdll.dll', r'C:\Windows\WinSxS\assembly\gdiplus.dll']
+        dll = str(exe.with_name('Mixed.DLL'))
+        package = frozenset((str(exe), dll))
+        roots = (package, Path(r'C:\Windows\System32'), Path(r'C:\Windows\WinSxS'))
+        good_names = [str(exe), r'c:\WINDOWS\SYSTEM32\ntdll.dll', r'C:\Windows\WinSxS\assembly\gdiplus.dll', dll]
         for case, message in ((None, None), ('dead', 'requires a live shell root'),
                               ('exited', 'exited during image sample'), ('timeout', 'sample deadline expired'),
-                              ('root', 'differs from the pinned entry'), ('empty', 'invalid module count'),
-                              ('full', 'invalid module count'), ('partial', 'invalid module count'),
-                              ('outside', 'outside the allowed'), ('alias', 'invalid DOS name'),
+                              ('root', 'differs from the pinned entry'), ('root-case', 'differs from the pinned entry'),
+                              ('empty', 'invalid module count'), ('full', 'invalid module count'),
+                              ('partial', 'invalid module count'), ('outside', 'outside the allowed'),
+                              ('unknown-package', 'without an exact pinned package image'),
+                              ('package-case', 'without an exact pinned package image'),
+                              ('package-parent-case', 'without an exact pinned package image'),
+                              ('alias', 'invalid DOS name'),
                               ('truncated', 'invalid DOS name'), ('nul-boundary', 'invalid DOS name'),
                               ('unavailable', 'K32GetModuleFileNameExW'),
                               ('no-root-module', 'missing from module sample')):
@@ -1792,21 +1870,25 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                 names = list(good_names)
                 names[1] = {'outside': r'C:\Windows\System32-extra\ntdll.dll',
                             'alias': r'C:\Windows\System32\..\System32\ntdll.dll'}.get(case, names[1])
+                names[3] = {'unknown-package': str(exe.with_name('other.dll')),
+                            'package-case': str(exe.with_name('mixed.dll')),
+                            'package-parent-case': dll.replace('\\bin\\', '\\BIN\\')}.get(case, dll)
                 if case == 'no-root-module':
-                    names[0] = str(exe.with_name('other.dll'))
+                    names.pop(0)
 
                 def root(handle, flags, output, count):
                     self.assertIs(handle, process)
                     self.assertEqual(flags, 0)
-                    output.value = str(exe.with_name('inkscape.exe') if case == 'root' else exe)
+                    output.value = {'root': str(exe.with_name('inkscape.exe')),
+                                    'root-case': str(exe.with_name('INKSCAPE.COM'))}.get(case, str(exe))
                     C.cast(count, C.POINTER(W.DWORD)).contents.value = len(output.value)
                     return 1
 
                 def enum(handle, modules, capacity, needed, flags):
                     self.assertIs(handle, process)
                     self.assertEqual((capacity, flags), (C.sizeof(W.HMODULE) * shell._IMAGE_MODULE_LIMIT, 3))
-                    modules[:3] = [11, 12, 13]
-                    count = {'empty': 0, 'full': capacity, 'partial': 1}.get(case, C.sizeof(W.HMODULE) * 3)
+                    modules[:len(names)] = range(11, 11 + len(names))
+                    count = {'empty': 0, 'full': capacity, 'partial': 1}.get(case, C.sizeof(W.HMODULE) * len(names))
                     C.cast(needed, C.POINTER(W.DWORD)).contents.value = count
                     return 1
 
@@ -1827,7 +1909,7 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                     deadline = time.monotonic() + (-1 if case == 'timeout' else 10)
                     if message is None:
                         self.assertEqual(shell._query_image_origins(job, exe, roots, deadline),
-                                         ('bin/inkscape.com', 1, 1, 1))
+                                         ('bin/inkscape.com', 2, 1, 1))
                     else:
                         with self.assertRaisesRegex((OSError, ValueError), message):
                             shell._query_image_origins(job, exe, roots, deadline)
