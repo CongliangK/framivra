@@ -67,6 +67,23 @@ class FrameReadOnly(unittest.TestCase):
             self.assertEqual(json.loads(proc.stdout)["diagnostics"][0]["code"], "cli.arguments")
         self.assertEqual(list(self.root.iterdir()), [self.path])
 
+    def test_cli_warnings_stay_visible_without_corrupting_json(self):
+        from types import SimpleNamespace
+        from vtx.cli.timeline_frame import run_frame_command
+        args = SimpleNamespace(command='timeline', timeline=str(self.path),
+            subs_extra=['frame'], frame='1', render=True, include_png=True,
+            max_png_bytes=None, expected_content_version=None)
+        stdout, stderr = io.StringIO(), io.StringIO()
+        expected = {'schema': 'framivra.timeline.frame/v1', 'ok': True}
+        def noisy_renderer(*_args, **_kwargs):
+            print('⚠ NVENC unavailable, using x264')
+            return expected
+        with patch('vtx.cli.timeline_frame.frame_timeline', side_effect=noisy_renderer), \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            self.assertEqual(run_frame_command(args, None), 0)
+        self.assertEqual(json.loads(stdout.getvalue()), expected)
+        self.assertIn('NVENC unavailable', stderr.getvalue())
+
     def test_cli_signal_handler_is_scoped_and_restored(self):
         import signal
         from vtx.cli.timeline_frame import _cancel_on_sigterm

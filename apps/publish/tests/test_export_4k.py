@@ -140,7 +140,7 @@ print(values[entry])
             media = media_dir / "clip 'name.mp4"
             media.write_bytes(b'\0\0\0\x10moov' + b'\0' * 56)
             timeline = media_dir / 'timeline.json'
-            timeline.write_text(json.dumps({'project': {'duration_frames': 60}}))
+            timeline.write_text(json.dumps({'project': {'duration_frames': 60, 'fps': 30}}))
             marker = root / 'must-not-execute'
             expression = f"(__import__('pathlib').Path({str(marker)!r}).touch() or 60)"
             for name, expected_frames, cap, expected_status in (
@@ -166,6 +166,11 @@ print(values[entry])
 
 
 class TestMaxrate(unittest.TestCase):
+    def test_rational_rate_timescales_are_exact_integer_ticks(self):
+        for fps in (29.97, '30000/1001', 30000 / 1001):
+            self.assertEqual(export_4k.timescale_args(fps),
+                             ['-video_track_timescale', '15360000', '-movie_timescale', '15360000'])
+
     def test_valid_rates_are_normalized(self):
         for value, expected in [("20m", "20M"), ("20M", "20M"), ("1000k", "1000k"),
                                 ("1000K", "1000k"), ("1000", "1000"), ("0.001M", "0.001M")]:

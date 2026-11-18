@@ -17,7 +17,7 @@ python3 scripts/demo.py fonts
 python3 scripts/demo.py preflight --fonts-dir "/path/to/existing-font-files"
 ```
 
-`fonts` 列出固定公开来源与包/字体 SHA256，未提供已有目录时报告 MISSING、退出 1；`fonts --fonts-dir DIR` 校验已有字体。preflight 退出 0 只代表报告完整，另看 `prepare_ready`；缺字体或工具时为 false。依赖诊断逐项列出 Python/Node/FFmpeg/ffprobe/Inkscape/fc-scan/jsonschema 的缺失或失败；Inkscape 只发现路径和字节，不启动进程。预检不联网、不证明运行库/选面/原生渲染通过。
+`fonts` 列出固定公开来源与包/字体 SHA256，未提供已有目录时报告 MISSING、退出 1；`fonts --fonts-dir DIR` 校验已有字体。preflight 退出 0 只代表报告完整；平台不支持时 `prepare_supported` 为 false，平台、字体或工具有缺项时 `prepare_ready` 为 false。依赖诊断逐项列出 Python/Node/FFmpeg/ffprobe/Inkscape/fc-scan/jsonschema 的缺失或失败；Inkscape 只发现路径和字节，不启动进程。预检不联网、不证明运行库/选面/原生渲染通过。
 
 以下为**显式联网与写操作**：从 Debian 官方公开包下载并校验字体，不执行包安装器；生成音频、帧、缓存及成片。必须在同一 Bash 会话中使用全新物理 RUN，不能复用用户工程或证据目录。prepare 拒绝已有输出、symlink 组件、缺父目录及仓/HOME/cache 内输出；失败保留日志且停止后续步骤。
 
@@ -33,23 +33,7 @@ python3 -m vtx -t "$PROJECT/timeline.json" qc --strict > "$RUN/qc-strict.log" 2>
 
 示例使用默认正式分段，不设置单段绕行；[帧时钟修复 #359](https://github.com/CongliangK/framivra/pull/359) 已合入。完整解码和 strict QC 仍不能替代全部 900 帧 PTS=`n/30` 的独立检查；历史单段成功、旧多段失败均保留原身份，不自动升级成当前平台通过。自定义 TMPDIR 也须位于仓/HOME/cache 外且无链接组件。
 
-以下 PowerShell 是同一正式链的调用形式，**当前 Windows SVG 后端仍未实现，产品 validate 会阻断，不能视为可运行或已验收配方**。先选一个已存在、无 symlink/junction/reparse 组件且在仓/HOME/cache 外的物理父目录；通常 `$env:TEMP` 位于 HOME 内，不符合准备边界。以下命令显式联网并写新目录；Python UTF-8 模式不承诺 Windows PowerShell 重定向日志逐字节一致。
-
-```powershell
-$ErrorActionPreference = 'Stop'
-$PARENT = 'C:\framivra-runs' # 替换为已存在、符合上述边界的物理目录
-$RUN = Join-Path $PARENT ([guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $RUN | Out-Null
-$PROJECT = Join-Path $RUN 'project'
-python -X utf8 scripts/demo.py prepare --output "$PROJECT" --fetch-fonts
-if ($LASTEXITCODE -ne 0) { throw 'prepare failed' }
-python -X utf8 scripts/demo.py verify --project "$PROJECT"
-if ($LASTEXITCODE -ne 0) { throw 'input verification failed' }
-python -X utf8 -m vtx -t "$PROJECT/timeline.json" --events-jsonl "$RUN/all.events.jsonl" all
-if ($LASTEXITCODE -ne 0) { throw 'formal all failed' }
-python -X utf8 -m vtx -t "$PROJECT/timeline.json" qc --strict
-if ($LASTEXITCODE -ne 0) { throw 'strict QC failed' }
-```
+**Windows 尚不支持本主片的 SVG 后端。** 可以在 PowerShell 运行只读预检 `python -X utf8 scripts/demo.py preflight`；`prepare` 会在下载和创建项目之前拒绝执行。Windows 的 HTML 能力检查不替代本主片验收。
 
 离线准备时把 `--fetch-fonts` 换为 `--fonts-dir DIR`，目录须含原文件名的四份锁定字体；两参数互斥。也可先显式运行 `python3 scripts/demo.py fonts --output "$RUN/fonts"`（联网写入新目录），再复用该目录。网络失败或包/字体 SHA 不符会明确失败，不自动采用其他版本或本机同名字体；无系统全局安装。已有完整项目携带字体，正式渲染不需要联网。
 

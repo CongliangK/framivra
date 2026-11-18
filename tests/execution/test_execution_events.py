@@ -148,6 +148,41 @@ class EventsTests(unittest.TestCase):
             self.assertEqual(event['task_id'], ref['task_id'])
             self.assertEqual(sum(r['event'] == 'receipt_commit' for r in rows), 1)
 
+    def test_nested_cross_stage_receipt_has_own_postcommit_identity(self):
+        with tempfile.TemporaryDirectory() as temp:
+            execution = self.execution()
+            c = Ctx(fixture(Path(temp)), execution=execution)
+            with execution.task('qc', kind='stage').scope() as outer:
+                c.receipt('gfx', True)
+                c.receipt('qc', True)
+            rows = self.rows()
+            stages = json.loads((c.out / 'receipt.json').read_text())['stages']
+            gfx_ref, qc_ref = (stages[name]['observed_by'] for name in ('gfx', 'qc'))
+            gfx = next(row for row in rows if row['event_id'] == gfx_ref['event_id'])
+            qc = next(row for row in rows if row['event_id'] == qc_ref['event_id'])
+            self.assertEqual((gfx['stage'], gfx['extensions']['receipt_stage']), ('gfx', 'gfx'))
+            self.assertEqual(gfx['task_id'], gfx_ref['task_id'])
+            self.assertEqual(gfx['parent_task_id'], outer.task_id)
+            self.assertNotEqual(gfx_ref['task_id'], outer.task_id)
+            self.assertEqual(qc_ref['task_id'], outer.task_id)
+            self.assertEqual(qc['stage'], 'qc')
+            # The unchanged strict parser must reject the previous malformed row.
+            changed = [dict(row) for row in rows]
+            bad = next(row for row in changed if row['event_id'] == gfx_ref['event_id'])
+            bad['stage'] = 'qc'
+            with self.assertRaisesRegex(ValueError, 'invalid receipt commit'):
+                events.read_events(''.join(json.dumps(row) + '\n' for row in changed))
+
+    def test_failed_nested_receipt_never_emits_success_or_dangling_reference(self):
+        execution = self.execution()
+        with execution.task('qc', kind='stage').scope():
+            with self.assertRaises(OSError):
+                execution.receipt('gfx', True, lambda ref: (_ for _ in ()).throw(OSError('private failure')))
+        rows = self.rows()
+        self.assertFalse(any(row['event'] == 'receipt_commit' for row in rows))
+        nested = next(row for row in rows if row['event'] == 'task_terminal' and row['stage'] == 'gfx')
+        self.assertEqual(nested['outcome'], 'failed')
+
     def test_concurrent_stage_receipts_remain_separate(self):
         with tempfile.TemporaryDirectory() as temp:
             execution = self.execution()

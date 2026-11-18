@@ -3,7 +3,9 @@
 These are loader/identity unit tests, never evidence of real Inkscape pixels.
 """
 import contextlib
+import os
 import plistlib
+import stat
 import struct
 import tempfile
 import unittest
@@ -92,6 +94,155 @@ class DarwinSvgIdentity(unittest.TestCase):
         (self.resources / 'outside-alias').symlink_to(outside)
         with self.assertRaisesRegex(gfx_environment.EnvironmentError, 'escapes'):
             gfx_environment._darwin_bundle(self.app)
+
+    def test_bundle_membership_alias_and_restored_mtime_are_rechecked(self):
+        resource = self.resources / 'share/inkscape/resource.dat'
+        resource.write_bytes(b'first')
+        app_alias = self.root / 'Alias.app'
+        app_alias.symlink_to(self.app.name, target_is_directory=True)
+        first = gfx_environment._darwin_bundle(self.app)
+        self.assertEqual(first, gfx_environment._darwin_bundle(app_alias))
+        added = resource.with_name('added.dat')
+        added.write_bytes(b'new member')
+        self.assertNotEqual(first, gfx_environment._darwin_bundle(self.app))
+        added.unlink()
+        self.assertEqual(first, gfx_environment._darwin_bundle(self.app))
+        saved = resource.stat()
+        resource.write_bytes(b'other')
+        os.utime(resource, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+        self.assertNotEqual(first, gfx_environment._darwin_bundle(self.app))
+        resource.unlink()
+        self.assertNotEqual(first, gfx_environment._darwin_bundle(self.app))
+
+    def test_bundle_directory_prefix_is_guarded_against_member_mutation(self):
+        original = gfx_environment._file_resolved
+        added = self.main.parent / 'added-during-inventory'
+        def hashed(path, *args, **kwargs):
+            result = original(path, *args, **kwargs)
+            if path == self.main:
+                saved = path.parent.stat()
+                added.write_bytes(b'new member')
+                os.utime(path.parent, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+            return result
+        with mock.patch.object(gfx_environment, '_file_resolved', side_effect=hashed):
+            with self.assertRaisesRegex(ValueError, 'directory changed'):
+                gfx_environment._darwin_bundle(self.app)
+
+    def test_bundle_directory_guards_do_not_use_regular_file_handle_tokens(self):
+        expected = gfx_environment._darwin_bundle(self.app)
+        original = gfx_environment._file_token
+        checked_files = []
+        def file_only(path, info):
+            # Simulate Windows _file_token's lack of directory-handle support
+            # without changing os.name (and the host pathlib implementation).
+            if stat.S_ISDIR(info.st_mode):
+                raise PermissionError('regular-file token cannot open directory')
+            checked_files.append(str(path))
+            return original(path, info)
+        with mock.patch.object(gfx_environment, '_file_token', side_effect=file_only):
+            self.assertEqual(expected, gfx_environment._darwin_bundle(self.app))
+        self.assertIn(str(self.main), checked_files)
+
+    def test_bundle_cached_member_checks_full_token_after_lookup(self):
+        gfx_environment._darwin_bundle(self.app)
+        original = Path.lstat
+        calls = 0
+        def current(path):
+            nonlocal calls
+            if path == self.main:
+                calls += 1
+                if calls == 2:
+                    saved = path.stat()
+                    raw = path.read_bytes()
+                    path.write_bytes(raw[:-1] + bytes([raw[-1] ^ 1]))
+                    os.utime(path, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+            return original(path)
+        with mock.patch.object(Path, 'lstat', new=current):
+            with self.assertRaisesRegex(ValueError, 'member changed'):
+                gfx_environment._darwin_bundle(self.app)
+
+    def test_bundle_directory_link_retarget_and_dangling_link_fail(self):
+        alias = self.resources / 'resource-directory'
+        alias.symlink_to('share', target_is_directory=True)
+        first = gfx_environment._darwin_bundle(self.app)
+        alias.unlink()
+        alias.symlink_to('share/inkscape', target_is_directory=True)
+        self.assertNotEqual(first, gfx_environment._darwin_bundle(self.app))
+        alias.unlink()
+        alias.symlink_to('missing', target_is_directory=True)
+        with self.assertRaises(OSError):
+            gfx_environment._darwin_bundle(self.app)
+
+    def test_runtime_parses_each_file_once_but_keeps_loader_contexts(self):
+        shared = macho(self.resources / 'lib/gio/modules/shared.dylib')
+        macho(self.main, deps=(str(shared), str(shared)), filetype=2)
+        original = gfx_environment._darwin_load_commands
+        with self.runtime(), mock.patch.object(gfx_environment, '_darwin_load_commands',
+                                                wraps=original) as parsed:
+            first = gfx_svg._darwin_runtime(self.main)
+        self.assertEqual([call.args[0] for call in parsed.call_args_list].count(shared), 1)
+        self.assertEqual([call.args[0] for call in parsed.call_args_list].count(self.main), 1)
+        with self.runtime():
+            self.assertEqual(first, gfx_svg._darwin_runtime(self.main))
+            saved = shared.stat()
+            # Same-size load command mutation must not reuse previous facts.
+            macho(shared, cpu=0x1000007)
+            os.utime(shared, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+            with self.assertRaisesRegex(ValueError, 'non-native'):
+                gfx_svg._darwin_runtime(self.main)
+
+    def test_runtime_repeated_file_mutation_is_refused_with_restored_mtime(self):
+        shared = macho(self.resources / 'lib/shared.dylib')
+        mutator = macho(self.resources / 'lib/mutator.dylib')
+        macho(self.main, deps=(str(shared), str(mutator), str(shared)), filetype=2)
+        original = gfx_environment._darwin_load_commands
+        def parsed(path):
+            result = original(path)
+            if path == mutator:
+                saved = shared.stat()
+                macho(shared, cpu=0x1000007)
+                os.utime(shared, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+            return result
+        with self.runtime(), mock.patch.object(gfx_environment, '_darwin_load_commands', side_effect=parsed):
+            with self.assertRaisesRegex(ValueError, 'changed during inventory'):
+                gfx_svg._darwin_runtime(self.main)
+
+    def test_context_dependent_shared_library_still_fails(self):
+        shared = macho(self.resources / 'lib/shared.dylib', deps=('@rpath/leaf.dylib',))
+        parents = []
+        for name in ('a', 'b'):
+            parent = macho(self.resources / name / 'parent.dylib',
+                           deps=(str(shared),), rpaths=('@loader_path',))
+            macho(parent.parent / 'leaf.dylib')
+            parents.append(str(parent))
+        macho(self.main, deps=parents, filetype=2)
+        with self.runtime(), self.assertRaisesRegex(ValueError, 'context-dependent'):
+            gfx_svg._darwin_runtime(self.main)
+
+    def test_module_root_boundary_and_load_command_mutations_are_bound(self):
+        module = macho(self.resources / 'lib/pango')
+        inactive = macho(self.resources / 'lib/pango-extra/ignored.dylib', cpu=0x1000007)
+        with self.runtime():
+            first = gfx_svg._darwin_runtime(self.main)
+            self.assertIn(str(module), first['dependencies'])
+            self.assertNotIn(str(inactive), first['dependencies'])
+            macho(module, deps=('/usr/lib/libSystem.B.dylib',))
+            second = gfx_svg._darwin_runtime(self.main)
+            self.assertNotEqual(first, second)
+            self.assertEqual(second['dependencies'][str(module)],
+                             {'/usr/lib/libSystem.B.dylib': 'system-cache'})
+            module.unlink()
+            self.assertNotIn(str(module), gfx_svg._darwin_runtime(self.main)['dependencies'])
+
+    def test_runtime_app_and_executable_aliases_are_canonical(self):
+        app_alias = self.root / 'Alias.app'
+        app_alias.symlink_to(self.app.name, target_is_directory=True)
+        executable_alias = self.root / 'inkscape-alias'
+        executable_alias.symlink_to(self.main)
+        with self.runtime():
+            first = gfx_svg._darwin_runtime(self.main)
+            self.assertEqual(first, gfx_svg._darwin_runtime(app_alias / 'Contents/MacOS/inkscape'))
+            self.assertEqual(first, gfx_svg._darwin_runtime(executable_alias))
 
     def test_standalone_helper_executable_path_is_its_own(self):
         helper = self.resources / 'lib/gio/modules/helper'

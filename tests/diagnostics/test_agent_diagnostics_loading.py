@@ -40,7 +40,7 @@ class Loading(unittest.TestCase):
                 rc,r=self.invoke();self.assertEqual(rc,1)
                 self.assertEqual(r['diagnostics'][0]['rule_id'],rule)
                 self.assertEqual(r['diagnostics'][0]['json_path'],path)
-        for bad in [0,24,29.97,True,'30',None]:
+        for bad in [0,26,29.972,True,'30',None]:
             with self.subTest(fps=bad):
                 t=timeline();t['project']['fps']=bad;self.write(t)
                 rc,r=self.invoke();self.assertEqual(rc,1)

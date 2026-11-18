@@ -929,6 +929,191 @@ class FailedKillRetention(unittest.TestCase):
         closed.assert_called_once_with()
         self.assertFalse(self.run_dir.exists())
 
+    def test_stop_defers_first_interrupt_until_all_owned_cleanup_finishes(self):
+        group = self.supervisor()
+        tmp = group._tmp
+        guard = group.guard_proc = mock.Mock()
+        first = KeyboardInterrupt('worker wait interrupted')
+        later = KeyboardInterrupt('guard wait interrupted')
+
+        def wait(*args):
+            self.assertIs(group.guard_proc, guard)
+            self.assertIs(group._tmp, tmp)
+            self.assertFalse(self.ledger.exists())
+            for stream in (guard.stdin, guard.stdout, guard.stderr):
+                stream.close.assert_not_called()
+            if guard.wait.call_count == 1:
+                raise later
+
+        guard.wait.side_effect = wait
+        with mock.patch.object(group, '_terminate_worker', side_effect=[first, True]) as terminate:
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                group.stop()
+            self.assertIs(caught.exception, first)
+            group.stop()
+        self.assertEqual(terminate.call_count, 2)
+        self.assertEqual(guard.wait.call_args_list, [mock.call(3), mock.call(3)])
+        guard.kill.assert_not_called()
+        for stream in (guard.stdin, guard.stdout, guard.stderr):
+            stream.close.assert_called_once_with()
+        self.assertIsNone(group.guard_proc)
+        self.assertIsNone(group._tmp)
+        self.assertFalse(self.run_dir.exists())
+
+    def test_stop_interrupted_termination_false_keeps_existing_retention_outcome(self):
+        group = self.supervisor()
+        interruption = KeyboardInterrupt('interrupted termination')
+        with mock.patch.object(group, '_terminate_worker',
+                               side_effect=[interruption, False]) as terminate, \
+                mock.patch.object(group, '_close_pipe_and_reap_guard') as close, \
+                mock.patch.object(group, '_unlink_ledger') as unlink:
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                group.stop()
+            self.assertIs(caught.exception, interruption)
+            group.stop()
+        self.assertEqual(terminate.call_count, 2)
+        close.assert_called_once_with()
+        unlink.assert_not_called()
+        self.assertTrue(self.ledger.is_file())
+        self.assertIsNone(group._tmp)
+
+    def test_stop_interruption_then_error_preserves_first_interrupt_and_evidence(self):
+        group = self.supervisor()
+        interruption = KeyboardInterrupt('interrupted termination')
+        failure = RuntimeError('termination outcome unavailable')
+        with mock.patch.object(group, '_terminate_worker',
+                               side_effect=[interruption, failure]) as terminate, \
+                mock.patch.object(group, '_close_pipe_and_reap_guard') as close:
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                group.stop()
+        self.assertIs(caught.exception, interruption)
+        self.assertIs(caught.exception.__context__, failure)
+        self.assertEqual(terminate.call_count, 2)
+        close.assert_called_once_with()
+        self.assertTrue(self.ledger.is_file())
+
+    def test_stop_guard_wait_interrupt_retries_only_that_wait(self):
+        for after_kill in (False, True):
+            with self.subTest(after_kill=after_kill):
+                self.run_dir.mkdir(parents=True, exist_ok=True)
+                self.ledger.write_text(json.dumps(self.record))
+                group = self.supervisor()
+                guard = group.guard_proc = mock.Mock()
+                interruption = KeyboardInterrupt('guard wait interrupted')
+                guard.wait.side_effect = ([subprocess.TimeoutExpired('guard', 3),
+                                           interruption, None] if after_kill else
+                                          [interruption, None])
+                with mock.patch.object(group, '_terminate_worker', return_value=True) as terminate:
+                    with self.assertRaises(KeyboardInterrupt) as caught:
+                        group.stop()
+                    self.assertIs(caught.exception, interruption)
+                    group.stop()
+                terminate.assert_called_once_with()
+                self.assertEqual(guard.wait.call_count, 3 if after_kill else 2)
+                self.assertEqual(guard.kill.call_count, 1 if after_kill else 0)
+                for stream in (guard.stdin, guard.stdout, guard.stderr):
+                    stream.close.assert_called_once_with()
+                self.assertIsNone(group.guard_proc)
+                self.assertIsNone(group._tmp)
+                self.assertFalse(self.run_dir.exists())
+
+    def test_stop_tmp_exit_interrupt_retains_owner_and_retries_only_exit(self):
+        group = self.supervisor()
+        owned_tmp = group._tmp
+        tmp = group._tmp = mock.Mock()
+        interruption = KeyboardInterrupt('tmp exit interrupted')
+
+        def exit_tmp(*args):
+            self.assertIs(group._tmp, tmp)
+            self.assertIsNone(group.guard_proc)
+            self.assertFalse(self.ledger.exists())
+            if tmp.__exit__.call_count == 1:
+                self.assertTrue(self.run_dir.is_dir())
+                raise interruption
+            return owned_tmp.__exit__(*args)
+
+        # Special methods are explicit mocks here: no context manager machinery
+        # or signals are involved in injecting the interruption.
+        tmp.__exit__ = mock.Mock(side_effect=exit_tmp)
+        with mock.patch.object(group, '_terminate_worker', return_value=True) as terminate, \
+                mock.patch.object(group, '_close_pipe_and_reap_guard') as close:
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                group.stop()
+            self.assertIs(caught.exception, interruption)
+            group.stop()
+        terminate.assert_called_once_with()
+        close.assert_called_once_with()
+        self.assertEqual(tmp.__exit__.call_args_list,
+                         [mock.call(None, None, None), mock.call(None, None, None)])
+        self.assertIsNone(group._tmp)
+        self.assertFalse(self.run_dir.exists())
+
+    def test_guard_helper_defers_interrupt_and_keeps_owner_until_wait_finishes(self):
+        group = self.supervisor()
+        guard = group.guard_proc = mock.Mock()
+        interruption = KeyboardInterrupt('guard wait interrupted')
+
+        def wait(*args):
+            self.assertIs(group.guard_proc, guard)
+            for stream in (guard.stdin, guard.stdout, guard.stderr):
+                stream.close.assert_not_called()
+            if guard.wait.call_count == 1:
+                raise interruption
+
+        guard.wait.side_effect = wait
+        with self.assertRaises(KeyboardInterrupt) as caught:
+            group._close_pipe_and_reap_guard()
+        self.assertIs(caught.exception, interruption)
+        self.assertEqual(guard.wait.call_count, 2)
+        guard.kill.assert_not_called()
+        for stream in (guard.stdin, guard.stdout, guard.stderr):
+            stream.close.assert_called_once_with()
+        self.assertIsNone(group.guard_proc)
+
+    def test_stop_pipe_close_interrupt_does_not_close_reused_descriptor(self):
+        group = self.supervisor()
+        guard = group.guard_proc = mock.Mock()
+        read_fd, write_fd = os.pipe()
+        group._pipe_w = write_fd
+        real_close = os.close
+        interruption = KeyboardInterrupt('pipe already closed')
+        replacement = None
+
+        def close_then_interrupt(fd):
+            nonlocal replacement
+            real_close(fd)
+            if replacement is None:
+                replacement = os.open(os.devnull, os.O_RDONLY)
+                self.assertEqual(replacement, fd, 'fixture must reuse the closed fd')
+                raise interruption
+
+        close = mock.Mock(side_effect=close_then_interrupt)
+        try:
+            with mock.patch.object(group, '_terminate_worker', return_value=True) as terminate, \
+                    mock.patch.object(proc_supervisor.os, 'close', side_effect=lambda fd:
+                                      close(fd) if fd == write_fd else real_close(fd)):
+                with self.assertRaises(KeyboardInterrupt) as caught:
+                    group.stop()
+                self.assertIs(caught.exception, interruption)
+                group.stop()
+            close.assert_called_once_with(write_fd)
+            terminate.assert_called_once_with()
+            os.fstat(replacement)  # The unrelated replacement is still open.
+            self.assertIsNone(group._pipe_w)
+            self.assertIsNone(group.guard_proc)
+            self.assertIsNone(group._tmp)
+            guard.wait.assert_called_once_with(3)
+            guard.kill.assert_not_called()
+            for stream in (guard.stdin, guard.stdout, guard.stderr):
+                stream.close.assert_called_once_with()
+            self.assertFalse(self.run_dir.exists())
+        finally:
+            for fd in (read_fd, write_fd):
+                try:
+                    real_close(fd)
+                except OSError:
+                    pass
+
     def test_cli_reports_incomplete_reaping_as_failure(self):
         stats = dict(ledgers=1, killed=0, live_host=0, stale=0, removed=0, kill_failed=1)
         with mock.patch('vtx.pipeline.infra.Ctx', return_value=self.c), \

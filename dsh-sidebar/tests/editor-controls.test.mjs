@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import React, { act } from 'react'
 import { JSDOM } from 'jsdom'
-import { stepFrame, Transport, LayoutDivider, SelectionSummary } from '../src/client/editor-controls.mjs'
+import { stepFrame, secondsFrame, Transport, LayoutDivider, SelectionSummary } from '../src/client/editor-controls.mjs'
 import { ManualEditor } from '../src/client/manual.mjs'
 
 const h = React.createElement
@@ -43,6 +43,13 @@ test('stepFrame: negative/empty/out-of-range frames fall back to 0 as current fr
   assert.equal(stepFrame(10, 10, 1), 1, 'frame === duration is out of range → current 0 → forward 1')
   assert.equal(stepFrame(99, 10, 1), 1)
   assert.equal(stepFrame(0, 10, 0), 1, 'direction 0 is treated as forward')
+})
+
+test('secondsFrame uses the saved integer rate and refuses fractional clocks', () => {
+  assert.equal(secondsFrame('10', '5', 25), 255)
+  assert.equal(secondsFrame('1', '119', 120), 239)
+  assert.throws(() => secondsFrame('1', '25', 25))
+  for (const fps of [29.97, '30000/1001']) assert.throws(() => secondsFrame('10', '5', fps), /全局整数帧/)
 })
 
 // ---------- Transport: navigation only, zero network ----------
@@ -149,10 +156,10 @@ test('SelectionSummary: shows the saved clip name and range; split gated by boun
   const { root } = await mount(t)
   const result = mkResult('aroll', 'A-roll 开场')
   const quickCalls = []
-  const render = (props) => act(async () => root.render(h(SelectionSummary, { selection: { kind: 'block', address: '/t/0/b/0' }, selected: [{ kind: 'block', address: '/t/0/b/0' }], result, frame: 20, onFrame: () => {}, onClear: () => {}, onProperties: () => {}, quick: op => quickCalls.push(op), ...props })))
+  const render = (props) => act(async () => root.render(h(SelectionSummary, { selection: { kind: 'block', address: '/t/0/b/0' }, selected: [{ kind: 'block', address: '/t/0/b/0' }], result, frame: 20, fps: 30, onFrame: () => {}, onClear: () => {}, onProperties: () => {}, quick: op => quickCalls.push(op), ...props })))
   await render({})
   assert(document.body.textContent.includes('A-roll 开场'), 'name comes from saved block data')
-  assert(document.body.textContent.includes('10–40 · 30 帧'), 'range from saved projection')
+  assert(document.body.textContent.includes('00:00:10–00:01:10 · 长度 00:01:00'), 'range from saved projection displayed as timecode')
   const split = document.querySelector('[aria-label="在播放头分割选中片段"]')
   assert(!split.disabled, 'interior frame + write grant enables split')
   await act(async () => split.click())

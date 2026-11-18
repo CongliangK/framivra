@@ -242,14 +242,14 @@ void WorkerClient::OnPaint(CefRefPtr<CefBrowser> /*browser*/,
   if (state_->sync_machine != nullptr && state_->sync_capture_armed) {
     // Reject only paints that provably CANNOT advance a signed phase. This
     // avoids an 8 MiB copy and renderer round-trip for every early/stale 1080p
-    // paint. The prefilter is pure; accounting runs through the SAME verifier.
-    // It never accepts or supplies output, even for a matching unsigned frame.
+    // paint. Borrowed-buffer rereads use a structurally nonadvancing verifier:
+    // even a changed/positive reread cannot bypass the owned post-paint fence.
     const auto w = static_cast<uint32_t>(width);
     const auto h = static_cast<uint32_t>(height);
     const size_t stride = width > 0 ? static_cast<size_t>(width) * 4u : 0;
     if (!state_->sync_machine->PaintMayAdvance(src, stride, w, h)) {
-      const auto verdict = state_->sync_machine->FeedPaint(src, stride, w, h,
-                                                         nullptr, NowUs());
+      const auto verdict = state_->sync_machine->FeedNonAdvancingPaint(
+          src, stride, w, h, NowUs());
       if (verdict.disposition == fsync::PaintDisposition::kSizeMismatch) {
         state_->sync_size_mismatch = true;
         state_->sync_actual_w = w;

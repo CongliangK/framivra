@@ -157,18 +157,27 @@ class FrameSyncStateMachine {
   // 证明 —— 提交完成只能由 S5 真实像素验签确立）。
   bool EnterPumping(uint64_t now_us);
 
-  // Negative-only prefilter: false means FeedPaint cannot advance a signed
-  // phase or accept. This permits early/late/stale/invalid OnPaint rejection
-  // without allocating a full frame or running a renderer error fence. True
-  // ALWAYS requires immutable native bytes + a successful post-paint fence;
+  // Pure prefilter of the bytes observed NOW, not lasting authorization to
+  // re-read a borrowed callback buffer through the advancing verifier. False
+  // must use FeedNonAdvancingPaint for accounting (even if a later read differs).
+  // True ALWAYS requires immutable native bytes + a successful post-paint fence;
   // it is NOT acceptance, full-content validation, or compositor completion.
   bool PaintMayAdvance(const uint8_t* src, size_t stride, uint32_t width,
                        uint32_t height) const;
 
+  // Borrowed-buffer rejection accounting only: preserves normal early/late,
+  // invalid-buffer, size and stale attribution, but NEVER advances a signed
+  // phase, freezes a candidate, accepts, copies pixels or supplies output.
+  // A changed/positive reread is rejected; wait for a fresh fenced candidate.
+  PaintVerdict FeedNonAdvancingPaint(const uint8_t* src, size_t stride,
+                                    uint32_t width, uint32_t height,
+                                    uint64_t now_us);
+
   // OnPaint 喂入（UI 线程同步调用）。
   //   src：CEF OnPaint 原始 BGRA_PREMUL 缓冲（行步长 stride 字节）；
-  //   dst：接受帧紧凑拷贝目标（可空 = 只判定不拷贝，供早期丢弃/拒收路径
-  //        零带宽）；接受时逐行紧凑拷贝后原地恢复 (0,0)/(1,0) 两像素（clean）。
+  //   dst：接受帧紧凑拷贝目标；空指针仅抑制目标拷贝，仍可推进 signed
+  //        证明或接受。拒收计账必须走 FeedNonAdvancingPaint，不能仅传空 dst。
+  //        接受时逐行紧凑拷贝后原地恢复 (0,0)/(1,0) 两像素（clean）。
   // 判定序（工单口径）：S4 前直接丢弃 → 尺寸卫兵 → 双像素逐字节全等
   // （Clean）/双对角 8×8 块核验（Diagnostic）→ 匹配即 S5 + 恢复 + 计时。
   // Exact instead requires both relocated signed phases and the separate veto.
@@ -295,7 +304,7 @@ class FrameSyncStateMachine {
  private:
   PaintVerdict FeedPaintImpl(const uint8_t* src, size_t stride, uint32_t width,
       uint32_t height, uint8_t* dst, uint64_t now_us,
-      std::vector<uint8_t>* owned);
+      std::vector<uint8_t>* owned, bool allow_advance);
   bool DecodeSignedProbes(const uint8_t* src, size_t stride, uint32_t width,
                           uint32_t height, PaintVerdict* verdict) const;
   PaintVerdict FinalizeAccepted(PaintVerdict verdict, uint64_t now_us);

@@ -6,15 +6,66 @@
 （纯 ffmpeg/本地操作）→ 断言 manifest 六字段、final 格式 48000/mono/pcm_s16le、
 时长贴预算 ±0.02s（repack_voice.py 消费契约静态断言，不动 live）。
 """
+import argparse
+import contextlib
+import io
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import edge_worker  # noqa: E402
+import tts_cli  # noqa: E402
+
+
+class TestIndexTTSInterpreter(unittest.TestCase):
+    def test_init_template_uses_native_conda_default(self):
+        template = Path(tts_cli.REPO_ROOT) / "config.example.json"
+        cfg = json.loads(template.read_text(encoding="utf-8"))
+        env = Path.home() / "miniconda3" / "envs" / "indextts"
+        expected = env / "python.exe" if os.name == "nt" else env / "bin" / "python"
+        self.assertEqual(Path(tts_cli.DEFAULT_TTS_PY), expected)
+        with tempfile.TemporaryDirectory() as td:
+            conda = Path(td) / expected.name
+            conda.touch()
+            with patch.object(tts_cli, "DEFAULT_TTS_PY", str(conda)), \
+                 patch.object(tts_cli, "load_config", return_value=cfg):
+                self.assertEqual(tts_cli._indextts_python(td), str(conda))
+
+    def test_probe_and_gen_agree_on_native_venv_fallback(self):
+        with tempfile.TemporaryDirectory(prefix="tts interpreter ") as td:
+            repo = Path(td)
+            layout = ("Scripts", "python.exe") if os.name == "nt" else ("bin", "python")
+            fallback = repo.joinpath(".venv", *layout)
+            fallback.parent.mkdir(parents=True)
+            fallback.touch()
+            spec = repo / "spec.json"
+            spec.write_text('{"windows": []}', encoding="utf-8")
+            configured = repo / "configured"
+            configured.mkdir()  # A directory must not shadow the interpreter.
+            cfg = {"tts": {"repo": str(repo), "python": str(configured)}}
+            args = argparse.Namespace(spec=str(spec), engine="indextts", ids=None,
+                                      dry_run=False, project=str(repo), only_missing=False)
+            with patch.object(tts_cli, "load_config", return_value=cfg), \
+                 patch.object(tts_cli.shutil, "which", return_value=None), \
+                 patch.object(tts_cli.subprocess, "run",
+                              return_value=subprocess.CompletedProcess([], 4)) as run, \
+                 contextlib.redirect_stdout(io.StringIO()) as output:
+                tts_cli.cmd_probe(None)
+                run.assert_not_called()
+                self.assertIn(f"✓ 解释器 — {fallback}", output.getvalue())
+                self.assertIn("IndexTTS 推理仍受许可策略阻断", output.getvalue())
+                with self.assertRaises(SystemExit) as stopped:
+                    tts_cli.cmd_gen(args)
+                self.assertEqual(stopped.exception.code, 4)
+                self.assertEqual(run.call_args.args[0][0], str(fallback))
+                cfg["tts"]["python"] = sys.executable
+                self.assertEqual(tts_cli._indextts_python(str(repo)), sys.executable)
 
 
 def synth_raw(path, amp=0.2, dur=3.0, freq=440, rate=22050):

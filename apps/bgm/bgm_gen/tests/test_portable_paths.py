@@ -1,11 +1,14 @@
 """开源路径适配回归；不依赖个人磁盘布局或外部渲染。"""
 
 import copy
+import ntpath
 import os
+import posixpath
+from types import SimpleNamespace
 
 import pytest
 
-from bgm_gen import paths
+from bgm_gen import catalog, paths
 from bgm_gen.catalog import portable_catalog
 from bgm_gen.engines.sf2 import resolve_sf2
 from tools import make_timbre_previews as previews
@@ -50,6 +53,47 @@ def test_catalog_publication_prefix_boundary_and_no_mutation(tmp_path):
                    "samples": ["$MUSIC_SAMPLES_ROOT/hit.wav"], "count": 19,
                    "untouched": root + "-other/font.sf2"}
     assert cat == before
+    assert rt == {"assets_root": root, "samples_root": sample}
+
+
+def test_catalog_windows_paths_simulated(monkeypatch):
+    monkeypatch.setattr(catalog, "os", SimpleNamespace(path=ntpath, sep="\\"))
+    rt = {"assets_root": r"C:\Music\Assets", "samples_root": "C:/Music/Assets/Samples"}
+    cat = ["C:/Music/Assets/sf2/font.sf2", r"C:/Music/Assets\Samples\hit.wav",
+           r"C:\Music\Assets-extra\font.sf2", r"c:\Music\Assets\font.sf2",
+           r"C:\Music\Assets\..\other.wav", r"\\?\C:\Music\Assets\font.sf2",
+           "C:/Music/Assets/../private.wav", "C:/MusicX/Assets/sf2.wav"]
+    before = copy.deepcopy(cat)
+    assert portable_catalog(cat, rt) == [
+        "$MUSIC_ASSETS_ROOT/sf2/font.sf2", r"$MUSIC_SAMPLES_ROOT\hit.wav",
+        cat[2], cat[3], r"$MUSIC_ASSETS_ROOT\..\other.wav", *cat[5:]]
+    assert cat == before
+    assert rt == {"assets_root": r"C:\Music\Assets", "samples_root": "C:/Music/Assets/Samples"}
+    extended = r"\\?\C:\Music\Assets"
+    assert portable_catalog(extended + "/file", {"assets_root": extended}) == extended + "/file"
+    assert portable_catalog(extended + r"\file", {"assets_root": extended}) == r"$MUSIC_ASSETS_ROOT\file"
+    assert portable_catalog(r"C:\Music\Assets\Samples\hit.wav", rt) == (
+        r"$MUSIC_ASSETS_ROOT\Samples\hit.wav")  # Preserve existing literal match.
+    assert portable_catalog("assets/hit.wav", {"assets_root": r"assets"}) == "assets/hit.wav"
+    assert portable_catalog(r"assets\hit.wav", {"assets_root": "assets"}) == r"$MUSIC_ASSETS_ROOT\hit.wav"
+    assert portable_catalog("C:/Music/Assets/file", {"assets_root": r"C:\Music\..\Assets"}) == "C:/Music/Assets/file"
+    assert portable_catalog(r"\\server\share/Assets/file", {"assets_root": r"\\server\share\Assets"}) == "$MUSIC_ASSETS_ROOT/file"
+    url = "//server/share/Assets/file"
+    assert portable_catalog(url, {"assets_root": r"\\server\share\Assets"}) == url
+    assert portable_catalog(r"\\server\share\Assets\file", {"assets_root": "//server/share/Assets"}) == r"\\server\share\Assets\file"
+    unsafe = ["NUL", "NUL.txt", "NUL:stream", "CONIN$", "CONOUT$", "COM1",
+              "LPT¹.txt", "file:stream", "folder.", "folder ", "a?b"]
+    unsafe_paths = ["C:/Music/Assets/" + name for name in unsafe]
+    assert portable_catalog(unsafe_paths, rt) == unsafe_paths
+    assert portable_catalog(r"C:\Music\Assets\NUL.txt", rt) == r"$MUSIC_ASSETS_ROOT\NUL.txt"
+    assert portable_catalog("C:/Music/NUL.txt/file", {"assets_root": r"C:\Music\NUL.txt"}) == "C:/Music/NUL.txt/file"
+
+
+def test_catalog_posix_paths_simulated(monkeypatch):
+    monkeypatch.setattr(catalog, "os", SimpleNamespace(path=posixpath, sep="/"))
+    cat = ["/data/assets/a.wav", r"/data/assets\a.wav", "/data/assets-old/a.wav"]
+    assert portable_catalog(cat, {"assets_root": "/data/assets"}) == [
+        "$MUSIC_ASSETS_ROOT/a.wav", cat[1], cat[2]]
 
 
 def test_preview_release_set_and_credits():

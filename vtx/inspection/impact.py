@@ -42,12 +42,14 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
     tl = copy.deepcopy(timeline)
     root = Path(root).resolve()
     p = tl['project']
-    from ..pipeline.constraints import fps_error
+    from ..pipeline.constraints import fps_error, parse_fps, fps_expression
     error = fps_error(p.get('fps'))
     if error:
         raise ValueError(error)
+    rate = parse_fps(p['fps'])
     c = SimpleNamespace(tl=tl, root=root, cache=root / 'cache',
-                        fps=int(p['fps']), w=p['width'], h=p['height'], gpu=gpu)
+                        fps=int(rate) if rate.denominator == 1 else float(rate),
+                        w=p['width'], h=p['height'], gpu=gpu)
     sources = {s['id']: s for s in tl['sources']}
     c.src_path = lambda sid: root / sources[sid]['path']
     from ..media.subtitles_src import resolve_subtitles_src
@@ -157,7 +159,7 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
             ordered = [(up, cl, x, y, w, h) for _, cl, up, x, y, w, h in active]
             subtitle_bytes = plan.segment_ass_bytes(a, b) if with_subs else b''
             key = (segment_content_key(a, b, width, height, draft, gpu, ordered,
-                                       subtitle_bytes, graph)
+                                       subtitle_bytes, graph, fps=c.fps)
                    if all(L[2] is not None for L in active) else None)
             nodes[f'{prefix}vseg:{i}'] = dict(stage='video', key=key,
                 artifact=f'cache/{tag}/seg{i:02d}_{a:06d}_{key}.mp4' if key else None,
@@ -165,7 +167,7 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
                         'subtitles': hashlib.sha256(subtitle_bytes).hexdigest(),
                         'canvas': [width, height, draft, gpu], 'graph': graph},
                 parents=[L[0] for L in active])
-            previous = f"{a}|{b}|{width}x{height}|{int(bool(draft))}|{int(bool(with_subs))}"
+            previous = f"{a}|{b}|{width}x{height}|{int(bool(draft))}|{int(bool(with_subs))}|fps={fps_expression(c.fps)}"
             if len(active) > 1 and key is not None:
                 for k, layer in enumerate(ordered[:-1]):
                     previous = pass_content_key(previous, k, layer, graph)
@@ -203,7 +205,7 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
             raise ValueError(f'source changed during impact capture: {sid}')
     return {'schema': SCHEMA, 'root': str(root), 'nodes': nodes,
             'execution': {'nseg': nseg, 'draft': draft, 'gpu': gpu, 'encoder': encoder},
-            'audio_mix': _digest([tl.get('audio_tracks', []), p['duration_frames'],
+            'audio_mix': _digest([tl.get('audio_tracks', []), p['duration_frames'], fps_expression(c.fps),
                                   {s: source_ids.get(s) for s in sorted(audio_refs)}]),
             'warnings': warnings,
             'limitations': ['source_media_fast_sampled_identity_not_verified',

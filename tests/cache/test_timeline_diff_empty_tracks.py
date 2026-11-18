@@ -4,10 +4,10 @@ These source-bearing 1920x1080 fixtures run production through mux, not QC.
 Pure edge and estimate controls remain in test_timeline_diff.
 """
 import copy
+from fractions import Fraction
 import hashlib
 import json
 import os
-from fractions import Fraction
 from pathlib import Path
 import re
 import shutil
@@ -76,17 +76,18 @@ class EmptyTrackImpactIntegration(unittest.TestCase):
         for line, duration_line in zip(lines[::2], lines[1::2]):
             match = re.fullmatch(r"file '(.+)'", line)
             self.assertIsNotNone(match, line)
+            duration = re.fullmatch(r"duration (\d+\.\d{6})", duration_line)
+            self.assertIsNotNone(duration, duration_line)
             path = Path(match[1])
             name = re.fullmatch(r"seg(\d+)_(\d+)_[a-f0-9]+\.mp4", path.name)
             self.assertIsNotNone(name, path.name)
             entries.append({"index": int(name[1]), "start": int(name[2]), "name": path.name,
                             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                             "mtime_ns": path.stat().st_mtime_ns, "frames": self.decoded_frames(path)})
-            duration = re.fullmatch(r"duration (\d+\.\d{6})", duration_line)
-            self.assertIsNotNone(duration, duration_line)
-            # These fixtures cut on whole seconds: require the explicit concat
-            # clock to match decoded segment frames, not container duration.
-            self.assertEqual(Fraction(duration[1]), Fraction(entries[-1]["frames"], 30))
+            start, frames = entries[-1]['start'], entries[-1]['frames']
+            expected_us = (round(Fraction((start + frames) * 1_000_000, 30))
+                           - round(Fraction(start * 1_000_000, 30)))
+            self.assertEqual(Fraction(duration[1]) * 1_000_000, expected_us)
         return entries
 
     def test_formal_cold_warm_endpoint_edit_matches_actual_four_segments(self):

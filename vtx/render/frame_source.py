@@ -10,9 +10,9 @@ import contextlib
 import hashlib
 import threading
 from dataclasses import dataclass, field, replace
-from fractions import Fraction
 from pathlib import Path
 
+from ..pipeline.constraints import parse_fps, fps_expression
 from ..cache.hygiene import gfx_cache_ns, gfx_dir
 from .gfx_cli import png_invalid_reason
 
@@ -115,7 +115,7 @@ class PngSequence:
     directory: Path
     identity: str
     frame_count: int
-    fps: int
+    fps: float
     width: int
     height: int
     storage_kind: str = "png_sequence"
@@ -128,7 +128,7 @@ class PngSequence:
 
     @property
     def time_base(self):
-        return Fraction(1, self.fps)
+        return 1 / parse_fps(self.fps)
 
     def _interval(self, start, stop):
         if not (0 <= start < stop <= self.frame_count):
@@ -185,7 +185,7 @@ class PngSequence:
             self._interval(start, stop)
         # Deliberately no input -frames:v/-t derived from stop: legacy compositor
         # controls output bounds and EOF/repeat. Preserve its optional draft -t.
-        return ["-reinit_filter", "0", "-framerate", str(self.fps), "-start_number", str(start),
+        return ["-reinit_filter", "0", "-framerate", fps_expression(self.fps), "-start_number", str(start),
                 *options, "-i", str(self.directory / "f%04d.png")]
 
 

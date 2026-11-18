@@ -11,10 +11,11 @@ import json
 import os
 from pathlib import Path
 import stat
+import sys
 import tempfile
 import uuid
 
-from .runtime.fstxn import file_lock
+from .runtime.fstxn import directory_write_capability, file_lock
 from . import timeline_write as _v2
 from .timeline_write import read_timeline_for_write, TimelineSnapshot
 from .timeline_edit import EDIT_OPERATION_FIELDS, EDIT_OPERATIONS, edit_summary, transform_timeline
@@ -23,6 +24,7 @@ from .timeline_structure import (identity_errors, json_equal, managed_objects, s
 
 _SCHEMA = "framivra.timeline.store/v1"
 _OPERATIONS = ("create", "adopt", "replace", "apply", "edit", "undo")
+_PARENT_LOCK = ".vtx-store-parent.lock"
 # Deliberately no identity, track-name, references, extension paths or nested writes.
 _FIELDS = {"source": {"path"}, "video_track": set(), "audio_track": set(),
            "clip": {"dst_in", "dur", "src_in", "src_out", "fade_in_frames", "fade_out_frames",
@@ -71,6 +73,7 @@ def timeline_store_capabilities():
             "base_revision": "exact file bytes sha256:<hex>; create only uses null",
             "validation_scope": "stored schema/IDs/bounds/EDL/references, not renderability/assets/plugins",
             "guarantee": "local POSIX cooperative threads/processes and process crashes only",
+            "platform_support": {"darwin": sys.platform == "darwin" and directory_write_capability()},
             "unmigrated_writers": "Blender, scaffold, snapshot and other legacy consumers; ASR/duck migrated (scripts not in wheel)",
             "v2": {"schema": _v2.SCHEMA, "request_protocol": 2,
                    "identity_mode": ["managed", "preserve-unmanaged"],
@@ -102,8 +105,40 @@ def _canonical(path):
     # Names are not appended to a sidecar name: arbitrary Unicode/long filenames work.
     if not value.name or value.name in (".", ".."):
         _fail("path.invalid", "expected a project file")
+    if sys.platform == "darwin":
+        if not directory_write_capability():
+            _fail("platform.unsupported", "macOS timeline store requires directory-relative no-follow locks")
+        # realpath on macOS can preserve case/Unicode aliases in parents too.
+        # Check only AFTER filesystem-order resolution, retaining symlink/.. semantics.
+        for component in reversed((parent,) + tuple(parent.parents)):
+            if component != component.parent:
+                _exact_leaf(component)
+        if value.name == _PARENT_LOCK:
+            _fail("path.alias", "project name is reserved for parent coordination")
     _regular(value, missing=True)
+    if sys.platform == "darwin":
+        _exact_leaf(value, missing=True)
     return value
+
+
+def _exact_leaf(path, *, missing=False):
+    """Refuse lookup aliases, never normalize/remap an existing store identity.
+
+    Compare actual directory-entry spelling, not casefold/NFC guesses: filesystem
+    equivalence rules differ, and distinct exact names on case-sensitive POSIX
+    filesystems must remain independent. An absent leaf is rechecked under the
+    macOS parent lock before any history initialization or project publication.
+    """
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        if missing:
+            return
+        raise
+    with os.scandir(path.parent) as entries:
+        if not any(entry.name == path.name for entry in entries):
+            _fail("path.alias", "refuse noncanonical case/Unicode path spelling: " + str(path))
+    return info
 
 
 def _regular(path, *, missing=False, directory=False):
@@ -210,17 +245,39 @@ def _initialize(target, home):
 
 
 @contextlib.contextmanager
-def _locked(target):
-    home = _location(target)
-    _initialize(target, home)
-    _regular(home, directory=True)
-    lock = home / "store.lock"
+def _parent_locked(target):
+    if sys.platform != "darwin":
+        yield
+        return
+    # Different absent spellings have different historical hashes, so target
+    # locks alone cannot serialize their first publication on APFS. Keep this
+    # stable sibling lock through the whole operation, including final replace.
+    # It carries no identity/HEAD and is never removed. Existing homes/hashes and
+    # bootstrap locks are untouched; POSIX create remains supported.
+    lock = target.parent / _PARENT_LOCK
     _regular(lock, missing=True)
-    # file_lock supplies thread lock -> flock, never delete it or reacquire this path.
-    with file_lock(home / "store"):
+    _exact_leaf(lock, missing=True)
+    with file_lock(lock.with_suffix("")):
         _regular(lock)
-        _check_manifest(home, target)
-        yield home
+        _exact_leaf(lock)
+        _regular(target, missing=True)
+        _exact_leaf(target, missing=True)
+        yield
+
+
+@contextlib.contextmanager
+def _locked(target):
+    with _parent_locked(target):
+        home = _location(target)
+        _initialize(target, home)
+        _regular(home, directory=True)
+        lock = home / "store.lock"
+        _regular(lock, missing=True)
+        # file_lock supplies thread lock -> flock, never delete it or reacquire this path.
+        with file_lock(home / "store"):
+            _regular(lock)
+            _check_manifest(home, target)
+            yield home
 
 
 def _check_manifest(home, target):

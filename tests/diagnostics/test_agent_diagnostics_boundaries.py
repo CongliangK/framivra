@@ -216,6 +216,17 @@ class StructuralMatrix(BoundaryEntryPoint):
             'subtitles_object', 'subtitle_text_missing', 'subtitle_text_int',
         })
 
+    def test_high_fps_timed_override_check_preserves_subtitle_boundaries(self):
+        for fps in (60, 119.88):
+            for name, value, code, paths, rules in MATRIX:
+                if name not in ('subtitle_null', 'subtitle_empty',
+                                'subtitle_text_missing', 'subtitle_text_int'):
+                    continue
+                with self.subTest(fps=fps, case=name):
+                    value = copy.deepcopy(value)
+                    value['project']['fps'] = fps
+                    self.check_matrix_case(value, code, paths, rules)
+
     def test_empty_audio_event_identifies_every_missing_required_field(self):
         value = timeline()
         value['audio_tracks'] = [{'name': 'a', 'events': [{}]}]

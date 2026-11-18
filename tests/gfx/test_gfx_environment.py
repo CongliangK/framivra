@@ -169,6 +169,66 @@ class CheckedEnvironmentDigest(unittest.TestCase):
         with self.assertRaises(OSError): os.fstat(descriptors[0])
         self.assertNotIn(str(self.path), env._hashes)
 
+    @unittest.skipUnless(os.name == 'posix', 'POSIX directory-prefix optimization')
+    def test_batch_matches_individual_hashes_and_reenumerates_inputs(self):
+        directory = self.root / 'members'; directory.mkdir()
+        member = directory / 'member.bin'; member.write_bytes(b'member')
+        parent_alias = self.root / 'parent-alias'; parent_alias.symlink_to(directory)
+        file_alias = directory / 'file-alias'; file_alias.symlink_to(self.path)
+        paths = [member, parent_alias / member.name, file_alias, self.path, member]
+        expected = dict(sorted(env._file(p) for p in sorted(set(map(str, paths)))))
+        self.assertEqual(env._files(p for p in paths), expected)
+        saved = self.path.stat()
+        self.path.write_bytes(b'library B')
+        os.utime(self.path, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+        changed = env._files(paths)
+        self.assertNotEqual(expected, changed)
+        file_alias.unlink(); file_alias.symlink_to(member)
+        self.assertEqual(env._files([file_alias]), dict([env._file(member)]))
+        extra = directory / 'new.bin'; extra.write_bytes(b'new member')
+        self.assertNotEqual(changed, env._files([*paths, extra]))
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX directory-prefix optimization')
+    def test_batch_refuses_parent_alias_and_directory_replacement_during_scan(self):
+        original = env._file_resolved
+        for mode in ('alias', 'directory'):
+            with self.subTest(mode=mode):
+                base = self.root / mode; base.mkdir()
+                first = base / 'first'; first.mkdir()
+                second = base / 'second'; second.mkdir()
+                # Identical leaf inode: the refusal must depend on the prefix,
+                # not on differing file bytes or metadata.
+                os.link(self.path, first / 'member')
+                os.link(self.path, second / 'member')
+                alias = base / 'link'; alias.symlink_to(first)
+                entry = alias / 'member' if mode == 'alias' else first / 'member'
+                def changed(*args, **kwargs):
+                    value = original(*args, **kwargs)
+                    if mode == 'alias':
+                        alias.unlink(); alias.symlink_to(second)
+                    else:
+                        first.rename(base / 'old'); second.rename(first)
+                    return value
+                with patch.object(env, '_file_resolved', side_effect=changed):
+                    with self.assertRaisesRegex(env.EnvironmentError, 'directory changed'):
+                        env._files([entry])
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX directory-prefix optimization')
+    def test_batch_refuses_regular_entry_replaced_by_same_inode_symlink(self):
+        original = env._file_resolved
+        for warm in (False, True):
+            with self.subTest(warm=warm):
+                entry = self.root / ('warm' if warm else 'cold')
+                os.link(self.path, entry)
+                if warm:
+                    env._files([entry])
+                def replaced(*args, **kwargs):
+                    entry.unlink(); entry.symlink_to(self.path)
+                    return original(*args, **kwargs)
+                with patch.object(env, '_file_resolved', side_effect=replaced):
+                    with self.assertRaises(env.EnvironmentError):
+                        env._files([entry])
+
     def test_windows_policy_simulation_still_reads_every_call(self):
         # Only the no-memo branch is simulated; this is not native Windows QA.
         token = lambda path, st: (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
@@ -178,6 +238,96 @@ class CheckedEnvironmentDigest(unittest.TestCase):
             self.assertEqual(env._file(self.path), env._file(self.path))
         self.assertEqual(read.call_count, 2)
         self.assertEqual(env._hashes, {})
+
+
+class PythonPackageInventory(unittest.TestCase):
+    def setUp(self):
+        self.root = temporary_root(self).resolve()
+        self.metadata_root = self.root / 'pillow-1.0.dist-info'
+        self.metadata_root.mkdir()
+        self.metadata = self.metadata_root / 'METADATA'
+        self.metadata.write_text('Name: Pillow\nVersion: 1.0\n', encoding='utf-8')
+        self.package = env.importlib.metadata.PathDistribution(self.metadata_root)
+        self.code = self.root / 'PIL' / '__init__.py'
+        self.code.parent.mkdir()
+        self.code.write_bytes(b'# Pillow fixture A')
+        self.native = self.code.parent / '_imaging.so'
+        self.native.write_bytes(b'native fixture')
+        def distribution(name):
+            if name == 'Pillow':
+                return self.package
+            raise env.importlib.metadata.PackageNotFoundError(name)
+        lookup = patch.object(env.importlib.metadata, 'distribution', side_effect=distribution)
+        lookup.start(); self.addCleanup(lookup.stop)
+
+    def test_rpm_inventory_hashes_real_code_and_reenumerates(self):
+        self.assertIsNone(self.package.files)
+        members = [self.metadata, self.code, self.native, self.root / 'ignored.pyc']
+        def query(_args):
+            return ''.join(str(p) + '\n' for p in members)
+        with patch.object(env.platform, 'system', return_value='Linux'), \
+                patch.object(env, '_command', side_effect=query) as command:
+            before = env._python_runtime()
+            facts = before['packages']['Pillow']
+            self.assertEqual(facts['version'], '1.0')
+            self.assertEqual(facts['files'], {
+                str(self.code): hashlib.sha256(self.code.read_bytes()).hexdigest(),
+                str(self.native): hashlib.sha256(self.native.read_bytes()).hexdigest()})
+            self.assertEqual(before['packages']['numpy'], {'status': 'absent'})
+            self.code.write_bytes(b'# Pillow fixture B')
+            changed = env._python_runtime()
+            self.assertNotEqual(before, changed)
+            extra = self.code.parent / 'plugin.py'
+            extra.write_bytes(b'# new member')
+            members.append(extra)
+            self.assertNotEqual(changed, env._python_runtime())
+        self.assertEqual(command.call_args_list, [call([
+            'rpm', '-q', '--file', str(self.metadata), '--queryformat',
+            '[%{FILENAMES}\\n]'])] * 3)
+
+    def test_record_inventory_never_queries_rpm(self):
+        record = self.metadata_root / 'RECORD'
+        record.write_text('PIL/__init__.py,,\nPIL/_imaging.so,,\n', encoding='utf-8')
+        with patch.object(env, '_command', side_effect=AssertionError('unexpected RPM query')):
+            result = env._python_runtime()
+        self.assertEqual(result['packages']['Pillow']['files'], env._files([self.code, self.native]))
+        self.package = SimpleNamespace(files=[])
+        with patch.object(env, '_command', side_effect=AssertionError('unexpected RPM query')):
+            with self.assertRaisesRegex(env.EnvironmentError, 'empty installed renderer package inventory'):
+                env._python_runtime()
+
+    def test_unknown_rpm_inventory_still_refuses(self):
+        cases = [
+            ('query failed', env.EnvironmentError('rpm exited 1')),
+            ('empty', ''),
+            ('metadata not owned', str(self.code) + '\n'),
+            ('relative path', str(self.metadata) + '\nPIL/__init__.py\n'),
+            ('no code', str(self.metadata) + '\n'),
+        ]
+        with patch.object(env.platform, 'system', return_value='Linux'):
+            for label, output in cases:
+                with self.subTest(case=label), patch.object(env, '_command') as command:
+                    if isinstance(output, Exception):
+                        command.side_effect = output
+                    else:
+                        command.return_value = output
+                    with self.assertRaises(env.EnvironmentError):
+                        env._python_runtime()
+            missing = self.root / 'missing.py'
+            with patch.object(env, '_command', return_value=f'{self.metadata}\n{missing}\n'):
+                with self.assertRaises(OSError):
+                    env._python_runtime()
+
+    def test_non_linux_and_custom_distributions_do_not_use_rpm(self):
+        with patch.object(env.platform, 'system', return_value='Darwin'), \
+                patch.object(env, '_command', side_effect=AssertionError('unexpected RPM query')):
+            with self.assertRaisesRegex(env.EnvironmentError, 'unknown installed renderer package inventory'):
+                env._python_runtime()
+        self.package = SimpleNamespace(files=None)
+        with patch.object(env.platform, 'system', return_value='Linux'), \
+                patch.object(env, '_command', side_effect=AssertionError('unexpected RPM query')):
+            with self.assertRaisesRegex(env.EnvironmentError, 'unknown installed renderer package inventory'):
+                env._python_runtime()
 
 
 class ChromeInstallerTelemetry(unittest.TestCase):
@@ -411,7 +561,7 @@ class EnvironmentContracts(unittest.TestCase):
         self.config = self.root / 'fonts.conf'; self.config.write_text('<fontconfig/>')
         self.lib = self.root / 'libfont.so'; self.lib.write_bytes(b'library A')
         self.tool = self.root / 'fc-list'; self.tool.write_bytes(b'fontconfig tool')
-        original_files = env._files
+        self.hash_files = env._files
         self.patches = [
             patch.dict(os.environ, {'VTX_GFX': 'cdp', 'FONTCONFIG_FILE': str(self.config),
                 'LD_LIBRARY_PATH': '', 'LD_PRELOAD': '', 'LIBGL_DRIVERS_PATH': '',
@@ -421,7 +571,7 @@ class EnvironmentContracts(unittest.TestCase):
             patch.object(env.platform, 'system', return_value='Linux'),
             patch.object(env, '_command', side_effect=self.command),
             patch.object(env, '_python_runtime', return_value={'fixture': True}),
-            patch.object(env, '_files', side_effect=lambda paths: original_files(
+            patch.object(env, '_files', side_effect=lambda paths: self.hash_files(
                 [{'/fixture/font.ttf': self.font, '/fixture/libfont.so': self.lib,
                   '/fixture/fonts.conf': self.config, '/etc/machine-id': self.lib,
                   '/proc/sys/kernel/random/boot_id': self.lib, '/etc/ld.so.cache': self.lib}.get(str(p), p)
@@ -461,13 +611,16 @@ class EnvironmentContracts(unittest.TestCase):
         # no drive mapping or system configuration is created by this fixture.
         physical_font = self.font
         self.font = Path('D:/renderer-fixture/font.ttf')
-        original_file, observed = env._file, []
-        def hash_input(path):
-            if str(path) == str(self.font):
-                observed.append(str(path))
-                return original_file(physical_font)
-            return original_file(path)
-        with patch.object(env, '_file', side_effect=hash_input):
+        original_files, observed = self.hash_files, []
+        def hash_inputs(paths):
+            mapped = []
+            for path in paths:
+                if str(path) == str(self.font):
+                    observed.append(str(path))
+                    path = physical_font
+                mapped.append(path)
+            return original_files(mapped)
+        with patch.object(self, 'hash_files', side_effect=hash_inputs):
             before = self.collect()
             st = physical_font.stat()
             physical_font.write_bytes(b'font B')

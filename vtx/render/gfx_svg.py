@@ -381,6 +381,26 @@ def _darwin_runtime(executable):
     contains = lib._dyld_shared_cache_contains_path
     contains.argtypes, contains.restype = [ctypes.c_char_p], ctypes.c_bool
     files, dependencies, visited = {}, {}, set()
+    facts = {}
+
+    def file_facts(path):
+        # Collection-local only: every use freshly checks the actual file token.
+        # Loader context is deliberately not cached here (entry/runpath matter).
+        before = path.stat()
+        token = ge._file_token(path, before)
+        previous = facts.get(str(path))
+        if previous is not None:
+            if previous[0] != token:
+                raise ValueError(f'SVG Darwin dependency changed during inventory: {path}')
+            return previous[1:]
+        sha = ge._file_resolved(path, before)[1]
+        commands = ge._darwin_load_commands(path)
+        if commands is not None:
+            ge._darwin_native(path)
+        if ge._file_token(path, path.stat()) != token:
+            raise ValueError(f'SVG Darwin dependency changed during inventory: {path}')
+        facts[str(path)] = token, commands, sha
+        return commands, sha
 
     def expand(value, loader, entry):
         for prefix, base in (('@loader_path', loader.parent), ('@executable_path', entry.parent)):
@@ -392,10 +412,9 @@ def _darwin_runtime(executable):
 
     def walk(path, entry, inherited=()):
         path = path.resolve(strict=True)
-        commands = ge._darwin_load_commands(path)
+        commands, sha = file_facts(path)
         if commands is None:
             raise ValueError(f'non-native SVG Darwin dependency: {path}')
-        ge._darwin_native(path)
         deps, rpaths, filetype = commands
         if filetype == 2:
             entry, inherited = path, ()
@@ -406,7 +425,7 @@ def _darwin_runtime(executable):
         if len(visited) >= 4096:
             raise ValueError('SVG Darwin dependency inventory exceeds budget')
         visited.add(state)
-        files[str(path)] = ge._file(path)[1]
+        files[str(path)] = sha
         resolved = {}
         for dep in deps:
             if dep.startswith(('/usr/lib/', '/System/Library/')) and contains(os.fsencode(dep)):
@@ -432,15 +451,19 @@ def _darwin_runtime(executable):
         # Modules loaded by GIO/Pango/GTK need identity even when absent from
         # LC_LOAD_DYLIB. Python extensions/standalone tools are hashed as app
         # resources; static SVG PNG export does not execute those programs.
-        commands = ge._darwin_load_commands(executable)
+        commands, _ = file_facts(executable)
         inherited = tuple(str(expand(r, executable, executable).resolve()) for r in commands[1])
-        module_roots = tuple(bundle / 'Contents/Resources/lib' / name for name in
-                             ('gio/modules', 'gdk-pixbuf-2.0', 'gtk-3.0', 'pango'))
+        module_names = {str(bundle / 'Contents/Resources/lib' / name) for name in
+                        ('gio/modules', 'gdk-pixbuf-2.0', 'gtk-3.0', 'pango')}
+        module_roots = tuple(name + os.sep for name in module_names)
         for value in distribution['files'].values():
-            path = Path(value[0])
-            if (any(path.is_relative_to(root) for root in module_roots)
-                    and ge._darwin_load_commands(path) is not None):
-                walk(path, executable, inherited)
+            # Values are canonical absolute paths from the checked bundle, not
+            # lexical aliases. A separator boundary preserves Path containment
+            # semantics without reparsing every resource for each module root.
+            if value[0] in module_names or value[0].startswith(module_roots):
+                path = Path(value[0])
+                if file_facts(path)[0] is not None:
+                    walk(path, executable, inherited)
     return {'resolver': 'darwin-arm64-svg/1', 'files': dict(sorted(files.items())),
             'dependencies': dict(sorted(dependencies.items())),
             'distribution': distribution, 'system_cache': ge._darwin_cache(*ge._darwin_dyld()),
@@ -544,7 +567,11 @@ def resolve(c, clip):
     manifest = json.loads(raw.decode('utf-8'))
     if not isinstance(manifest, dict) or manifest.get('format') != FORMAT:
         raise ValueError(f'SVG manifest.format must be {FORMAT}')
-    for field, value in [('fps', c.fps), ('width', c.w), ('height', c.h), ('frame_count', clip['dur'])]:
+    from ..pipeline.constraints import parse_fps, fps_expression
+    rate = parse_fps(c.fps)
+    if parse_fps(manifest.get('fps')) != rate:
+        raise ValueError(f'SVG manifest.fps must equal {fps_expression(c.fps)}')
+    for field, value in [('width', c.w), ('height', c.h), ('frame_count', clip['dur'])]:
         if type(manifest.get(field)) is not int or manifest[field] != value:
             raise ValueError(f'SVG manifest.{field} must equal {value}')
     if type(clip['dur']) is not int or not 1 <= clip['dur'] <= MAX_FRAMES:
@@ -604,7 +631,9 @@ def resolve(c, clip):
     return {'producer': PRODUCER, 'manifest': clip['src'], 'files': files,
             'frames': frames, 'fonts': fonts, 'font_faces': font_faces,
             'export_reuse': {'proof': 'font-free-rects/v1', 'frames': reusable},
-            'fontconfig': fontconfig, 'fps': c.fps, 'width': c.w,
+            'fontconfig': fontconfig,
+            'fps': int(rate) if rate.denominator == 1 else str(rate),
+            'width': c.w,
             'height': c.h, 'frame_count': clip['dur'], 'engine': engine_identity(),
             'implementation': code,
             'parameters': {'export': 'png', 'area': 'page', 'background_opacity': 0,

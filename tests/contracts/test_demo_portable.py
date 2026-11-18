@@ -118,6 +118,22 @@ class PortableEntryTests(unittest.TestCase):
                     with self.assertRaises((demo.DemoError, UnicodeError)):
                         demo.tool_identity('node')
 
+    def test_windows_does_not_claim_preparation_ready_or_touch_output(self):
+        args = SimpleNamespace(fonts_dir=None, audio_inputs=None, output='unused')
+        with patch.object(demo.sys, 'platform', 'win32'), \
+                patch.object(demo, 'engine_identity', return_value={}), \
+                patch.object(demo, 'dependency_identity', return_value={}), \
+                patch.object(demo, 'check_fonts', return_value={}), \
+                patch.object(demo, 'check_output_path', side_effect=AssertionError('output inspected')), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(demo.cmd_preflight(args), 0)
+            status = json.loads(output.getvalue())
+            self.assertTrue(all(row['ok'] for row in status['checks'].values()))
+            self.assertFalse(status['prepare_supported'])
+            self.assertFalse(status['prepare_ready'])
+            with self.assertRaisesRegex(demo.DemoError, 'BLOCKED: .* requires the SVG runtime'):
+                demo.cmd_prepare(args)
+
     def test_windows_reparse_components_are_rejected_before_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp).resolve()

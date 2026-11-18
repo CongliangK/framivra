@@ -38,7 +38,7 @@ TARGET_LUFS = -14            # 项目目标响度（EBU R128，与 stages.build_
 QC_TP_MAX = -1.0             # 解码域真峰阈（dBFS，v2 §1.3：G3 的 -1.0 为唯一权威）
 
 # ---- QC 命中段免检记录（方案三阶段1，2026-09-13）----
-# 记录 cache/qc_pass_segs.json：{"version":5,"final":{size,mtime_ns,frames},
+# 记录 cache/qc_pass_segs.json：{"version":6,"final":{size,mtime_ns,frames},
 # "probe_filter":采样表达式,"segs":[{name,a,b,key,size,mtime_ns}],
 # "checks":{检查名:上轮是否 pass}}。
 # 免检判定（非 --strict，见 qc() 内）：final (size,mtime_ns) 与记录一致 + 检查项
@@ -56,23 +56,26 @@ _QC_SEG_RECORD = "qc_pass_segs.json"
 # applies its limited→full expansion with truncating fixed-point rounding that
 # also mishandles range metadata (FFmpeg 8.1.3: tv 235→253, tv 20→3/4, pc 1→0),
 # so black/near-black thresholds read falsely. Sample luma instead by expanding
-# range explicitly on a swscale pass (in_range=auto honours the stream's
+# range explicitly on a yuv→yuv swscale pass (in_range=auto honours the stream's
 # color_range tag with round-to-nearest), then copying the Y plane verbatim via
-# extractplanes. Constrain its OUTPUT to yuv420p, never its input: a leading
-# format=yuv420p inserts an unconfigured auto_scale for decoded yuvj420p on
-# FFmpeg 6.1.1, quantizing pc→tv→pc (Y=4→19→3) before this explicit pass.
-# Let scale consume the native format/range directly — no yuv→gray range drift,
-# no libzimg dependency, same bicubic+accurate_rnd kernel and probe geometry.
-# The same filter applies to final, source and qc_clean probes; thresholds stay
-# unchanged. The filter string also invalidates pre-fix exemption records.
+# extractplanes — no yuv→gray range drift, no libzimg dependency, same
+# bicubic+accurate_rnd kernel and probe geometry. The same filter applies to
+# final, source and qc_clean probes; thresholds stay unchanged.
 # Schema revisions also reject legacy readers on rollback: v2 changed gray
 # sampling; v3 projects gfx content bounds through the shared scale geometry;
 # v4 binds video stream zero and compares native alpha over the black canvas;
-# v5 expands the gray probe to full range with exact rounding (values change,
-# every cached exemption record re-probes).
-_QC_RECORD_VERSION = 5
+# v5 expands the gray probe to full range with exact rounding; v6 also maps
+# every native input format to common BT.709 luma before extracting Y. Do not
+# subsample to yuv420p before matrix conversion: that can lose chromatic edges
+# before normalization. Native Y from different matrices is not comparable,
+# even when RGB agrees. Untagged inputs retain FFmpeg's auto-matrix fallback;
+# unknown metadata is not a proof of the author's intended colorimetry.
+# Both revisions invalidate cached exemption records; old QC reports/receipts
+# are not retroactively certified and need an actual fresh QC invocation.
+_QC_RECORD_VERSION = 6
 _QC_GRAY_WIDTH, _QC_GRAY_HEIGHT = 48, 27
 _QC_GRAY_FILTER = (f"scale={_QC_GRAY_WIDTH}:{_QC_GRAY_HEIGHT}"
+                   f":in_color_matrix=auto:out_color_matrix=bt709"
                    f":in_range=auto:out_range=full:flags=bicubic+accurate_rnd,"
                    f"format=yuv420p,extractplanes=y,format=gray")
 _VSEG_NAME = re.compile(r"^seg(\d+)_(\d{6})_([0-9a-f]{12})\.mp4$")

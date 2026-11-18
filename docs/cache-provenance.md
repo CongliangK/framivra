@@ -43,6 +43,13 @@
   manifest、每帧 SVG、声明字体/依赖及可选生成器文件的全文摘要，与画布/fps/帧数、
   Inkscape/fontconfig 身份、运行库及实现摘要共同成键；生成器只记录、不执行。
   完成凭据绑定该输入记录与逐帧 PNG SHA256，不沿用 HTML 环境证明。
+  冷片按实际导出帧分成独立 Inkscape shell：默认上限为 `min(5, max(1, CPU数//2))`，
+  每增加一个 shell 至少需要 120 个待导出帧，小片仍单 shell；`VTX_SVG_WORKERS=1..5`
+  可限制上限，设为 `1` 回退串行。每个 shell 独占 HOME、profile、字体副本与字体缓存，
+  完成后以同一上限并行逐张执行完整 PNG 解码/CRC/SHA 校验，全部结束并复核全输入/环境后才发布凭据；失败不发布。
+  取消先通知导出线程停止等待，再逐一终止/等待自有 shell；回收失败仍报错，不把线程退出当作进程已回收。
+  调度不改输入语法、输出参数或缓存语义，凭据 `batch_count` 记录实际生产 shell 数；
+  暖缓存命中不再启动 shell。实现摘要变化仍须重渲，不能给旧缓存补签。
 - **环境边界**：CDP/CLI/CEF 见[渲染环境身份](#gfx-environment)，Electron/SVG 各有独立身份；
   身份匹配不证明跨后端像素等价。段中间物 `vseg_pass` 不进入普通 gc，定向回收见[容量与保留](#容量与保留)。
 - **seg 预编码** `cache/seg/<key>.mov|mp4` 与 **抽音频** `cache/audio/<key>.wav`：
@@ -152,7 +159,13 @@ plist 及 ByHost 文件内容摘要，不读取 Chrome profile/history，也不�
 选中的偏好文件及 ByHost 目录不支持符号链接。未知库、外部 bundle 链接、缺失或
 不可读 cache、loader 覆盖均拒绝；不支持 Rosetta、Darwin CLI/Electron 或其他浏览器。
 首次收集读取实际文件；后续沿用 inode/size/mtime/ctime 哈希 memo，仍复核成员与
-元数据。CPU 合成测试不代表实机验收，输入绑定不证明跨平台像素一致。
+元数据。共享 bundle 采集每次仍重新遍历全成员，每个目录前缀严格解析并核对处理前后
+身份，每个链接独立严格解析和检查边界；普通成员在哈希 memo 命中时也复查完整
+inode/size/mtime/ctime。SVG 库闭包的 Mach-O 元数据仅在一次采集内去重，每次复用
+重新核对文件 token；原生架构、加载上下文、搜索路径歧义、动态模块、系统 cache 和
+loader 检查不省略，不按根目录 mtime 缓存整个环境。此去重不改变证书字段与内容；
+解析器实现身份仍变化，旧 gfx 不可补签，须按新键重新准备。
+CPU 合成测试不代表实机验收，输入绑定不证明跨平台像素一致。
 真实 CDP 缓存验收入口见 [Darwin 集成运行器](../tests/runners/run_macos_cdp_acceptance.py)，
 全链音视频与字幕入口见 [端到端运行器](../tests/runners/run_e2e.py)。本解析器不接纳上述范围之外的平台或运行模式。
 
@@ -176,13 +189,14 @@ CEF 负例仅在同一 worker、同一路径的 libcef.so 追加不参与装载�
 ## 阶段回执（PR#1）
 
 QC 的段免检记录另绑定 `vtx/inspection/qc.py` 中 `_QC_GRAY_FILTER` 的精确采样表达式。
-记录 schema 为 v5：继承 v4 的首个视频流选择与原生 alpha 黑画布合成基准，
-并显式在 YUV→YUV 缩放时展开满幅，再直接取 Y 面，避免 FFmpeg 8 的 YUV→gray 范围/舍入漂移。
+记录 schema 为 v6：继承首个视频流选择与原生 alpha 黑画布合成基准，
+在原生输入格式上统一转换为 BT.709 矩阵、展开满幅，再直接取 Y 面，避免不同矩阵的原生 Y 值不可比及 FFmpeg 8 的 YUV→gray 范围/舍入漂移。不能先降采样为 yuv420p 再转矩阵，否则饱和色边缘的色度损失会污染规范 Y；输出仍为 48×27 的 8-bit 样本。输入矩阵/范围沿用 FFmpeg `auto` 及未知标签的既有回落，不为未声明色彩信息作真实性保证。
 gfx 源 alpha 内容 bbox 仍按合成器实际尺寸投影，再平移、裁至画布，
-不是 Lanczos 后重新阈值测得的 bbox。当前读取器拒绝 v1/v2/v3/v4（即使 filter 相同），
-旧读取器也拒绝 v5，因此升级和回退均重测段像素探针。缺少或不匹配 `probe_filter` 的记录不免检，下一次 QC
+不是 Lanczos 后重新阈值测得的 bbox。当前读取器拒绝 v1/v2/v3/v4/v5（即使 filter 相同），
+旧读取器也拒绝 v6，因此升级和回退均重测段像素探针。缺少或不匹配 `probe_filter` 的记录不免检，下一次 QC
 实测后刷新；不删除媒体、重编码或放宽阈值。当前表达式保留 bicubic 与准确舍入，
 不新增 libzimg 依赖；源片、成片与 `qc_clean` 共用该探针。
+采样 schema 不追溯改写旧 `receipt.json` 或 QC 报告；必须实际重新执行 QC 才能取得新结论，不删除媒体或为旧成功补签。
 `--strict` 禁用段像素免检，响度仍可能复用回执缓存。此身份不包含完整 FFmpeg/CPU 环境，环境升级不构成跨版本
 像素保证；重测段像素使用 strict，独立响度/TP 需另直接解码测量。黑场、近黑、声明范围与泄漏的 CPU 回归见
 `tests/qc/test_qc_sampling.py`；这不是整片内容或任意小区域泄漏的保证。

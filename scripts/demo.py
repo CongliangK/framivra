@@ -11,6 +11,7 @@ import importlib.metadata
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import stat
@@ -403,7 +404,16 @@ def check_inputs(project, files, lock, logs=None):
     return {'status': 'checked', 'media': check_audio(project, lock)}
 
 
+def unsupported_prepare_platform():
+    # Prepare ends with the actual SVG validator; generating input files alone
+    # is not a successful preparation on a platform it cannot validate.
+    if sys.platform == 'linux' or (sys.platform == 'darwin' and platform.machine() == 'arm64'):
+        return None
+    return 'portable-v2 prepare requires the SVG runtime (Linux ELF or macOS arm64)'
+
+
 def cmd_preflight(args):
+    supported = unsupported_prepare_platform() is None
     checks = {}
     def check(name, operation):
         try:
@@ -423,8 +433,8 @@ def cmd_preflight(args):
     if args.audio_inputs:
         check('audio_inputs', lambda: check_audio(Path(os.path.abspath(args.audio_inputs)), lock, True)) if lock else checks.update(audio_inputs={'ok': False, 'error': 'canonical input lock unavailable'})
     print(json.dumps({'schema_version': 2, 'baseline_id': BENCHMARK_ID, 'command': 'preflight',
-        'read_only': True, 'checks': checks, 'engine': engine_identity(), 'prepare_supported': True,
-        'prepare_ready': all(row['ok'] for row in checks.values()),
+        'read_only': True, 'checks': checks, 'engine': engine_identity(), 'prepare_supported': supported,
+        'prepare_ready': supported and all(row['ok'] for row in checks.values()),
         'render': {'ready': False, 'reason': 'Native rendering has not run', 'cef': None,
                    'cef_reason': 'CEF is an independent regression, UNRUN'},
         'regressions': [{'path': 'tests/gfx_bench_suite/suite_manifest.json', 'mode': 'reference-only', 'execution': 'UNRUN'}],
@@ -433,6 +443,8 @@ def cmd_preflight(args):
 
 
 def cmd_prepare(args):
+    if reason := unsupported_prepare_platform():
+        raise DemoError('BLOCKED: ' + reason)
     project = check_output_path(args.output)
     baseline = load_baseline(); lock = load_input_lock(baseline)
     files = source_files(baseline)

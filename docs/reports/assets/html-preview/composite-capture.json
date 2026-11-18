@@ -1,0 +1,59 @@
+{
+  "schema": "framivra.cold-composite-ui-capture/v1",
+  "host": "official DeepSeek Harness 0.2.2-rc.1, isolated macOS arm64 instance",
+  "viewport": {"width": 1440, "height": 1000, "device_scale_factor": 1},
+  "appearance": "light host shell, dark expanded workbench; matched pair has file/property drawers closed",
+  "baseline_revision": "03ff6fa",
+  "candidate_production_revision": "9afc723",
+  "platform_dependency_revision": "fd09a6a8e116946c0833af7b82bb79321c40fb69",
+  "candidate_wheel_sha256": "d0b12be7810d29427f3a2bdc05e5c17a402103a89368e87886eb7e5e3e9c1f35",
+  "candidate_sidebar_sha256": "86619666f9440f80849339d1135608bdf7cf17133fb8e7f045bf270d8d63bb27",
+  "candidate_sidebar_build": "pkg:57ee95cdbabdcb7d",
+  "scenario": {
+    "fixture": "public synthetic tests.runners._capability_fixture.create plus scaled ordinary-media overlay",
+    "duration_frames": 180, "fps": 30, "width": 1920, "height": 1080,
+    "global_frame": 44, "html_local_frame": 29,
+    "selected_address": "/video_tracks/2/clips/0", "visible_interval": [0, 180],
+    "layers": ["ordinary media", "scaled opacity PiP", "transparent HTML canvas FRAME 29", "ASS subtitle"],
+    "initial_cache_and_out": "absent; no prior formal gfx/seg preparation",
+    "original_content_version": "sha256:340ce4c86fe1d5289dcf3f45b68d8a4a192580bcaffb07468d64a17f9baf402d"
+  },
+  "captures": {
+    "before": {"file": "composite-before.png", "sha256": "bd1c15592bf0ceb80866d93cd5733c7529ce7b748ad556c1e9f79d48e2b78857", "result": "actual platform.unsupported: render requires Linux fd-anchored writes; no PNG"},
+    "after": {"file": "composite-after.png", "sha256": "e7579dab39081341b63a742d02374231175ed52b12bb978364158f4c5585d04c", "result": "actual verified current-composite, not a standalone HTML image"},
+    "after_edited_supplement": {"file": "composite-after-edited.png", "sha256": "78ea5849e7b301d6c4a80a3d61b38f2b469044a48ec4edd22a44bed42ae08809", "result": "saved subtitle text changed to Edited subtitle; property drawer open, not the matched Before/After pair"}
+  },
+  "deliveries": [
+    {"scenario": "initial cold global 44", "http": 200, "response_seconds": 16.132, "decoded_seconds": 16.301, "decoded_size": [1920, 1080], "kind": "current-composite", "cache_hit": false, "png_bytes": 391529, "input_fingerprint": "7a572a8f1487f47dd9c0e757c79dd1ea180b6c39d7c68fbdb02e7017fe61e77d", "render_key": "17b0207e401c7776028ea3e32a7b1782d7d684e61a11abcac837d0e4c48f8b63", "png_sha256": "5d74531ab0a7b5da3f32d099702877b28ce37e3199f40e922baab4c0d7864914"},
+    {"scenario": "first repeat global 44", "http": 200, "response_seconds": null, "decoded_seconds": null, "timing_limitation": "measurement script ReferenceError; request succeeded and decoded image was verified; no latency claim"},
+    {"scenario": "neighbor global 45", "http": 200, "response_seconds": 15.405, "decoded_seconds": 15.452, "decoded_size": [1920, 1080], "cache_hit": false, "png_bytes": 389844, "render_key": "bfa986bdaf69c289b4ae83ac3b33ef1ca54e3a64a624cde84a39c60ec24d9593", "png_sha256": "372c0712045cad5fc90b55ed2e4fdef15c2cf0e00506a1a618c66659208aa5ff"},
+    {"scenario": "back to global 44", "http": 200, "response_seconds": 15.343, "decoded_seconds": 15.417, "cache_hit": false, "render_key": "17b0207e401c7776028ea3e32a7b1782d7d684e61a11abcac837d0e4c48f8b63", "png_sha256": "5d74531ab0a7b5da3f32d099702877b28ce37e3199f40e922baab4c0d7864914"},
+    {"scenario": "after saved subtitle edit global 44", "http": 200, "response_seconds": 15.479, "decoded_seconds": 15.548, "decoded_size": [1920, 1080], "cache_hit": false, "png_bytes": 381356, "content_version": "sha256:0e271c416736904e991df88dda27caade564f74a322ffab98ba2d78d21652ea5", "input_fingerprint": "d3f8c05d1729dc1ff2e8c6679965ee71152260e40126776f64c6d7cf0c3ced0c", "render_key": "2d463987fdd424eb0ff11cd6b9dc56d221dbbf1c51098b8a0d86f84cdf9f6100", "png_sha256": "9aaddea2494fca1b5e9c92b9f645d179a8df6acf4c51d21e137be87f2e2dec58"},
+    {"scenario": "explicit regeneration after UI cancel", "http": 200, "response_seconds": 15.556, "decoded_seconds": 15.621, "decoded_size": [1920, 1080], "cache_hit": false, "render_key": "2d463987fdd424eb0ff11cd6b9dc56d221dbbf1c51098b8a0d86f84cdf9f6100", "png_sha256": "9aaddea2494fca1b5e9c92b9f645d179a8df6acf4c51d21e137be87f2e2dec58"}
+  ],
+  "draft": {"explicit_second_click": true, "png_attachment_count": 1, "exact_core_reference_verified": true, "sent": false, "automatic_upload_observed": false},
+  "edit": {"explicit_legacy_adopt": true, "dirty_batch_invalidated_image": true, "dirty_staging_and_generation_refused": true, "zero_write_plan_reviewed": true, "save_explicitly_confirmed": true, "permissions_reset_after_version_change": true},
+  "ui_cancel": {"cancel_click_ms": 302, "ui_enabled_ms": 314, "image_cleared": true, "render_request": "net::ERR_ABORTED", "cancel_request": "HTTP 200", "http_499_observed": false, "native_browser_phase_or_independent_reap_proof": "unverified; this is an early UI cancellation test, not an active-browser cleanup certificate"},
+  "shutdown": {"owned_hosts_stopped": true, "browser_pages_closed": true, "project_preview_children": [], "project_out_exists": false},
+  "canonical_svg": {
+    "input": "official scripts/demo.py prepare/verify portable-v2 30s/900frames/1920x1080/30fps",
+    "production_revision": "9afc723", "source_tree_revision": "348cf20",
+    "prepare_seconds": 19.787, "verify_seconds": 0.457,
+    "preparation_note": "prepare's validate-only receipt was preserved outside the project before anchored removal of only that owned derived out domain; cache/out then absent, verify repeated successfully",
+    "cli_cold_228_seconds": 26.605, "cold_preview_children": [], "cold_formal_gfx_created": false,
+    "formal_all_seconds": 108.946, "strict_qc_seconds": 30.443,
+    "formal_all_exit": 0, "strict_qc_exit": 0, "decoded_frames": 900, "frame_rate": "30/1",
+    "cold_png_vs_formal_frame_228_mae": 0.45309204603909464, "existing_mae_limit": 2,
+    "warm_input_228_seconds": 23.182, "warm_image_cache_hit": false,
+    "official_gui_cold_228": {"http": 200, "response_seconds": 28.649, "decoded_seconds": 28.725, "decoded_size": [1920, 1080], "html_trust_checked": false, "explicit_requests": 1, "retries": 0, "cache_hit": false, "png_bytes": 41587, "input_fingerprint": "810f18f49f0f537769ca6b1d6075605bf7f04716db6fe6637a2cf8f08bba60a4", "render_key": "ebd64b25ff2b2c470e8fbcead4157e36ca2175c66974bfdfa4fa9be9a5339567", "png_sha256": "32e9f91f7d9507dabc4e762f1a361c6a44d77b31e20d0871426743c9b09e37b8", "same_bytes_as_cli": true},
+    "scope": "functional and quality regression at fixed input/CPU configuration, not a cross-engine speedup claim or a p95 latency certificate"
+  },
+  "native_fault_probes_at_capture": "UNRUN at this capture revision; any subsequent real fault-probe results must be separate evidence records. Early UI cancellation above is not an active-browser reap proof.",
+  "limitations": [
+    "Fresh project cache/out is not an OS page-cache flush; repeat requests still generate fresh graphics and do not claim artifact cache hits.",
+    "GUI pictures/draft do not verify audio or formal QC; separate real same-input all/audio/strict-QC/frame comparisons are required.",
+    "Linux official-host testing waived by maintainer at https://github.com/CongliangK/framivra/issues/363#issuecomment-6915812680; no Linux/Windows GUI pass claimed.",
+    "Legacy HTML is trusted execution with browser-permitted file/network access, not a sandbox or a proven dynamic resource closure.",
+    "MIT provenance records project-authored capture/fixture contributions and the inspected host license declaration only; it does not clear transitive font/icon/software rights. No private Feishu content, credentials or runtime binaries are included."
+  ]
+}

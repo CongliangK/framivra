@@ -188,6 +188,11 @@ class WSConn:
         return remaining
 
     def _io(self, operation, *args):
+        # close may run on another worker during a shared-browser heal.
+        with self._io_guard:
+            return self._guarded_io(operation, *args)
+
+    def _guarded_io(self, operation, *args):
         remaining = self._remaining()
         if remaining is None:
             return operation(*args)
@@ -201,6 +206,7 @@ class WSConn:
             self.sock.settimeout(previous)
 
     def __init__(self, port, path, timeout=20):
+        self._io_guard = threading.Lock()
         self._rbuf = bytearray()   # 握手响应同包尾随的帧字节（罕见），交 recv 消费
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
         self.sock.settimeout(timeout)
@@ -306,11 +312,23 @@ class WSConn:
             if fin:
                 return op, bytes(frag)
 
-    def close(self):
+    def interrupt(self):
+        # Keep the fd open until its receiving worker settles. On macOS a close
+        # racing the socket's readiness wait can otherwise strand that wait.
         try:
-            self.sock.close()
+            self.sock.shutdown(socket.SHUT_RDWR)
         except OSError:
-            pass
+            pass  # Already disconnected/closed is harmless.
+
+    def close(self):
+        self.interrupt()
+        # A healed pool can be retired while another worker still receives.
+        # Wait only for its awakened I/O, never for a callback or browser lock.
+        with self._io_guard:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
 
 
 class Tab:
@@ -322,12 +340,25 @@ class Tab:
             self._mid = 0
             self.request_policy = None
             self._policy_commands = set()
-            self.call("Page.enable")
+            try:
+                self.call("Page.enable")
+            except (TimeoutError, socket.timeout) as exc:
+                # Before Python 3.10, socket.timeout is a distinct exception.
+                timeout_type = TimeoutError if isinstance(exc, TimeoutError) else socket.timeout
+                raise timeout_type(
+                    "CDP Page.enable timeout: page CDP WebSocket handshake completed, but Page.enable "
+                    "did not complete in time (Page domain readiness unconfirmed); "
+                    "this timeout alone does not identify a renderer or token root cause"
+                ) from exc
             self.call("Emulation.setDeviceMetricsOverride",
                       width=width, height=height, deviceScaleFactor=1, mobile=False)
         except BaseException:
             self.ws.close()   # 半初始化 Tab 显式关 fd（RECP-20260916-002）
             raise
+
+    def interrupt(self):
+        """Wake the owned worker without closing its readiness-wait fd."""
+        self.ws.interrupt()
 
     def close(self):
         """释放本 tab 的 CDP socket（对端已死时为无害 no-op，close 内吞 OSError）。"""
@@ -530,8 +561,17 @@ class Browser:
                     f"http://127.0.0.1:{self.port}/json/version", timeout=1)
                 break
             except Exception:
-                if self.proc.poll() is not None:
-                    raise RuntimeError("chrome exited during startup")
+                status = self.proc.poll()
+                if status is not None:
+                    message = "chrome exited during startup"
+                    # Only native-sized integers, not arbitrary poll values or process details.
+                    if type(status) is int:
+                        if sys.platform == "win32":
+                            if -(1 << 31) <= status <= 0xFFFFFFFF:
+                                message += f" (exit status: 0x{status & 0xFFFFFFFF:08X})"
+                        elif -255 <= status <= 255:
+                            message += f" (exit status: {status})"
+                    raise RuntimeError(message)
                 time.sleep(0.2)
         else:
             raise RuntimeError("chrome devtools not ready in 15s")
@@ -560,14 +600,15 @@ class Browser:
         # issue #103：监管态收尾统一走组停机（SIGTERM 主进程 → 宽限 → 组残员
         # killpg → 删账本 → 关管道收守卫 → tmp_run rmtree 运行目录含 Profile）。
         if self.group is not None:
-            group, self.group = self.group, None
-            group.stop()
+            # Keep ownership if stop is interrupted or fails; cleanup may retry.
+            self.group.stop()
+            self.group = None
             self.proc = None
             self.user_data_dir = None
             return
         if self.windows_job is not None:
-            job, self.windows_job = self.windows_job, None
-            job.close()
+            self.windows_job.close()
+            self.windows_job = None
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:
@@ -863,6 +904,10 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         browser.stop()
         raise
     pool = []
+    owned_tabs = []             # Only sessions not yet closed; protected by browser.lock.
+    stopping = threading.Event()
+    threads = []
+    settled = [threading.Event() for _ in range(tabs_n)]
     t0 = time.monotonic()
     failed = []
     transparent = None
@@ -972,19 +1017,28 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             try:
                 new_pool = None
                 with browser.lock:
+                    if stopping.is_set():
+                        return
                     if browser.generation == gen[0]:
                         browser.hard_restart()
+                        # The old browser has stopped: release its sockets now,
+                        # rather than retain every superseded pool for a long page.
+                        for tab in owned_tabs[:]:
+                            tab.close()
+                            owned_tabs.remove(tab)
+                        if stopping.is_set():
+                            return
                         new_pool = browser.open_tabs()
+                        owned_tabs.extend(new_pool)
                         # override 重应用须在锁内、池发布前完成（2026-09-11 修复）：
                         # 重启后的新池若不带 override，透明页会静默渲成白底不透明帧。
                         # 锁内 CDP 调用有 Tab.call 硬超时兜底。
                         if new_pool is not None and use_override and not apply_override(new_pool):
                             use_override = False  # 重应用失败 → 本页回落双截
-                if new_pool is not None:
-                    pool = new_pool
+                        pool = new_pool
                     gen[0] = browser.generation
             except Exception:
-                time.sleep(0.5)
+                stopping.wait(0.5)
 
         def shot_with_heal(i, navfree=False):
             """渲一帧并落盘（含自愈重试 ≤2）。B5 语义：路径计数移到 write 成功
@@ -992,11 +1046,13 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             抛错时本帧自动转回导航路径（不耗重试预算，页级一次性告警）。"""
             nf = navfree
             retries = 0
-            while True:
+            while not stopping.is_set():
                 try:
                     if idx >= len(pool):
                         raise ConnectionError("tab lost after browser restart")
                     png, path, timing = do_frame(pool[idx], i, navfree=nf)
+                    if stopping.is_set():
+                        return False
                     t0 = time.monotonic()
                     _atomic_write_bytes(os.path.join(outdir, f"f{i:04d}.png"), png, root=ctx.root if ctx is not None else None)
                     my_times["write"].append(time.monotonic() - t0)
@@ -1008,6 +1064,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                     gen[0] = browser.generation
                     return True
                 except Exception:
+                    if stopping.is_set():
+                        return False
                     if nf:
                         # navfree 失败 → 本帧转导航路径；绝不静默（页级告警一次）
                         nf = False
@@ -1036,12 +1094,27 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             except Exception:
                 nf_tab = False    # 首导航失败 → 本 tab 逐帧导航（各帧自会重试/自愈）
         for i in queues[idx]:
+            if stopping.is_set():
+                break
             shot_with_heal(i, navfree=nf_tab)
         # 收尾：写本 worker 的观测槽位（每槽只被所属线程写一次，无竞争）
         per_tab[idx] = (my_paths, my_times)
 
+    def run_worker(idx):
+        try:
+            # A native thread may bootstrap after an interrupted start returns.
+            # Such a late target must not touch browser state or scratch output.
+            if stopping.is_set():
+                return
+            worker(idx)
+        finally:
+            # An interrupted Thread.join can mark a still-running thread stopped
+            # on some Python versions. This event records actual target exit.
+            settled[idx].set()
+
     try:
         pool = browser.open_tabs()
+        owned_tabs.extend(pool)
         pool[0].navigate(f"{base_uri}?f={work[0]}")
         time.sleep(0.15)
         # Canvas 导出通道（PR#1）先于透明检测：opt-in 页直出画布 PNG（自带精确 alpha），
@@ -1127,15 +1200,49 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             transparent = True
         if work:
             # 缩减后 work 可能清空（缺失帧全是已缓存头帧的跨度成员）→ 零线程收尾
-            threads = [threading.Thread(target=worker, args=(k,)) for k in range(tabs_n)]
+            threads = [threading.Thread(target=run_worker, args=(k,)) for k in range(tabs_n)]
             for t in threads:
                 t.start()
             for t in threads:
                 t.join()
     finally:
-        for t in pool:
-            t.close()   # 显式释放 tab CDP fd(对端将随 stop() 退出,无害)
-        browser.stop()
+        # Cancel before taking the restart lock: an in-flight heal may finish,
+        # but no waiting worker may start another browser after teardown.
+        stopping.set()
+        interrupted = None
+
+        def finish_cleanup(operation):
+            nonlocal interrupted
+            while True:
+                try:
+                    return operation()
+                except KeyboardInterrupt as exc:
+                    if interrupted is None:
+                        interrupted = exc
+
+        finish_cleanup(browser.lock.acquire)
+        try:
+            try:
+                for t in owned_tabs:
+                    finish_cleanup(t.interrupt)
+            finally:
+                finish_cleanup(browser.stop)
+        finally:
+            browser.lock.release()
+            try:
+                # Shutdown wakes CDP I/O while preserving its fd until the worker
+                # exits. Drain CPU/write/callback work before removing scratch.
+                for idx, thread in enumerate(threads):
+                    if thread.ident is None:
+                        # A late target sees stopping and remains inert.
+                        continue
+                    finish_cleanup(settled[idx].wait)
+                    finish_cleanup(thread.join)
+            finally:
+                for t in owned_tabs:
+                    finish_cleanup(t.close)
+        if interrupted is not None and sys.exc_info()[0] is None:
+            raise interrupted
     dt = (time.monotonic() - t0) * 1000
     # —— 特性 2 延后复制：头帧已由本次渲染落盘，缺失成员字节复制头帧文件 ——
     for head, members in deferred_spans:

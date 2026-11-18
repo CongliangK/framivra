@@ -203,12 +203,20 @@ class TechTalkCreator(unittest.TestCase):
                 self.assertTrue(cache.resolve().is_relative_to(self.home))
                 cache.rmdir()  # validate leaves this cache empty; prove skip still creates it.
                 receipt = target.parent / "out/receipt.json"
-                old_receipt_inode = receipt.stat().st_ino
-                rerun = self.run_creator(name)
-                self.success(rerun)
-                self.assertEqual(self.fingerprint(paths), before)
-                self.assertTrue(cache.is_dir())
-                self.assertNotEqual(receipt.stat().st_ino, old_receipt_inode)
+                # Pin the old inode outside the project without keeping an open
+                # handle that could block replacement on Windows. Multiple atomic
+                # receipt rewrites must not recycle the original inode number.
+                receipt_pin = self.cwd / f"{name}-old-receipt.json"
+                os.link(receipt, receipt_pin)
+                try:
+                    old_receipt_inode = receipt_pin.stat().st_ino
+                    rerun = self.run_creator(name)
+                    self.success(rerun)
+                    self.assertEqual(self.fingerprint(paths), before)
+                    self.assertTrue(cache.is_dir())
+                    self.assertNotEqual(receipt.stat().st_ino, old_receipt_inode)
+                finally:
+                    receipt_pin.unlink()
                 self.assertIn(f"⚠ 已存在，不覆盖：{name}/timeline.json", rerun.stdout)
                 if name == "unmanaged-no-history":
                     self.assertFalse(list(target.parent.glob(".vtx*")))

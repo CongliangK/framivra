@@ -1,0 +1,86 @@
+{
+  "schema": "framivra.cold-composite-qc-correction/v1",
+  "state": "Runtime acceptance PASS; ready for human review after final evidence-head checks recorded in PR. Not merged or deployed.",
+  "authorization": "https://github.com/CongliangK/framivra/pull/377#issuecomment-6938329364",
+  "main_revision": "dceba10bf73480a6f0b16b29683336d8630bb28b",
+  "base_branch": "main",
+  "production_revision": "333aeba",
+  "artifact": {
+    "platform": "macOS arm64",
+    "host": "unmodified official npm DSH 0.2.2-rc.1, isolated loopback instance",
+    "wheel_sha256": "e9b8ad39f8d1d329278ded54cf68f45ddcb8d2d764d1b2498f661c51444d9c4c",
+    "sidebar_sha256": "b92a850d1f4cf38115a5ab8cc7b78aa24c477506f7a151cc4093fbc3b18879d9",
+    "sidebar_build": "pkg:3890eabd0c67a165",
+    "note": "Later evidence-only commits do not relabel the tested production artifact; no production DSH profile changed or new model/assets downloaded."
+  },
+  "historical_record": {"file": "closeout-capture.json", "revision": "ae1c890d87262ea4e2daf4fe1f89a03021062f16", "status_then": "INCOMPLETE: same-input all/strict QC failed on candidate and main", "preserved": "Earlier files and hashes are unchanged; this new record supersedes the incomplete disposition only after new actual checks, not by editing old failures to PASS."},
+  "qc_correction": {
+    "prior_failure": {"frame": 179, "mean_difference": 20.233024691358025, "coverage_percent_reported": 32.2, "all_exit": 1, "strict_qc_exit": 1, "reproduced_on_main": true},
+    "diagnostic": "Input seek versus full-decode select and presence/absence of source pre-crop/scale produced identical gray samples within each input; neither explains this failure. Direct decoded RGB final179 versus source89 MAE was0.873739. Old probe extracted native Y without a common matrix. The streams have no declared matrix tags; no intended input colorimetry is invented. Controlled independently authored RGB encodes with declared BT.601/BT.709 verify the matrix-normalization mechanism.",
+    "implementation": "Normalize native input format directly to common BT.709/full-range before extracting Y. Removing upfront yuv420p avoids losing chromatic edge information before the matrix conversion. Input matrix/range retain FFmpeg auto handling and its unknown-tag fallback. Same dimensions48x27, bicubic+accurate_rnd and8-bit output, no libzimg dependency.",
+    "unchanged_thresholds": {"leak_mean_max": 2.0, "leak_coverage_max": 0.02, "pixel_difference": 24, "window_mean_min": 5.0, "window_coverage_min": 0.03},
+    "unchanged_scope": "No checks removed/skipped, no strict semantic or test selector/count/workflow/deadline change; new matrix assertions extend the existing mixed-pattern test.",
+    "cache": "qc_pass_segs schema6 plus exact filter rejects legacy1-5, malformed current and future schema; valid current reuse and strict re-probe tested. Stored receipts/reports are not retroactively certified; fresh QC ran. Rendered media completion certificates were not deleted to hide results.",
+    "real_regression": "RGB-authored saturated moving pattern encoded losslessly with declared BT.601/709; decoded RGB compared independently with authored bytes. Production samples at0/17/29 equal full-decode select byte-for-byte, equivalent matrices stay under unchanged leak thresholds, different moving content is still rejected. An explicitly untagged SD copy follows existing BT.601 auto fallback only for that fixture. Existing full/limited black/white/near-black, mixed geometry, center/edge/colored leak, real overlay/window removal controls remain unchanged and passed."
+  },
+  "same_saved_input_180": {
+    "content_version": "sha256:54ba4be09f50748f81ab38cf03a46a521ad254cc94c43a976932ac13a20c1b08",
+    "initial_cache_and_out": "absent in a new public synthetic project copy; identical saved timeline/media/page bytes",
+    "global_frame": 44, "html_local_frame": 29,
+    "layers": ["ordinary media", "scaled opacity PiP", "transparent HTML canvas", "ASS subtitle"],
+    "cold_preview": {"exit": 0, "seconds": 14.272, "budget_seconds": 30, "kind": "current-composite", "size": [1920, 1080], "fps": {"num": 30, "den": 1}, "bytes": 387514, "sha256": "0786d160b4e2a6cb9caae7fef5505d37e368ed413f92346b723b8382c542546e", "input_fingerprint": "7e39625a916d4c61b4d0e8058876b974ca65430c4fb06fa2337f7eb81b68e972", "render_key": "8fe7606d2cd177555c8350113e1f31dd337737bf2049bbf82c6659edeb00e710", "cache_hit": false, "path": null, "request_scratch_cleaned_before_response": true},
+    "formal_all": {"exit": 0, "seconds": 23.552},
+    "independent_strict_qc": {"exit": 0, "seconds": 6.179, "passed": 12, "checks": 12, "frame179_mean_difference": 1.75, "frame179_coverage_percent": 0.0},
+    "independent_full_decode": {"video_frames": 180, "r_frame_rate": "30/1", "avg_frame_rate": "30/1", "pcm_audio_samples": 288000, "audio_non_silent": true},
+    "cold_png_vs_formal44_mae": {"whole": 0.8294962062757202, "graphic": 0.7849967606090055, "subtitle": 1.1801568700396825, "pip": 1.229259545038866, "existing_limit": 2},
+    "saved_timeline_bytes_unchanged": true
+  },
+  "canonical_900_svg": {
+    "baseline": "official portable-v2 30seconds /900frames /1920x1080 /30fps SVG, not a mechanism replacement",
+    "preparation": "Only scripts/demo.py prepare/verify with retained publicly locked fonts and exact canonical-transfer WAVs; no new download. Prepare's validate-only receipt was preserved outside the owned project before pinned removal of that exact derived out domain, then verify repeated with cache/out absent.",
+    "prepare_exit": 0, "verify_exit": 0, "cold_verify_exit": 0,
+    "content_version": "sha256:a7008c2e5b2833da13021c3a1ccb46a09068ca1775b6724328563d2d37f7d105",
+    "cold228": {"exit": 0, "seconds": 26.752, "budget_seconds": 30, "kind": "current-composite", "sha256": "32e9f91f7d9507dabc4e762f1a361c6a44d77b31e20d0871426743c9b09e37b8", "input_fingerprint": "cfc551d6693d242f1fcf0405ba6802cfb5f7bb2c568bc9bfe006f0f8c89b057c", "render_key": "2a4fd23f87ef4235f2895437c7712bf17219c4ae81122f0727a07b2c98efff6d", "bytes": 41587, "cache_hit": false, "formal_gfx_created": false, "preview_children": []},
+    "formal_all": {"exit": 0, "seconds": 109.357},
+    "independent_strict_qc": {"exit": 0, "seconds": 31.104, "passed": 7, "checks": 7, "last_frame899_mean": 0.0, "last_frame899_coverage_percent": 0.0},
+    "decoded_video_frames": 900, "r_frame_rate": "30/1", "avg_frame_rate": "30/1", "cold228_vs_formal228_mae": 0.45309204603909464,
+    "warm_input228": {"exit": 0, "seconds": 23.403, "same_png_sha256": true, "image_cache_hit": false},
+    "scope": "Functional/quality regression after the QC change. Request budgets unchanged; no paired performance research, p95 certificate or cross-engine speedup claim. Current900 official-GUI rerun is UNRUN; earlier official-GUI900 capture remains bound to its old artifact."
+  },
+  "native_faults_final_artifact": {
+    "instrumentation": "Installed API, actual native browser start and worker CDP send; no replacement renderer. Each CLI child in its owned new session, cancellation issued only after non-main worker sent window.__vtx_export_png().",
+    "bad_dependency": {"exit": 1, "seconds": 4.251, "code": "render.failed", "stage": "Actual producer dependency identity rejected missing-preview-dependency.css before browser launch", "browser_started": false},
+    "active_worker_cancel": {"exit": 1, "seconds": 8.053, "code": "render.cancelled", "actual_browser_group": 46104, "actual_worker_export_sent": true, "cancel_to_exit_seconds": 0.074, "remaining_owned_group_members": []},
+    "slow_font": {"exit": 0, "seconds": 15.978, "actual_http_requests": 1, "response_delay_seconds": 2, "font": "ProbeSlow", "native_document_fonts_and_face_status": "loaded at all observed navigation returns", "kind": "current-composite", "frame": 134, "png_sha256": "2e4083fe9f557c81c1a2da72a95b2529a9712a4208fd8489a24efa8f06fb8921", "remaining_owned_group_members": []},
+    "all_three_after_return": {"preview_children": [], "out_exists": false, "completion_markers": [], "worker_ledgers": []}
+  },
+  "official_gui": {
+    "status": "PASS on final333aeba installed package, observed by actual MCP browser",
+    "viewport": [1440, 1000], "dpr": 1, "theme": "light shell / dark expanded workbench", "drawers_closed": true, "visible_interval": [0, 180],
+    "selected_address": "/video_tracks/2/clips/0", "frame": 44, "html_local_frame_visible": 29,
+    "content_version": "sha256:54ba4be09f50748f81ab38cf03a46a521ad254cc94c43a976932ac13a20c1b08",
+    "kind": "current-composite", "approximate": false, "size": [1920, 1080], "fps": {"num": 30, "den": 1}, "cache_hit": false,
+    "bytes": 387514, "sha256": "0786d160b4e2a6cb9caae7fef5505d37e368ed413f92346b723b8382c542546e",
+    "input_fingerprint": "2cf319a6aa0250dbab99a84d8c6e902065e57901a92776f7dc45582a01e0059e", "render_key": "5b9cfa040bfde5ddd4ffc99eebeaff809ad314ac3b76091938eb0ee13a1141fe",
+    "independent_complete_browser_decode_and_blob_sha_match": true, "click_to_decode_blob_and_hash_seconds": 14.517,
+    "timing_scope": "Real Playwright click through visible image/decode/blob fetch/SHA includes browser overhead; observed control responses include polls, not a precise backend latency or p95 claim.",
+    "screenshot": "closeout-after-edited.png", "screenshot_sha256": "8eeda88a3a01fb0c8217fada3505e450c90424c91086897033b2c1ab1bd95dc5",
+    "screenshot_provenance": "New actual final-wheel capture is byte-identical to the already preserved saved-edit supplement. Not a replacement for the matched initial Before/After pair, and not a mockup. Parent inspected the actual new capture.",
+    "sent": false, "uploaded": false, "page_closed_after_requests": true,
+    "scope": "Final preview verified; unchanged UI draft/edit semantics keep their earlier independently identified real observations, not relabelled as re-executed."
+  },
+  "earlier_ui_chain": {"record": "closeout-capture.json", "scope": "Real matched Before/After, empty-cache full-layer PNG, exact reference and second-click draft, explicit adopt/plan/save invalidation/re-consent/re-preview. Those observations retain their original artifact identities; no UI code changed in the QC correction."},
+  "verification": {
+    "qc_sampling_and_ownership": {"passed": 19, "failed": 0, "skipped": 0, "note": "Actual real-FFmpeg-enabled subcases in the44-case combined run; selectors/counts unchanged"},
+    "combined_qc_diagnostics": {"passed": 43, "failed": 1, "skipped": 0, "inherited_failure": "Diagnostic CPU black-canvas concat assertion expects4 lines but actual explicit file+duration entries are8; exact test reproduces on main dceba10. No assertion or concat frame-clock behavior changed."},
+    "payload_audit": "The earlier19-test license run had18PASS/1ERROR: eight unregistered old images also reproduced with exact main inventory/tracked list. These remain inherited failures, not hidden by this feature.",
+    "core_preview_contracts": {"discovered": 140, "passed": 127, "failed": 0, "skipped": 13, "skip_scope": "Six Linux/proc-specific and seven optional Chrome/FFmpeg cases; actual final-artifact media results are separately recorded above"},
+    "sidebar_frame_tests": {"passed": 51, "failed": 0, "skipped": 0},
+    "documentation_gates": {"passed": 7, "failed": 0, "skipped": 0},
+    "ordinary_ci_production333aeba": "3/3 passed; final evidence-head checks are recorded separately in the PR",
+    "agents_unicode_characters": 2000,
+    "independent_review": "Read-only independent review of actual matrix/format-order/schema/test/docs correction found no blocking issue; runtime tests were executed by implementing worker, not falsely attributed to reviewer."
+  },
+  "shutdown": {"browser_page_closed": true, "owned_isolated_host_running": false, "owned_media_gui_processes": [], "existing_serial_lock_released_and_nonblocking_reacquire_verified": true, "statement": "自有媒体/GUI进程已结束，串行窗口已释放"},
+  "limitations": ["Linux/Windows native GUI UNRUN; Linux-host-only acceptance waived by maintainer, not cross-platform certification.", "Full repository suite UNRUN; inherited audit/diagnostic failures remain explicitly listed.", "HTML remains trusted non-sandbox execution; declared inputs do not prove dynamic closure. Original saved1080p30/core-only/30-second request lease unchanged.", "PNG cannot certify audio; separate delivered audio/strict results above do.", "Only project-authored public synthetic fixture/evidence is distributed under root MIT; no private Feishu content, user media, credentials, font/runtime binaries or transitive legal clearance."]
+}

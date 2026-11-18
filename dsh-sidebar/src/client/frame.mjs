@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { parseJSON, stringifyJSON } from '../json.mjs'
 import { boundedText, FRAME_WIRE_LIMIT } from '../bounded.mjs'
 import { captureCurrentDraft, referenceQuery, selectedReference } from './reference.mjs'
@@ -15,12 +15,17 @@ const whole = value => Number.isSafeInteger(value) && value >= 0
  * 30.0000000000000000000001 with 30. Canonical safe-integer numbers (the only
  * numbers parseJSON keeps) compare by exact integer math; rawJSON tokens are
  * compared as exact decimals with tightly bounded digit/exponent ranges, so a
- * second JSON parser is not needed. Strings and lookalikes are rejected. */
+ * second JSON parser is not needed. Only supported exact rational strings pass. */
 export const FPS_TOKEN_LIMIT = 64, FPS_DIGIT_LIMIT = 40, FPS_EXPONENT_LIMIT = 60
 const fpsTokenPattern = /^([+-]?)(0|[1-9][0-9]*)(?:\.([0-9]+))?(?:[eE]([+-]?[0-9]+))?$/
 export function fpsMatchesReference(num, den, referenceFps) {
   if (!whole(num) || !whole(den) || num < 1 || den < 1) return false
   if (typeof referenceFps === 'number') return Number.isSafeInteger(referenceFps) && referenceFps >= 1 && num % den === 0 && num / den === referenceFps
+  if (typeof referenceFps === 'string') {
+    if (!['24000/1001', '30000/1001', '48000/1001', '60000/1001', '120000/1001'].includes(referenceFps)) return false
+    const [n, d] = referenceFps.split('/').map(BigInt)
+    return BigInt(num) * d === BigInt(den) * n
+  }
   if (typeof JSON.isRawJSON !== 'function' || !JSON.isRawJSON(referenceFps)) return false
   const token = stringifyJSON(referenceFps)
   if (typeof token !== 'string' || token.length > FPS_TOKEN_LIMIT) return false
@@ -35,6 +40,13 @@ export function fpsMatchesReference(num, den, referenceFps) {
   if (magnitude === 0n) return false
   const signedMagnitude = sign === '-' ? -magnitude : magnitude
   const numerator = BigInt(num), denominator = BigInt(den)
+  // Decimal NTSC labels denote exact N/1001 clocks, just as in the core parser.
+  for (const [label, rate] of [[23976n, 24000n], [29970n, 30000n], [47952n, 48000n], [59940n, 60000n], [119880n, 120000n]]) {
+    const alias = exponent >= 0
+      ? signedMagnitude * 10n ** BigInt(exponent) * 1000n === label
+      : signedMagnitude * 1000n === label * 10n ** BigInt(-exponent)
+    if (alias) return numerator * 1001n === denominator * rate
+  }
   // referenceFps = signedMagnitude * 10^exponent must equal num/den exactly.
   return exponent >= 0
     ? numerator === denominator * signedMagnitude * 10n ** BigInt(exponent)
@@ -109,7 +121,7 @@ export async function verifyFrame(envelope, { frame, contentVersion, signal, lim
   if (envelope?.schema !== 'framivra.timeline.frame/v1' || envelope.operation !== 'frame' || envelope.ok !== true || envelope.content_version !== contentVersion || !versionSHA.test(contentVersion) || !Array.isArray(envelope.diagnostics)) bad('Frame envelope/version/operation')
   if (reference?.schema !== 'framivra.timeline.reference/v1' || reference.operation !== 'reference' || reference.ok !== true || reference.content_version !== contentVersion || reference.selection?.global_frame !== frame || !Array.isArray(reference.selection.tracks) || !Array.isArray(reference.selection.blocks) || typeof reference.document?.raw !== 'string' || reference.document.content_version !== contentVersion || !Array.isArray(reference.diagnostics) || typeof reference.coverage?.complete !== 'boolean') bad('Same saved core reference required')
   for (const item of [...reference.selection.tracks, ...reference.selection.blocks]) if (!item || typeof item.address !== 'string' || item.content_version !== contentVersion || !(item.stable_id === null || typeof item.stable_id === 'string') || !(item.raw === null || typeof item.raw === 'string')) bad('Malformed core reference selection')
-  if (image?.state !== 'generated' || image.kind !== 'current-composite' || image.approximate !== false || image.mime_type !== 'image/png' || image.frame !== frame || image.content_version !== contentVersion || !whole(frame)) bad('Exact current-composite PNG certificate required')
+  if (image?.state !== 'generated' || image.kind !== 'current-composite' || Object.hasOwn(image, 'layer') || image.approximate !== false || image.mime_type !== 'image/png' || image.frame !== frame || image.content_version !== contentVersion || !whole(frame)) bad('Exact current-composite PNG certificate required')
   if (!whole(image.width) || !whole(image.height) || !image.width || !image.height || image.width > FRAME_EDGE_LIMIT || image.height > FRAME_EDGE_LIMIT || image.width * image.height > FRAME_PIXEL_LIMIT) bad('Decode dimensions exceed feature limits')
   if (!fpsMatchesReference(image.fps?.num, image.fps?.den, reference.selection?.fps)) bad('FPS does not match core reference')
   if (!rawSHA.test(image.sha256) || !rawSHA.test(image.render_key) || !rawSHA.test(image.input_fingerprint) || typeof image.identity_semantics !== 'string' || !image.identity_semantics.includes('Fast media stat identity') || !whole(image.bytes) || image.bytes < 33 || image.bytes > FRAME_WIRE_LIMIT) bad('Missing PNG identity/size certificates')
@@ -142,6 +154,7 @@ export async function verifyFrame(envelope, { frame, contentVersion, signal, lim
 }
 export function frameDraftText(generated, selection, positionOnly = false) {
   const reference = generated.reference
+  if (generated.certificate.kind !== 'current-composite' || Object.hasOwn(generated.certificate, 'layer')) bad('Only full current-composite frames may enter a draft')
   let selected
   if (selection && !positionOnly) {
     const list = selection.kind === 'track' ? reference.selection.tracks : reference.selection.blocks
@@ -149,14 +162,28 @@ export function frameDraftText(generated, selection, positionOnly = false) {
     if (!selected) throw new Error('FRAME_NOT_HIT: 选中对象不在该帧命中集合；明确选择仅位置引用或重新固定帧')
   }
   const payload = { certificate: generated.certificate, association: positionOnly || !selection ? 'position-only; no association to non-hit selection' : 'selected core frame hit', selected: selected ?? null, reference }
-  const text = `\nFramivra 当前合成帧 + core 原文引用（不是 final/QC 证书）。Fast 媒体 stat 身份；证书仅对渲染时输入成立，加入草稿时不保证素材 live-atomic。全局整数帧由 core 给出；无自动发送。\n\`\`\`json\n${stringifyJSON(payload, 2)}\n\`\`\`\n`
+  const description = 'Framivra 当前完整合成帧 + core 原文引用（不是 final/音频 QC 证书）。Fast 媒体 stat 身份；证书仅对渲染时输入成立，加入草稿时不保证素材 live-atomic。'
+  const text = `\n${description}全局整数帧由 core 给出；无自动发送。\n\`\`\`json\n${stringifyJSON(payload, 2)}\n\`\`\`\n`
   if (new TextEncoder().encode(text).byteLength > FRAME_WIRE_LIMIT) throw new Error('FRAME_REFERENCE_LIMIT: 引用超限，不截断、不加入草稿')
   return text
 }
 
-export function FrameTools({ owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call }) {
+export function FrameTools({ owner, opened, sessionId, frame, selection, tabSignal, getDraftServices, call, active = true, suspended = false }) {
+  const scheduling = useRef({ suspended, revision: 0, intent: 0 })
+  if (scheduling.current.suspended !== suspended) scheduling.current.revision++
+  scheduling.current.suspended = suspended
   const [state, setState] = useState({}), [consent, setConsent] = useState(false), [positionOnly, setPositionOnly] = useState(false)
-  const version = opened.snapshot.content_version
+  const [prepareGfx, setPrepareGfx] = useState(false), [htmlTrust, setHTMLTrust] = useState(false)
+  const [follow, setFollow] = useState(false)
+  const serial = useRef(), generation = useRef(0), cleanupFailed = useRef(false)
+  const modeLabel = '当前合成帧'
+  const changePrepare = event => { owner.invalidate(); setPrepareGfx(event.target.checked); setHTMLTrust(false); setState({ busy: !!state.busy, message: '准备授权已变化；旧画面已失效，请重新生成。' }) }
+  const changeTrust = event => { owner.invalidate(); setHTMLTrust(event.target.checked); setState({ busy: !!state.busy, message: 'HTML 信任已变化；旧画面已失效，请重新生成。' }) }
+  const version = opened.snapshot.content_version, viewEpoch = owner.epoch
+  const assertCurrent = () => {
+    owner.assertReady()
+    if (owner.epoch !== viewEpoch) throw new Error('FRAME_STALE: 显示或授权已变化；请使用当前控件重新点击')
+  }
   useEffect(() => () => owner.invalidate(), [owner])
   const generated = owner.generated
   function imageLimits(required = false) {
@@ -165,35 +192,51 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
     if (required && !limits) throw new Error('DRAFT_UNAVAILABLE: DSH imageLimits 尚未就绪')
     return limits
   }
-  async function generate() {
+  async function generate(automatic = false) {
     let operation
+    const sequence = ++generation.current
     try {
-      owner.assertReady()
+      assertCurrent()
+      if (cleanupFailed.current) throw new Error('FRAME_CLEANUP: 请先显式取消并确认回收')
       operation = owner.begin(tabSignal)
       owner.check(operation)
       if (!consent || !whole(frame)) throw new Error('FRAME_CONSENT: 请固定整数帧并明确允许仅 cache/preview 写入')
       owner.generated = undefined
-      setState({ busy: true, message: '正在显式生成当前合成 PNG…' })
-      const envelope = await frameRequest(sessionId, { op: 'render', grant: opened.grant, frame, contentVersion: version, renderConsent: 'cache/preview-only', operationId: crypto.randomUUID() }, operation.signal)
+      setState({ busy: true, message: prepareGfx ? '等待或按需准备图形 / 合成当前完整帧…（无阶段进度回报）' : '等待或合成当前完整帧…（仅暖输入）' })
+      const envelope = await frameRequest(sessionId, { op: 'render', grant: opened.grant, frame, contentVersion: version, renderConsent: 'cache/preview-only', operationId: crypto.randomUUID(), ...(prepareGfx ? { prepareGfx: true, ...(htmlTrust ? { htmlTrust: 'trusted-local-html' } : {}) } : {}) }, operation.signal)
+      owner.check(operation)
+      setState({ busy: true, message: '正在验证 PNG / 原文 / 哈希 / 引用…' })
       const verified = await verifyFrame(envelope, { frame, contentVersion: version, signal: operation.signal, limits: imageLimits() })
       owner.check(operation)
       // Validate association before making either stage/copy available.
-      frameDraftText(verified, selection, positionOnly)
+      if (!automatic) frameDraftText(verified, selection, positionOnly)
       owner.generated = verified
-      setState({ message: '已验证 PNG，未发送。复制与入稿请展开图片工具。' })
-    } catch (error) { if (!operation?.signal.aborted) setState({ message: error.message }); else setState({ message: '操作已失效/取消；未加入草稿。' }) }
+      setState({ previewEpoch: owner.epoch, message: '已验证 PNG，未发送。复制与入稿请展开图片工具。' })
+    } catch (error) {
+      if (sequence === generation.current) {
+        if (!operation?.signal.aborted) { setState({ message: `错误：${error.message}` }); if (automatic) { scheduling.current.intent++; setFollow(false) } }
+        else setState({ message: '操作已失效/取消；未加入草稿。' })
+      }
+    } finally {
+      // The HTTP abort may settle before the Host's managed child is reaped.
+      // A following frame must wait for explicit cleanup, never race or retry it.
+      if (operation?.signal.aborted && !tabSignal.aborted) {
+        try { await frameRequest(sessionId, { op: 'cancel', grant: opened.grant }, tabSignal) }
+        catch (error) { cleanupFailed.current = true; setFollow(false); setState({ message: `回收未确认：${error.message}；请显式取消后重新启用实时预览。` }) }
+      }
+    }
   }
   async function stage() {
     // Guard even retained handlers before capture; clean clicks still capture
     // synchronously before begin and before the first reference await.
     let captured, operation
     try {
-      owner.assertReady()
+      assertCurrent()
       captured = captureCurrentDraft(getDraftServices, sessionId)
       operation = owner.begin(tabSignal)
       owner.check(operation)
       const current = owner.generated
-      if (!current || current.certificate.frame !== frame || current.certificate.content_version !== version) throw new Error('FRAME_STALE: 请重新生成当前固定帧')
+      if (!current || current.certificate.frame !== frame || current.certificate.content_version !== version || current.certificate.kind !== 'current-composite') throw new Error('FRAME_STALE: 请重新生成当前固定帧')
       imageLimits(true)
       setState({ busy: true, message: '核对保存版本后追加到点击时草稿…' })
       const fresh = await call(sessionId, { op: 'reference', grant: opened.grant, query: selection && !positionOnly ? referenceQuery(selection, version, frame) : { expected_content_version: version, frame } }, operation.signal)
@@ -210,7 +253,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
   async function copy() {
     let operation
     try {
-      owner.assertReady()
+      assertCurrent()
       operation = owner.begin(tabSignal)
       owner.check(operation)
       const current = owner.generated
@@ -220,7 +263,26 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       setState({ message: operation.signal.aborted ? '剪贴板写入可能已完成；OS 无法撤回，当前选择已变化。' : 'PNG 已复制；OS 可能重新编码，不承诺剪贴板字节恒等。' })
     } catch (error) { setState({ message: `图片未确认复制：${error.message}；无自动文本降级。` }) }
   }
-  const blocked = !whole(frame) || !!owner.ghost || owner.edit.dirty || owner.edit.busy || owner.edit.unknown
+  const blocked = suspended || !whole(frame) || !!owner.ghost || owner.edit.dirty || owner.edit.busy || owner.edit.unknown
+  function enqueue(automatic = false) {
+    const revision = scheduling.current.revision, intent = ++scheduling.current.intent
+    const start = () => {
+      // Suspension invalidates old intents even if it ends before cleanup;
+      // a newer queued intent or automatic failure also supersedes this one.
+      const current = scheduling.current
+      if (owner.epoch !== viewEpoch || !active || current.suspended || current.revision !== revision || current.intent !== intent || tabSignal.aborted) return
+      return generate(automatic)
+    }
+    const task = serial.current ? serial.current.then(start) : start()
+    serial.current = task
+    void task?.finally(() => { if (serial.current === task) serial.current = undefined })
+    return task
+  }
+  useEffect(() => {
+    if (!active || !follow || !consent || blocked) return
+    const timer = setTimeout(() => { void enqueue(true) }, 120)
+    return () => clearTimeout(timer)
+  }, [active, follow, consent, blocked, frame, viewEpoch, prepareGfx, htmlTrust])
   // Verified preview object URL: created only from the verified owner.generated.file
   // (never image.path or unverified bytes), revoked on replacement/invalidation/unmount.
   // jsdom has no URL.createObjectURL; the guard keeps tests and non-browser hosts clean.
@@ -235,19 +297,23 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
     return () => { URL.revokeObjectURL(url); setPreview(undefined) }
   }, [verifiedFile])
   const shownPreview = generated && preview && preview.file === generated.file ? preview.url : null
-  const cancel = () => { owner.invalidate(); setState({ busy: true, message: '取消并等待实际进程退出…' }); void frameRequest(sessionId, { op: 'cancel', grant: opened.grant }, tabSignal).then(() => setState({ message: '已回收；未自动重试。' }), error => setState({ message: error.message })) }
+  // Only availability text expires; observed draft/copy and cleanup outcomes remain visible.
+  const message = state.previewEpoch !== undefined && (state.previewEpoch !== viewEpoch || !generated)
+    ? '旧画面已失效；请解决当前拒绝原因后显式重新生成。'
+    : state.message
+  const cancel = () => { owner.invalidate(); setFollow(false); setState({ busy: true, message: '取消并等待实际进程退出…' }); void frameRequest(sessionId, { op: 'cancel', grant: opened.grant }, tabSignal).then(() => { cleanupFailed.current = false; setState({ message: '已回收；未自动重试。' }) }, error => setState({ message: error.message })) }
   const cancelButton = () => h(ToolButton, { icon: 'cancel', variant: 'danger', label: '显式取消帧并等待回收', tooltip: '取消当前帧操作并等待实际进程回收', onClick: cancel })
   const imageTools = h('details', { className: 'fv-frame-tools-details' },
     h(ToolSummary, { icon: 'more', label: '图片与草稿 · 验证详情', tooltip: '展开图片复制 / 入稿与验证详情' }),
     h('div', { className: 'fv-frame-tools-tools' },
-      h(ToolButton, { icon: 'copy', label: '复制已生成 PNG（再次点击）', tooltip: '把已验证的当前合成 PNG 写入剪贴板（再次点击确认）', disabled: !generated || blocked || state.busy, onClick: () => void copy() }),
+      h(ToolButton, { icon: 'copy', label: '复制已生成 PNG（再次点击）', tooltip: `把已验证的${modeLabel} PNG 写入剪贴板（再次点击确认）`, disabled: !generated || blocked || state.busy, onClick: () => void copy() }),
       h(ToolButton, { icon: 'draft', label: '将该帧 + 精确引用加入当前草稿（不发送）', tooltip: '把已验证帧与精确 core 引用追加到当前草稿，不发送', disabled: !generated || blocked || state.busy, onClick: () => void stage() }),
       !state.busy ? cancelButton() : null),
     h('label', null, h('input', { type: 'checkbox', checked: positionOnly, onChange: event => { owner.invalidate(); setPositionOnly(event.target.checked); setState({}) } }), '仅位置引用，不关联未命中选区'),
     h('p', null, '生成前须单独允许本次 cache/preview 写入；不授予 timeline/history 写权限。图片和引用仅加入草稿，不发送。'),
-    h('p', null, `保存版本 ${version} · 固定全局帧 ${frame ?? '未设置'}。current-composite / Fast 身份，不是成片 QC。不会准备缺失输入；只接受 core inline PNG，绝不读取 image.path。`),
+    h('p', null, `保存版本 ${version} · 固定全局帧 ${frame ?? '未设置'}。current-composite / Fast 身份，不是成片 QC（也不是音频 QC）。${prepareGfx ? '仅显式准备当前帧图形；可见 HTML 另需信任。' : '默认不会准备缺失输入。'}只接受 core inline PNG，绝不读取 image.path。`),
     generated ? h('pre', null, stringifyJSON(generated.certificate, 2)) : null)
-  return h('section', { 'aria-label': '当前合成帧与草稿', className: 'fv-frame-tools', 'aria-busy': state.busy ? 'true' : 'false' },
+  return h('section', { 'aria-label': '当前合成帧与草稿', className: 'fv-frame-tools', hidden: !active, style: !active ? { display: 'none' } : undefined, 'aria-busy': state.busy ? 'true' : 'false' },
     h('style', null, `
 .fv-frame-tools{min-width:0;max-width:100%;font:inherit;color:inherit}.fv-frame-tools *{box-sizing:border-box}.fv-frame-tools button,.fv-frame-tools input{font:inherit}
 .fv-frame-tools .fv-frame-tools-head{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;margin:0 0 6px}
@@ -269,17 +335,21 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
 .fv-frame-tools pre{white-space:pre-wrap;overflow-wrap:anywhere}
 ` + iconControlCSS),
     h('div', { className: 'fv-frame-tools-head' },
-      h('h3', null, '当前合成帧'),
+      h('h3', null, modeLabel),
       h('span', { className: 'fv-frame-tools-meta', title: version }, `版本 ${version.slice(7, 19)} · 帧 ${whole(frame) ? frame : '未固定'}`)),
-    h('div', { className: 'fv-frame-tools-stage' },
+    generated ? h('p', null, `已生成 ${modeLabel} · 全局帧 ${generated.certificate.frame}`) : null,
+    h('div', { className: 'fv-frame-tools-stage fv-program-stage', 'data-mode': 'live' },
       shownPreview
-        ? h('img', { src: shownPreview, width: generated.certificate.width, height: generated.certificate.height, alt: `已验证合成帧 ${generated.certificate.frame}（${generated.certificate.width}×${generated.certificate.height} PNG）` })
-        : h('div', { className: 'fv-frame-tools-empty' }, h(Icon, { name: state.busy ? 'refresh' : 'film', size: 32 }), h('span', null, state.busy ? '正在生成并验证…' : whole(frame) ? '未生成画面（需显式生成）' : '未固定帧'))),
+        ? h('img', { src: shownPreview, width: generated.certificate.width, height: generated.certificate.height, title: '已验证当前完整合成帧；不是 final/音频 QC', alt: `已验证合成帧 ${generated.certificate.frame}（${generated.certificate.width}×${generated.certificate.height} PNG）` })
+        : h('div', { className: 'fv-frame-tools-empty' }, h(Icon, { name: state.busy ? 'refresh' : 'film', size: 32 }), h('span', null, state.busy ? '等待 / 准备 / 合成 / 验证；可显式取消' : whole(frame) ? '未生成画面（需显式生成）' : '未固定帧'))),
     h('div', { className: 'fv-frame-tools-tools' },
       h('label', { title: '单独允许本次点击向此工程 cache/preview 写入；不授予 timeline/history 写权限。' }, h('input', { type: 'checkbox', checked: consent, onChange: event => { owner.invalidate(); setConsent(event.target.checked); setState({}) } }), '允许写入预览缓存（不改时间线）'),
-      h(ToolButton, { icon: 'camera', variant: 'primary', label: '显式生成并验证固定帧 PNG', tooltip: '显式生成当前固定帧合成 PNG 并逐项验证证书', disabled: !consent || blocked || state.busy, onClick: () => void generate() }),
+      h('label', null, h('input', { type: 'checkbox', checked: prepareGfx, onChange: changePrepare }), '允许按需准备当前帧图形（仅预览域）'),
+      prepareGfx ? h('label', null, h('input', { type: 'checkbox', checked: htmlTrust, onChange: changeTrust }), '仅信任的工程：允许执行已保存的可见 HTML / 脚本，可访问浏览器允许的文件和网络；不是沙箱，不授予更广泛的未知权限。') : null,
+      h('label', { title: '明确启用后，播放头变化将按需写入预览缓存并验证完整合成帧；停止拖动后更新，不承诺视频帧率播放。' }, h('input', { type: 'checkbox', checked: follow, disabled: !consent, onChange: event => { owner.invalidate(); setFollow(event.target.checked); setState({}) } }), '随播放头实时生成（写预览缓存）'),
+      h(ToolButton, { icon: 'camera', variant: 'primary', label: '显式生成并验证固定帧 PNG', tooltip: `显式生成${modeLabel} PNG 并逐项验证证书`, disabled: !active || !consent || blocked || state.busy || follow, onClick: () => { void enqueue() } }),
       state.busy ? cancelButton() : null,
       imageTools),
     blocked ? h('p', { role: 'alert' }, '当前未固定帧，或编辑/队列/计划/写结果未解决；拒绝生成和加入草稿。') : null,
-    state.message ? h('p', { role: 'status' }, state.message) : null)
+    message ? h('p', { role: 'status' }, message) : null)
 }

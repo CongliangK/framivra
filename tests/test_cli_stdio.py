@@ -172,12 +172,10 @@ class CliStdioUnitTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout), [False, False, False])
 
     def test_unnormalized_nonblocking_breaks_or_times_out(self):
-        # Drain/timeout semantics of subprocess.run against a child that writes
-        # 600KB through inherited nonblocking pipes WITHOUT calling main():
-        # communicate() must either observe the child's EAGAIN failure
-        # (nonzero exit, BlockingIOError traceback) or fire the timeout and
-        # kill the stuck writer. Both outcomes prove the transport is unsafe
-        # until ensure_blocking_stdio() normalizes it.
+        # Establish backpressure before spawning: communicate() must not drain
+        # stdout concurrently and let the unnormalized writer win a timing race.
+        # The full inherited nonblocking pipe must cause EAGAIN (nonzero exit,
+        # BlockingIOError traceback) or timeout-owned termination.
         script = r'''
 import os, sys
 assert sys.stdout.fileno() == 1
@@ -188,16 +186,32 @@ sys.stdout.flush()
         def nonblocking():
             for fd in (0, 1, 2):
                 os.set_blocking(fd, False)
+        read_fd, write_fd = os.pipe()
         try:
-            result = subprocess.run(
-                [sys.executable, "-c", script],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                preexec_fn=nonblocking, timeout=5, check=False,
-            )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn(b"BlockingIOError", result.stderr + result.stdout)
-        except subprocess.TimeoutExpired:
-            pass  # writer wedged on the full nonblocking pipe: timeout-owned kill
+            os.set_blocking(write_fd, False)
+            while True:
+                try:
+                    os.write(write_fd, b"p" * 65536)
+                except BlockingIOError:
+                    break
+            # This negative control specifically exercises buffered-write errors;
+            # unbuffered FileIO can silently discard an EAGAIN write instead.
+            child_env = dict(os.environ)
+            child_env.pop("PYTHONUNBUFFERED", None)
+            # Keep read_fd open but deliberately undrained until the child exits.
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-c", script],
+                    stdout=write_fd, stderr=subprocess.PIPE, env=child_env,
+                    preexec_fn=nonblocking, timeout=5, check=False,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b"BlockingIOError", result.stderr)
+            except subprocess.TimeoutExpired:
+                pass  # writer wedged on the full nonblocking pipe: timeout-owned kill
+        finally:
+            os.close(write_fd)
+            os.close(read_fd)
 
 
 @unittest.skipUnless(os.name == "posix" and hasattr(os, "set_blocking"), "POSIX descriptor semantics")

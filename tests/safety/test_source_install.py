@@ -16,6 +16,10 @@ from vtx.runtime.managed import configure_environment
 
 class SourceInstall(unittest.TestCase):
     def setUp(self):
+        # These local filesystem fixtures do not perform elevated deployments.
+        elevation = mock.patch.object(install, 'windows_elevated', return_value=False)
+        elevation.start()
+        self.addCleanup(elevation.stop)
         self.temp = tempfile.TemporaryDirectory(prefix='framivra-source-test-')
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name).resolve()
@@ -59,6 +63,42 @@ class SourceInstall(unittest.TestCase):
         self.assertFalse(destination.exists())
         run.assert_not_called()
 
+    def test_elevated_windows_install_stops_before_creating_root_or_tools(self):
+        destination = self.base / 'elevated-root'
+        with mock.patch.object(install, 'windows_elevated', return_value=True), \
+                mock.patch.object(install, 'prepare_tools') as prepare, \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(install.main(['--root', str(destination), '--yes']), 1)
+        self.assertIn('non-administrator PowerShell', errors.getvalue())
+        self.assertFalse(destination.exists())
+        prepare.assert_not_called()
+
+    def test_elevated_read_only_plan_never_probes_elevation_or_writes(self):
+        destination = self.base / 'plan-root'
+        found = {name: '/tools/' + name for name in (*install.TOOL_NAMES, 'chrome')}
+        with mock.patch.object(install, 'windows_elevated', return_value=True) as elevation, \
+                mock.patch.object(install, 'tools', return_value=found), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(install.main(['--root', str(destination), '--plan']), 0)
+        elevation.assert_not_called()
+        self.assertFalse(destination.exists())
+
+    def test_persistent_root_inherits_windows_acl_but_keeps_posix_private_mode(self):
+        for system in ('win32', 'linux'):
+            destination = self.base / (system + '-root')
+            with self.subTest(system=system), \
+                    mock.patch.object(install.sys, 'platform', system), \
+                    mock.patch.object(install.platform, 'machine', return_value='AMD64'), \
+                    mock.patch.object(install, 'windows_elevated', return_value=False), \
+                    mock.patch.object(Path, 'mkdir', autospec=True) as mkdir, \
+                    mock.patch.object(install, 'installation_lock', side_effect=install.InstallError('after root creation')), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+                self.assertEqual(install.main(['--root', str(destination), '--yes']), 1)
+            self.assertIn('after root creation', errors.getvalue())
+            options = {} if system == 'win32' else {'mode': 0o700}
+            mkdir.assert_called_once_with(destination, parents=True, exist_ok=True, **options)
+            self.assertFalse(destination.exists())
+
     def test_real_clone_pin_resume_and_explicit_update(self):
         first = self.deploy()
         self.assertEqual(first, self.run_git('rev-parse', 'HEAD'))
@@ -88,7 +128,7 @@ class SourceInstall(unittest.TestCase):
             if '-c' in argv:
                 return real_command(argv, **kwargs)
             return ''  # Only skip network pip install; real ensurepip is vendored.
-        with mock.patch.object(install, 'command', side_effect=no_network):
+        with mock.patch.object(install, 'command', side_effect=no_network), mock.patch.object(install.python_packages, 'install', return_value={}):
             python, env = install.prepare_python(self.root, self.upstream, {'chrome': '/unused/chrome'})
         subprocess.run([str(python), '-I', '-c', 'import pip'], env=env, check=True, capture_output=True)
 
@@ -136,9 +176,96 @@ class SourceInstall(unittest.TestCase):
             return real_git(*args, **kwargs)
         with mock.patch.object(install, 'git', side_effect=fail_fetch):
             with self.assertRaisesRegex(install.InstallError, 'network interrupted'):
-                self.deploy()
+                self.deploy(update=True)
         self.assertFalse((self.root / 'source').exists())
-        self.assertEqual(self.deploy(), self.run_git('rev-parse', 'HEAD'))
+        pending = json.loads((self.root / '.source-progress.json').read_text())
+        approved = pending['commit']
+        stage = self.root / pending['stage']
+        self.assertTrue((stage / '.git').is_dir())
+        (self.upstream / 'later').write_text('main advanced during interruption')
+        later = self.commit('newer main while interrupted')
+        self.assertEqual(install.update_source(self.root, str(self.upstream), 'main', update=True, source_commit=later), approved)
+        self.assertFalse(stage.exists())
+        self.assertFalse((self.root / '.source-progress.json').exists())
+        self.assertEqual(self.deploy(update=True), later)
+
+    def test_clean_approved_checkout_recovers_after_receipt_publication_interruption(self):
+        first = self.deploy()
+        (self.upstream / 'later').write_text('new source')
+        second = self.commit('update')
+        real_git = install.git
+        def crash_after_checkout(*args, **kwargs):
+            value = real_git(*args, **kwargs)
+            if 'checkout' in args:
+                raise install.InstallError('interrupted after checkout')
+            return value
+        with mock.patch.object(install, 'git', side_effect=crash_after_checkout):
+            with self.assertRaisesRegex(install.InstallError, 'after checkout'):
+                self.deploy(update=True)
+        self.assertEqual(json.loads((self.root / 'installation.json').read_text())['commit'], first)
+        self.assertEqual(self.deploy(), second)
+        self.assertEqual(json.loads((self.root / 'installation.json').read_text())['status'], 'preparing')
+        self.assertFalse((self.root / '.source-progress.json').exists())
+
+    def test_fresh_bootstrap_pin_is_source_identity_but_retry_does_not_follow_new_main(self):
+        first = self.run_git('rev-parse', 'HEAD')
+        (self.upstream / 'later').write_text('later')
+        second = self.commit('advance main before source fetch')
+        self.assertEqual(install.update_source(self.root, str(self.upstream), 'main', source_commit=first), first)
+        self.assertEqual(install.update_source(self.root, str(self.upstream), 'main', source_commit=second), first)
+        self.assertEqual(install.update_source(self.root, str(self.upstream), 'main', update=True, source_commit=second), second)
+
+    def test_no_system_reuses_receipt_bound_keg_only_pair(self):
+        selected = {}
+        for name in (*install.TOOL_NAMES, 'chrome'):
+            path = self.root / 'private-full' / 'bin' / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('native fixture')
+            selected[name] = str(path)
+        (self.root / 'installation.json').write_text(json.dumps(dict(
+            schema=install.SCHEMA, sourceRoot=str(self.root / 'source'), tools=selected)))
+        capabilities = ' '.join((*install.REQUIRED_ENCODERS, *install.REQUIRED_FILTERS))
+        with mock.patch.object(install.sys, 'platform', 'darwin'), mock.patch.object(install.shutil, 'which', return_value=None), mock.patch.object(install, 'native_browser', return_value=None), mock.patch.object(install, 'command', return_value=capabilities) as run:
+            actual = install.prepare_tools(True, self.root)
+        self.assertEqual(actual['ffmpeg'], selected['ffmpeg'])
+        self.assertEqual(actual['ffprobe'], selected['ffprobe'])
+        self.assertEqual(run.call_count, 2)  # capability inventory, no package install
+
+    def test_source_recovery_does_not_adopt_a_journal_escaping_root(self):
+        (self.root / '.source-progress.json').write_text(json.dumps(dict(
+            schema='framivra.source-progress/v1', kind='clone', repository=str(self.upstream),
+            ref='main', commit=self.run_git('rev-parse', 'HEAD'), stage='../upstream')))
+        with self.assertRaisesRegex(install.InstallError, 'staging path'):
+            self.deploy()
+        self.assertFalse((self.root / 'source').exists())
+
+    def test_same_update_after_dependency_failure_keeps_approved_source(self):
+        approved = self.run_git('rev-parse', 'HEAD')
+        args = ['--root', str(self.root), '--repo', str(self.upstream), '--yes', '--update']
+        with mock.patch.object(install, 'prepare_tools', return_value={}), mock.patch.object(install, 'verify_native_tools'), mock.patch.object(install, 'prepare_python', side_effect=install.InstallError('fixture dependency failure')), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(install.main(args), 1)
+            (self.upstream / 'advanced').write_text('main moved after source approval')
+            self.commit('main advanced during dependency interruption')
+            self.assertEqual(install.main(args), 1)
+        self.assertEqual(self.run_git('rev-parse', 'HEAD', cwd=self.root / 'source'), approved)
+        self.assertEqual(json.loads((self.root / 'installation.json').read_text())['status'], 'preparing')
+
+    def test_foreign_receipt_cannot_authorize_an_unmanaged_venv(self):
+        foreign = self.root / 'venv' / 'marker'
+        foreign.parent.mkdir()
+        foreign.write_text('unrelated environment')
+        receipts = ({}, dict(schema='other/v1', status='preparing', repository=str(self.upstream), sourceRoot=str(self.root / 'source')),
+                    dict(schema=install.SCHEMA, status='preparing', repository=str(self.upstream), sourceRoot=str(self.base / 'other/source')))
+        for receipt in receipts:
+            with self.subTest(receipt=receipt):
+                encoded = json.dumps(receipt)
+                (self.root / 'installation.json').write_text(encoded)
+                with mock.patch.object(install, 'prepare_tools') as native, contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(install.main(['--root', str(self.root), '--repo', str(self.upstream), '--yes']), 1)
+                native.assert_not_called()
+                self.assertEqual(foreign.read_text(), 'unrelated environment')
+                self.assertEqual((self.root / 'installation.json').read_text(), encoded)
+                self.assertFalse((self.root / 'source').exists())
 
     def test_unowned_clone_is_never_adopted(self):
         self.run_git('clone', str(self.upstream), str(self.root / 'source'))
@@ -159,6 +286,42 @@ class SourceInstall(unittest.TestCase):
         self.assertIn('ChrisBagwell.SoX', ids)
         self.assertNotIn('torch', ' '.join(install.PYTHON_PACKAGES).lower())
         self.assertIn('scipy', ' '.join(install.PYTHON_PACKAGES))
+
+    def test_windows_plan_names_portable_git_and_conditional_runtime_without_probes(self):
+        with mock.patch.object(install.windows, 'ensure_python_runtime') as runtime:
+            plans = install.platform_packages({}, 'win32')
+            self.assertIn(['managed-original-download', '--id', 'Git.MinGit'], plans)
+            conditional = ['conditional-python-runtime', '--id', 'Microsoft.VCRedist.2015+.x64']
+            self.assertIn(conditional, plans)
+            found = {name: '/tools/' + name for name in (*install.TOOL_NAMES, 'chrome')}
+            self.assertEqual(install.platform_packages(found, 'win32'), [conditional])
+        runtime.assert_not_called()
+
+    def test_windows_runtime_failure_preserves_prepared_dependencies_and_never_reaches_ready(self):
+        def prepared(root, source, found, **kwargs):
+            state = install.json_record(root / 'installation.json')
+            install.atomic_json(root / 'installation.json', dict(state, pythonDependenciesPrepared=True))
+            return root / 'venv/Scripts/python.exe', {'PATH': '/fixture'}
+        with mock.patch.object(install.sys, 'platform', 'win32'), \
+                mock.patch.object(install.platform, 'machine', return_value='AMD64'), \
+                mock.patch.object(install, 'prepare_tools', return_value={}), \
+                mock.patch.object(install, 'verify_native_tools'), \
+                mock.patch.object(install, 'prepare_python', side_effect=prepared), \
+                mock.patch.object(install.windows, 'ensure_python_runtime',
+                                  side_effect=install.InstallError('runtime requires restart')) as runtime, \
+                mock.patch.object(install, 'prepare_configuration') as configure, \
+                mock.patch.object(install, 'verify') as verify, \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(install.main(['--root', str(self.root), '--repo', str(self.upstream), '--yes']), 1)
+        state = install.json_record(self.root / 'installation.json')
+        self.assertEqual(state['status'], 'preparing')
+        self.assertTrue(state['sourceApproved'])
+        self.assertTrue(state['pythonDependenciesPrepared'])
+        self.assertEqual(runtime.call_args.kwargs['network'], 'cn')
+        self.assertTrue(runtime.call_args.kwargs['yes'])
+        self.assertFalse(runtime.call_args.kwargs['no_system'])
+        configure.assert_not_called()
+        verify.assert_not_called()
 
     def test_linux_fontconfig_and_ensurepip_are_planned_without_replacing_browser(self):
         found = {name: '/tools/' + name for name in (*install.TOOL_NAMES, 'chrome')}
