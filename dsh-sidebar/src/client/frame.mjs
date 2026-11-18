@@ -312,9 +312,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
         ),
       generated ? h('p', null, `已生成 ${modeLabel} · 全局帧 ${generated.certificate.frame}`) : null,
       h('label', null, h('input', { type: 'checkbox', checked: positionOnly, onChange: event => { owner.invalidate(); setPositionOnly(event.target.checked); setState({}) } }), '仅位置引用，不关联未命中选区'),
-      h('p', null, '生成前须单独允许本次 cache/preview 写入；不授予 timeline/history 写权限。图片和引用仅加入草稿，不发送。'),
-      h('p', null, `保存版本 ${version} · 固定全局帧 ${frame ?? '未设置'}。current-composite / Fast 身份，不是成片 QC（也不是音频 QC）。${prepareGfx ? '仅显式准备当前帧图形；可见 HTML 另需信任。' : '默认不会准备缺失输入。'}只接受 core inline PNG，绝不读取 image.path。`),
-      generated ? h('pre', null, stringifyJSON(generated.certificate, 2)) : null))
+      generated ? h('p', null, `${generated.certificate.width} × ${generated.certificate.height} PNG · 完整合成，不含音频`) : null))
   return h('section', { 'aria-label': '当前合成帧与草稿', className: 'fv-frame-tools', hidden: !active, style: !active ? { display: 'none' } : undefined, 'aria-busy': state.busy ? 'true' : 'false' },
     h('style', null, `
 .fv-frame-tools{min-width:0;max-width:100%;font:inherit;color:inherit}.fv-frame-tools *{box-sizing:border-box}.fv-frame-tools button,.fv-frame-tools input{font:inherit}

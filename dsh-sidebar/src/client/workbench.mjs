@@ -90,15 +90,41 @@ export const workbenchCSS = `
 .fv-inspector[hidden]{display:none}
 .fv-inspector-section{border-bottom:1px solid var(--fv-line);padding:0 0 10px;margin-bottom:8px}
 .fv-inspector-section>summary{color:var(--fv-text);font-weight:600}
-.fv-inspector section{border:0!important;padding:0!important;min-width:0}
-.fv-inspector section>*+*{margin-top:10px}
-.fv-inspector section>h3{display:none}
-.fv-inspector section>button{margin-right:5px;max-width:100%;text-align:left;justify-content:flex-start}
-.fv-inspector fieldset{border:1px solid var(--fv-line);border-radius:4px;padding:10px;margin:12px 0;min-width:0}
-.fv-inspector fieldset label{display:block;margin:8px 0;font-size:12px;color:var(--fv-muted)}
-.fv-inspector fieldset :is(input:not([type=checkbox]),select){display:block;width:100%;margin-top:4px}
-.fv-inspector p{font-size:12px;color:var(--fv-muted)}
-.fv-inspector legend{font-size:11px;color:var(--fv-muted)}
+.fv-inspector :is(p,dd,li){font-size:12px;text-wrap:pretty}
+.fv-inspector :is(.fv-inspector-metrics,.fv-inspector-overview,.fv-edit-meta){font-variant-numeric:tabular-nums}
+.fv-inspector .fv-inspector-editor{border:0;padding:0;margin:10px 0;min-width:0}
+.fv-inspector :is(.fv-selection-card,.fv-inspector-empty){border:1px solid var(--fv-line);border-radius:6px;padding:10px;background:var(--fv-bg)}
+.fv-inspector-empty,.fv-inspector-item,.fv-inspector-tools,.fv-reference-actions,.fv-reference-extra{display:flex;gap:8px;align-items:center;min-width:0}
+.fv-inspector-empty,.fv-inspector-item p,.fv-inspector-metrics dt,.fv-inspector-overview dt{color:var(--fv-muted)}
+.fv-inspector-item>div{min-width:0}
+.fv-inspector-item strong,.fv-inspector-item p{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fv-inspector-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:9px 0;gap:5px}
+.fv-inspector-metrics>div{border-left:2px solid var(--fv-line);padding-inline-start:6px}
+.fv-inspector :is(dt,dd){margin:0;font-size:12px}
+.fv-inspector-overview{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0 0 6px}
+.fv-external-ref{display:block}
+.fv-inspector-tools,.fv-reference-actions{gap:4px;flex-wrap:wrap}
+.fv-reference-more{display:flex;position:relative}
+.fv-reference-extra{position:absolute;top:100%;right:0;padding:4px;z-index:4;border:1px solid var(--fv-line);border-radius:5px;background:var(--fv-raised)}
+.fv-edit-panel,.fv-edit-advanced{min-width:0}
+.fv-edit-panel>*+*{margin-top:8px}
+.fv-edit-header,.fv-edit-actions,.fv-edit-item{display:flex;align-items:center;gap:6px;min-width:0}
+.fv-edit-actions{flex-wrap:wrap}
+.fv-edit-header{justify-content:space-between}
+.fv-edit-operation-details summary{font-size:12px;min-height:0;padding:2px 0}
+.fv-edit-values{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 8px;margin:3px 0;border-left:1px solid var(--fv-line);padding-left:6px}
+.fv-edit-values dd{min-width:0;overflow-wrap:anywhere}
+.fv-edit-list{display:grid;gap:5px;list-style:none;margin:6px 0;padding:0}
+.fv-edit-item,.fv-edit-plan,.fv-edit-receipt{padding:7px 8px;border:1px solid var(--fv-line);border-radius:5px;background:var(--fv-bg)}
+.fv-edit-item-body{flex:1;min-width:0}
+.fv-edit-name{font-weight:600}
+.fv-edit-meta,.fv-edit-status{color:var(--fv-muted);font-size:12px}
+.fv-edit-status{margin-block:5px!important}
+.fv-edit-advanced,.fv-edit-proposal{border-top:1px solid var(--fv-line)}
+.fv-inspector fieldset:not(.fv-inspector-editor){border:1px solid var(--fv-line);border-radius:4px;padding:8px;margin:4px 0 8px;min-width:0}
+.fv-inspector fieldset label{display:block;margin:5px 0;font-size:12px;color:var(--fv-muted)}
+.fv-inspector fieldset :is(input:not([type=checkbox]),select){display:block;width:100%;margin-top:3px}
+.fv-inspector legend{font-size:12px;color:var(--fv-muted)}
 .fv-timeline-pane{border-top:1px solid var(--fv-line);background:var(--fv-surface);padding:4px 8px 8px;min-width:0}
 .fv-data{border-top:1px solid var(--fv-line);margin-top:12px;color:var(--fv-muted);font-size:12px}
 .fv-data p{margin:8px 0}
@@ -157,7 +183,7 @@ export const workbenchCSS = `
  .fv-workbench[open] .fv-layout-divider{display:flex;align-items:center;justify-content:center;height:12px;flex:none;border-top:1px solid var(--fv-line);cursor:row-resize;color:var(--fv-muted);background:var(--fv-bg);touch-action:none;user-select:none}
  .fv-workbench[open] .fv-layout-divider:hover,.fv-workbench[open] .fv-layout-divider:focus-visible{color:var(--fv-accent);background:var(--fv-raised);outline:2px solid var(--fv-accent);outline-offset:-2px}
  .fv-workbench[open] .fv-timeline-pane{flex:0 0 var(--fv-timeline-share,38%);min-height:300px;overflow:hidden;padding-top:4px}
- .fv-workbench[open] .fv-timeline .fv-help summary,.fv-workbench[open] .fv-data>summary{padding:3px 0;min-height:24px}
+ .fv-workbench[open] .fv-data>summary{padding:3px 0;min-height:24px}
  .fv-workbench[open] .fv-data{flex:none}
  .fv-workbench[open] .fv-data[open]{max-height:45%;overflow:auto}
 }

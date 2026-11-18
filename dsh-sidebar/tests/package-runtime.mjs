@@ -75,7 +75,17 @@ const configForm = {
   async mutate() { if (this !== configForm) throw new TypeError('lost receiver on mutate'); throw new Error('Read-only settings adapter cannot write') },
 }
 let configServing = 0
-const fs = new MemoryFs(), subprocess = fixtureSubprocess({ cwd: release, executable })
+const fs = new MemoryFs(), fixture = fixtureSubprocess({ cwd: release, executable })
+// This packaged-UI fixture needs the current stored integer-frame field so the
+// real visual selection surface is available; all other wire tokens stay exact.
+const subprocess = { ...fixture, spawn(spec) {
+  const child = fixture.spawn(spec)
+  if (spec.argv[3] === 'inspect') {
+    const readFrom = child.collected.stdout.readFrom
+    child.collected.stdout.readFrom = offset => { const result = readFrom(offset); return { ...result, text: result.text.replace('"duration":100', '"duration_frames":100') } }
+  }
+  return child
+} }
 if (process.platform === 'win32') {
   // Keep the in-memory provider's slash-separated keys but use drive-absolute
   // paths, like the native provider that the packaged Host can receive.
@@ -213,7 +223,7 @@ async function until(predicate) {
 try {
   // Hook state/effects run under the exact same React instance supplied to the loader.
   await act(async () => submit(form()))
-  await until(() => document.body.textContent.includes('Complete query envelope'))
+  await until(() => document.querySelector('.fv-ruler'))
   // On a Windows Host the store is unavailable before any opt-in/UI probe.
   // On supported Hosts the authorization panel still mounts and polls as before.
   if (process.platform === 'win32') {
@@ -225,8 +235,8 @@ try {
   }
   assert.deepEqual([...tools], ['framivra_timeline_read', 'framivra_timeline_propose', 'framivra_proposal_status'])
   assert(requests.every(x => x.sessionId === 'one'))
-  assert(document.body.textContent.includes('Read-only ·'))
-  assert(document.body.textContent.includes('9007199254740993'))
+  assert(document.body.textContent.includes('已保存视图'))
+  assert(!document.body.textContent.includes('9007199254740993'), 'raw JSON is not rendered')
   assert(!document.body.textContent.includes('9007199254740992'))
   const button = label => [...document.querySelectorAll('button')].find(node => node.getAttribute('aria-label') === label || node.textContent === label)
   // This read-only kernel fixture cannot render live frames, so the packaged
@@ -236,17 +246,21 @@ try {
   assert(document.body.textContent.includes('来源 UNKNOWN'))
   assert.equal(document.querySelectorAll('video').length, 1)
   assert(document.querySelector('video').getAttribute('src').startsWith('/api/framivra/media?sessionId=one&grant='))
-  await act(async () => button('选择块 /fixture/0/blocks/0').click())
+  await act(async () => document.querySelector('.fv-clip').click())
   await until(() => document.body.textContent.includes('引用就绪。'))
   assert.equal(requests.at(-1).op, 'reference')
   assert.equal(requests.at(-1).query.block_addresses[0], '/fixture/0/blocks/0')
-  assert(document.body.textContent.includes('legacy / 无协议稳定 ID'))
+  assert.equal(document.querySelector('[aria-label="选中对象 raw JSON"]'), null, 'legacy raw is not rendered')
   await act(async () => button('复制 raw JSON').click())
   await until(() => copies.length === 1)
   assert.equal(copies[0], '{ "id":9007199254740993, "decimal":1.0000000000000001, "huge":1e400, "text":"原文" }')
+  assert(!copies[0].includes('9007199254740992'), 'exact Clipboard has no rounded integer')
+  await act(async () => button('复制 ID / 临时定位').click())
+  await until(() => copies.length === 2)
+  assert.equal(copies[1], `transient:/fixture/0/blocks/0\ncontent_version:${requests.find(request => request.op === 'reference').query.expected_content_version}`, 'legacy reference stays explicitly transient')
   const beforeUnavailable = requests.length
   await act(async () => button('加入当前会话草稿（不发送）').click())
-  assert(document.body.textContent.includes('DRAFT_UNAVAILABLE'))
+  assert(document.body.textContent.includes('请先打开一个已有会话，再加入草稿。'))
   assert.equal(requests.length, beforeUnavailable)
   const field = document.querySelector('input[name="framivra-frame"]')
   const queryForm = field.form

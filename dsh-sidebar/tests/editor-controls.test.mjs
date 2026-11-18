@@ -205,7 +205,7 @@ test('ManualEditor quick: retained callback refuses after selection/frame/grant 
   const { root, calls, render, byLabel } = await editorMount(t, quicks)
   const result = mkResult('aroll', '块一')
   await render({ result })
-  await act(async () => { [...document.querySelectorAll('button')].find(b => b.textContent === '明确允许本会话向此工程及 core 历史写入').click() })
+  await act(async () => { [...document.querySelectorAll('button')].find(b => b.textContent === '启用编辑').click() })
   for (let i = 0; i < 100 && !(quicks.at(-1) instanceof Function); i++) await act(async () => { await new Promise(r => setTimeout(r, 1)) })
   const quick = quicks.find(q => q instanceof Function)
   assert(quick, 'quick became available after explicit write authorization')
@@ -234,7 +234,7 @@ test('ManualEditor quick: split outside block bounds refuses with EDIT_BOUNDS; n
   const { render, calls } = await editorMount(t, quicks)
   const result = mkResult('aroll', '块一')
   await render({ result, frame: 5 }) // frame 5 <= range[0] 10
-  await act(async () => { [...document.querySelectorAll('button')].find(b => b.textContent === '明确允许本会话向此工程及 core 历史写入').click() })
+  await act(async () => { [...document.querySelectorAll('button')].find(b => b.textContent === '启用编辑').click() })
   for (let i = 0; i < 100 && !(quicks.at(-1) instanceof Function); i++) await act(async () => { await new Promise(r => setTimeout(r, 1)) })
   const quick = quicks.at(-1)
   assert(quick instanceof Function)

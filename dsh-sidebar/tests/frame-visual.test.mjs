@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom'
 import { FrameEpoch, FrameTools } from '../src/client/frame.mjs'
 
 // Presentation-only regression for the FrameTools UI branch: preview stage,
-// objectURL lifecycle, folded prose/certificate, preserved test-facing labels.
+// objectURL lifecycle, folded frame details, preserved test-facing labels.
 // Generate/stage/copy semantics also stay covered by frame-ghost.test.mjs;
 // follow opt-in and serialized cleanup are exercised below with held HTTP replies.
 const raw = '{"project":{"duration_frames":100}}'
@@ -105,7 +105,7 @@ test('UI prepare allows cold SVG without HTML trust; only explicit clicks send b
   assert(!Object.hasOwn(requests[2], 'prepareGfx')); assert(!Object.hasOwn(requests[2], 'htmlTrust'))
   for (const request of requests) { assert.equal(request.renderConsent, 'cache/preview-only'); assert(!Object.hasOwn(request, 'htmlBlockAddress')) }
 })
-test('frame visual: stage placeholders, folded prose/certificate, labels and consent order preserved', async t => {
+test('frame visual: stage placeholders, folded frame details, labels and consent order preserved', async t => {
   const f = await fixture(t)
   const section = f.section()
   // Consent stays the first input; all four action labels keep their prefixes.
@@ -132,8 +132,7 @@ test('frame visual: stage placeholders, folded prose/certificate, labels and con
   assert(section.textContent.includes('未生成画面（需显式生成）'))
   const details = section.querySelector('.fv-frame-tools-details')
   assert(details && !details.hasAttribute('open'), 'certificate details exists and starts closed')
-  assert(details.textContent.includes('不是成片 QC'), 'boundary prose moved into details')
-  assert.equal(section.querySelector('details pre'), null, 'certificate pre only appears after generation')
+  assert.equal(section.querySelector('details pre'), null, 'no raw certificate shown')
   // Black 16:9 stage CSS contract, fully scoped to .fv-frame-tools.
   assert.equal(section.className, 'fv-frame-tools')
   const css = section.querySelector('style').textContent
@@ -153,8 +152,8 @@ test('frame visual: verified objectURL only from owner.generated.file, revoked o
   const img = f.section().querySelector('img')
   assert(img && img.src === 'blob:frame-1')
   assert(img.alt.includes('已验证合成帧 10'))
-  // Certificate now visible inside the closed details.
-  assert(f.section().querySelector('details pre'), 'certificate pre present after generation')
+  assert(f.section().querySelector('.fv-frame-tools-details').textContent.includes('1920 × 1080 PNG'))
+  assert.equal(f.section().querySelector('details pre'), null, 'verified frame has a summary rather than raw JSON')
   // Replacement revokes the old URL before creating the new one.
   f.owner.generated = second
   await f.rerender(10)
