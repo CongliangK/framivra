@@ -4,7 +4,7 @@
 set -euo pipefail
 bootstrap() {
   if [ "${1-}" = '--help' ]; then
-    printf '%s\n' 'Usage: bash scripts/bootstrap.sh [--yes] [--plan] [--no-system] [--update] [--network cn|official]' 'Installs non-AI/CDP under ~/.local/share/framivra. Verified downloads resume across invocations.'
+    printf '%s\n' 'Usage: bash scripts/bootstrap.sh [--yes] [--plan] [--no-system] [--update [--restart-update]] [--network cn|official]' 'Installs non-AI/CDP under ~/.local/share/framivra. Verified downloads resume across invocations.'
     exit 0
   fi
   SYSTEM_ALLOWED=1; AUTO_YES=0; NETWORK=cn; SOURCE_REF=main; SOURCE_COMMIT=''
