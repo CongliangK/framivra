@@ -938,7 +938,7 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None, staged_gfx=Non
                     a, b = native_window
                     if cl['dst_in'] >= b or cl['dst_in'] + cl['dur'] <= a:
                         continue
-                    layer["source"], layer["source_stop"] = staged_gfx[ti, ci]
+                    layer["source"], layer["source_stop"], layer["cl"] = staged_gfx[ti, ci]
                 layers.append(layer)
                 continue
             windowed, x, y, w2, h2, geometry = _media_geometry(c, cl)

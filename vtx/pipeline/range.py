@@ -184,16 +184,23 @@ def _stage_window_gfx(c, fa, fb, scratch, check_cancel):
         for ci, clip in enumerate(track['clips']):
             if not _intersects(clip, fa, fb):
                 continue
+            # Legacy formal timelines can place a page using 6.0 instead of 6.
+            # Keep the authenticated clip intact, but use exact integers for the
+            # reader interval and the private layer's image2 start_number.
             dst = clip['dst_in']
+            if type(dst) is float and dst.is_integer():
+                dst = int(dst)
+            if type(dst) is not int:
+                raise ValueError('1080p window requires an integer graphics clip in-point')
             start, stop = max(fa, dst) - dst, min(fb, dst + clip['dur']) - dst
             count += stop - start
             if count > reader._MAX_FRAMES:
                 raise ValueError('1080p window exceeds aggregate graphics frame limit')
-            requests.append((ti, ci, clip, start, stop))
+            requests.append((ti, ci, clip, dst, start, stop))
 
     remaining = reader._MAX_BYTES
     staged, rechecks = {}, []
-    for ti, ci, clip, start, stop in requests:
+    for ti, ci, clip, dst, start, stop in requests:
         check_cancel()
         if remaining <= 0:
             raise ValueError('1080p window exceeds aggregate graphics byte limit')
@@ -213,7 +220,8 @@ def _stage_window_gfx(c, fa, fb, scratch, check_cancel):
         identity = hashlib.sha256(''.join(hashes.values()).encode('ascii')).hexdigest()
         source = PngSequence(directory, identity, clip['dur'], c.fps, c.w, c.h,
                              environment_check=lambda hashes=hashes: hashes)
-        staged[ti, ci] = source, stop
+        layer_clip = clip if type(clip['dst_in']) is int else dict(clip, dst_in=dst)
+        staged[ti, ci] = source, stop, layer_clip
     return staged, rechecks
 
 

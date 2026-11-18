@@ -425,6 +425,7 @@ class TestRangeCachePolicy(unittest.TestCase):
         from vtx.cache.session import pack_path
         from vtx.pipeline import range as ranges
         from vtx.pipeline.infra import Ctx
+        from vtx.pipeline.stages import validate_core
         from vtx.render import gfx_cli, gfx_environment, gfx_pack, gfx_packed_reader
 
         def png(red):
@@ -442,7 +443,7 @@ class TestRangeCachePolicy(unittest.TestCase):
         for name in ('lower', 'upper', 'cold'):
             (self.root / f'{name}.html').write_text(f'<body>{name}</body>')
         tracks = [{'kind': 'gfx', 'name': 'lower', 'clips': [
-            {'src': 'lower.html', 'dur': 4, 'dst_in': 6, 'opacity': .7},
+            {'src': 'lower.html', 'dur': 4, 'dst_in': 6.0, 'opacity': .7},
             {'src': 'cold.html', 'dur': 4, 'dst_in': 10}]},
             {'kind': 'gfx', 'name': 'upper', 'clips': [
                 {'src': 'upper.html', 'dur': 4, 'dst_in': 8, 'fade_in_frames': 2}]}]
@@ -453,7 +454,9 @@ class TestRangeCachePolicy(unittest.TestCase):
         c = Ctx(timeline)
         c.cache_policy = CachePolicy('core')
         c.run = mock.Mock()
+        self.assertEqual(validate_core(c), [])
         lower, upper = (t['clips'][0] for t in c.tl['video_tracks'])
+        self.assertIs(type(lower['dst_in']), float)
         expected, packs = {}, []
         for clip, seed in ((lower, 20), (upper, 40)):
             directory = gfx_dir(c, clip)
@@ -475,6 +478,7 @@ class TestRangeCachePolicy(unittest.TestCase):
         def composite(plan, layers, _out, _subs, *, a, b, sub_file):
             self.assertEqual((a, b), (7, 10))
             self.assertEqual([layer['cl'] for layer in layers], [lower, upper])
+            self.assertIs(type(layers[0]['cl']['dst_in']), int)
             for layer, (first, stop) in zip(layers, ((1, 4), (0, 2))):
                 source = layer['source']
                 self.assertEqual(layer['source_stop'], stop)
