@@ -6,6 +6,7 @@ import os
 import stat
 import json
 import subprocess
+import sysconfig
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -736,6 +737,54 @@ class LinuxSvgRuntimeDigest(unittest.TestCase):
                                    side_effect=subprocess.TimeoutExpired('/fixture/ldd', 15)):
                 with self.assertRaises(subprocess.TimeoutExpired):
                     gfx_svg.runtime_libraries('/fixture/engine')
+
+
+@unittest.skipUnless(os.name == 'nt' and sysconfig.get_platform() == 'win-amd64', 'native Windows x64')
+class WindowsFontconfigCheck(unittest.TestCase):
+    def test_refuses_unverified_bundle_before_fontconfig_query(self):
+        from vtx.render import gfx_svg_win_fontconfig as fc
+        root = temporary_root(self)
+        bin_dir = root / 'inkscape' / 'bin'
+        bin_dir.mkdir(parents=True)
+        candidate = bin_dir / fc._FONTCONFIG
+        # Same length as the approved DLL, but data only, not an executable.
+        candidate.write_bytes(bytes(fc._DLLS[fc._FONTCONFIG][0]))
+        font = root / 'test.ttf'
+        font.write_bytes(b'test')
+        scratch = root / 'scratch'
+        scratch.mkdir()
+        with self.assertRaisesRegex(ValueError, 'bundled DLL byte identity mismatch'):
+            fc.inspect_face(root, font, sha256=gfx_svg.digest(b'test'), scratch=scratch)
+        self.assertEqual(list(scratch.iterdir()), [])
+
+    def test_rejects_unbounded_face_and_sample_before_launch(self):
+        from vtx.render import gfx_svg_win_fontconfig as fc
+        for kwargs, reason in (({'index': 65536}, 'index'), ({'sample': 'a' * 129}, 'Unicode scalars'),
+                               ({'sample': '\ud800'}, 'Unicode scalars')):
+            with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, reason):
+                fc.inspect_face(None, None, sha256='0' * 64, scratch=None, **kwargs)
+
+    def test_never_reads_or_removes_scratch_when_worker_exit_is_unconfirmed(self):
+        from vtx.render import gfx_svg_win_fontconfig as fc
+        scratch = temporary_root(self)
+        worker = mock.Mock()
+        worker.poll.return_value = None
+        worker.wait.side_effect = [subprocess.TimeoutExpired('worker', fc._TIMEOUT),
+                                   subprocess.TimeoutExpired('worker', fc._REAP_TIMEOUT)]
+        with mock.patch.object(fc.subprocess, 'Popen', return_value=worker):
+            with self.assertRaisesRegex(ValueError, 'exit not confirmed; scratch retained'):
+                fc.inspect_face(scratch, scratch / 'font.ttf', sha256='0' * 64, scratch=scratch)
+        worker.kill.assert_called_once_with()
+        self.assertEqual(worker.wait.call_args_list, [mock.call(timeout=fc._TIMEOUT), mock.call(timeout=fc._REAP_TIMEOUT)])
+        self.assertEqual(len(list(scratch.iterdir())), 1)
+
+    def test_interrupted_launch_does_not_remove_unowned_worker_scratch(self):
+        from vtx.render import gfx_svg_win_fontconfig as fc
+        scratch = temporary_root(self)
+        with mock.patch.object(fc.subprocess, 'Popen', side_effect=KeyboardInterrupt) as launch:
+            with self.assertRaises(KeyboardInterrupt):
+                fc.inspect_face(scratch, scratch / 'font.ttf', sha256='0' * 64, scratch=scratch)
+        self.assertEqual(list(scratch.iterdir()), [launch.call_args.kwargs['cwd']])
 
 
 if __name__ == '__main__': unittest.main()
