@@ -168,6 +168,11 @@ class GfxPackTests(unittest.TestCase):
             gfx_pack.read_frame(self.target, 0, expected_record=self.record, max_frame_bytes=100)
         with self.assertRaises(gfx_pack.GfxPackError):
             gfx_pack.inspect_pack(self.target, max_header_bytes=10)
+        # A writer with a relaxed block size can otherwise coalesce many valid
+        # PNGs into a single block. A large single blob is still supported.
+        with mock.patch.object(gfx_pack, '_BLOCK_BYTES', 5000):
+            with self.assertRaisesRegex(gfx_pack.GfxPackError, 'multiple blobs in oversized'):
+                self.restore()
 
     def test_zlib_bombs_truncation_and_trailing_streams_rejected_even_with_updated_digest(self):
         for transform in (lambda c: c[:-2], lambda c: c + b'junk',
