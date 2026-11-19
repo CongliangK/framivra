@@ -126,9 +126,15 @@ class TimelineStoreTest(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertNotEqual(store._location(self.path), store._location(second))
         alias = self.root / "parent-link"
-        alias.symlink_to(self.root, target_is_directory=True)
-        self.assertEqual(timeline_store_status(alias / self.path.name)["evidence_path"],
-                         timeline_store_status(self.path)["evidence_path"])
+        if sys.platform == "win32":
+            junction = subprocess.run(['cmd.exe', '/d', '/c', 'mklink', '/J', str(alias), str(self.root)],
+                                      capture_output=True, timeout=10)
+            self.assertEqual(junction.returncode, 0, junction.stderr)
+            self.assertEqual(timeline_store_status(alias / self.path.name)["code"], "path.alias")
+        else:
+            alias.symlink_to(self.root, target_is_directory=True)
+            self.assertEqual(timeline_store_status(alias / self.path.name)["evidence_path"],
+                             timeline_store_status(self.path)["evidence_path"])
 
     def test_two_processes_same_base_exactly_one_commit(self):
         self.adopt()
@@ -249,6 +255,8 @@ print(json.dumps(timeline_transaction(sys.argv[1],req)))
 
     def test_fault_every_checkpoint_current_is_before_or_after_recovery_never_reapply(self):
         points = ("locked", "recovered", "read", "validated", "intent_published", "staged", "final_cas", "replaced", "parent_synced", "committed")
+        if sys.platform == "win32":
+            points = tuple(point for point in points if point != "parent_synced")
         for point in points:
             with self.subTest(point=point), tempfile.TemporaryDirectory(prefix="framivra-fault-") as tmp:
                 target = Path(tmp) / "timeline.json"
@@ -275,25 +283,31 @@ print(json.dumps(timeline_transaction(sys.argv[1],req)))
                     self.assertTrue(retry["replayed"])
                     self.assertEqual(sha(current), retry["revision"])
 
-    @unittest.skipUnless(os.name == "posix", "POSIX kill recovery")
+    @unittest.skipUnless(os.name == "posix" or sys.platform == "win32", "local abrupt process exit recovery")
     def test_sigkill_each_phase(self):
         code = """import json,os,signal,sys
 from vtx import timeline_store as s
 point=sys.argv[2]
 def checkpoint(name):
- if name==point: os.kill(os.getpid(),signal.SIGKILL)
+ if name==point:
+  if sys.platform=='win32': os._exit(93)  # No finally blocks or interpreter cleanup.
+  os.kill(os.getpid(),signal.SIGKILL)
 s._checkpoint=checkpoint
 p=sys.argv[1]
 b=open(p,'rb').read()
 s.timeline_transaction(p,dict(operation='adopt',op_id='killed',base_revision=s._sha(b)))
 """
-        for point in ("locked", "recovered", "read", "validated", "intent_published", "staged", "final_cas", "replaced", "parent_synced", "committed"):
+        points = ("locked", "recovered", "read", "validated", "intent_published", "staged", "final_cas", "replaced", "parent_synced", "committed")
+        if sys.platform == "win32":
+            points = tuple(point for point in points if point != "parent_synced")
+        for point in points:
             with self.subTest(point=point), tempfile.TemporaryDirectory(prefix="framivra-kill-") as tmp:
                 target = Path(tmp) / "timeline.json"; target.write_bytes(json.dumps(document()).encode())
                 before = target.read_bytes()
                 proc = subprocess.run([sys.executable, "-c", code, str(target), point], cwd=tmp,
                                       env=dict(os.environ, PYTHONPATH=str(ROOT), PYTHONDONTWRITEBYTECODE="1"), capture_output=True, timeout=20)
-                self.assertEqual(proc.returncode, -signal.SIGKILL, proc.stderr)
+                expected = 93 if sys.platform == "win32" else -signal.SIGKILL
+                self.assertEqual(proc.returncode, expected, proc.stderr)
                 current = target.read_bytes()
                 result = timeline_store_status(target, recover=True)
                 self.assertTrue(result["ok"], result)
@@ -302,6 +316,45 @@ s.timeline_transaction(p,dict(operation='adopt',op_id='killed',base_revision=s._
                     self.assertEqual(current, before)
                 else:
                     self.assertFalse(identity_errors(json.loads(current)))
+
+    @unittest.skipUnless(sys.platform == "win32", "native NTFS parent coordination")
+    def test_windows_refuses_cased_leaf_alias_and_linked_parent_lock(self):
+        target = self.root / 'Timeline.json'
+        before = json.dumps(document()).encode('utf-8')
+        target.write_bytes(before)
+        request = dict(operation='adopt', op_id='alias', base_revision=sha(before))
+        self.assertFalse(timeline_transaction(target.with_name('timeline.json'), request)['ok'])
+        self.assertFalse(store._location(target).exists())
+        second = self.root / 'linked-lock'
+        second.mkdir()
+        target = second / target.name
+        target.write_bytes(before)
+        lock = second / store._PARENT_LOCK
+        victim = second / 'ordinary.txt'
+        victim.write_bytes(b'keep original bytes')
+        os.link(victim, lock)
+        self.assertFalse(timeline_transaction(target, request)['ok'])
+        self.assertEqual(target.read_bytes(), before)
+        self.assertEqual(victim.read_bytes(), b'keep original bytes')
+        self.assertFalse(store._location(target).exists())
+
+    @unittest.skipUnless(sys.platform == "win32", "native NTFS rename with concurrent readers")
+    def test_windows_short_leaf_and_drive_alias_with_reader(self):
+        from vtx.render.gfx_svg_win_publish import anchored_relative
+
+        target = self.root / 'a'
+        lower_drive = target.drive.lower() + str(target)[2:]
+        created = timeline_transaction(lower_drive, dict(
+            operation='create', op_id='short-create', base_revision=None, document=document(ids=True)))
+        self.assertTrue(created['ok'], created)
+        self.assertTrue(timeline_store_status(target)['ok'])
+        req = dict(operation='apply', op_id='short-replace', base_revision=created['revision'],
+                   changes=[{'id': json.loads(target.read_bytes())['subtitles'][0]['id'],
+                             'set': {'text': 'changed'}}])
+        with anchored_relative(self.root) as parent, parent.open_read('a', share=5):
+            saved = timeline_transaction(target, req)
+            self.assertTrue(saved['ok'], saved)
+        self.assertEqual(sha(target.read_bytes()), saved['revision'])
 
     def test_corrupt_history_pending_external_change_and_missing_file_never_overwritten(self):
         self.adopt()

@@ -42,14 +42,14 @@ def run_store_command(args, parser):
                     # Explicit file only (no stdin, URLs, dirs, symlink or hardlink
                     # leaves). Freeze once before digest/lock; journal has bytes,
                     # not a mutable source path. Relative to caller cwd.
-                    from ..timeline_store import _canonical, _read
+                    from ..timeline_store import _read_path
                     if "payload_file" not in request or "raw_bytes" in request or "raw_utf8" in request:
                         raise ValueError("exact CLI request requires payload_file only")
                     request = dict(request)
                     payload_file = request.pop("payload_file")
                     if not isinstance(payload_file, str) or not payload_file:
                         raise ValueError("payload_file must be a nonempty local file path")
-                    request["raw_bytes"] = _read(_canonical(payload_file))
+                    request["raw_bytes"] = _read_path(payload_file)
                 execute = {"plan": timeline_write_plan, "edit-view": timeline_edit_view}.get(
                     extra[0] if extra else None, timeline_transaction)
                 result = execute(args.timeline, request)
