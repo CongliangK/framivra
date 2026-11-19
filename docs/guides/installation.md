@@ -43,6 +43,7 @@ Windows 主流程须普通非提升 PowerShell；提升写态在引导下载前�
 
 ### 维护跨平台安装验收
 
+- macOS 创建或修复受管 venv 时链接解释器，兼容 Xcode/CLT 的 framework Python，不改为复制可执行文件。
 - 发现 BGM 不依赖 POSIX；发布目录时兼容部分 Windows 绝对路径的混合斜杠，不改运行数据。
 - GPU 使用原生锁；Windows 派发并发任务前实测可用内存，探测失败即拒派。
 - hue 素材先规范 RGB 色域，不放宽 QC；冷暖快照须计入 Linux core 持久化图形包。
