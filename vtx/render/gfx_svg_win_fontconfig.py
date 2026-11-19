@@ -1,4 +1,4 @@
-"""Internal single-file face check; not called by the SVG runtime.
+"""Internal face and fixed-config catalog checks for trusted acceptance; not a renderer.
 
 The caller supplies a trusted font digest and an exclusive scratch parent.
 The fresh worker trusts Windows, base CPython, this checkout and the local
@@ -24,9 +24,13 @@ import sysconfig
 import tempfile
 import time
 from types import SimpleNamespace
+from typing import NamedTuple
+from xml.sax.saxutils import escape
 
 from ..runtime import windows_browser as native
 from ..runtime.windows_cleanup import pinned
+from .gfx_svg_win_input import _StandardInfo
+from .gfx_svg_win_snapshot import _AttributeTagInfo, _handle_info, _image_size, _pin_dir, _pin_entry
 
 
 # Normal and delay PE imports, recursively, taking only non-OS imports from
@@ -93,21 +97,53 @@ def _pin_dirs(stack, path):
         stack.enter_context(pinned(directory, directory=True))
 
 
-def _pin_file(stack, path, limit):
-    _, info, _ = stack.enter_context(pinned(path))
-    if not stat.S_ISREG(info.st_mode) or info.st_file_attributes & 0x400:
-        raise _Rejected('face check input is not a regular non-reparse file')
-    if not 0 < info.st_size <= limit:
-        raise _Rejected('face check input exceeds its file size bounds')
-    return info.st_size
+def _file_size(handle, kernel):
+    try:
+        # The snapshot and Fontconfig require the same regular single-link disk file.
+        return _image_size(handle, kernel)
+    except ValueError:
+        raise _Rejected('Fontconfig input is not a regular single-link disk file') from None
 
 
-def _verified(path, size, expected, label):
-    # Read at most size+1 even if metadata is incorrect. The caller pins the
-    # file and ancestors, including across native reads of the private copy.
-    with path.open('rb') as stream:
-        data = stream.read(size + 1)
-    if len(data) != size or hashlib.sha256(data).hexdigest() != expected:
+class _HeldFile(NamedTuple):
+    handle: int
+    kernel: 'C.WinDLL'
+    size: int
+
+
+def _pin_file(stack, path, limit, *, exact=False):
+    # Retain the read-share-only OPEN_REPARSE_POINT handle; discard path lstat facts.
+    handle, _, kernel = stack.enter_context(pinned(path))
+    size = _file_size(handle, kernel)
+    if not 0 < size <= limit or (exact and size != limit):
+        raise _Rejected('Fontconfig input is outside its file size bounds')
+    return _HeldFile(handle, kernel, size)
+
+
+def _verified(held, expected, label, *, collect=False):
+    handle, kernel, size = held
+    if _file_size(handle, kernel) != size:
+        raise _Rejected(f'{label} byte identity mismatch')
+    seek = _bind(kernel, 'SetFilePointerEx', W.BOOL, W.HANDLE, C.c_int64, C.c_void_p, W.DWORD)
+    if not seek(handle, 0, None, 0):  # FILE_BEGIN, including the end revalidation pass
+        raise C.WinError(C.get_last_error())
+    read = _bind(kernel, 'ReadFile', W.BOOL, W.HANDLE, C.c_void_p, W.DWORD, C.POINTER(W.DWORD), C.c_void_p)
+    buffer, count = C.create_string_buffer(min(65536, size)), W.DWORD()
+    digest, data, remaining = hashlib.sha256(), bytearray() if collect else None, size
+    while remaining:
+        amount = min(len(buffer), remaining)
+        if not read(handle, buffer, amount, C.byref(count), None):
+            raise C.WinError(C.get_last_error())
+        if not 0 < count.value <= amount:
+            raise _Rejected(f'{label} byte identity mismatch')
+        block = buffer[:count.value]
+        digest.update(block)
+        if data is not None:
+            data.extend(block)
+        remaining -= count.value
+    if not read(handle, buffer, 1, C.byref(count), None):
+        raise C.WinError(C.get_last_error())
+    if count.value or _file_size(handle, kernel) != size or digest.hexdigest() != expected:
         raise _Rejected(f'{label} byte identity mismatch')
     return data
 
@@ -177,34 +213,212 @@ def _check_modules(kernel, directory=None):
                 raise _Rejected('Fontconfig DLL was not loaded from the verified snapshot')
 
 
-def _inspect(bundle, font, expected, index, sample):
-    # Worker-only. No Fontconfig config, registration, font directory search,
-    # caches, or Inkscape execution. The OS and CPython installation are trusted.
+_CATALOG_LEAVES = ('font0.ttc', 'font1.ttc', 'font2.ttf', 'font3.ttf')
+_CATALOG_COUNTS = (10, 10, 1, 1)
+_CATALOG_FAMILIES = tuple('Noto Sans ' + mono + 'CJK ' + region
+                          for mono in ('', 'Mono ') for region in ('JP', 'KR', 'SC', 'TC', 'HK'))
+_CATALOG_ROWS = frozenset(
+    (slot, index, family, (b'Regular', b'Bold')[slot], (80., 200.)[slot])
+    for slot in (0, 1) for index, family in enumerate(f.encode('ascii') for f in _CATALOG_FAMILIES)
+) | {(2, 0, b'DejaVu Sans', b'Book', 80.), (3, 0, b'DejaVu Sans', b'Bold', 200.)}
+
+
+def _expected_catalog_config(cwd):
+    # Independent allowlist, not an XML validator or the shell's config writer.
+    return ('<fontconfig><dir>' + escape((cwd / 'fonts').as_posix()) + '</dir><cachedir>'
+            + escape((cwd / 'font-cache').as_posix()) + '</cachedir></fontconfig>').encode('ascii')
+
+
+def _check_catalog_config(path):
+    expected = _expected_catalog_config(path.parent)
+    with path.open('rb') as stream:
+        if stream.read(len(expected) + 1) != expected:
+            raise _Rejected('Fontconfig fixed configuration byte mismatch')
+
+
+def _catalog_cache_name(cwd):
+    # The pinned build's unsalted directory-key convention, not a trust digest.
+    key = hashlib.md5((cwd / 'fonts').as_posix().encode('ascii'), usedforsecurity=False).hexdigest()
+    return key + '-le64.cache-9'
+
+
+def _require_empty_catalog_cache(cwd):
+    with os.scandir(cwd / 'font-cache') as entries:
+        if next(entries, None) is not None:
+            raise _Rejected('Fontconfig catalog cache is not empty')
+
+
+def _empty_catalog_cache(cwd):
+    # The caller holds the cache directory pinned and proved the worker settled.
+    # No recursive cleanup and no read or reuse of cache contents.
+    cache = cwd / 'font-cache'
+    name = _catalog_cache_name(cwd)
+    with os.scandir(cache) as entries:
+        entry = next(entries, None)
+        if entry is None:
+            return
+        if entry.name not in (name, name + '.NEW') or next(entries, None) is not None:
+            raise _Rejected('Fontconfig probe left unexpected cache entries')
+    with pinned(cache / entry.name, delete=True) as (handle, _, kernel):
+        tag = _handle_info(handle, kernel, 9, _AttributeTagInfo())
+        info = _handle_info(handle, kernel, 1, _StandardInfo())
+        forbidden = stat.FILE_ATTRIBUTE_REPARSE_POINT | stat.FILE_ATTRIBUTE_DIRECTORY | stat.FILE_ATTRIBUTE_DEVICE
+        if (tag.tag or tag.attributes & forbidden or info.directory or info.delete_pending
+                or info.links != 1 or not 0 <= info.size <= 256 * 1024):
+            raise _Rejected('Fontconfig probe left an invalid cache file')
+        discard = W.BOOL(True)  # FileDispositionInfo: delete this held file on close
+        if not kernel.SetFileInformationByHandle(handle, 4, C.byref(discard), C.sizeof(discard)):
+            raise _Rejected('Fontconfig probe cache file could not be removed')
+    with os.scandir(cache) as entries:
+        if next(entries, None) is not None:
+            raise _Rejected('Fontconfig probe cache is not empty after cleanup')
+
+
+def _catalog_string(address):
+    chars = C.cast(address, C.POINTER(C.c_ubyte))
+    for n in range(_MAX_TEXT + 1):
+        if not chars or not chars[n]:
+            if n:
+                return C.string_at(address, n)
+            break
+    raise _Rejected('Fontconfig catalog string is missing or exceeds its bound')
+
+
+def _catalog(library, cwd):
+    ptr, integer, string = C.c_void_p, C.c_int, C.c_char_p
+
+    class FontSet(C.Structure):  # public FcFontSet ABI, borrowed from config
+        _fields_ = [('nfont', integer), ('sfont', integer), ('fonts', C.POINTER(ptr))]
+
+    def bind(name, result, *args):
+        return _bind(library, name, result, *args)
+
+    def encoded(path):
+        return path.as_posix().encode('ascii')
+
+    destroy = bind('FcConfigDestroy', None, ptr)
+    config = bind('FcConfigCreate', ptr)()
+    if not config:
+        raise _Rejected('Fontconfig could not allocate a catalog configuration')
+    fonts, cfg, cache = cwd / 'fonts', cwd / 'fonts.conf', cwd / 'font-cache'
+    try:
+        if not bind('FcConfigParseAndLoad', integer, ptr, string, integer)(config, encoded(cfg), 1):
+            raise _Rejected('Fontconfig could not parse the fixed configuration')
+        get_next = bind('FcStrListNext', ptr, ptr)
+        done = bind('FcStrListDone', None, ptr)
+        for suffix, expected in (('ConfigFiles', cfg), ('FontDirs', fonts), ('CacheDirs', cache)):
+            paths = bind('FcConfigGet' + suffix, ptr, ptr)(config)
+            if not paths:
+                raise _Rejected('Fontconfig catalog configuration list unavailable')
+            try:
+                if _catalog_string(get_next(paths)) != encoded(expected) or get_next(paths):
+                    raise _Rejected('Fontconfig catalog configuration roots differ')
+            finally:
+                done(paths)
+        # FcSetSystem (0) names the configured set; no OS/global config init,
+        # no AppFont registrations and only the above verified private roots.
+        if not bind('FcConfigBuildFonts', integer, ptr)(config):
+            raise _Rejected('Fontconfig could not build the fixed catalog')
+        result = bind('FcConfigGetFonts', C.POINTER(FontSet), ptr, integer)(config, 0)
+        if not result:
+            raise _Rejected('Fontconfig catalog is unavailable')
+        fs = result.contents
+        if fs.nfont != len(_CATALOG_ROWS) or fs.sfont < fs.nfont or not fs.fonts:
+            raise _Rejected('Fontconfig catalog face count differs')
+        slots = {encoded(fonts / leaf): i for i, leaf in enumerate(_CATALOG_LEAVES)}
+        get_s = bind('FcPatternGetString', integer, ptr, string, integer, C.POINTER(ptr))
+        get_i = bind('FcPatternGetInteger', integer, ptr, string, integer, C.POINTER(integer))
+        get_w = bind('FcPatternGetDouble', integer, ptr, string, integer, C.POINTER(C.c_double))
+        remaining = set(_CATALOG_ROWS)
+        for n in range(fs.nfont):
+            pattern = fs.fonts[n]
+
+            def field(get, key, out):
+                if not pattern or get(pattern, key, 0, C.byref(out)) != 0:
+                    raise _Rejected('Fontconfig catalog face metadata is incomplete')
+                return out.value
+
+            # This build emits mixed slash spellings. Only convert separators;
+            # never open a returned path or collapse dots, case or aliases.
+            path = _catalog_string(field(get_s, b'file', ptr())).replace(b'\\', b'/')
+            if path not in slots:
+                raise _Rejected('Fontconfig catalog path is outside the staged set')
+            row = (slots[path], field(get_i, b'index', integer()),
+                   _catalog_string(field(get_s, b'family', ptr())),
+                   _catalog_string(field(get_s, b'style', ptr())), field(get_w, b'weight', C.c_double()))
+            if row not in remaining:
+                raise _Rejected('Fontconfig catalog face inventory differs')
+            remaining.remove(row)
+        return _CATALOG_COUNTS
+    finally:
+        destroy(config)
+
+
+def _catalog_inputs(stack, cwd, digests):
+    stack.enter_context(_pin_dir(cwd))
+    fonts, cache, cfg = cwd / 'fonts', cwd / 'font-cache', cwd / 'fonts.conf'
+    for path in (fonts, cache):
+        stack.enter_context(_pin_dir(path))
+    _, info, _, is_dir = stack.enter_context(_pin_entry(cfg))
+    if is_dir or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise _Rejected('Fontconfig fixed configuration is not a single-link file')
+    _check_catalog_config(cfg)
+    with os.scandir(cache) as entries:
+        if next(entries, None) is not None:
+            raise _Rejected('Fontconfig catalog cache is not initially empty')
+    required = set(_CATALOG_LEAVES)
+    with os.scandir(fonts) as entries:
+        for entry in entries:
+            if entry.name not in required:
+                raise _Rejected('Fontconfig staged catalog has an unexpected entry')
+            required.remove(entry.name)
+    if required:
+        raise _Rejected('Fontconfig staged catalog is incomplete')
+    verified = []
+    for leaf, sha in zip(_CATALOG_LEAVES, digests):
+        font = _pin_file(stack, fonts / leaf, _MAX_FONT)
+        _verified(font, sha, 'font')
+        verified.append((font, sha))
+    return verified
+
+
+def _inspect(bundle, font, expected, index, sample, *, catalog=None):
+    # Worker-only; standalone face mode does not parse config or scan dirs.
+    # The OS and CPython installation are trusted.
     kernel = _kernel()
     _bind(kernel, 'SetErrorMode', W.UINT, W.UINT)(0x0001 | 0x0002)  # no worker error dialogs
     if not _bind(kernel, 'SetDefaultDllDirectories', W.BOOL, W.DWORD)(_SYSTEM32):
         raise _Rejected('restricted Windows DLL search is unavailable')
     directory = Path.cwd()
-    bin_dir, font = _local_path(bundle) / 'inkscape' / 'bin', _local_path(font)
+    bin_dir = _local_path(bundle) / 'inkscape' / 'bin'
     with ExitStack() as stack:
         _pin_dirs(stack, bin_dir)
-        _pin_dirs(stack, font.parent)
         stack.enter_context(pinned(directory, directory=True))  # parent pins the ancestors
         inputs = [(bin_dir / name, name, size, sha, 'bundled DLL') for name, (size, sha) in _DLLS.items()]
-        font_name = 'font' + font.suffix.lower()
-        font_size = _pin_file(stack, font, _MAX_FONT)
-        inputs.append((font, font_name, font_size, expected, 'font'))
-        for source, name, size, sha, label in inputs:
-            if label == 'bundled DLL':
-                _pin_file(stack, source, size)
+        if catalog is None:
+            font = _local_path(font)
+            _pin_dirs(stack, font.parent)
+            font_name = 'font' + font.suffix.lower()
+            inputs.append((font, font_name, _MAX_FONT, expected, 'font'))
+        else:
+            cwd = _local_path(bundle) / 'shell'
+            staged = _catalog_inputs(stack, cwd, catalog)
+        copies = []
+        for path, name, limit, sha, label in inputs:
+            source = _pin_file(stack, path, limit, exact=label == 'bundled DLL')
+            data = _verified(source, sha, label, collect=True)
             with (directory / name).open('xb') as stream:
-                stream.write(_verified(source, size, sha, label))
-            _pin_file(stack, directory / name, size)
-            _verified(directory / name, size, sha, label)
+                stream.write(data)
+            del data
+            copy = _pin_file(stack, directory / name, source.size, exact=True)
+            _verified(copy, sha, label)
+            copies.append((source, copy, sha, label))
 
         # Do not search the original bin directory or allow other files in the
         # private load directory to stand in for OS imports.
-        expected_names = {*_DLLS, font_name}
+        expected_names = set(_DLLS)
+        if catalog is None:
+            expected_names.add(font_name)
         with os.scandir(directory) as entries:
             for entry in entries:
                 if entry.name not in expected_names:
@@ -220,15 +434,24 @@ def _inspect(bundle, font, expected, index, sample):
         version = _bind(library, 'FcGetVersion', C.c_int)()
         if version != 21701:
             raise _Rejected('unexpected pinned Fontconfig version')
-        face = _query(library, font_name, index, sample)
-        for source, name, size, sha, label in inputs:
-            _verified(directory / name, size, sha, label)
-            _verified(source, size, sha, label)
-        return {'fontconfig_version': version, 'fontconfig_sha256': _DLLS[_FONTCONFIG][1],
-                'font_sha256': expected, **face}
+        if catalog is None:
+            face = _query(library, font_name, index, sample)
+        else:
+            counts = _catalog(library, cwd)
+            _check_catalog_config(cwd / 'fonts.conf')
+            for font, sha in staged:
+                _verified(font, sha, 'font')
+        # Native code opens the fixed private names; these pins attest only disk bytes.
+        for source, copy, sha, label in copies:
+            _verified(copy, sha, label)
+            _verified(source, sha, label)
+        identity = {'fontconfig_version': version, 'fontconfig_sha256': _DLLS[_FONTCONFIG][1]}
+        if catalog is not None:
+            return {**identity, 'faces_by_file': counts}
+        return {**identity, 'font_sha256': expected, **face}
 
 
-def _run_worker(argv, directory, operation):
+def _run_worker(argv, directory, operation, *, deadline=None, kind='face'):
     system = C.create_unicode_buffer(512)
     n = _bind(_kernel(), 'GetSystemWindowsDirectoryW', W.UINT, W.LPWSTR, W.UINT)(system, len(system))
     if not 0 < n < len(system):
@@ -243,7 +466,10 @@ def _run_worker(argv, directory, operation):
     args = [str(python), '-IBS', '-c', bootstrap, str(Path(__file__).resolve().parents[2]), *argv]
     # Sorted allowlist; the buffer adds the second NUL for CreateProcessW.
     environment = C.create_unicode_buffer(f'SystemRoot={system.value}\0TEMP={directory}\0TMP={directory}\0')
-    deadline = time.monotonic() + _TIMEOUT + _SETTLE_RESERVE
+    if deadline is None:
+        deadline = time.monotonic() + _TIMEOUT + _SETTLE_RESERVE
+    elif time.monotonic() >= deadline - _SETTLE_RESERVE:
+        raise TimeoutError(f'Fontconfig {kind} check deadline expired before launch')
     operation.keep = True  # revoke scratch cleanup authority before launch can run a writer
     job, launched = None, False
 
@@ -251,7 +477,7 @@ def _run_worker(argv, directory, operation):
         try:
             job._close(deadline)  # exact root handle and Job accounting, not just root exit
         except OSError as error:
-            raise _Rejected('Fontconfig face worker Job settlement unconfirmed; scratch retained') from error
+            raise _Rejected(f'Fontconfig {kind} worker Job settlement unconfirmed; scratch retained') from error
         if launched:
             operation.keep = False
 
@@ -261,11 +487,11 @@ def _run_worker(argv, directory, operation):
             job._launch(args, subprocess.DEVNULL, subprocess.DEVNULL, cwd=str(directory), environment=environment)
             launched = True
         except OSError:
-            raise _Rejected('Fontconfig face worker launch not confirmed; scratch retained') from None
+            raise _Rejected(f'Fontconfig {kind} worker launch not confirmed; scratch retained') from None
         if not job._pump(deadline - _SETTLE_RESERVE):
-            raise _Rejected('Fontconfig face check timed out')
+            raise _Rejected(f'Fontconfig {kind} check timed out')
         if job.proc.returncode != 0:
-            raise _Rejected('Fontconfig face worker failed')
+            raise _Rejected(f'Fontconfig {kind} worker failed')
     except BaseException as primary:
         if job is not None:
             # Even a clean close cannot prove ownership if launch did not return.
@@ -278,13 +504,22 @@ def _run_worker(argv, directory, operation):
 
 
 def _worker():
-    bundle, font, sha, index, sample = sys.argv[1:]
+    args = sys.argv[1:]
+    kind = 'catalog' if args[0] == 'catalog' else 'face'
     try:
-        reply = {'face': _inspect(bundle, font, sha, int(index), json.loads(sample))}
+        if kind == 'catalog':
+            _, bundle, *digests = args
+            if _local_path(bundle) != Path.cwd().parent or len(digests) != len(_CATALOG_LEAVES):
+                raise _Rejected('Fontconfig catalog requires the fixed private staging layout')
+            result = _inspect(bundle, None, None, None, None, catalog=digests)
+        else:
+            bundle, font, sha, index, sample = args
+            result = _inspect(bundle, font, sha, int(index), json.loads(sample))
+        reply = {kind: result}
     except _Rejected as error:
         reply = {'error': str(error)}
-    except (OSError, UnicodeError):
-        reply = {'error': 'Fontconfig face check rejected an unreadable or invalid input'}
+    except (OSError, UnicodeError, ValueError):
+        reply = {'error': f'Fontconfig {kind} check rejected an unreadable or invalid input'}
     with Path(_REPLY).open('xb') as stream:
         stream.write(json.dumps(reply).encode('ascii'))
 
@@ -319,6 +554,15 @@ def inspect_face(portable_root, font_path, *, sha256, scratch, index=0, sample='
     or completion integration. ``sha256`` must come from a trusted caller, not
     from rehashing an arbitrary font before running this check.
     """
+    return _inspect_face(portable_root, font_path, sha256=sha256, scratch=scratch, index=index, sample=sample)
+
+
+def _inspect_face(portable_root, font_path, *, sha256, scratch, index, sample='', operation=None, deadline=None):
+    """The private raster caller shares its cleanup authority and absolute deadline."""
+    if operation is None:
+        operation = SimpleNamespace(keep=False)
+    elif operation.keep:
+        raise _Rejected('Fontconfig face check requires confirmed prior Job settlement')
     if sys.platform != 'win32' or sysconfig.get_platform() != 'win-amd64':
         raise _Rejected('face check requires Windows x64 Python')
     if type(sha256) is not str or not re.fullmatch(r'[0-9a-f]{64}', sha256):
@@ -331,26 +575,51 @@ def inspect_face(portable_root, font_path, *, sha256, scratch, index=0, sample='
     bundle, font, scratch = map(_local_path, (portable_root, font_path, scratch))
     if font.suffix.lower() not in {'.ttf', '.otf', '.ttc', '.otc'}:
         raise _Rejected('face check requires a TTF, OTF, TTC or OTC file')
+    argv = [str(bundle), str(font), sha256, str(index), json.dumps(sample)]
+    return _worker_reply(argv, scratch, operation, deadline, 'face')
+
+
+def _inspect_catalog(bundle, digests, *, operation, deadline):
+    # Only the private standard operation can supply the fixed sibling layout;
+    # no font/config/root selectors or standalone catalog API.
+    if operation.keep:
+        raise _Rejected('Fontconfig catalog check requires confirmed prior Job settlement')
+    if len(digests) != len(_CATALOG_LEAVES) or any(not re.fullmatch(r'[0-9a-f]{64}', d) for d in digests):
+        raise _Rejected('Fontconfig catalog requires four trusted font digests')
+    bundle = _local_path(bundle)
+    if (bundle / 'shell' != operation.inputs.cwd or bundle / 'inkscape' != operation.inputs.vendor
+            or not str(bundle).isascii()):
+        raise _Rejected('Fontconfig catalog requires the fixed private staging layout')
+    reply = _worker_reply(['catalog', str(bundle), *digests], bundle, operation, deadline, 'catalog')
+    expected = {'fontconfig_version': 21701, 'fontconfig_sha256': _DLLS[_FONTCONFIG][1],
+                'faces_by_file': list(_CATALOG_COUNTS)}
+    if reply != expected:
+        raise _Rejected('Fontconfig catalog reply differs from the fixed inventory')
+    return _CATALOG_COUNTS
+
+
+def _worker_reply(argv, scratch, operation, deadline, kind):
     stack = ExitStack()
-    with _after(stack.close, 'Fontconfig face scratch pins could not be released'):
+    with _after(stack.close, f'Fontconfig {kind} scratch pins could not be released'):
         _pin_dirs(stack, scratch)
         directory = Path(tempfile.mkdtemp(dir=scratch, prefix='vtx-fc-'))
-        operation = SimpleNamespace(keep=False)
 
         def remove():
             if not operation.keep:
                 shutil.rmtree(directory)
 
-        with _after(remove, 'Fontconfig face scratch removal failed'):
-            _run_worker([str(bundle), str(font), sha256, str(index), json.dumps(sample)], directory, operation)
+        with _after(remove, f'Fontconfig {kind} scratch removal failed'):
+            _run_worker(argv, directory, operation, deadline=deadline, kind=kind)
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(f'Fontconfig {kind} check deadline expired before reply')
             try:
                 with (directory / _REPLY).open('rb') as stream:
                     data = stream.read(_MAX_RESULT + 1)
             except OSError:
-                raise _Rejected('Fontconfig face reply could not be read') from None
+                raise _Rejected(f'Fontconfig {kind} reply could not be read') from None
             if len(data) > _MAX_RESULT:
-                raise _Rejected('Fontconfig face reply exceeds its bound')
+                raise _Rejected(f'Fontconfig {kind} reply exceeds its bound')
             reply = json.loads(data)
             if 'error' in reply:
                 raise _Rejected(reply['error'])
-            return reply['face']
+            return reply[kind]

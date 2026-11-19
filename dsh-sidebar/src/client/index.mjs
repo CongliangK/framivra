@@ -389,7 +389,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       }
     }
   }
-  async function refreshCommitted({ focusId, expectedRevision }) {
+  async function refreshCommitted({ focusId, expectedRevision, view }) {
     frameOwner.invalidate()
     task.current?.abort()
     const controller = new AbortController()
@@ -397,21 +397,24 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
     const sequence = ++readSequence.current
     const opened = state.opened
     const signal = AbortSignal.any([controller.signal, tab.signal])
-    // Neither authoritative read depends on the other's result. If one fails,
-    // cancel the sibling instead of blocking an already-applied edit on it.
-    const pair = new AbortController()
-    const readSignal = AbortSignal.any([signal, pair.signal])
-    let failure
-    const read = async (op, query) => {
-      try { return await control(sessionId, { op, grant: opened.grant, query }, readSignal) }
-      catch (error) {
-        if (!pair.signal.aborted || terminalGrantFailure(error?.message)) failure = error
-        pair.abort()
+    async function readBack() {
+      // Neither legacy read depends on the other; cancel its sibling on error.
+      const pair = new AbortController()
+      const readSignal = AbortSignal.any([signal, pair.signal])
+      let failure
+      const read = async (op, query) => {
+        try { return await control(sessionId, { op, grant: opened.grant, query }, readSignal) }
+        catch (error) {
+          if (!pair.signal.aborted || terminalGrantFailure(error?.message)) failure = error
+          pair.abort()
+        }
       }
+      const results = await Promise.all([read('inspect'), read('query', {})])
+      if (pair.signal.aborted) throw failure
+      return results
     }
-    const [snapshot, result] = await Promise.all([read('inspect'), read('query', {})])
+    const [snapshot, result] = view ? [view.snapshot, view.result] : await readBack()
     signal.throwIfAborted()
-    if (pair.signal.aborted) throw failure
     if (grant.current !== opened.grant || readSequence.current !== sequence || task.current !== controller) throw new Error('显示已切换，未确认刷新。')
     // Two matching reads can both be from a later, unrelated save.
     const consistent = typeof expectedRevision === 'string' && /^sha256:[0-9a-f]{64}$/.test(expectedRevision) &&

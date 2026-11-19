@@ -20,9 +20,10 @@ from . import timeline_write as _v2
 from .timeline_write import read_timeline_for_write, TimelineSnapshot
 from .timeline_edit import EDIT_OPERATION_FIELDS, EDIT_OPERATIONS, edit_summary, transform_timeline
 from .timeline_structure import (identity_errors, json_equal, managed_objects, strict_loads,
-                                 structure_errors, valid_id)
+                                 structure_errors, valid_id, _HistorySchemaMemo)
 
 _SCHEMA = "framivra.timeline.store/v1"
+EDIT_VIEW_WIRE_LIMIT = 8 * 1024 * 1024
 _OPERATIONS = ("create", "adopt", "replace", "apply", "edit", "undo")
 _PARENT_LOCK = ".vtx-store-parent.lock"
 # Deliberately no identity, track-name, references, extension paths or nested writes.
@@ -307,7 +308,18 @@ def _check(doc, *, managed=False):
         _fail("input.structure", "; ".join(errors[:20]))
 
 
-def _record(home, directory, target):
+def _evidence_document(payload, *, managed, checks):
+    if checks is None:
+        doc = strict_loads(payload)
+        _check(doc, managed=managed)
+    else:
+        doc, errors = checks.decode_checked(payload, managed=managed)
+        if errors:
+            _fail("input.structure", "; ".join(errors[:20]))
+    return doc
+
+
+def _record(home, directory, target, *, schema_memo=None):
     """Read *all* published evidence strictly; corruption is never a cache miss."""
     try:
         _regular(directory, directory=True)
@@ -343,13 +355,11 @@ def _record(home, directory, target):
         after = _read(directory / "after.bin")
         if _sha(before) != intent["before_revision"] or _sha(after) != intent["after_revision"]:
             raise ValueError("evidence SHA mismatch")
-        after_doc = strict_loads(after)
-        _check(after_doc, managed=True)
+        after_doc = _evidence_document(after, managed=True, checks=schema_memo)
         if after_doc["_vtx"] != {"protocol": 1, "project_id": intent["project_id"], "head": intent["op_id"]}:
             raise ValueError("intent/head mismatch")
-        before_doc = strict_loads(before) if before is not None else None
+        before_doc = _evidence_document(before, managed=False, checks=schema_memo) if before is not None else None
         if before_doc is not None:
-            _check(before_doc)
             if "_vtx" in before_doc and before_doc["_vtx"]["project_id"] != intent["project_id"]:
                 raise ValueError("project identity changed")
         if (before is None) != (intent["operation"] == "create"):
@@ -394,14 +404,14 @@ def _record(home, directory, target):
         _fail("recovery_required", "invalid history: " + str(error))
 
 
-def _history(home, target):
+def _history(home, target, *, schema_memo=None):
     records = {}
     for directory in sorted(home.iterdir()):
         if directory.name in ("manifest.json", "store.lock") or directory.name.startswith(".staging-"):
             continue
         if not directory.name.startswith("op-"):
             _fail("recovery_required", "unknown history entry: " + directory.name)
-        record = _record(home, directory, target)
+        record = _record(home, directory, target, schema_memo=schema_memo)
         op_id = record["intent"]["op_id"]
         if op_id in records:
             _fail("recovery_required", "duplicate operation")
@@ -511,11 +521,22 @@ def timeline_transaction(path, request):
     Returned error codes distinguish conflict, aborted, recovery_required and
     outcome_unknown. Retrying the same op never applies an operation twice.
     """
+    return _transaction(path, request, edit_view=False)
+
+
+def timeline_edit_view(path, request):
+    """Managed v1 edit with a bounded read view of its own committed bytes."""
+    return _transaction(path, request, edit_view=True)
+
+
+def _transaction(path, request, *, edit_view):
     operation = request.get("operation") if isinstance(request, dict) else None
     op_id = request.get("op_id") if isinstance(request, dict) else None
     replacing = False
     v2 = isinstance(request, dict) and "protocol" in request
     try:
+        if edit_view and (v2 or operation != "edit"):
+            _fail("input.request", "edit-view requires a managed v1 semantic edit request")
         if v2:
             request, digest = _v2.freeze_request(request)
         elif not isinstance(request, dict) or operation not in _OPERATIONS or not valid_id(op_id):
@@ -531,7 +552,10 @@ def timeline_transaction(path, request):
         target = _canonical(path)
         with _locked(target) as home:
             _checkpoint("locked")
-            records = _history(home, target)
+            records = (_history(home, target, schema_memo=_HistorySchemaMemo()) if edit_view
+                       else _history(home, target))
+            if edit_view and any(record["state"] == "pending" for record in records.values()):
+                _fail("recovery_required", "unresolved intent; explicit recover required before editing")
             _recover(home, target, records)
             _checkpoint("recovered")
             before = _read(target, missing=True)
@@ -543,6 +567,10 @@ def timeline_transaction(path, request):
             _checkpoint("read")
             replay = _idempotency_decision(records, op_id, digest, _sha(before))
             if replay is not None:
+                if edit_view:
+                    # The persisted receipt may predate the bounded transport.
+                    # Identity/result state are sufficient; never borrow a view.
+                    replay.pop("edit", None)
                 return replay
             revision = _sha(before)
             if request["base_revision"] != revision:
@@ -606,6 +634,21 @@ def timeline_transaction(path, request):
                 intent = dict(protocol=1, target=target.name, op_id=op_id, request_digest=digest,
                               operation=operation, before_revision=revision, after_revision=_sha(after),
                               project_id=after_doc["_vtx"]["project_id"], request=request, result=result)
+            if edit_view:
+                response = dict(result, current_revision=result["revision"], replayed=False)
+                # Prepare the full wire reply from exactly the staging bytes, not
+                # from a reopened path or an independently reconstructed document.
+                # Refuse an untransportable view before publishing this intent.
+                from .timeline import _inspect_query_bytes
+                if len(after) >= EDIT_VIEW_WIRE_LIMIT:
+                    _fail("edit.view_limit", "saved view exceeds the edit-view wire limit")
+                view = _inspect_query_bytes(after)
+                if not all(item["ok"] and item["content_version"] == result["revision"]
+                           for item in view.values()):
+                    _fail("edit.view_invalid", "saved bytes do not have a valid same-version read view")
+                response["view"] = view
+                if len(json.dumps(response, ensure_ascii=True, allow_nan=False)) + 1 > EDIT_VIEW_WIRE_LIMIT:
+                    _fail("edit.view_limit", "saved view exceeds the edit-view wire limit")
             directory = _publish_intent(home, target, intent, before, after)
             _checkpoint("intent_published")
             fd, name = tempfile.mkstemp(prefix=".vtx-timeline-", suffix=".tmp", dir=target.parent)
@@ -629,7 +672,7 @@ def timeline_transaction(path, request):
                 _checkpoint("parent_synced")
                 _publish_file(directory / "commit.json", _encode(result))
                 _checkpoint("committed")
-                return dict(result, current_revision=_sha(after), replayed=False)
+                return response if edit_view else dict(result, current_revision=_sha(after), replayed=False)
             finally:
                 staging.unlink(missing_ok=True)
     except (OSError, ValueError, TypeError, KeyError, RecursionError) as error:

@@ -115,15 +115,20 @@ def valid_id(value):
     return isinstance(value, str) and _ID.fullmatch(value) is not None
 
 
-def _schema_errors(value, schema, path=""):
+_SCHEMA_TYPES = {"object": lambda v: isinstance(v, dict), "array": lambda v: isinstance(v, list),
+                 "string": lambda v: isinstance(v, str), "integer": lambda v: type(v) is int,
+                 "number": lambda v: type(v) in (int, float), "boolean": lambda v: type(v) is bool}
+_SCHEMA_PATH = Path(__file__).with_name("timeline.schema.json")
+
+
+def _schema_errors(value, schema, path="", *, root_property=None):
     """Evaluate the vocabulary used by timeline.schema.json (no dependencies)."""
+    if not schema:
+        return []
     errors = []
     def add(message):
         errors.append((path or "/") + ": " + message)
-    types = {"object": lambda v: isinstance(v, dict), "array": lambda v: isinstance(v, list),
-             "string": lambda v: isinstance(v, str), "integer": lambda v: type(v) is int,
-             "number": lambda v: type(v) in (int, float), "boolean": lambda v: type(v) is bool}
-    if "type" in schema and not types[schema["type"]](value):
+    if "type" in schema and not _SCHEMA_TYPES[schema["type"]](value):
         add("expected " + schema["type"])
         return errors
     def equal(a, b):
@@ -143,9 +148,10 @@ def _schema_errors(value, schema, path=""):
         for key in schema.get("required", []):
             if key not in value:
                 add("missing " + key)
+        check = root_property or _schema_errors
         for key, sub in schema.get("properties", {}).items():
             if key in value:
-                errors.extend(_schema_errors(value[key], sub, path + "/" + key))
+                errors.extend(check(value[key], sub, path + "/" + key))
     if isinstance(value, list):
         if len(value) < schema.get("minItems", 0):
             add("too few items")
@@ -157,17 +163,69 @@ def _schema_errors(value, schema, path=""):
         if "pattern" in schema and re.search(schema["pattern"], value) is None:
             add("invalid string pattern")
     if type(value) in (int, float):
-        for key, test in (("minimum", lambda a, b: a < b), ("maximum", lambda a, b: a > b),
-                          ("exclusiveMinimum", lambda a, b: a <= b)):
-            if key in schema and test(value, schema[key]):
-                add("outside " + key)
+        if "minimum" in schema and value < schema["minimum"]:
+            add("outside minimum")
+        if "maximum" in schema and value > schema["maximum"]:
+            add("outside maximum")
+        if "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"]:
+            add("outside exclusiveMinimum")
     return errors
 
 
-def structure_errors(doc, *, require_managed=False, preserve_unmanaged=False):
+class _HistorySchemaMemo:
+    """One scan; reuse only successful local schema checks for identical JSON.
+
+    Root and cross-property rules, addresses, identities, bounds and evidence
+    are always checked afresh. Keep one bounded value per schema property.
+    """
+    def __init__(self):
+        self._text = self._schema = None
+        self._checked = {}
+        self._documents = {}
+
+    def _refresh(self):
+        text = _SCHEMA_PATH.read_text(encoding="utf-8")
+        if text != self._text:
+            self._text, self._schema = text, json.loads(text)
+            self._checked.clear()
+            self._documents.clear()
+
+    def decode_checked(self, payload, *, managed):
+        # Evidence files are independently read and SHA-checked by the store.
+        # Adjacent records can share exact bytes; do not infer adjacency by ID.
+        self._refresh()
+        doc = self._documents.get(payload)
+        if doc is not None and (not managed or "_vtx" in doc):
+            return doc, []
+        doc = strict_loads(payload)
+        errors = structure_errors(doc, require_managed=managed, _schema_memo=self)
+        if not errors and len(payload) <= 1024 * 1024:
+            if len(self._documents) == 32:
+                self._documents.pop(next(iter(self._documents)))
+            self._documents[payload] = doc
+        return doc, errors
+
+    def check(self, doc):
+        return _schema_errors(doc, self._schema, root_property=self._property)
+
+    def _property(self, value, schema, path):
+        # The strict decoder returns only JSON builtins. Serialization, unlike
+        # Python equality, distinguishes bool/int/float and preserves contents.
+        if not isinstance(value, (dict, list)):
+            return _schema_errors(value, schema, path)
+        frozen = json.dumps(value, ensure_ascii=True, allow_nan=False, separators=(",", ":"))
+        if frozen == self._checked.get(path):
+            return []
+        errors = _schema_errors(value, schema, path)
+        if not errors and len(frozen) <= 1024 * 1024:
+            self._checked[path] = frozen
+        return errors
+
+
+def structure_errors(doc, *, require_managed=False, preserve_unmanaged=False, _schema_memo=None):
     """Schema + stored bounds/EDL/references/IDs; NOT renderability validation."""
-    schema = json.loads(Path(__file__).with_name("timeline.schema.json").read_text(encoding="utf-8"))
-    errors = _schema_errors(doc, schema)
+    errors = (_schema_memo.check(doc) if _schema_memo is not None else
+              _schema_errors(doc, json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))))
     errors.extend(identity_errors(doc, require_managed=require_managed,
                                   preserve_unmanaged=preserve_unmanaged))
     result = {"document": doc, "ok": True, "diagnostics": []}

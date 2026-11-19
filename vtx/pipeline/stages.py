@@ -664,7 +664,7 @@ def prepare(c: Ctx, *, publish_receipt=True):
 
 
 # ---------------------------------------------------------------- audio
-def _audio_graph(c: Ctx, win=None, margin_frames: int = 60):
+def _audio_graph(c: Ctx, win=None, margin_frames: int = 60, *, direct_pcm=None):
     """构建多轨混音 filtergraph（区间渲染与整片 build_audio 共用，唯一实现）。
 
     win=None：与现行全片行为逐字一致（全部事件、apad 补齐成片全长）。
@@ -675,6 +675,9 @@ def _audio_graph(c: Ctx, win=None, margin_frames: int = 60):
     自动跳过（sidechaincompress 需要双流齐备，缺流会让 ffmpeg 挂起解析）。
     返回 (cmd_inputs, chains, n_ev, duck_used)：cmd_inputs = 输入参数片段列表。
     """
+    if direct_pcm and (win is None or getattr(c, '_core_only_preview', False) is not True
+                       or getattr(c, '_visual_bgm', None) is not None):
+        raise ValueError('direct PCM requires an isolated core-only window')
     atracks = c.tl["audio_tracks"]
     # v2 §2.2 缝 B 挂载点：构建 filtergraph 前对全量 tracks 的纯内存 events 变换
     # （duck-static 型插件；无插件注册 = 原样恒等，P1-2 空转零行为变化）。
@@ -693,8 +696,9 @@ def _audio_graph(c: Ctx, win=None, margin_frames: int = 60):
     def _wav(sid: str) -> Path:
         if sid not in wav_of:
             p = _plugin_hooks.resolve_source_wav(c, sid)
-            wav_of[sid] = Path(p) if p is not None else \
-                c.cache / "audio" / f"{audio_key(c, sid)}.wav"
+            direct = direct_pcm.get(sid) if direct_pcm else None
+            wav_of[sid] = (Path(p) if p is not None else direct.path if direct is not None else
+                           c.cache / "audio" / f"{audio_key(c, sid)}.wav")
         return wav_of[sid]
 
     evs = [(ti, tr, e) for ti, tr in enumerate(atracks) for e in tr["events"] if inside(e)]
@@ -758,7 +762,7 @@ def _audio_graph(c: Ctx, win=None, margin_frames: int = 60):
     return cmd, chains, len(evs), duck_used
 
 
-def mix_audio_wav(c: Ctx, out_wav: Path, win=None, gain_override=None):
+def mix_audio_wav(c: Ctx, out_wav: Path, win=None, gain_override=None, *, direct_pcm=None):
     """两遍响度混音（共用执行体）：第一遍 ebur128 实测原始混音 I，第二遍施加恒定
     静态增益到目标响度（单遍 dynamic loudnorm 长节目塌陷，见 build_audio 注）。
     输出链内置 alimiter 采样限幅（v2 §1.2，2026-09-13 吸收 post_loudness.py）：
@@ -773,7 +777,9 @@ def mix_audio_wav(c: Ctx, out_wav: Path, win=None, gain_override=None):
     gain_override：外部指定静态增益（区间预览用——窗口局部内容响度 ≠ 全片响度，
     窗口自测增益会把安静段放大到削波；复用整片回执里的 gain_db 保持听感一致，
     且省一遍 ebur128 测量）。返回 (gain, raw_i, n_ev, duck_used)。win 语义见 _audio_graph。"""
-    cmd, chains, n_ev, duck_used = _audio_graph(c, win)
+    for source in (direct_pcm or {}).values():
+        source.verify()
+    cmd, chains, n_ev, duck_used = _audio_graph(c, win, direct_pcm=direct_pcm)
     gain = 0.0
     raw_i = None
     if gain_override is not None:
@@ -787,6 +793,8 @@ def mix_audio_wav(c: Ctx, out_wav: Path, win=None, gain_override=None):
         if not mI: print("✗ 原始混音响度测量失败"); sys.exit(1)
         raw_i = float(mI.group(1)); gain = TARGET_LUFS - raw_i
         print(f"  原始混音 I={raw_i:.1f} LUFS → 静态增益 {gain:+.1f}dB")
+        for source in (direct_pcm or {}).values():
+            source.verify()  # Before the second FFmpeg open of the path.
     c.run(cmd + ["-filter_complex", ";".join(chains[:-1] + [chains[-1] + f",volume={gain:+.2f}dB,aformat=sample_fmts=s16,alimiter=limit=0.599:level=false:latency=true[aout]"]),
                  "-map", "[aout]", "-c:a", "pcm_s16le", "-ar", "48000", str(out_wav)])
     return gain, raw_i, n_ev, duck_used

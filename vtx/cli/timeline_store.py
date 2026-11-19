@@ -3,7 +3,8 @@ import json
 import sys
 from pathlib import Path
 
-from ..timeline_store import (timeline_transaction, timeline_store_status,
+from ..timeline_store import (EDIT_VIEW_WIRE_LIMIT, timeline_edit_view,
+                              timeline_transaction, timeline_store_status,
                               timeline_store_capabilities, timeline_write_plan)
 from ..timeline_structure import strict_loads
 
@@ -17,11 +18,12 @@ def run_store_command(args, parser):
     extra = args.subs_extra
     has_request = args.request is not None or args.request_stdin
     usage = unused or (args.request is not None and args.request_stdin) or (
-        has_request and extra not in ([], ["plan"])) or (
+        has_request and extra not in ([], ["plan"], ["edit-view"])) or (
+        extra == ["edit-view"] and not args.request_stdin) or (
         not has_request and extra not in (["status"], ["recover"], ["capabilities"]))
     if usage:
         result = dict(schema="framivra.timeline.store/v1", ok=False, code="cli.arguments",
-                      message="use store [plan] (--request PATH | --request-stdin) | store status | store recover | store capabilities; no render/dry-run flags")
+                      message="use store [plan] (--request PATH | --request-stdin) | store edit-view --request-stdin | store status | store recover | store capabilities; no render/dry-run flags")
         code = 2
     else:
         if has_request:
@@ -36,7 +38,7 @@ def run_store_command(args, parser):
                 else:
                     payload = Path(args.request).expanduser().read_bytes()
                 request = strict_loads(payload)
-                if isinstance(request, dict) and request.get("protocol") == 2 and request.get("payload_mode") == "exact-import":
+                if extra != ["edit-view"] and isinstance(request, dict) and request.get("protocol") == 2 and request.get("payload_mode") == "exact-import":
                     # Explicit file only (no stdin, URLs, dirs, symlink or hardlink
                     # leaves). Freeze once before digest/lock; journal has bytes,
                     # not a mutable source path. Relative to caller cwd.
@@ -48,14 +50,27 @@ def run_store_command(args, parser):
                     if not isinstance(payload_file, str) or not payload_file:
                         raise ValueError("payload_file must be a nonempty local file path")
                     request["raw_bytes"] = _read(_canonical(payload_file))
-                result = (timeline_write_plan if extra == ["plan"] else timeline_transaction)(args.timeline, request)
+                execute = {"plan": timeline_write_plan, "edit-view": timeline_edit_view}.get(
+                    extra[0] if extra else None, timeline_transaction)
+                result = execute(args.timeline, request)
             except (OSError, ValueError, UnicodeError, RecursionError) as error:
                 result = dict(schema="framivra.timeline.store/v1", ok=False, code="input.request", message=str(error))
         elif extra == ["capabilities"]:
             result = dict(timeline_store_capabilities(), request_transport={
-                "stdin": {"flag": "--request-stdin", "max_bytes": _REQUEST_MAX_BYTES}})
+                "stdin": {"flag": "--request-stdin", "max_bytes": _REQUEST_MAX_BYTES}},
+                edit_view={"command": "edit-view", "read_schema": "framivra.timeline.read/v1",
+                           "wire_limit_bytes": EDIT_VIEW_WIRE_LIMIT, "preload_stdin": True})
         else:
             result = timeline_store_status(args.timeline, recover=extra == ["recover"])
         code = 0 if result["ok"] else 1
-    print(json.dumps(result, ensure_ascii=True, allow_nan=False))
+    text = json.dumps(result, ensure_ascii=True, allow_nan=False)
+    if extra == ["edit-view"] and len(text) + 1 > EDIT_VIEW_WIRE_LIMIT:
+        # Fresh success is preflighted by the store. Bound even pathological
+        # rejection diagnostics without turning a possible commit into refusal.
+        result = dict(schema="framivra.timeline.store/v1", ok=False,
+                      code="outcome_unknown" if result["ok"] else result["code"],
+                      message="edit-view response exceeded the wire limit")
+        text = json.dumps(result)
+        code = 1
+    print(text)
     return code

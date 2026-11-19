@@ -4,7 +4,7 @@
 
 - timeline.json/素材→帧精确视频/混音/QC/缓存；[内核](<vtx/>)永不可关
 - [应用](<apps/>)产素材/辅助结果；[插件](<plugins/>)扩时间线，启用不忽略依赖/失败；已知不可用声明先于 probe 拒绝，源声明在 prepare/range 裸缓存前同拒。
-- [侧栏](<dsh-sidebar/README.md>)独立发行：完整合成非单页，预览共用整数播放头、成片联动非合成证书；单行工具栏，帧步进与轨道高度在时间线；字幕轨置顶与轨高/专注视图只改显示；宽屏文件列表独立滚动；单帧拒绝其他插件，官方 BGM 仅作无声画面引用、不执行；HTML信任≠沙箱；拖动复用已保存片段视图；启用直接剪辑后松手走内核预检/CAS，双读均匹配内核回执版本才恢复监看，非法保留原位；吸附/闭合同轨空隙不改时基或他轨；授权/历史在顶栏，恢复确认且同版读回后才清底部待恢复提示，模型工具只读不代理写入；会话草稿只附 ≤300 字符的定位摘要，不发送。
+- [侧栏](<dsh-sidebar/README.md>)独立发行：完整合成非单页，预览共用整数播放头、成片联动非合成证书；单行工具栏，帧步进与轨道高度在时间线；字幕轨置顶与轨高/专注视图只改显示；宽屏文件列表独立滚动；单帧拒绝其他插件，官方 BGM 仅作无声画面引用、不执行；HTML信任≠沙箱；拖动复用已保存片段视图；启用直接剪辑后松手走内核校验/CAS，新内核单事务返回已提交字节同版本视图，旧内核走计划/提交/双读且均匹配回执，非法保留原位；吸附/闭合同轨空隙不改时基或他轨；授权/历史在顶栏，恢复确认且同版读回后才清底部待恢复提示，模型工具只读不代理写入；会话草稿只附 ≤300 字符的定位摘要，不发送。
 - 侧栏按宿主与内核能力分开报告读、整帧与事务；Windows 不把静态协议声明或成片播放当成内核帧合成、写入资格。
 - [空间管理](<docs/reference/storage-api.md>)删除权归内核；清理须独立确认停写，不向模型开放。
 - macOS授权见接口；目录fd≠proc-fd Path；单帧须全输入前后复核；环境文件批查仅复用本次目录前缀并前后核验，仍重枚举/哈希/查链接；Linux缺RECORD只认元数据所属RPM清单。
@@ -25,7 +25,7 @@
 - 离线体检：`env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor`；联网会fetch 写入。
 - 链接预演：`python3 vt.py --fix-links --dry`；实改前核对目标/权限。
 - 渲染：`python3 vtx/vtx.py -t <timeline.json> all`（写缓存/产物）；前置见[交付链](<docs/skill/references/edit.md>)。
-- 测试：本机 Linux / DSH 全量、侧栏 DOM 与真实工具回归一律用[本机限额入口](<CONTRIBUTING.md#本机-linux先隔离再运行>)；组 OOM 后停止重跑，由人工排查并确认。其他平台、局部选测见[贡献指南](<CONTRIBUTING.md#测试入口>)。
+- 测试：本机 Linux / DSH 全量、侧栏 DOM 与真实工具回归一律用[本机限额入口](<CONTRIBUTING.md#本机-linux先隔离再运行>)；组 OOM 后停止重跑，由人工排查并确认；复验显式使用事故时的限额。其他平台、局部选测见[贡献指南](<CONTRIBUTING.md#测试入口>)。
 - 文档必跑：`bash scripts/doc_gates.sh`；报告 PASS/FAIL/SKIP/UNRUN；冒烟、语法检查不等于业务或全量验证。
 
 ## 写态红线
@@ -51,16 +51,18 @@
 ## 基线与性能
 
 - 唯一主基线：30秒/900帧/1080p30 SVG；禁用退役12秒基线，探针不替主片。
-- [Windows SVG 读输入](<vtx/render/gfx_svg_win_input.py>)先验原始相对声明，依赖并集用 `/` 并核对精确路径；仅接受调用方授权的稳定项目根与直连固定 NTFS 映射，句柄逐级拒绝重解析，同一文件句柄验单链接并限量读取；不授 Windows SVG 渲染资格。
+- Windows SVG：[生产身份](<vtx/render/gfx_svg.py>)未获验证即在 PATH/缓存查找前拒绝，不回退内部验收；[锚读](<vtx/render/gfx_svg_win_input.py>)仅认授权稳定根及直连固定 NTFS，原始相对声明先验后并集（`/`、精确路径），逐级拒重解析、同句柄限量验单链接。
 - [Windows SVG-only 回执](<vtx/cache/cache_state.py>)的清单和声明依赖字节沿用项目根句柄读取与限额；缺失、拒读或无法读取均直接失败，不记 MISSING 或回退；不是原子指纹。[影响分析](<vtx/inspection/impact.py>)用调用方原始根和精确相对名复核已观测的 SVG 文件，不以报表绝对路径代替，也不作原子快照。
-- [Windows Fontconfig 检查](<vtx/render/gfx_svg_win_fontconfig.py>)在私有 Job 中用固定官方 DLL 快照查单个已知字体 face；启动所有权或结算未证则不读回执、不删暂存；不证明闭包、渲染或产物资格。
-- [Windows SVG 快照](<vtx/render/gfx_svg_win_snapshot.py>)先用目录句柄拒绝重解析和物理重叠，再核验独占包树；核验入口不启动进程。[内部验收](<vtx/render/gfx_svg_win_shell.py>)仅以固定官方 `.com` 验几何或锁字体文本单帧、固定 180 帧几何序列及 portable-v2 固定 1080p `f0135`（句柄锚定读取并锁定 SVG 和字体字节）；逐帧验像素，期限内未证 Job 结算则不读 PNG、不删操作目录；不证明加载域、成片、缓存或发布资格。
+- [Windows Fontconfig 检查](<vtx/render/gfx_svg_win_fontconfig.py>)私有 Job 以固定官方 DLL 快照查单 face；900 帧另核对私有字体集四文件的 22 个 face 及索引，结算后清空探针缓存再启动 Inkscape。DLL 与字体用各自只共享读的原句柄限量验单链接和摘要，复制只写已验字节；不证映射字节、渲染选字、加载闭包或产物资格。启动所有权或结算未证不读回执、不删暂存。
+- [Windows SVG 快照](<vtx/render/gfx_svg_win_snapshot.py>)目录句柄拒重解析/物理重叠，验独占包树，不启进程。[内部验收](<vtx/render/gfx_svg_win_shell.py>)固定官方 `.com` 验几何/锁字体单帧、180 帧几何及 portable-v2 `f0135`/900 帧（句柄锚定、锁 SVG/字体）。900 帧锚读锁定时间线/清单及固定声明依赖（声明不选路径、非原子），生产静检、同快照查暂存字体 face；同上下文验版本/资源根及首个 stdout 整行后的根进程活映像路径（包 bin 精确匹配整树验真并持有的只读文件，System32/WinSxS 默认不验文件身份）；同原句柄逐模块用独立卷映射核对 loader 名与 VM 映射名，只在原枚举基址查元数据，要求已提交映像及分配/区域基址一致；对获验的 System32/WinSxS 相对名称集合返版本化摘要；仅可信内部审计可传入冻结字面清单，[验收](<vtx/render/gfx_svg_win_system.py>)在首个 worker 前持有系统盘文件并限量验字节，结算后比对路径集合及按原句柄复核，不更新信任；逐帧验像素，仅返摘要。Job 结算未证不读结果、不删操作目录；路径相符不证映射对象或字节、字形选择、瞬时/子进程/最终加载、成片、缓存或发布资格。
+- [Windows SVG PE](<vtx/render/gfx_svg_win_imports.py>)锚读已验包树固定根的 AMD64 普通/延迟声明（非绑定 IAT），可精确匹配 bin 候选导出。转发链另限调用方逐边选定的原句柄；无选址回退、循环或歧义即拒，不授加载闭包、缓存或生产资格。
+- [Windows SVG 本机目录签名](<vtx/render/gfx_svg_win_catalog.py>)仅限可信内部 900 调用方按冻结磁盘范围逐文件指定 CatRoot basename 和原句柄 SHA-256 Authenticode 摘要，可选签名者 DER 指纹；首个 worker 前以离线 WinTrust 验成员，不枚举目录签名；传目录签名路径而非句柄，不证提供者重读成员，不查吊销或授产品、缓存、QC 资格。
 - [SVG shell](<vtx/render/gfx_svg_stage.py>) 即使退出成功也拒收明确的 Fontconfig error / Pango-CRITICAL，不发布完成凭据；该诊断只报告固定短错误，不回显日志，普通警告不拒收。
 - portable-v2 基线仅用 `scripts/demo.py prepare/verify`；锁字体与标准库音频，禁混旧输入；预检不授渲染资格，见[SVG 基线](<templates/demo-timeline-svg/README.md>)。
 - [可编辑主 Demo](<templates/demo-workbench/README.md>)同源生成 SVG/HTML，默认由主时间线直引乐谱 JSON，不提交音频；CDP、CEF 与 Inkscape 验收不代替安装、冻结与性能基线。
 - [portable-v2 锁定运行时源](<templates/demo-timeline-svg/benchmark/portable-v2.json>)须以 LF 检出（含 Windows）；[属性规则](<.gitattributes>)仅补齐既有 Python 规则未覆盖的锁成员，核验仍按原始字节。
 - 同输入/质量/环境/后端/配置分冷暖测全链；留身份/哈希/证据；未测UNRUN，探针非整体提速；SVG有界调度/串行回退见[缓存](<docs/cache-provenance.md#产物身份>)。
 - [事件](<docs/reference/execution-events.md>)跨阶段回执绑定实际嵌套任务，区间不相加冒充墙钟。
-- [区间渲染](<vtx/pipeline/range.py>)的普通视频仅预编码与窗口相交的原 clip；切点仍取全片，图形核验与正式成片不随之裁剪。
-- 帧率由[constraints](<vtx/pipeline/constraints.py>)统一；FFmpeg用精确时基，音频按绝对帧端点取采样；正式/区间concat共用端点，不以容器或总帧数替代时钟判据。
+- [区间渲染](<vtx/pipeline/range.py>)只预编码相交普通片，切点取全片，draft 全验图形；内部原尺寸窗口限已验上下文与独占目录，共用合成/混音，仅直读确证的 48kHz 双声道 PCM，其余正常抽取；拒活动插件及相交 GFX，不授正式回执或宿主播放资格。GFX 单帧/有界区间共用暖读认证，坏包不降级。
+- 帧率由[constraints](<vtx/pipeline/constraints.py>)统一；FFmpeg用精确时基，音频按绝对帧端点取采样；正式/区间concat共用端点；原尺寸区间 MP4 的 movie 时基取帧率分子与 48 kHz 的最小公倍数，回归核验呈现时间戳和音频终点，不只数帧。
 - [CEF 帧证明](<experiments/gfx_cef_worker/README.md>)的拒收/非推进回调只能计账，不得推进 signed 阶段、冻结候选或写输出；推进须 owned 快照及对应绘制后 JS 围栏，保留完整见证/字节 veto；修复须重编并绑定 worker 二进制身份。

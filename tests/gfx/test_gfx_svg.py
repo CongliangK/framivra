@@ -6,6 +6,7 @@ import os
 import stat
 import json
 import subprocess
+import sys
 import sysconfig
 import tempfile
 import unittest
@@ -24,7 +25,8 @@ from vtx.pipeline.infra import Ctx
 from tests._support import temporary_root
 from tests.gfx._png import png, write_png
 
-REAL_ENGINE_IDENTITY = gfx_svg.engine_identity
+POSIX_RUNTIME = gfx_svg._PosixRuntimeIdentity
+REAL_ENGINE_IDENTITY = POSIX_RUNTIME.engine_identity
 
 ENGINE = {'name': 'inkscape', 'version': 'Inkscape test', 'executable': '/test/inkscape', 'sha256': 'e' * 64}
 SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080"><rect width="100" height="100" fill="red"/></svg>'
@@ -33,11 +35,15 @@ SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBo
 class SvgContract(unittest.TestCase):
     def setUp(self):
         self.root = temporary_root(self)
-        self.engine = mock.patch.object(gfx_svg, 'engine_identity', return_value=ENGINE)
+        if sys.platform not in ('linux', 'darwin'):
+            scope = mock.patch.object(gfx_svg, '_runtime_identity_scope',
+                                      side_effect=lambda: contextlib.nullcontext(POSIX_RUNTIME()))
+            scope.start(); self.addCleanup(scope.stop)
+        self.engine = mock.patch.object(POSIX_RUNTIME, 'engine_identity', return_value=ENGINE)
         self.engine.start(); self.addCleanup(self.engine.stop)
         for method, value in [('fontconfig_identity', {'executable': '/test/fc-scan', 'version': 'fontconfig test', 'sha256': 'f'*64}),
-                              ('_font_faces', [{'family': 'test', 'style': 'Regular', 'index': 0}])]:
-            patch = mock.patch.object(gfx_svg, method, return_value=value)
+                              ('font_faces', [{'family': 'test', 'style': 'Regular', 'index': 0}])]:
+            patch = mock.patch.object(POSIX_RUNTIME, method, return_value=value)
             patch.start(); self.addCleanup(patch.stop)
         self.clip = dict(format='svg-sequence', src='manifest.json', dst_in=9, dur=2)
         self.manifest = dict(format=gfx_svg.FORMAT, fps=30, width=1920, height=1080,
@@ -253,7 +259,7 @@ class SvgContract(unittest.TestCase):
     def test_windows_impact_marks_conflicting_png_source_key_unknown(self):
         from vtx.inspection.impact import capture
 
-        with mock.patch.object(gfx_svg, 'engine_identity', side_effect=[ENGINE, dict(ENGINE, version='later')]):
+        with mock.patch.object(POSIX_RUNTIME, 'engine_identity', side_effect=[ENGINE, dict(ENGINE, version='later')]):
             snapshot = capture(self.timeline, self.root)
         self.assertIsNone(snapshot['nodes']['clip:0:0']['key'])
         self.assertTrue(any('PNG source identity differs' in w.get('detail', '')
@@ -271,7 +277,7 @@ class SvgContract(unittest.TestCase):
         (self.root / 'font.ttf').write_bytes(b'font-version-two')
         self.assertNotEqual(old, gfx_key(c, self.clip))
         old = gfx_key(c, self.clip)
-        with mock.patch.object(gfx_svg, 'engine_identity', return_value={**ENGINE, 'version': 'Inkscape next'}):
+        with mock.patch.object(POSIX_RUNTIME, 'engine_identity', return_value={**ENGINE, 'version': 'Inkscape next'}):
             self.assertNotEqual(old, gfx_key(c, self.clip))
 
     def test_text_needs_explicit_fonts(self):
@@ -410,7 +416,7 @@ class SvgContract(unittest.TestCase):
                 def render_with_identity(*args, **kwargs):
                     render(*args, **kwargs)
                     if mode == 'identity-changed': identity.return_value = dict(ENGINE, version='changed')
-                with mock.patch.object(gfx_svg, 'engine_identity', identity), \
+                with mock.patch.object(POSIX_RUNTIME, 'engine_identity', identity), \
                      mock.patch.object(gfx_svg_stage, 'run_shell', side_effect=render_with_identity), \
                      mock.patch.object(gfx_svg_stage, 'copy_png', side_effect=copying):
                     if mode in ('input-changed', 'identity-changed'):
@@ -537,7 +543,7 @@ class SvgContract(unittest.TestCase):
     def test_runtime_library_digest_changes_identity(self):
         engine = self.root/'engine.bin'; engine.write_bytes(b'ordinary engine fixture')
         libraries = {'libgraphics.so': {'path': 'ordinary library fixture', 'sha256': '1'*64}}
-        with mock.patch.object(gfx_svg,'engine_identity',side_effect=REAL_ENGINE_IDENTITY), \
+        with mock.patch.object(POSIX_RUNTIME,'engine_identity',side_effect=REAL_ENGINE_IDENTITY), \
              mock.patch.object(gfx_svg,'inkscape_executable',return_value=str(engine)), \
              mock.patch.object(gfx_svg,'runtime_libraries',return_value=libraries), \
              mock.patch.object(gfx_svg,'_version',return_value='Inkscape fixture'):
@@ -697,7 +703,7 @@ class SvgContract(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError): source.require_ready(0,1)
             with self.subTest(input_args=name), self.assertRaises(ValueError): source.input_args(0,1)
             path.write_bytes(original)
-        with mock.patch.object(gfx_svg,'engine_identity',return_value={**ENGINE,'version':'Inkscape next'}):
+        with mock.patch.object(POSIX_RUNTIME,'engine_identity',return_value={**ENGINE,'version':'Inkscape next'}):
             with self.assertRaises(ValueError): source.require_ready(0,1)
         source.require_ready(0,1)
 
@@ -786,6 +792,46 @@ class SvgContract(unittest.TestCase):
             self.assertNotIn('黑场',output.getvalue())
             self.assertFalse(hasattr(c,'_svg_consumer_sources'))
 
+@unittest.skipUnless(sys.platform == 'win32', 'native Windows production admission')
+class WindowsSvgProductionAdmission(unittest.TestCase):
+    def test_ctx_rejects_before_tool_or_cache_lookup(self):
+        root = temporary_root(self).resolve()
+        timeline = root / 'timeline.json'
+        timeline.write_text(json.dumps(dict(version=2, sources=[], subtitles=[], audio_tracks=[],
+            project=dict(fps=30, width=1920, height=1080, duration_frames=1),
+            video_tracks=[dict(name='graphics', kind='gfx', clips=[
+                dict(format='svg-sequence', src='manifest.json', dst_in=0, dur=1)])])), encoding='utf-8')
+        manifest = root / 'manifest.json'
+        record = dict(format=gfx_svg.FORMAT, fps=30, width=1920, height=1080,
+                      frame_count=1, frames=['frame.svg'])
+        (root / 'frame.svg').write_text(SVG, encoding='utf-8')
+        diagnostics = []
+
+        def monitor_path(operation):
+            def checked(path, *args, **kwargs):
+                if any(path.is_relative_to(root / name) for name in ('cache', 'out')):
+                    self.fail('cache or output path accessed before admission')
+                return operation(path, *args, **kwargs)
+            return checked
+
+        with mock.patch.object(gfx_svg.shutil, 'which', side_effect=AssertionError('tool discovery')), \
+             mock.patch.object(subprocess, 'Popen', side_effect=AssertionError('tool launch')), \
+             mock.patch.object(Path, 'open', monitor_path(Path.open)), \
+             mock.patch.object(Path, 'stat', monitor_path(Path.stat)), \
+             mock.patch('vtx.pipeline.infra.receipt_fingerprint', side_effect=AssertionError('receipt pin')):
+            manifest.write_text(json.dumps(dict(record, frame_count=2)), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, r'manifest\.frame_count'):
+                Ctx(timeline, diagnostics=diagnostics)
+            self.assertEqual(diagnostics[-1]['rule_id'], 'load.svg_sequence')
+            self.assertEqual(diagnostics[-1]['json_path'], '$.video_tracks[0].clips[0].src')
+            manifest.write_text(json.dumps(record), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'Windows production runtime identity'):
+                Ctx(timeline)
+            with self.assertRaisesRegex(ValueError, 'Windows production runtime identity'):
+                gfx_svg.engine_identity()
+        self.assertEqual({item.name for item in root.iterdir()}, {'timeline.json', 'manifest.json', 'frame.svg'})
+
+
 class LinuxSvgRuntimeDigest(unittest.TestCase):
     """Fresh ldd closure every call, shared byte facts only for runtime files."""
     def setUp(self):
@@ -812,8 +858,8 @@ class LinuxSvgRuntimeDigest(unittest.TestCase):
     def test_shared_libraries_skip_only_unchanged_bytes_not_ldd(self):
         with mock.patch.object(gfx_svg.subprocess, 'run', return_value=self.result) as ldd, \
                 mock.patch.object(self.checked, 'file_digest', wraps=self.checked.file_digest) as read:
-            first = gfx_svg.engine_identity(), gfx_svg.fontconfig_identity()
-            second = gfx_svg.engine_identity(), gfx_svg.fontconfig_identity()
+            first = gfx_svg.engine_identity(), POSIX_RUNTIME.fontconfig_identity()
+            second = gfx_svg.engine_identity(), POSIX_RUNTIME.fontconfig_identity()
         self.assertEqual(first, second)
         self.assertEqual(ldd.call_count, 4)
         self.assertEqual(read.call_count, 12 if os.name == 'nt' else 4)
@@ -914,6 +960,36 @@ class LinuxSvgRuntimeDigest(unittest.TestCase):
 
 @unittest.skipUnless(os.name == 'nt' and sysconfig.get_platform() == 'win-amd64', 'native Windows x64')
 class WindowsFontconfigCheck(unittest.TestCase):
+    def test_verified_leaf_reads_the_same_handle_from_start_each_time(self):
+        from vtx.render import gfx_svg_win_fontconfig as fc
+        path = temporary_root(self) / '字体.ttf'
+        data = bytes(range(256)) * 300  # inert data spanning more than one read
+        path.write_bytes(data)
+        sha = gfx_svg.digest(data)
+        with contextlib.ExitStack() as stack, \
+                mock.patch.object(Path, 'lstat', return_value=None), \
+                mock.patch.object(Path, 'open', side_effect=AssertionError('pathname reopened')):
+            held = fc._pin_file(stack, path, len(data), exact=True)
+            self.assertEqual(fc._verified(held, sha, 'font', collect=True), data)
+            self.assertIsNone(fc._verified(held, sha, 'font'))
+            with self.assertRaisesRegex(ValueError, '^font byte identity mismatch$'):
+                fc._verified(held, '0' * 64, 'font', collect=True)
+
+    def test_pin_rejects_invalid_file_metadata(self):
+        from vtx.render import gfx_svg_win_fontconfig as fc
+        root = temporary_root(self)
+        path = root / 'font.ttf'
+        path.write_bytes(b'inert')
+        with contextlib.ExitStack() as stack:
+            with self.assertRaisesRegex(ValueError, 'file size bounds'):
+                fc._pin_file(stack, path, 6, exact=True)
+        alias = root / 'second-name.ttf'
+        os.link(path, alias)
+        for leaf in (path, alias, root):
+            with self.subTest(leaf=leaf.name), contextlib.ExitStack() as stack:
+                with self.assertRaisesRegex(ValueError, 'regular single-link disk file'):
+                    fc._pin_file(stack, leaf, 4096)
+
     def test_refuses_unverified_bundle_before_fontconfig_query(self):
         from vtx.render import gfx_svg_win_fontconfig as fc
         root = temporary_root(self)
@@ -1056,6 +1132,164 @@ class WindowsFontconfigCheck(unittest.TestCase):
 
 @unittest.skipUnless(os.name == 'nt' and sysconfig.get_platform() == 'win-amd64', 'native Windows x64')
 class WindowsRuntimeSnapshot(unittest.TestCase):
+    def test_system_scope_declarations_and_name_set(self):
+        from hashlib import sha256
+        from vtx.render import gfx_svg_win_shell as shell
+
+        one = ('system32/a.dll', 1, 'a' * 64, 2)
+        two = ('winsxs/assembly/b.dll', 2, 'b' * 64, 1)
+        scope = shell.win_system._validate_scope
+        digest = sha256(b'framivra:windows-svg:system-pathname-set:v1\nsystem32/a.dll\nwinsxs/assembly/b.dll\n')
+        self.assertEqual(scope((2, (two, one))), digest.hexdigest())
+        self.assertEqual(scope((2, (one, two))), digest.hexdigest())
+        self.assertNotEqual(scope((2, (one, ('winsxs/assembly/c.dll', *two[1:])))), digest.hexdigest())
+        invalid = [(1, (one, two)), (True, (one,)), (1, [one]), (2, (one, one)),
+                   (1, (('system32/a.dll', True, one[2], 2),)),
+                   (1, (('system32/a.dll', 1, one[2].upper(), 2),)),
+                   (1, (('system32/a.dll', 1, one[2], False),)),
+                   (9, tuple((f'system32/{i}.dll', 32 * 1024**2, one[2], 2) for i in range(9))),
+                   (17, tuple((f'winsxs/{i}/a.dll', *two[1:]) for i in range(17))),
+                   (97, tuple((f'system32/{i}.dll', *one[1:]) for i in range(97)))]
+        invalid += [(1, ((name, *one[1:]),)) for name in (
+            'system32/A.dll', 'system32/é.dll', 'system32/a.dll:ads', 'system32/a.dll.',
+            'system32/nul.dll', 'system32/a\n.dll', 'system32/foo/a.dll', 'system32//a.dll',
+            'winsxs/b.dll', 'winsxs/../b.dll', 'winsxs/a/b/c.dll', 'winsxs/a\\b.dll', 'x:/a.dll')]
+        with mock.patch.object(shell, '_locked_runtime_digests') as opened:
+            for malformed in invalid:
+                with self.subTest(scope=malformed), self.assertRaises(ValueError):
+                    shell._accept_standard_raster(None, scratch=None, project_root=None, expected_system_scope=malformed)
+            opened.assert_not_called()
+
+    def test_system_catalog_requires_exact_complete_immutable_scope_before_input(self):
+        from vtx.render import gfx_svg_win_shell as shell
+
+        names = ('system32/a.dll', 'winsxs/assembly/b.dll')
+        scope = (2, tuple((name, 1, 'a' * 64, 1) for name in names))
+        a = (names[0], 'A~b.cat', 'b' * 64, 'c' * 64)
+        b = (names[1], a[1], 'd' * 64, None)  # a catalog may cover multiple members
+        shell.win_catalog._validate_catalogs(scope, (a, b))
+        malformed = [(a,), (a, a), (b, a), (a, b, b), [a, b], (list(a), b),
+                     ((a[0], a[1], a[2].upper(), a[3]), b), ((a[0], a[1], a[2], True), b)]
+        malformed += [((a[0], name, *a[2:]), b) for name in (
+            'nul.cat', 'nul .cat', '../a.cat', r'x\a.cat', 'C:a.cat', 'a.cat:ads', 'a.cat.', ' a.cat',
+            'K.cat', 'x.exe', 'a' * 221 + '.cat')]
+        with mock.patch.object(shell, '_locked_runtime_digests') as opened:
+            for disk, catalogs in [(None, (a, b)), *((scope, bad) for bad in malformed)]:
+                with self.subTest(catalogs=catalogs), self.assertRaisesRegex(ValueError, 'system scope coverage|catalog row'):
+                    shell._accept_standard_raster(None, scratch=None, project_root=None,
+                                                  expected_system_scope=disk, expected_system_catalogs=catalogs)
+            opened.assert_not_called()
+
+    def test_system_catalog_rewinds_and_always_closes_attempted_trust(self):
+        import ctypes as C
+        from vtx.render import gfx_svg_win_catalog as catalog
+
+        for case, expected in ((None, None), ('digest', 'digest differs'), ('status', 'trust failed'),
+                               ('state', 'trust failed'), ('deadline', 'deadline expired'),
+                               ('pin', 'signer pin differs'), ('close', 'state close failed')):
+            with self.subTest(case=case):
+                calls = []
+                current = 0
+                digest = b'\xab' * 32
+                cat_path, member = r'C:\fixed\leaf.cat', r'C:\fixed\member.dll'
+
+                def rewind(handle, offset, new_position, whence):
+                    self.assertEqual((handle, offset, new_position, whence), (123, 0, None, 0))
+                    calls.append('rewind')
+                    return True
+
+                def hash_from_handle(admin, handle, size, out, flags):
+                    self.assertEqual((admin, handle, size._obj.value, flags), (456, 123, 32, 0))
+                    calls.append('hash')
+                    out[:] = digest
+                    return True
+
+                def verify(hwnd, action, state):
+                    nonlocal current
+                    data = state._obj
+                    self.assertEqual(hwnd, catalog._INVALID)
+                    self.assertEqual((data.ui, data.revocation, data.choice, data.flags), (2, 0, 2, 0x1010))
+                    info = data.catalog.contents
+                    self.assertEqual((info.catalog, info.member, info.member_handle, info.tag, info.admin),
+                                     (cat_path, member, 123, digest.hex().upper(), 456))
+                    self.assertEqual(C.string_at(info.digest, info.digest_size), digest)
+                    self.assertFalse(info.ctl)
+                    if data.action == 1:
+                        calls.append('verify')
+                        if case != 'state':
+                            data.state = 789
+                        if case == 'deadline':
+                            current = 2
+                        return 1 if case == 'status' else 0  # even a positive LONG is not successful
+                    self.assertEqual(data.action, 2)
+                    self.assertEqual(data.state, None if case == 'state' else 789)
+                    calls.append('close')
+                    return int(case == 'close')
+
+                def check_time(deadline):
+                    if current >= deadline:
+                        raise TimeoutError('deadline expired')
+
+                trust = SimpleNamespace(CryptCATAdminCalcHashFromFileHandle2=hash_from_handle, WinVerifyTrust=verify)
+                with mock.patch.object(catalog, '_signer_sha256', return_value='f' * 64) as signer, \
+                        mock.patch.object(catalog, '_scope_time', side_effect=check_time):
+                    error = (self.assertRaisesRegex(TimeoutError if case == 'deadline' else ValueError, expected)
+                             if expected else contextlib.nullcontext())
+                    with error:
+                        catalog._verify_member(trust, 456, rewind, member, 123, cat_path,
+                                               'a' * 64 if case == 'digest' else digest.hex(),
+                                               'e' * 64 if case == 'pin' else None, 1)
+                self.assertEqual(calls, ['rewind', 'hash'] if case == 'digest' else
+                                 ['rewind', 'hash', 'rewind', 'verify', 'close'])
+                self.assertEqual(signer.call_count, int(case == 'pin'))
+
+    def test_system_scope_native_same_handle_lifetime_and_reparse(self):
+        from hashlib import sha256
+        import time
+        from vtx.render import gfx_svg_win_shell as shell
+
+        root = temporary_root(self)
+        system32, winsxs = root / 'System32', root / 'WinSxS'
+        system32.mkdir()
+        winsxs.mkdir()
+        first = system32 / 'MiXeD.dll'
+        first.write_bytes(b'system')
+        alias = root / 'alias.dll'
+        os.link(first, alias)
+        second = winsxs / 'Assembly' / 'Child.dll'
+        second.parent.mkdir()
+        second.write_bytes(b'component')
+        rows = (('system32/mixed.dll', 6, sha256(b'system').hexdigest(), 2),
+                ('winsxs/assembly/child.dll', 9, sha256(b'component').hexdigest(), 1))
+        def hold(pins, rows=rows):
+            shell.win_system._validate_scope((len(rows), rows))
+            return shell.win_system._hold_under_roots(pins, root, system32, winsxs, rows,
+                                                       time.monotonic() + 5, shell._image_device)
+
+        with contextlib.ExitStack() as pins:
+            held = hold(pins)
+            self.assertEqual(alias.read_bytes(), b'system')
+            with self.assertRaises(PermissionError):
+                with alias.open('r+b'):
+                    pass
+            with self.assertRaises(PermissionError):
+                first.rename(first.with_suffix('.new'))
+            held.verify(time.monotonic() + 5)
+        with alias.open('r+b') as stream:
+            stream.write(b'bad!!!')  # equal length, same name, and same file ID
+        with self.assertRaisesRegex(ValueError, 'identity mismatch'), contextlib.ExitStack() as pins:
+            hold(pins)
+        with self.assertRaisesRegex(ValueError, 'metadata mismatch'), contextlib.ExitStack() as pins:
+            hold(pins, ((rows[0][0], 6, sha256(b'bad!!!').hexdigest(), 1),))
+
+        junction = winsxs / 'junction'
+        cmd = shell._system_windows_path() / 'System32/cmd.exe'
+        subprocess.run([str(cmd), '/d', '/c', 'mklink', '/j', str(junction), str(second.parent)],
+                       capture_output=True, check=True, timeout=5)
+        self.addCleanup(junction.rmdir)
+        with self.assertRaisesRegex(ValueError, 'non-reparse'), contextlib.ExitStack() as pins:
+            hold(pins, (('winsxs/junction/child.dll', *rows[1][1:]),))
+
     def scratch_fixture(self, snapshot):
         parent = Path(tempfile.gettempdir())
         if not str(parent).isascii() or ';' in str(parent):
@@ -1103,6 +1337,64 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                     self.fail('unverified vendor tree was selected')
             self.assertEqual(list(scratch.iterdir()), [])
             self.assertEqual(entry.read_bytes(), b'Sample')
+
+    def test_snapshot_retains_only_authenticated_package_images_when_opted_in(self):
+        from hashlib import sha256
+        from vtx.render import gfx_svg_win_snapshot as snapshot
+
+        root = self.scratch_fixture(snapshot)
+        scratch, vendor = root / 'scratch', root / 'inkscape'
+        scratch.mkdir()
+        (vendor / 'bin/sub').mkdir(parents=True)
+        eligible = ('bin/inkscape.com', 'bin/Mixed.DLL', 'bin/tool.exe')
+        other = ('bin/help.txt', 'bin/other.com', 'bin/sub/nested.dll')
+        data = b'inert'
+        for name in (*eligible, *other):
+            (vendor / name).write_bytes(data)
+        manifest = {'schema': 'framivra-audit/inkscape-vendor-tree/1', 'directories': ['bin', 'bin/sub'],
+                    'files': {name: [len(data), sha256(data).hexdigest()] for name in (*eligible, *other)}}
+        expected = sha256(json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode('ascii')).hexdigest()
+        with mock.patch.multiple(snapshot, _MAX_FILES=6, _MAX_DIRS=2, _MAX_BYTES=30, _TREE_SHA256=expected):
+            with snapshot._runtime_snapshot(root, scratch=scratch) as inputs:
+                with (inputs.vendor / eligible[1]).open('r+b') as stream:
+                    self.assertEqual(stream.read(), data)  # standalone route retains no image leaves
+            self.assertEqual(list(scratch.iterdir()), [])
+
+            with self.assertRaisesRegex(RuntimeError, 'unwind'):
+                with snapshot._snapshot_operation(root, scratch=scratch, retain_package_images=True) as op:
+                    stage = op.inputs.executable.parent.parent
+                    self.assertEqual(op.package_images, frozenset(str(stage / name) for name in eligible))
+                    for name in eligible:
+                        target = stage / name
+                        self.assertEqual(target.read_bytes(), data)
+                        with self.assertRaises(PermissionError), target.open('r+b'):
+                            self.fail('authenticated package image was writable')
+                        with self.assertRaises(PermissionError):
+                            target.rename(target.with_suffix('.tmp'))
+                    for name in other:
+                        with (stage / name).open('r+b') as stream:
+                            self.assertEqual(stream.read(), data)
+                    for directory in (stage / 'bin', stage):
+                        with self.assertRaises(PermissionError):
+                            directory.rename(directory.with_name('renamed'))
+                    op.keep = True
+                    raise RuntimeError('unwind')
+            self.assertEqual(list(scratch.iterdir()), [stage.parent])
+            for name in eligible:
+                with (stage / name).open('r+b') as stream:
+                    self.assertEqual(stream.read(), data)  # handles released, not scratch
+            (stage / 'bin').rename(stage / 'renamed-bin')
+            stage.rename(stage.with_name('renamed-vendor'))
+
+            for attr, ceiling, message in (('_MAX_IMAGES', 2, 'handle bound'),
+                                           ('_MAX_IMAGE_BYTES', 4, 'byte bound'),
+                                           ('_MAX_IMAGES_BYTES', 14, 'byte bound'),
+                                           ('_TREE_SHA256', '0' * 64, 'tree identity mismatch')):
+                with self.subTest(attr=attr), mock.patch.object(snapshot, attr, ceiling):
+                    with self.assertRaisesRegex(ValueError, message):
+                        with snapshot._snapshot_operation(root, scratch=scratch, retain_package_images=True):
+                            self.fail('failed image authentication yielded a snapshot')
+                    self.assertEqual(list(scratch.iterdir()), [stage.parent])
 
     def test_overlapping_directory_chains_refuse_before_mkdtemp(self):
         from vtx.render import gfx_svg_win_snapshot as snapshot
@@ -1287,6 +1579,673 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
             self.assertEqual(shell._png_pixels(animated.getvalue(), width, height, Image.open), first.tobytes())
         with self.assertRaisesRegex(ValueError, 'requires a static PNG'):
             shell._png_pixels(animated.getvalue(), width, height, Image.open, static_only=True)
+
+    def test_standard_raster_anchors_all_sources_and_proves_closed_ordered_output(self):
+        import ctypes as C
+        from hashlib import sha256
+        from struct import pack
+        from tests.gfx._png import chunk
+        from vtx.render import gfx_svg_win_shell as shell, gfx_svg_win_snapshot as snapshot
+
+        root = self.scratch_fixture(snapshot)
+        project, scratch = root / '工程 #', root / 'scratch'
+        inputs, fonts = project / 'gfx/frames-svg', project / 'assets/fonts'
+        for directory in (inputs, fonts, scratch, root / 'inkscape/bin', root / 'inkscape/share/inkscape'):
+            directory.mkdir(parents=True)
+        (root / 'inkscape/bin/inkscape.com').write_bytes(b'sample')  # never executed
+        manifest_path = inputs.parent / 'demo.frames.json'
+        stems = [f'f{i:04d}' for i in range(4)]
+        manifest = {'format': 'framivra-svg-sequence/v1', 'fps': 30, 'width': 6, 'height': 4,
+                    'frame_count': 4, 'generator': 'build_demo.js',
+                    'fonts': ['assets/fonts/' + name for name in shell._FONT_NAMES],
+                    'frames': [f'gfx/frames-svg/{stem}.svg' for stem in stems]}
+        raw = json.dumps(manifest).encode('utf-8')
+        timeline_path = project / 'timeline.json'
+        timeline = json.loads((shell._DEMO / 'timeline.json').read_bytes())
+        timeline['project'].update(width=6, height=4, duration_frames=4)
+        clip = timeline['video_tracks'][0]['clips'][0]
+        clip['dur'] = 4
+        timeline_raw = json.dumps(timeline).encode('utf-8')
+        runtime_digests = shell._locked_runtime_digests()
+        runtime_digests['timeline.json'] = sha256(timeline_raw).hexdigest()
+        for name in clip['cache_dependencies'][:-4]:
+            target = project / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((shell._DEMO / name).read_bytes())
+        sources = [f'<svg xmlns="http://www.w3.org/2000/svg" width="6" height="4" viewBox="0 0 6 4">'
+                   f'<text id="{stem}" font-family="{family}">Demo</text></svg>'.encode()
+                   for stem, family in zip(stems, ('Noto Sans CJK SC', 'DejaVu Sans') * 2)]
+        font_data = [name.encode() for name in shell._FONT_NAMES]
+        for stem, data in zip(stems, sources):
+            (inputs / (stem + '.svg')).write_bytes(data)
+        for name, data in zip(shell._FONT_NAMES, font_data):
+            (fonts / name).write_bytes(data)
+        pixels = [bytes((23, 87, i, 255)) * 24 for i in range(4)]
+        outputs = [png(6, 4, rgba=data) for data in pixels]
+
+        def fold(kind, payloads):
+            framed = b''.join(pack('>IQ', i, len(data)) + data for i, data in enumerate(payloads))
+            return sha256(f'framivra:portable-v2:{kind}:v1\0'.encode() + framed).hexdigest()
+
+        svg_sha, png_sha = fold('svg', sources), fold('png', outputs)
+        rgba_sha = fold('rgba', [sha256(data).digest() for data in pixels])
+        font_digests = tuple(sha256(data).hexdigest() for data in font_data)
+        face_keys = ('family', 'style', 'index', 'fontconfig_weight', 'file_face_count')
+        face_values = (('Noto Sans CJK SC', 'Regular', 2, 80.0, 10), ('Noto Sans CJK SC', 'Bold', 2, 200.0, 10),
+                       ('DejaVu Sans', 'Book', 0, 80.0, 1), ('DejaVu Sans', 'Bold', 0, 200.0, 1))
+        receipts = [dict(zip(face_keys, values), font_sha256=digest)
+                    for values, digest in zip(face_values, font_digests)]
+        real_face = shell.fontconfig._inspect_face
+        real_catalog = shell.fontconfig._inspect_catalog
+        with mock.patch.multiple(shell, _RASTER_FRAMES=4, _STANDARD_SIZE=(6, 4),
+                                 _RASTER_MANIFEST_BYTES=len(raw), _RASTER_MANIFEST_SHA256=sha256(raw).hexdigest(),
+                                 _RASTER_SVG_TOTAL=sum(map(len, sources)), _RASTER_SVG_SHA256=svg_sha,
+                                 _RASTER_PNG_SHA256=png_sha, _RASTER_RGBA_SHA256=rgba_sha), \
+                mock.patch.multiple(snapshot, _MAX_FILES=1, _MAX_DIRS=3, _MAX_BYTES=6,
+                                    _TREE_SHA256='a576aafef70b8fd83cdbdf9f581c6734fee849138f38018f824b1ad332bc64a5'), \
+                mock.patch.object(shell, '_locked_runtime_digests', return_value=runtime_digests), \
+                mock.patch.object(shell, '_locked_font_digests', return_value=font_digests), \
+                mock.patch.object(shell.fontconfig, '_inspect_face') as inspect_face, \
+                mock.patch.object(shell.fontconfig, '_inspect_catalog') as inspect_catalog, \
+                mock.patch.object(shell.native, '_OwnedJob') as own:
+            def accept(where=scratch):
+                return shell._accept_standard_raster(root, scratch=where, project_root=project)
+
+            with mock.patch.object(shell, '_fixed_shell') as staging:
+                with self.assertRaises(FileNotFoundError):
+                    accept()  # no timeline; must fail before any manifest/staging work
+                timeline_path.write_bytes(timeline_raw + b'\n')  # same JSON, different bytes
+                with self.assertRaisesRegex(ValueError, 'timeline byte identity mismatch'):
+                    accept()
+                timeline_path.write_bytes(b'?' + timeline_raw[1:])
+                with self.assertRaisesRegex(ValueError, 'timeline byte identity mismatch'):
+                    accept()  # identity checked before JSON parsing
+                for field, wrong in [('src', 'gfx/other.frames.json'), ('dst_in', False), ('dur', 3),
+                                     ('cache_dependencies', clip['cache_dependencies'][::-1])]:
+                    with self.subTest(timeline_clip_field=field):
+                        original = clip[field]
+                        clip[field] = wrong
+                        wrong_raw = json.dumps(timeline).encode('utf-8')
+                        clip[field] = original
+                        timeline_path.write_bytes(wrong_raw)
+                        # Model even a trusted source lock drifting from the fixed relationship.
+                        with mock.patch.dict(runtime_digests, {'timeline.json': sha256(wrong_raw).hexdigest()}), \
+                                mock.patch.object(shell.win_input, 'read', wraps=shell.win_input.read) as read:
+                            with self.assertRaisesRegex(ValueError, 'timeline fields mismatch'):
+                                accept()
+                        self.assertEqual([call.args[1] for call in read.call_args_list], ['timeline.json'])
+                timeline_path.write_bytes(timeline_raw)
+
+                dep_name = clip['cache_dependencies'][-5]  # last non-font dependency
+                dep = project / dep_name
+                dep_data = dep.read_bytes()
+                dep.unlink()
+                with self.assertRaises(FileNotFoundError):
+                    accept()
+                dep.write_bytes(dep_data[:-1] + b' ')  # inert same-size change
+                with self.assertRaisesRegex(ValueError, 'dependency byte identity mismatch') as rejected:
+                    accept()
+                self.assertTrue(str(rejected.exception).endswith(dep_name))
+                dep.write_bytes(dep_data)
+                total = sum((project / name).stat().st_size for name in clip['cache_dependencies'][:-4])
+                with mock.patch.object(shell, '_RASTER_DEP_TOTAL', total - 1):
+                    with self.assertRaisesRegex(ValueError, 'exceeds byte budget'):
+                        accept()
+
+                # With the canonical relationship and sources restored, prove the
+                # independent existing manifest byte/field vetoes still apply.
+                with self.assertRaises(FileNotFoundError):
+                    accept()
+                alternate = manifest_path.with_suffix('.JSON')
+                alternate.write_bytes(raw)
+                with self.assertRaisesRegex(ValueError, 'exact Windows filesystem name'):
+                    accept()
+                alternate.unlink()
+                manifest_path.write_bytes(raw + b'\n')
+                with self.assertRaisesRegex(ValueError, 'exceeds byte budget'):
+                    accept()
+                manifest_path.write_bytes(b'?' + raw[1:])  # invalid JSON, correct length: reject before parsing
+                with self.assertRaisesRegex(ValueError, 'manifest byte identity mismatch'):
+                    accept()
+                for field, wrong in [('fps', 30.0), ('generator', 'renderer.js'),
+                                     ('fonts', manifest['fonts'][::-1]), ('frames', manifest['frames'][::-1])]:
+                    with self.subTest(manifest_field=field):
+                        wrong_raw = json.dumps(dict(manifest, **{field: wrong})).encode('utf-8')
+                        manifest_path.write_bytes(wrong_raw)
+                        with mock.patch.multiple(shell, _RASTER_MANIFEST_BYTES=len(wrong_raw),
+                                                 _RASTER_MANIFEST_SHA256=sha256(wrong_raw).hexdigest()):
+                            with self.assertRaisesRegex(ValueError, 'manifest fields mismatch'):
+                                accept()
+                manifest_path.write_bytes(raw)
+
+                later = inputs / 'f0003.svg'
+                later.write_bytes(sources[-1].replace(b'f0003', b'f0002'))  # same-size late source change
+                with self.assertRaisesRegex(ValueError, 'source byte identity mismatch'):
+                    accept()
+                wrong_family = sources[-1].replace(b'DejaVu Sans', b'Liberation Sans')
+                later.write_bytes(wrong_family)
+                with mock.patch.multiple(shell, _RASTER_SVG_TOTAL=sum(map(len, sources[:-1])) + len(wrong_family),
+                                         _RASTER_SVG_SHA256=fold('svg', sources[:-1] + [wrong_family])):
+                    with self.assertRaisesRegex(ValueError, 'static frame 3: .*text.font-family'):
+                        accept()
+                later.write_bytes(sources[-1])
+                staging.assert_not_called()
+            with self.assertRaisesRegex(ValueError, 'scratch overlaps the project'):
+                accept(project)
+            last_font = fonts / shell._FONT_NAMES[-1]
+            last_font.unlink()
+            with self.assertRaises(FileNotFoundError):
+                accept()
+            last_font.write_bytes(font_data[-1])
+            own.assert_not_called()
+            inspect_face.assert_not_called()
+            self.assertEqual(list(scratch.iterdir()), [])
+
+            def face_for(bundle, target, *, sha256, scratch, index, operation, deadline):
+                i = int(target.stem.removeprefix('font'))
+                self.assertEqual(scratch, bundle)
+                self.assertEqual(bundle / 'inkscape', operation.inputs.vendor)
+                with self.assertRaises(PermissionError), operation.inputs.executable.open('r+b'):
+                    self.fail('package entry lost its pin before a face worker')
+                self.assertEqual(target, bundle / 'shell/fonts' / f'font{i}{Path(shell._FONT_NAMES[i]).suffix}')
+                self.assertEqual(target.read_bytes(), font_data[i])
+                self.assertEqual((sha256, index), (font_digests[i], face_values[i][2]))
+                return receipts[i]
+
+            inspect_face.side_effect = lambda *a, **kw: dict(face_for(*a, **kw), style='Wrong')
+            with self.assertRaisesRegex(ValueError, 'staged font face metadata mismatch'):
+                accept()
+            inspect_face.assert_called_once()
+            inspect_catalog.assert_not_called()
+            own.assert_not_called()  # neither Inkscape facts nor raster was launched
+            self.assertEqual(list(scratch.iterdir()), [])
+
+            # A later worker can lose settlement after an earlier worker has
+            # positively settled and removed its own scratch. Use the real
+            # face wrapper/Job supervision here; only native process IO is doubled.
+            uncertain = root / 'uncertain-face'
+            uncertain.mkdir()
+            worker_dirs, worker_jobs = [], []
+
+            def face_job(argv):
+                self.assertEqual(argv[1:3], ['-IBS', '-c'])
+                i = len(worker_jobs)
+                job = mock.Mock()
+                worker_jobs.append(job)
+                job.proc.returncode = 0
+                job._pump.return_value = True
+
+                def launch(args, stdout, stderr, *, cwd, environment):
+                    directory = Path(cwd)
+                    worker_dirs.append(directory)
+                    (directory / 'result.json').write_text(json.dumps({'face': receipts[i]}), encoding='ascii')
+
+                job._launch.side_effect = launch
+                if i == 1:
+                    job._close.side_effect = OSError('injected accounting failure')
+                return job
+
+            inspect_face.side_effect = real_face
+            own.side_effect = face_job
+            with self.assertRaisesRegex(ValueError, 'face worker Job settlement unconfirmed'):
+                accept(uncertain)
+            self.assertEqual(len(worker_jobs), 2)
+            first, second = worker_dirs
+            self.assertFalse(first.exists())
+            self.assertEqual(list(uncertain.iterdir()), [second.parent])
+            self.assertTrue(second.is_dir())
+            self.assertEqual(len({job._close.call_args.args[0] for job in worker_jobs}), 1)
+            inspect_face.side_effect = face_for
+
+            def catalog_for(bundle, digests, *, operation, deadline):
+                self.assertEqual((digests, bundle / 'shell'), (font_digests, operation.inputs.cwd))
+                last_face = inspect_face.call_args.kwargs
+                self.assertIs(operation, last_face['operation'])
+                self.assertEqual(deadline, last_face['deadline'])
+                config = bundle / 'shell/fonts.conf'
+                with self.assertRaises(PermissionError), config.open('r+b'):
+                    self.fail('configuration open for write')
+                self.assertEqual(config.read_bytes(), shell.fontconfig._expected_catalog_config(config.parent))
+                (config.parent / 'font-cache' / (shell.fontconfig._catalog_cache_name(config.parent) + '.NEW')).write_bytes(
+                    b'private worker output')
+                return (10, 10, 1, 1)
+
+            original_environment = shell._environment
+
+            def wrong_config(cwd, bin_dir):
+                env = original_environment(cwd, bin_dir)
+                with (cwd / 'fonts.conf').open('ab') as stream:
+                    stream.write(b'\n')  # harmless XML change still fails byte identity
+                return env
+
+            own.reset_mock()
+            with mock.patch.object(shell, '_environment', side_effect=wrong_config):
+                with self.assertRaisesRegex(ValueError, 'fixed configuration byte mismatch'):
+                    accept()
+            own.assert_not_called()
+            inspect_catalog.assert_not_called()
+
+            # An unexpected preflight cache leaf, or a non-file at the exact
+            # cache name after the probe, is neither consumed nor torn down.
+            def populated_environment(cwd, bin_dir):
+                env = original_environment(cwd, bin_dir)
+                (cwd / 'font-cache/marker.txt').write_bytes(b'preserve before worker')
+                return env
+
+            def catalog_with_directory(bundle, *args, **kwargs):
+                cwd = bundle / 'shell'
+                (cwd / 'font-cache' / shell.fontconfig._catalog_cache_name(cwd)).mkdir()
+                return (10, 10, 1, 1)
+
+            for before, expected in ((True, 'cache is not empty'), (False, 'invalid cache file')):
+                target = root / f'cache-veto-{before}'
+                target.mkdir()
+                inspect_catalog.side_effect = catalog_with_directory
+                with mock.patch.object(shell, '_environment',
+                                       side_effect=populated_environment if before else original_environment):
+                    with self.assertRaisesRegex(ValueError, expected):
+                        accept(target)
+                own.assert_not_called()
+                (retained,) = target.iterdir()
+                cwd = retained / 'shell'
+                if before:
+                    self.assertEqual((cwd / 'font-cache/marker.txt').read_bytes(), b'preserve before worker')
+                else:
+                    self.assertTrue((cwd / 'font-cache' / shell.fontconfig._catalog_cache_name(cwd)).is_dir())
+                self.assertEqual(inspect_catalog.call_count, int(not before))
+
+            # Run the real catalog wrapper with the native Job IO doubled. An
+            # uncertain worker may have written a cache and even a reply; neither
+            # is consumed and no subsequent runtime/shell Job may launch.
+            uncertain_catalog = root / 'uncertain-catalog'
+            uncertain_catalog.mkdir()
+            catalog_job = mock.Mock()
+            catalog_job._pump.return_value = True
+            catalog_job.proc.returncode = 0
+            catalog_job._close.side_effect = OSError('accounting unavailable')
+
+            def launch_catalog(args, stdout, stderr, *, cwd, environment):
+                self.assertEqual(args[-6], 'catalog')
+                directory = Path(cwd)
+                (directory / 'result.json').write_text('unreadable receipt sentinel', encoding='ascii')
+                cwd = directory.parent / 'shell'
+                (cwd / 'font-cache' / (shell.fontconfig._catalog_cache_name(cwd) + '.NEW')).write_bytes(
+                    b'private worker output')
+
+            catalog_job._launch.side_effect = launch_catalog
+            own.side_effect = None
+            own.return_value = catalog_job
+            inspect_catalog.side_effect = real_catalog
+            with self.assertRaisesRegex(ValueError, 'catalog worker Job settlement unconfirmed'):
+                accept(uncertain_catalog)
+            own.assert_called_once()
+            worker_dir = Path(catalog_job._launch.call_args.kwargs['cwd'])
+            self.assertTrue((worker_dir / 'result.json').is_file())
+            cwd = worker_dir.parent / 'shell'
+            self.assertTrue((cwd / 'font-cache' / (shell.fontconfig._catalog_cache_name(cwd) + '.NEW')).is_file())
+            self.assertEqual(inspect_catalog.call_args.kwargs['deadline'], catalog_job._close.call_args.args[0])
+            inspect_catalog.side_effect = catalog_for
+
+            version, system, user = '--version', '--system-data-directory', '--user-data-directory'
+            version_line = b'Inkscape 1.4.4 (dcaf3e7, 2026-05-05)\n'
+            bad_version = b'Inkscape 1.4.4 (dcaf3e8, 2026-05-05)\r\n'
+            outer_system = root / 'inkscape/share/inkscape'  # identical basename, but outside the verified copy
+            other_profile = root / 'profile'
+            other_profile.mkdir()
+            fact_failures = {
+                'build': (version, 'fact mismatch', bad_version),
+                'two-lines': (version, 'invalid stdout', version_line + b'extra\r\n'),
+                'bad-crlf': (version, 'invalid stdout', version_line.replace(b'\n', b'\r\r\n')),
+                'no-terminator': (version, 'invalid stdout', version_line[:-1]),
+                'non-ascii': (version, 'invalid stdout', b'\xff\r\n'),
+                'system-root': (system, 'fact mismatch', os.fsencode(outer_system) + b'\r\n'),
+                'user-root': (user, 'fact mismatch', os.fsencode(other_profile) + b'\r\n'),
+                'stderr': (user, 'emitted a diagnostic', None),
+                'nonzero': (system, 'runtime query failed', None),
+                'capture': (version, 'injected capture overflow', None),
+                'facts-timeout': (system, 'did not exit', None),
+                'facts-settlement': (user, 'settlement unconfirmed', None),
+            }
+            image_failures = {'image-eof': 'exited before a live image sample',
+                              'image-rejected': 'mapped name differs',
+                              'image-unconfirmed': 'requires a committed image mapping'}
+            raster_failures = {None: None, 'missing': 'missing output frames', 'extra': 'unexpected output entry',
+                               'reordered': 'ordered pixels differ', 'later': 'ordered pixels differ',
+                               'encoding': 'ordered PNG bytes differ', 'settlement': 'settlement unconfirmed',
+                               **image_failures}
+            origins = shell._ImageOrigins('bin/inkscape.com', 2, 1, 1, 'a' * 64)
+            for i, failure in enumerate((*raster_failures, *fact_failures)):
+                with self.subTest(failure=failure):
+                    case_scratch = root / f'case-{i}'
+                    case_scratch.mkdir()
+                    own.reset_mock()
+                    inspect_face.reset_mock()
+                    inspect_catalog.reset_mock()
+                    stop, rejection, wrong = fact_failures.get(failure, ('--shell', raster_failures.get(failure), None))
+                    jobs, settings = [], []
+
+                    def job_for(argv, *, capture_limit):
+                        self.assertEqual(inspect_face.call_count, 4)
+                        self.assertEqual(inspect_catalog.call_count, 1)
+                        self.assertEqual(len({call.kwargs['deadline'] for call in inspect_face.call_args_list}), 1)
+                        flag = argv[1]
+                        self.assertEqual(len(argv), 2)
+                        is_fact = flag != '--shell'
+                        self.assertEqual(capture_limit, 1024 if is_fact else 1024 * 1024)
+                        if jobs:
+                            jobs[-1]._close.assert_called_once()
+                        job = mock.Mock()
+                        jobs.append(job)
+                        job._pump.return_value = True
+                        job.proc.returncode = 0
+                        if flag == stop:
+                            if failure in ('settlement', 'facts-settlement', 'image-unconfirmed'):
+                                job._close.side_effect = OSError('injected accounting failure')
+                            elif failure == 'facts-timeout':
+                                job._pump.return_value = False
+                            elif failure == 'capture':
+                                job._pump.side_effect = OSError('injected capture overflow')
+                            elif failure == 'nonzero':
+                                job.proc.returncode = 1
+
+                        def launch(args, stdout, stderr, *, cwd, stdin, environment):
+                            self.assertEqual(args, argv)
+                            self.assertEqual((stdout, stderr), (subprocess.PIPE, subprocess.PIPE))
+                            self.assertEqual(stdin is None, is_fact)
+                            if settings:
+                                self.assertEqual((args[0], cwd), tuple(settings[:2]))
+                                self.assertIs(environment, settings[2])
+                            else:
+                                settings[:] = [args[0], cwd, environment]
+                            cwd = Path(cwd)
+                            self.assertEqual(Path(args[0]), cwd.parent / 'inkscape/bin/inkscape.com')
+                            with self.assertRaises(PermissionError), Path(args[0]).open('r+b'):
+                                self.fail('package entry lost its pin at launch')
+                            self.assertEqual([p.read_bytes() for p in sorted((cwd / 'fonts').iterdir())], font_data)
+                            self.assertFalse(list((cwd / 'font-cache').iterdir()))
+                            with self.assertRaises(PermissionError), (cwd / 'fonts.conf').open('r+b'):
+                                self.fail('configuration open for write at launch')
+                            self.assertEqual([(cwd / (stem + '.svg')).read_bytes() for stem in stems], sources)
+                            plan = cwd / 'actions.txt'
+                            if is_fact:
+                                self.assertFalse(plan.exists())
+                                facts = {version: version_line,
+                                         system: os.fsencode(cwd.parent / 'inkscape/share/inkscape') + b'\r\n',
+                                         user: os.fsencode(cwd / 'profile') + b'\r\n'}
+
+                                def read_fact():
+                                    job._close.assert_called_once()
+                                    return (wrong if flag == stop and wrong is not None else facts[flag],
+                                            b'private diagnostic' if failure == 'stderr' and flag == stop else b'')
+
+                                job._output.side_effect = read_fact
+                                return
+                            job._output.return_value = (b'', b'')
+                            captured = bytearray()
+                            job._captures = [SimpleNamespace(data=captured)]
+
+                            def pump(deadline):
+                                if failure == 'image-eof':
+                                    return True
+                                if not captured:
+                                    captured.extend(b'ready')
+                                elif b'\n' not in captured:
+                                    captured.extend(b'\n')
+                                else:
+                                    return True
+                                return False
+
+                            job._pump.side_effect = pump
+                            actions = plan.read_bytes().splitlines()
+                            self.assertEqual(len(actions), len(stems) + 1)
+                            self.assertEqual(actions[-1], b'quit')
+                            for stem, action in zip(stems, actions):
+                                self.assertTrue(action.startswith(f'file-open:{stem}.svg;'.encode()))
+                                self.assertIn(f'export-filename:frames/{stem}.png;'.encode(), action)
+                            frames = cwd / 'frames'
+                            for i in reversed(range(4)):  # disk order is not the acceptance order
+                                if failure == 'missing' and i == 3:
+                                    continue
+                                data = outputs[3 - i] if failure == 'reordered' and i in (1, 2) else outputs[i]
+                                if i == 3 and failure == 'later':
+                                    data = png(6, 4, rgba=b'\0' + pixels[i][1:])
+                                if i == 3 and failure == 'encoding':
+                                    data = data[:-12] + chunk(b'tEXt', b'proof\0test') + data[-12:]
+                                (frames / (stems[i] + '.png')).write_bytes(data)
+                            if failure == 'extra':
+                                (frames / 'f0004.png').write_bytes(outputs[0])
+
+                        job._launch.side_effect = launch
+                        return job
+
+                    def query(job, executable, roots, deadline):
+                        self.assertIs(job, jobs[3])
+                        self.assertEqual(job._captures[0].data, b'ready\n')
+                        self.assertEqual(job._pump.call_count, 2)
+                        job._close.assert_not_called()
+                        self.assertEqual(executable, Path(settings[0]))
+                        self.assertEqual(roots[0], frozenset((str(executable),)))
+                        with self.assertRaises(PermissionError), executable.open('r+b'):
+                            self.fail('package entry lost its pin before the image sample')
+                        self.assertEqual([path.name for path in roots[1:]], ['System32', 'WinSxS'])
+                        if failure == 'image-rejected':
+                            other = r'\Device\HarddiskVolume2\private\inkscape\bin\Other.dll'
+                            buffer = C.create_unicode_buffer(other, shell._IMAGE_NAME_LIMIT)
+                            shell._require_mapped_image_name(buffer, len(other),
+                                                             other.replace('Other.dll', 'inkscape.com'), exact=True)
+                        if failure == 'image-unconfirmed':
+                            shell._require_image_mapping(lambda _h, _base, _out, size: size, object(), 0x10000)
+                        return origins
+
+                    real_require_outputs = shell._require_outputs
+
+                    def check_outputs(directory, names):
+                        jobs[-1]._close.assert_called_once()
+                        with self.assertRaises(PermissionError), Path(settings[0]).open('r+b'):
+                            self.fail('package entry lost its pin before output verification')
+                        real_require_outputs(directory, names)
+
+                    own.side_effect = job_for
+                    with mock.patch.object(shell, '_require_outputs', side_effect=check_outputs) as check_names, \
+                            mock.patch.object(shell, '_read_png', wraps=shell._read_png) as read_png, \
+                            mock.patch.object(shell, '_query_image_origins', side_effect=query) as observe:
+                        if rejection is None:
+                            self.assertEqual(accept(case_scratch),
+                                             (4, (6, 4), svg_sha, png_sha, rgba_sha, origins, (10, 10, 1, 1)))
+                        else:
+                            with self.assertRaisesRegex((ValueError, OSError), rejection) as rejected:
+                                accept(case_scratch)
+                            self.assertNotIn('private diagnostic', str(rejected.exception))
+                            if failure == 'image-unconfirmed':
+                                self.assertTrue(shell.native.job_cleanup_unconfirmed(rejected.exception))
+                        self.assertEqual(observe.call_count, int(failure not in fact_failures and failure != 'image-eof'))
+                        unchecked = failure in fact_failures or failure in image_failures or failure == 'settlement'
+                        self.assertEqual(check_names.call_count, 0 if unchecked else 1)
+                        self.assertEqual(read_png.call_count, 0 if unchecked or failure in ('missing', 'extra') else 4)
+                    flags = (version, system, user, '--shell')
+                    self.assertEqual(tuple(call.args[0][1] for call in own.call_args_list),
+                                     flags[:flags.index(stop) + 1])
+                    for job in jobs:
+                        job._launch.assert_called_once()
+                        job._close.assert_called_once()
+                        settle = job._close.call_args.args[0]
+                        if job is jobs[-1] and failure in image_failures:
+                            self.assertLess(job._pump.call_args.args[0], settle - 5)
+                        else:
+                            self.assertEqual(settle - job._pump.call_args.args[0], 5)
+                    query_jobs = jobs[:3]
+                    self.assertEqual(len({job._close.call_args.args[0] for job in query_jobs}), 1)
+                    if failure in image_failures or failure in ('facts-settlement', 'capture', 'facts-timeout', 'nonzero'):
+                        jobs[-1]._output.assert_not_called()
+                    self.assertEqual(bool(list(case_scratch.iterdir())),
+                                     failure in ('facts-settlement', 'settlement', 'image-unconfirmed'))
+
+    def test_image_sample_uses_only_live_owned_handle_and_bounded_names_and_metadata(self):
+        import ctypes as C
+        from ctypes import wintypes as W
+        from hashlib import sha256
+        import time
+        from vtx.render import gfx_svg_win_shell as shell
+
+        exe = Path(r'C:\private\inkscape\bin\inkscape.com')
+        dll = str(exe.with_name('Mixed.DLL'))
+        package = frozenset((str(exe), dll))
+        roots = (package, Path(r'D:\Windows\System32'), Path(r'D:\Windows\WinSxS'))
+        good_names = [str(exe), r'd:\WINDOWS\SYSTEM32\ntdll.dll', r'D:\Windows\WinSxS\assembly\gdiplus.dll', dll]
+        devices = {'C:': r'\Device\HarddiskVolume2', 'D:': r'\Device\HarddiskVolume4'}
+        header = b'framivra:windows-svg:system-pathname-set:v1\n'
+        baseline = b'system32/ntdll.dll\nwinsxs/assembly/gdiplus.dll\n'
+        records = {'renamed': b'system32/other.dll\nwinsxs/assembly/gdiplus.dll\n',
+                   'classes-exchanged': b'system32/gdiplus.dll\nwinsxs/assembly/ntdll.dll\n'}
+        for case, message in ((None, None), ('reordered', None), ('system-case', None),
+                              ('renamed', None), ('classes-exchanged', None), ('dead', 'requires a live shell root'),
+                              ('exited', 'exited during image sample'), ('timeout', 'sample deadline expired'),
+                              ('root', 'differs from the pinned entry'), ('root-case', 'differs from the pinned entry'),
+                              ('empty', 'invalid module count'), ('full', 'invalid module count'),
+                              ('partial', 'invalid module count'), ('outside', 'outside the allowed'),
+                              ('unknown-package', 'without an exact pinned package image'),
+                              ('package-case', 'without an exact pinned package image'),
+                              ('package-parent-case', 'without an exact pinned package image'),
+                              ('alias', 'invalid DOS name'),
+                              ('truncated', 'invalid DOS name'), ('nul-boundary', 'invalid DOS name'),
+                              ('unavailable', 'K32GetModuleFileNameExW'),
+                              ('device-alias', 'unambiguous direct volume mapping'),
+                              ('device-history', 'unambiguous direct volume mapping'),
+                              ('device-terminator', 'unambiguous direct volume mapping'),
+                              ('mapped-mismatch', 'mapped name differs'), ('mapped-volume', 'mapped name differs'),
+                              ('mapped-alias', 'mapped name differs'), ('mapped-case', 'mapped name differs'),
+                              ('mapped-boundary', 'invalid mapped name'), ('mapped-nul', 'invalid mapped name'),
+                              ('mapped-terminator', 'invalid mapped name'), ('mapped-unavailable', 'K32GetMappedFileNameW'),
+                              ('mapping-unavailable', 'VirtualQueryEx'),
+                              *((case, 'requires a committed image mapping') for case in
+                                ('mapping-short', 'mapping-oversize', 'mapping-data', 'mapping-private',
+                                 'mapping-reserved', 'mapping-base', 'mapping-allocation', 'mapping-empty')),
+                              ('no-root-module', 'missing from module sample')):
+            with self.subTest(case=case):
+                process = object()  # sentinel; no API receives a real process or PID
+                poll = mock.Mock(side_effect=[0 if case == 'dead' else None, 0 if case == 'exited' else None])
+                job = SimpleNamespace(_info=SimpleNamespace(process=process), proc=SimpleNamespace(poll=poll))
+                names = list(good_names)
+                names[1] = {'outside': r'D:\Windows\System32-extra\ntdll.dll',
+                            'alias': r'D:\Windows\System32\..\System32\ntdll.dll'}.get(case, names[1])
+                names[3] = {'unknown-package': str(exe.with_name('other.dll')),
+                            'package-case': str(exe.with_name('mixed.dll')),
+                            'package-parent-case': dll.replace('\\bin\\', '\\BIN\\')}.get(case, dll)
+                if case == 'no-root-module':
+                    names.pop(0)
+                elif case == 'reordered':
+                    names.reverse()
+                elif case == 'system-case':
+                    names[1:3] = [name.upper() for name in names[1:3]]
+                elif case == 'renamed':
+                    names[1] = names[1].replace('ntdll.dll', 'other.dll')
+                elif case == 'classes-exchanged':
+                    names[1] = names[1].replace('ntdll.dll', 'gdiplus.dll')
+                    names[2] = names[2].replace('gdiplus.dll', 'ntdll.dll')
+                bases = [i * 0x10000 for i in range(1, len(names) + 1)]
+
+                def root(handle, flags, output, count):
+                    self.assertIs(handle, process)
+                    self.assertEqual(flags, 0)
+                    output.value = {'root': str(exe.with_name('inkscape.exe')),
+                                    'root-case': str(exe.with_name('INKSCAPE.COM'))}.get(case, str(exe))
+                    C.cast(count, C.POINTER(W.DWORD)).contents.value = len(output.value)
+                    return 1
+
+                def enum(handle, modules, capacity, needed, flags):
+                    self.assertIs(handle, process)
+                    self.assertEqual((capacity, flags), (C.sizeof(W.HMODULE) * shell._IMAGE_MODULE_LIMIT, 3))
+                    modules[:len(names)] = bases
+                    count = {'empty': 0, 'full': capacity, 'partial': 1}.get(case, C.sizeof(W.HMODULE) * len(names))
+                    C.cast(needed, C.POINTER(W.DWORD)).contents.value = count
+                    return 1
+
+                def name(handle, module, output, capacity):
+                    self.assertIs(handle, process)
+                    self.assertEqual(capacity, shell._IMAGE_NAME_LIMIT)
+                    output.value = names[bases.index(module)]
+                    if case == 'nul-boundary' and module == bases[1]:
+                        prefix = str(roots[1]) + '\\'
+                        output.value = prefix + 'a' * (capacity - 1 - len(prefix))
+                        self.assertEqual(output[capacity - 1], '\0')
+                    return {'truncated': capacity, 'unavailable': 0}.get(case, len(output.value))
+
+                queried_drives, mapped_bases, metadata_bases = [], [], []
+
+                def device(drive, output, capacity):
+                    self.assertEqual(capacity, shell._IMAGE_NAME_LIMIT)
+                    queried_drives.append(drive)
+                    target = devices[drive]
+                    if case == 'device-alias':
+                        target = r'\??\C:\private'
+                    elif case == 'device-history':
+                        target += '\0' + r'\Device\HarddiskVolume3'
+                    multi = target + ('\0' if case == 'device-terminator' else '\0\0')
+                    output[:len(multi)] = multi
+                    return len(target) + 2
+
+                def mapped(handle, module, output, capacity):
+                    self.assertIs(handle, process)
+                    self.assertEqual(capacity, shell._IMAGE_NAME_LIMIT)
+                    mapped_bases.append(module)
+                    dos = names[bases.index(module)]
+                    value = devices[dos[:2].upper()] + dos[2:]
+                    if dos[0].upper() == 'D':
+                        value = value.lower()  # system-only ASCII case semantics
+                    if dos == dll:
+                        value = {'mapped-mismatch': value.replace('Mixed.DLL', 'Other.dll'),
+                                 'mapped-volume': value.replace('Volume2', 'Volume20'),
+                                 'mapped-alias': value.replace('inkscape', 'INKSCA~1'),
+                                 'mapped-case': value.replace('Mixed.DLL', 'mixed.dll'),
+                                 'mapped-boundary': 'a' * (capacity - 1),
+                                 'mapped-nul': value[:9] + '\0' + value[10:]}.get(case, value)
+                        if case == 'mapped-unavailable':
+                            return 0
+                        if case == 'mapped-terminator':
+                            output[:len(value)] = value  # previous longer valid name must not leave a NUL
+                            return len(value)
+                    output[:len(value) + 1] = value + '\0'
+                    return len(value)
+
+                def mapping(handle, module, output, capacity):
+                    self.assertIs(handle, process)
+                    self.assertEqual(capacity, 48)  # native AMD64 MEMORY_BASIC_INFORMATION
+                    self.assertEqual(mapped_bases, [*metadata_bases, module])
+                    metadata_bases.append(module)
+                    info = C.cast(output, C.POINTER(shell._MemoryBasicInformation)).contents
+                    info.BaseAddress = info.AllocationBase = module
+                    info.State, info.Type, info.RegionSize = 0x1000, 0x1000000, 0x1000
+                    if module == bases[-1]:
+                        if case == 'mapping-base':
+                            info.BaseAddress -= 1
+                        elif case == 'mapping-allocation':
+                            info.AllocationBase = bases[0]
+                        elif case == 'mapping-reserved':
+                            info.State = 0x2000
+                        elif case in ('mapping-data', 'mapping-private'):
+                            info.Type = 0x40000 if case == 'mapping-data' else 0x20000
+                        elif case == 'mapping-empty':
+                            info.RegionSize = 0
+                        return {'mapping-short': capacity - 1, 'mapping-oversize': capacity + 1,
+                                'mapping-unavailable': 0}.get(case, capacity)
+                    return capacity
+
+                functions = {'QueryFullProcessImageNameW': root, 'K32EnumProcessModulesEx': enum,
+                             'K32GetModuleFileNameExW': name, 'QueryDosDeviceW': device,
+                             'K32GetMappedFileNameW': mapped, 'VirtualQueryEx': mapping}
+                with mock.patch.object(shell, '_IMAGE_NAME_LIMIT', 128), \
+                        mock.patch.object(shell, '_windows_api', side_effect=lambda name, *_: functions[name]):
+                    deadline = time.monotonic() + (-1 if case == 'timeout' else 10)
+                    if message is None:
+                        expected = sha256(header + records.get(case, baseline)).hexdigest()
+                        self.assertEqual(shell._query_image_origins(job, exe, roots, deadline),
+                                         ('bin/inkscape.com', 2, 1, 1, expected))
+                        self.assertEqual(queried_drives, ['C:', 'D:'])
+                        self.assertEqual(mapped_bases, bases)
+                        self.assertEqual(metadata_bases, bases)
+                    else:
+                        with self.assertRaisesRegex((OSError, ValueError), message):
+                            shell._query_image_origins(job, exe, roots, deadline)
 
     def test_fixed_sequence_exact_outputs_and_index_pixels(self):
         from PIL import Image, ImageDraw

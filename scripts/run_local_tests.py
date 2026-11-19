@@ -136,7 +136,7 @@ def run_scope(limit_mib, command):
 
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--memory-mib", type=int, default=2048, help="hard group limit in MiB (default: 2048)")
+    parser.add_argument("--memory-mib", type=int, default=8192, help="hard group limit in MiB (default: %(default)s)")
     parser.add_argument("--ack-oom", action="store_true", help="acknowledge a stopped test-group OOM; never run tests")
     parser.add_argument("command", nargs=argparse.REMAINDER, metavar="-- COMMAND [ARG ...]")
     try:

@@ -66,6 +66,30 @@ test('direct gesture freezes plan/commit, spans busy through refresh, ignores se
  assert.equal(Boolean(button('保存更改') === undefined), true,'direct transaction never exposes a second confirmation button')
 })
 
+test('advertised edit-view sends one fixed request and hands its saved view to the editor', async t => {
+  const { root } = await mount(t)
+  const calls = [], saved = [], view = { snapshot, result }
+  let gesture
+  const call = async (_session, payload) => {
+    calls.push(payload)
+    if (payload.op === 'authorize-write') return { ok: true, writeGrant: 'explicit', editView: true }
+    assert.equal(payload.op, 'edit-view')
+    assert.match(payload.op_id, /^[0-9a-f-]{36}$/)
+    return { ok: true, revision: version, view }
+  }
+  const operations = [{ op: 'block.move', id: 'c', track_id: 'v', at: 10 }]
+  await act(async () => root.render(h(ManualEditor, {
+    sessionId: 'one', opened: { grant: 'read', snapshot }, result, call,
+    tabSignal: new AbortController().signal, onGestureReady: callback => { gesture = callback },
+    onCommitted: answer => saved.push(answer),
+  })))
+  await act(async () => button('启用编辑').click())
+  await act(async () => gesture(operations, { focusId: 'c' }))
+  assert.deepEqual(calls.map(payload => payload.op), ['authorize-write', 'edit-view'])
+  assert.deepEqual(calls[1], { op: 'edit-view', grant: 'read', writeGrant: 'explicit', op_id: calls[1].op_id, base_revision: version, operations })
+  assert.deepEqual(saved, [{ focusId: 'c', view, expectedRevision: version }])
+})
+
 test('direct preparation cancels on frame fence change; rejected plan never commits',{timeout:10000},async t=>{
  const {root}=await mount(t),calls=[];let gesture,resolvePlan,transaction
  const operations=[{op:'block.trim',id:'c',start:2,end:28,fade_policy:'preserve-content'}]

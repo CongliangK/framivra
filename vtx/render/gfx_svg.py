@@ -530,7 +530,7 @@ def _version(executable, sha256, runtime_digest):
     return result.stdout.strip()
 
 
-def engine_identity():
+def _posix_engine_identity():
     from .gfx_environment import _file
     executable = inkscape_executable()
     binary_hash = _file(executable)[1]
@@ -562,7 +562,7 @@ def _fontconfig_version(executable, sha256, runtime_digest):
     return (result.stdout + result.stderr).strip()
 
 
-def fontconfig_identity():
+def _posix_fontconfig_identity():
     from .gfx_environment import _file
     executable = shutil.which('fc-scan')
     if executable is None:
@@ -572,6 +572,35 @@ def fontconfig_identity():
     libraries = runtime_libraries(executable)
     return {'executable': executable, 'sha256': sha256, 'libraries': libraries,
             'version': _fontconfig_version(executable, sha256, digest(canonical(libraries)))}
+
+
+class _PosixRuntimeIdentity:
+    engine_identity = staticmethod(_posix_engine_identity)
+    fontconfig_identity = staticmethod(_posix_fontconfig_identity)
+
+    @staticmethod
+    def font_faces(c, name, sha256, fontconfig):
+        return _font_faces(fontconfig['executable'], str(input_path(c, name)), sha256,
+                           digest(canonical(fontconfig)))
+
+
+@contextlib.contextmanager
+def _runtime_identity_scope():
+    """Select a runtime independently of timeline, cache, and tool discovery.
+
+    The resolver consumes only serializable facts. A platform provider may
+    keep operation-local authority in this scope, never in a cache record.
+    """
+    if sys.platform == 'win32':
+        raise ValueError('SVG-sequence Windows production runtime identity is not supported')
+    if sys.platform not in ('linux', 'darwin'):
+        raise ValueError('SVG-sequence runtime identity supports Linux ELF and macOS arm64 only')
+    yield _PosixRuntimeIdentity()
+
+
+def engine_identity():
+    with _runtime_identity_scope() as runtime:
+        return runtime.engine_identity()
 
 
 def _dependency_members(c, clip):
@@ -625,6 +654,12 @@ def resolve(c, clip):
     fonts = manifest.get('fonts', [])
     if not isinstance(fonts, list):
         raise ValueError('SVG manifest.fonts must be a list of project-relative files')
+    with _runtime_identity_scope() as runtime:
+        return _resolve_inputs(c, clip, raw, manifest, rate, runtime)
+
+
+def _resolve_inputs(c, clip, raw, manifest, rate, runtime):
+    frames, fonts = manifest['frames'], manifest.get('fonts', [])
     files = {clip['src']: digest(raw)}
     total_bytes = len(raw)
     def add(name, *, limit=None, expected_path=None):
@@ -644,13 +679,13 @@ def resolve(c, clip):
             raise ValueError('SVG input changed while resolving identity')
         files[name] = value
         return data
-    fontconfig = fontconfig_identity()
+    fontconfig = runtime.fontconfig_identity()
     font_faces = {}
     for font in fonts:
         if not isinstance(font, str) or Path(font).suffix.lower() not in ('.ttf', '.otf', '.ttc', '.otc'):
             raise ValueError('SVG fonts must be explicit TTF/OTF/TTC/OTC files')
         add(font)
-        font_faces[font] = _font_faces(fontconfig['executable'], str(input_path(c, font)), files[font], digest(canonical(fontconfig)))
+        font_faces[font] = runtime.font_faces(c, font, files[font], fontconfig)
     if 'generator' in manifest:
         add(manifest['generator'])
     for name, expected_path in _dependency_members(c, clip):
@@ -677,7 +712,7 @@ def resolve(c, clip):
             'fontconfig': fontconfig,
             'fps': int(rate) if rate.denominator == 1 else str(rate),
             'width': c.w,
-            'height': c.h, 'frame_count': clip['dur'], 'engine': engine_identity(),
+            'height': c.h, 'frame_count': clip['dur'], 'engine': runtime.engine_identity(),
             'implementation': code,
             'parameters': {'export': 'png', 'area': 'page', 'background_opacity': 0,
                            'fonts': 'isolated-fontconfig', 'frame_index': 'clip-local'}}

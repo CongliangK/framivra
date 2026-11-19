@@ -184,7 +184,7 @@ vtx -t /path/to/timeline.json store --request /path/to/request.json
 vtx -t /path/to/timeline.json store recover
 ```
 
-CLI 的 `store [plan] --request-stdin` 可替代 `--request PATH`：直接读取已有 stdin 二进制流至 EOF，仅接受一个完整严格 UTF-8 JSON 对象，最多 **8388608 字节（8MiB）**；超限多读至多一字节即拒绝，不截断、不重开 `/dev/stdin`。发送者必须关闭写端；未到 EOF 不执行计划或提交。解析/UTF-8/重复键/非有限或不可无损写出的数值错误仍用 `input.request`/exit1；参数冲突为 `cli.arguments`/exit2。两种请求旗标互斥；status/recover/capabilities、所有只读/帧图像及渲染命令均拒绝该旗标且不消费 stdin。原 `--request PATH` 语义不变，`--request -` 仍是名为 `-` 的文件，不是 stdin。`store capabilities` 仅在 CLI 结果顶层额外声明 `request_transport:{"stdin":{"flag":"--request-stdin","max_bytes":8388608}}`；Python 能力结果、协议版本、digest 和历史回执不变。stdin 只传请求，不解除下述 exact-import 的显式本地 `payload_file` 限制。
+CLI 的 `store [plan] --request-stdin` 可替代 `--request PATH`：直接读取已有 stdin 二进制流至 EOF，仅接受一个完整严格 UTF-8 JSON 对象，最多 **8388608 字节（8MiB）**；超限多读至多一字节即拒绝，不截断、不重开 `/dev/stdin`。发送者必须关闭写端；未到 EOF 不执行计划或提交。解析/UTF-8/重复键/非有限或不可无损写出的数值错误仍用 `input.request`/exit1；参数冲突为 `cli.arguments`/exit2。两种请求旗标互斥；status/recover/capabilities、所有只读/帧图像及渲染命令均拒绝该旗标且不消费 stdin。原 `--request PATH` 语义不变，`--request -` 仍是名为 `-` 的文件，不是 stdin。`store capabilities` 在 CLI 结果顶层声明 `request_transport:{"stdin":{"flag":"--request-stdin","max_bytes":8388608}}`；Python 能力结果、协议版本、digest 和历史回执不变。stdin 只传请求，不解除下述 exact-import 的显式本地 `payload_file` 限制。
 
 request 为严格 JSON 对象，必需 `operation`、`op_id`、`base_revision`，拒绝未知请求键。`base_revision` 直接使用 inspect 的原字节 `content_version`，不使用 mtime。op_id/project_id/对象 ID 为 1–128 位、首位字母或数字、其余字母数字及 `_.:-` 的字符串；所有受管对象 ID 全局唯一。version 仍为 2，新增可选根 `_vtx: {protocol:1, project_id, head}`；未知未来协议拒写。管理对象为 sources、视频/音频轨、clip/event、内联字幕，不往自由 `_meta` 塞身份。
 
@@ -198,6 +198,12 @@ request 为严格 JSON 对象，必需 `operation`、`op_id`、`base_revision`�
 | undo | head | 只撤当前已提交 head，仍是带新 op_id/base CAS 的新提交；文件必须逐字节等于原 head 结果；不能 undo create/adopt；新结果含反向 edit 变更清单 |
 
 语义编辑使用独立的 `edit`，不是把 `replace` 的身份限制解除，也不改变既有 `apply.changes` 平面协议。可选外部界面见 [DSH 适配器](../../dsh-sidebar/README.md)；尚无 ID 改签或完整 gfx 连续编辑。apply/adopt/edit 保留全部未知 JSON 数据，不投影/展开 `subtitles_src`，不读取/重写字幕外引；replace 的 document 是调用者显式提供的全文。写入允许重排键/格式，不承诺原排版；严格拒重复键、NaN/Infinity、bool 帧以及重序列化会损失十进制值的高精度浮点输入。
+
+### 单事务编辑并返回已保存视图
+
+**会写工程与持久历史。** `vtx -t PATH store edit-view --request-stdin` 仅接受上方严格的 managed v1 `edit` 请求。CLI 能力另广告 `edit_view:{command:"edit-view",read_schema:"framivra.timeline.read/v1",wire_limit_bytes:8388608,preload_stdin:true}`，不猜版本、不改变普通 plan/commit。`preload_stdin` 允许受管进程仅空管道等待：完整请求及 EOF 之前不读写工程或历史，消费者不得提前缓冲请求体。无独立零写计划：同一锁内完成历史核验、语义校验、原字节 CAS、intent/替换/同步/commit marker；发现 pending 即要求显式恢复，不代办恢复。
+
+首次成功在通常回执上增加 `view:{snapshot,result}`，分别等价于对本次提交字节执行 inspect 和全量无过滤 query；两投影的 `content_version` 等于 `revision`。只证明本次保存的版本，不保证应答到达时无后续写入。预先核对含换行的 8 MiB ASCII 视图应答；超限为 `edit.view_limit`，不发布本次 intent、不动目标文件（锁和历史初始化不属零写保证）。相同请求重放只返回历史身份/状态回执，不附 `edit` 或 `view`，不会把旧视图当成当前。视图是传输附加字段，不入 journal、不改变 digest 或历史格式。传输/落盘结果未知时以原 op_id 检查状态或恢复，不自动重试。
 
 ### 原始写入 JSON 的公共解析边界
 

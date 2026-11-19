@@ -3,7 +3,7 @@
 // boundary fixtures only — no web server, no installed vtx.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { Readable } from 'node:stream'
+import { Readable, Writable } from 'node:stream'
 import { createPreviewHost } from '../src/host.mjs'
 import { MemoryFs } from './helpers.mjs'
 import * as bounded from '../src/bounded.mjs'
@@ -24,7 +24,7 @@ const storeEnvelope = operation => ({ schema: 'framivra.timeline.store/v1', oper
 /** Deferred manual child handles so tests control exit/managed-range timing exactly.
  *  waitForExit consumes one outcome per cleanup attempt (default true), modeling
  *  a provider whose managed-range confirmation can fail and later recover. */
-function makeBench({ storeCapabilities = storeEnvelope('store:capabilities') } = {}) {
+function makeBench({ storeCapabilities = storeEnvelope('store:capabilities'), reply = (_op, value) => value, config = { vtxExecutable: '/opt/trusted/vtx' } } = {}) {
   const fs = new MemoryFs()
   const sessions = new Map([['one', { id: 'one' }], ['two', { id: 'two' }]])
   sessions.list = () => [...sessions.values()]
@@ -35,7 +35,8 @@ function makeBench({ storeCapabilities = storeEnvelope('store:capabilities') } =
   function spawn(spec) {
     const argv = spec.argv.slice(1) // drop executable
     const op = argv[0] === '-t' ? (argv[2] === 'timeline' ? 'frame' : argv[2] === 'store' ? `store:${argv[3]}` : argv[2]) : 'unknown'
-    const text = wire(op === 'store:capabilities' ? storeCapabilities : op === 'frame' ? frameEnvelope() : op.startsWith('store:') ? storeEnvelope(op) : readEnvelope(op))
+    const responseText = inputSpec => wire(reply(op, op === 'store:capabilities' ? storeCapabilities : op === 'frame' ? frameEnvelope() : op.startsWith('store:') ? storeEnvelope(op) : readEnvelope(op), inputSpec))
+    let text = spec.stdio.stdin === 'pipe' ? '' : responseText(spec)
     let doneResolve, terminated = 0
     const rangeOutcomes = []
     const done = new Promise(resolve => { doneResolve = resolve })
@@ -45,17 +46,31 @@ function makeBench({ storeCapabilities = storeEnvelope('store:capabilities') } =
       done,
       terminate() { terminated++; doneResolve({ exitCode: null, signal: 'SIGTERM' }) },
       async waitForExit() { await done; return rangeOutcomes.shift() ?? true },
-      settle() { doneResolve({ exitCode: 0 }) },
+      settle(exitCode = op === 'store:edit-view' && JSON.parse(text).ok === false ? 1 : 0) { doneResolve({ exitCode }) },
       failRange(times = 1) { for (let i = 0; i < times; i++) rangeOutcomes.push(false) },
       collected: { stdout: { readFrom: () => ({ text, lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) } },
     }
+    if (spec.stdio.stdin === 'pipe') {
+      const chunks = []
+      handle.input = () => Buffer.concat(chunks).toString('utf8')
+      handle.stdin = new Writable({
+        write(chunk, _encoding, callback) { chunks.push(Buffer.from(chunk)); callback() },
+        final(callback) {
+          try {
+            text = responseText({ ...spec, stdio: { ...spec.stdio, stdin: { data: handle.input() } } })
+            if (!bench.manual.has(op)) handle.settle()
+            callback()
+          } catch (error) { callback(error) }
+        },
+      })
+    }
     bench.spawned.push(handle)
     for (const waiter of bench.waiters.filter(w => w.op === op)) waiter.resolve(handle)
-    if (!bench.manual.has(op)) handle.settle()
+    if (!bench.manual.has(op) && spec.stdio.stdin !== 'pipe') handle.settle()
     return handle
   }
   const subprocess = { resolveExecutable: async () => '/opt/trusted/vtx', spawn }
-  const host = createPreviewHost({ fs, sessions, workingDirectory, subprocess }, { vtxExecutable: '/opt/trusted/vtx' })
+  const host = createPreviewHost({ fs, sessions, workingDirectory, subprocess }, config)
   const control = (data, sessionId = 'one') => host.control(new Request('http://unit/api/framivra/control', { method: 'POST', body: typeof data === 'string' ? data : JSON.stringify({ sessionId, ...data }) }))
   const frame = (data, sessionId = 'one') => host.frame(new Request('http://unit/api/framivra/frame', { method: 'POST', body: JSON.stringify({ op: 'render', sessionId, frame: 0, contentVersion: version, renderConsent: 'cache/preview-only', operationId: crypto.randomUUID(), ...data }) }))
   const open = async sessionId => {
@@ -63,7 +78,7 @@ function makeBench({ storeCapabilities = storeEnvelope('store:capabilities') } =
     assert.equal(response.status, 200, await response.clone().text())
     return (await response.json()).grant
   }
-  return { host, fs, sessions, cwds, workingDirectory, ...bench, control, frame, open }
+  return { host, fs, sessions, cwds, workingDirectory, config, ...bench, control, frame, open }
 }
 
 test('write platform capability: Darwin requires an explicit new-core certificate; old core stays read-only', async t => {
@@ -318,4 +333,323 @@ test('open probes are owned by the pre-minted grant id: a failed open does not w
     const planResponse = await planning
     assert.equal(planResponse.status, 200, `semanticBusy must be clear after the failed open's scoped retry, got ${await planResponse.text()}`)
   } finally { await b.host.dispose().catch(() => {}) }
+})
+
+const editedVersion = `sha256:${'b'.repeat(64)}`
+const fastCapabilities = () => ({ ...storeEnvelope('store:capabilities'), edit_view: { command: 'edit-view', read_schema: 'framivra.timeline.read/v1', wire_limit_bytes: 8388608 } })
+function fastReply(spec) {
+  const request = JSON.parse(spec.stdio.stdin.data)
+  return { schema: 'framivra.timeline.store/v1', operation: 'edit', ok: true, op_id: request.op_id,
+    base_revision: request.base_revision, revision: editedVersion, current_revision: editedVersion, replayed: false,
+    view: { snapshot: { ...readEnvelope('inspect'), content_version: editedVersion, document: { _vtx: { head: request.op_id } } },
+      result: { ...readEnvelope('query'), content_version: editedVersion } } }
+}
+async function authorizeFast(b) {
+  const grant = await b.open('one')
+  const authorized = await (await b.control({ op: 'authorize-write', grant })).json()
+  return { op: 'edit-view', grant, writeGrant: authorized.writeGrant, op_id: crypto.randomUUID(), base_revision: version, operations: [{ op: 'fixture.edit' }], authorized }
+}
+const fastRequest = ({ authorized: _authorized, ...request }) => request
+const warmCapabilities = () => { const value = fastCapabilities(); value.edit_view.preload_stdin = true; return value }
+const nextTurn = () => new Promise(resolve => setImmediate(resolve))
+async function idleChild(b) {
+  await nextTurn() // Allow detached identity checks, not an arbitrary timer sleep.
+  const child = b.spawned.filter(child => child.op === 'store:edit-view' && child.spec.stdio.stdin === 'pipe').at(-1)
+  assert(child, 'an advertised preload should spawn a bounded EOF waiter')
+  assert.equal(child.input(), '', 'idle means zero request bytes, not a partial JSON prefix')
+  assert.equal(child.stdin.writableEnded, false)
+  return child
+}
+
+test('edit-view: exact capability/write grant, bounded official stdin, same validated receipt and advanced base', async () => {
+  const b = makeBench({ storeCapabilities: fastCapabilities(), reply: (op, value, spec) => op === 'store:edit-view' ? fastReply(spec) : value })
+  try {
+    const setup = await authorizeFast(b)
+    assert.equal(setup.authorized.editView, true)
+    const request = fastRequest(setup)
+    assert.equal(b.spawned.some(child => child.spec.stdio.stdin === 'pipe'), false, 'older fast advertisement must not preload')
+    const denied = await b.control({ ...request, writeGrant: 'wrong' })
+    assert.equal(denied.status, 403)
+    for (const invalid of [{ op_id: '-'.repeat(36) }, { extra: true }, { operations: [] }]) assert.equal((await b.control({ ...request, ...invalid })).status, 400)
+    const result = await (await b.control(request)).json()
+    const child = b.spawned.find(child => child.op === 'store:edit-view')
+    assert.deepEqual(child.spec.argv.slice(3), ['store', 'edit-view', '--request-stdin'])
+    assert.deepEqual(JSON.parse(child.spec.stdio.stdin.data), { operation: 'edit', op_id: request.op_id, base_revision: version, operations: request.operations })
+    assert.equal(child.spec.stdio.stdout.maxBytes, 8388608)
+    assert.deepEqual(result, fastReply(child.spec))
+    assert.equal(result.submitted_request, undefined)
+    assert.equal((await b.control({ ...request, op_id: crypto.randomUUID() })).status, 409, 'old base must not be reusable')
+    assert.equal((await b.control({ ...request, op_id: crypto.randomUUID(), base_revision: editedVersion })).status, 200)
+    assert.equal(Object.hasOwn(b.host.agent, 'edit-view'), false)
+  } finally { await b.host.dispose() }
+})
+
+test('edit-view: old or inexact capability keeps ordinary plan flow and never spawns fast edit', async t => {
+  for (const edit_view of [undefined, { ...fastCapabilities().edit_view, wire_limit_bytes: 1 }, { ...fastCapabilities().edit_view, command: 'other' }]) await t.test(JSON.stringify(edit_view) ?? 'older core', async () => {
+    const b = makeBench({ storeCapabilities: { ...fastCapabilities(), edit_view } })
+    try {
+      const setup = await authorizeFast(b)
+      assert.equal(setup.authorized.editView, undefined)
+      assert.equal((await b.control(fastRequest(setup))).status, 422)
+      assert.equal(b.spawned.some(child => child.op === 'store:edit-view'), false)
+      assert.equal((await b.control({ ...fastRequest(setup), op: 'plan' })).status, 200)
+    } finally { await b.host.dispose() }
+  })
+})
+
+test('edit-view: applied view/fence failures remain distinct from opaque or explicitly unknown outcomes', async t => {
+  for (const scenario of ['view-revision', 'view-head', 'view-shape', 'replay', 'executable', 'config', 'receipt-id', 'explicit-unknown']) await t.test(scenario, async () => {
+    let b
+    b = makeBench({ storeCapabilities: fastCapabilities(), reply: (op, value, spec) => {
+      if (op !== 'store:edit-view') return value
+      const result = fastReply(spec)
+      if (scenario === 'view-revision') result.view.result.content_version = version
+      if (scenario === 'view-head') result.view.snapshot.document._vtx.head = crypto.randomUUID()
+      if (scenario === 'view-shape') result.view.result.blocks = null
+      if (scenario === 'replay') { result.replayed = true; delete result.view }
+      if (scenario === 'executable') b.fs.files.get('/opt/trusted/vtx').version = 'replaced'
+      if (scenario === 'config') b.config.trustedPath = '/changed/bin' // Post-receipt grant fence also aborts the write signal.
+      if (scenario === 'receipt-id') result.op_id = crypto.randomUUID()
+      if (scenario === 'explicit-unknown') return { schema: result.schema, ok: false, code: 'outcome_unknown', outcome_unknown: true }
+      return result
+    } })
+    try {
+      const request = fastRequest(await authorizeFast(b))
+      const result = await (await b.control(request)).json()
+      const unknown = ['receipt-id', 'explicit-unknown'].includes(scenario)
+      assert.equal(result.code, unknown ? 'outcome_unknown' : 'applied_view_unavailable')
+      assert.equal(result.op_id, request.op_id)
+      assert.equal(result.view, undefined)
+      assert.equal(result.submitted_request, undefined)
+      if (!unknown) assert.equal(result.applied, true)
+      if (scenario === 'executable') assert.equal(result.terminal_code, 'EXECUTABLE_CHANGED')
+      if (scenario === 'config') assert.equal(result.terminal_code, 'CONFIG_CHANGED', 'known applied receipt survives a later aborting config fence')
+      const refused = await b.control({ ...request, op_id: crypto.randomUUID() })
+      assert.equal(refused.status, 409)
+      assert.equal((await refused.json()).error, scenario === 'config' ? 'CONFIG_CHANGED' : unknown ? 'OUTCOME_UNKNOWN' : 'STALE_BASE')
+      if (scenario === 'view-revision') for (const op of ['plan', 'commit', 'adopt', 'undo']) {
+        const legacy = await b.control({ ...request, op })
+        assert.equal((await legacy.json()).error, 'STALE_BASE', 'an applied stale view must not reopen editing through the older route')
+      }
+      assert.equal(b.spawned.filter(child => child.op === 'store:edit-view').length, 1, 'never retry')
+    } finally { await b.host.dispose() }
+  })
+})
+
+test('edit-view: malformed failure receipt is unknown; valid input refusal may omit op_id', async t => {
+  for (const failure of [{}, { code: '' }, { code: 1 }, { code: 'invalid', op_id: crypto.randomUUID() }, { code: 'invalid' }]) await t.test(JSON.stringify(failure), async () => {
+    const b = makeBench({ storeCapabilities: fastCapabilities(), reply: (op, value) => op === 'store:edit-view' ? { schema: 'framivra.timeline.store/v1', ok: false, ...failure } : value })
+    try {
+      const request = fastRequest(await authorizeFast(b))
+      const result = await (await b.control(request)).json()
+      assert.equal(result.code, failure.code === 'invalid' && failure.op_id === undefined ? 'invalid' : 'outcome_unknown')
+      if (result.code === 'outcome_unknown') assert.equal(result.op_id, request.op_id)
+    } finally { await b.host.dispose() }
+  })
+})
+
+test('edit-view preload: one empty EOF waiter, frame coexistence, one-shot exact release and verified re-prime', async () => {
+  const b = makeBench({ storeCapabilities: warmCapabilities(), reply: (op, value, spec) => op === 'store:edit-view' ? fastReply(spec) : value })
+  try {
+    const request = fastRequest(await authorizeFast(b))
+    const idle = await idleChild(b)
+    assert.equal(idle.spec.stdio.stdout.maxBytes, 8388608)
+    assert.equal((await b.control({ ...request, writeGrant: 'wrong' })).status, 403)
+    assert.equal((await b.control({ ...request, operations: [] })).status, 400)
+    assert.equal(idle.input(), '')
+    const rendering = b.frame({ grant: request.grant })
+    const frame = await b.onSpawned('frame')
+    frame.settle()
+    assert.equal((await rendering).status, 200, 'a harmless EOF waiter must not block either frame active gate')
+    assert.equal(idle.terminated(), 0)
+    const result = await (await b.control(request)).json()
+    assert.equal(result.ok, true)
+    assert.deepEqual(JSON.parse(idle.input()), { operation: 'edit', op_id: request.op_id, base_revision: version, operations: request.operations })
+    assert.equal(idle.stdin.writableEnded, true)
+    assert(idle.terminated() > 0, 'taken child must complete existing range cleanup')
+    const replacement = await idleChild(b)
+    assert.notEqual(replacement, idle)
+    assert.equal(b.spawned.filter(child => child.op === 'store:edit-view').length, 2, 'only taken child plus the next one-shot idle child')
+    assert.equal((await b.control({ op: 'cancel-write', grant: request.grant, writeGrant: request.writeGrant })).status, 200)
+    assert(replacement.terminated() > 0)
+    assert.equal(replacement.input(), '')
+  } finally { await b.host.dispose() }
+})
+
+test('edit-view preload: authorization does not await prime, whose own executable fence precedes spawn', async () => {
+  const b = makeBench({ storeCapabilities: warmCapabilities() })
+  let resume
+  const paused = new Promise(resolve => { resume = resolve })
+  let reached
+  const atFence = new Promise(resolve => { reached = resolve })
+  try {
+    const grant = await b.open('one')
+    const stat = b.fs.stat.bind(b.fs)
+    b.fs.stat = async (target, signal) => {
+      if (target.targetKey === '/opt/trusted/vtx') { reached(); await paused }
+      return stat(target, signal)
+    }
+    const response = await b.control({ op: 'authorize-write', grant })
+    assert.equal(response.status, 200, 'HTTP authorization must finish while prime identity validation is still pending')
+    await atFence
+    b.fs.files.get('/opt/trusted/vtx').version = 'changed-during-prime'
+    resume()
+    await nextTurn()
+    assert.equal(b.spawned.some(child => child.spec.stdio.stdin === 'pipe'), false, 'a failed idle-spawn identity fence must not execute a child')
+  } finally { resume(); await b.host.dispose() }
+})
+
+test('edit-view preload: full release fences reject drift without writing any idle bytes', async t => {
+  for (const drift of ['executable', 'timeline', 'project', 'cwd', 'session', 'config']) await t.test(drift, async () => {
+    const b = makeBench({ storeCapabilities: warmCapabilities(), reply: (op, value, spec) => op === 'store:edit-view' ? fastReply(spec) : value })
+    try {
+      const request = fastRequest(await authorizeFast(b))
+      const idle = await idleChild(b)
+      if (drift === 'executable') b.fs.files.get('/opt/trusted/vtx').version = 'replaced'
+      if (drift === 'timeline') b.fs.aliases.set('/workspace/timeline.json', '/workspace/other.json')
+      if (drift === 'project') b.fs.aliases.set('/workspace', '/other-workspace')
+      if (drift === 'cwd') b.cwds.one = '/other-workspace'
+      if (drift === 'session') b.sessions.set('one', { id: 'one' })
+      if (drift === 'config') b.config.trustedPath = '/changed/bin'
+      const response = await b.control(request)
+      const result = await response.json()
+      assert(response.status !== 200 || result.ok === false)
+      assert.equal(idle.input(), '', 'all identity fences precede request-byte release')
+      assert.equal(b.spawned.filter(child => child.op === 'store:edit-view').length, 1, 'no fallback/replacement transaction')
+    } finally { await b.host.dispose() }
+  })
+})
+
+test('edit-view preload: one global slot stays scoped to its original write owner', async () => {
+  const b = makeBench({ storeCapabilities: warmCapabilities(), reply: (op, value, spec) => op === 'store:edit-view' ? fastReply(spec) : value })
+  try {
+    const request = fastRequest(await authorizeFast(b))
+    const idle = await idleChild(b)
+    const otherGrant = await b.open('two')
+    const other = await (await b.control({ op: 'authorize-write', grant: otherGrant }, 'two')).json()
+    await nextTurn()
+    assert.equal(b.spawned.filter(child => child.spec.stdio.stdin === 'pipe').length, 1)
+    const result = await (await b.control({ ...request, grant: otherGrant, writeGrant: other.writeGrant, op_id: crypto.randomUUID() }, 'two')).json()
+    assert.equal(result.ok, true)
+    assert.equal(idle.input(), '', 'another owner must use its normal cold request, never the idle slot')
+    assert.equal((await b.control({ op: 'revoke-write', grant: otherGrant }, 'two')).status, 200)
+    assert.equal(idle.terminated(), 0, 'unrelated revoke cannot reap the original idle owner')
+    const renewed = await (await b.control({ op: 'authorize-write', grant: request.grant })).json()
+    const replacement = await idleChild(b)
+    assert.notEqual(replacement, idle, 'reauthorization must never reuse the previous write grant worker')
+    assert.notEqual(renewed.writeGrant, request.writeGrant)
+    assert(idle.terminated() > 0)
+    assert.equal((await b.control(request)).status, 403)
+    assert.equal(replacement.input(), '')
+    assert.equal((await b.control({ op: 'revoke-write', grant: request.grant })).status, 200)
+    assert(replacement.terminated() > 0)
+  } finally { await b.host.dispose() }
+})
+
+test('edit-view preload: a taken worker becomes an active transaction before bytes are dispatched', async () => {
+  const b = makeBench({ storeCapabilities: warmCapabilities(), reply: (op, value, spec) => op === 'store:edit-view' ? fastReply(spec) : value })
+  try {
+    const request = fastRequest(await authorizeFast(b))
+    const idle = await idleChild(b)
+    const otherGrant = await b.open('two')
+    const other = await (await b.control({ op: 'authorize-write', grant: otherGrant }, 'two')).json()
+    b.manual.add('store:edit-view')
+    const editing = b.control(request)
+    await nextTurn()
+    assert(idle.input().length > 0, 'the original idle worker must have been taken')
+    const refused = await b.control({ op: 'plan', grant: otherGrant, writeGrant: other.writeGrant, base_revision: version, operations: request.operations }, 'two')
+    assert.equal(refused.status, 409)
+    assert.equal((await refused.json()).error, 'FRAME_BUSY', 'another grant must observe the taken worker as semanticBusy, not harmless idle')
+    assert.equal(b.spawned.some(child => child.op === 'store:plan'), false)
+    idle.settle()
+    assert.equal((await (await editing).json()).ok, true)
+  } finally { await b.host.dispose() }
+})
+
+test('edit-view preload: idle cleanup failure blocks frame admission and remains retryable', async () => {
+  const b = makeBench({ storeCapabilities: warmCapabilities() })
+  try {
+    const request = fastRequest(await authorizeFast(b))
+    const idle = await idleChild(b)
+    idle.failRange(10)
+    assert.equal((await b.control({ op: 'revoke-write', grant: request.grant })).status, 502)
+    assert.equal((await b.frame({ grant: request.grant })).status, 409, 'failed idle cleanup is NOT harmless idle exclusion')
+    idle.waitForExit = async () => true
+    assert.equal((await b.control({ op: 'close', grant: request.grant })).status, 200, 'retained idle owner can be explicitly reaped')
+    assert.equal(idle.input(), '')
+  } finally { await b.host.dispose() }
+})
+
+test('edit-view preload: four-second expiry and dispose reap zero-byte workers', async () => {
+  const realSetTimeout = globalThis.setTimeout
+  let expire
+  globalThis.setTimeout = (fn, ms, ...args) => {
+    if (ms === 4000) expire = fn
+    return realSetTimeout(fn, ms, ...args)
+  }
+  const b = makeBench({ storeCapabilities: warmCapabilities() })
+  try {
+    await authorizeFast(b)
+    const idle = await idleChild(b)
+    assert.equal(typeof expire, 'function')
+    expire()
+    await nextTurn()
+    assert(idle.terminated() > 0)
+    assert.equal(idle.input(), '')
+    const grant = await b.open('one')
+    await b.control({ op: 'authorize-write', grant })
+    const next = await idleChild(b)
+    assert.notEqual(next, idle)
+    await b.host.dispose()
+    assert(next.terminated() > 0)
+    assert.equal(next.input(), '')
+  } finally { globalThis.setTimeout = realSetTimeout; await b.host.dispose() }
+})
+
+test('edit-view preload: dispatch failure is unknown and never falls back after taking', async t => {
+  for (const asynchronous of [false, true]) await t.test(asynchronous ? 'Writable error' : 'throwing end', async () => {
+    const b = makeBench({ storeCapabilities: warmCapabilities() })
+    try {
+      const request = fastRequest(await authorizeFast(b))
+      const idle = await idleChild(b)
+      let ends = 0
+      idle.stdin.end = () => {
+        ends++
+        if (asynchronous) { queueMicrotask(() => idle.stdin.emit('error', new Error('pipe failed'))); return idle.stdin }
+        throw new Error('ambiguous dispatch')
+      }
+      const result = await (await b.control(request)).json()
+      assert.equal(result.code, 'outcome_unknown')
+      assert.equal(result.op_id, request.op_id)
+      assert.equal(ends, 1)
+      assert(idle.terminated() > 0)
+      assert.equal(b.spawned.filter(child => child.op === 'store:edit-view').length, 1)
+    } finally { await b.host.dispose() }
+  })
+})
+
+test('edit-view: interruption preserves op_id/unknown and late inspect cannot downgrade published grant', async t => {
+  for (const interrupted of [false, true]) await t.test(interrupted ? 'cancel' : 'late inspect', async () => {
+    const b = makeBench({ storeCapabilities: fastCapabilities(), reply: (op, value, spec) => op === 'store:edit-view' ? fastReply(spec) : value })
+    try {
+      const request = fastRequest(await authorizeFast(b))
+      b.manual.add('inspect')
+      const inspecting = b.control({ op: 'inspect', grant: request.grant })
+      const oldRead = await b.onSpawned('inspect')
+      b.manual.add('store:edit-view')
+      const editing = b.control(request)
+      const child = await b.onSpawned('store:edit-view')
+      assert.equal((await b.control({ op: 'inspect', grant: request.grant })).status, 409)
+      if (interrupted) await b.control({ op: 'cancel-write', grant: request.grant, writeGrant: request.writeGrant })
+      else child.settle()
+      const result = await (await editing).json()
+      assert.equal(result.op_id, request.op_id)
+      assert.equal(result.code, interrupted ? 'outcome_unknown' : undefined)
+      oldRead.settle()
+      assert.equal((await inspecting).status, interrupted ? 502 : 409)
+      const next = await b.control({ ...request, op_id: crypto.randomUUID() })
+      assert.equal(next.status, 409)
+      assert.equal((await next.json()).error, interrupted ? 'OUTCOME_UNKNOWN' : 'STALE_BASE')
+    } finally { await b.host.dispose() }
+  })
 })
