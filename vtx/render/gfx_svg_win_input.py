@@ -6,7 +6,7 @@ uses a pathname. Directory handles stay live through the leaf read. This is not
 an immutable content snapshot or protection from privileged/filesystem actors.
 """
 import ctypes as C
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from ctypes import wintypes as W
 from functools import lru_cache
 import os
@@ -24,6 +24,10 @@ _GENERIC_READ = 0x80000000
 _INVALID_HANDLE = W.HANDLE(-1).value
 _DONT_REPARSE = 0x1000  # OBJECT_ATTRIBUTES: OBJ_DONT_REPARSE
 _OPEN_REPARSE = 0x00200000  # FILE_OPEN_REPARSE_POINT / FILE_FLAG_OPEN_REPARSE_POINT
+
+
+class WindowsPathAlias(ValueError):
+    """An inspected Windows filesystem entry is not an ordinary exact name."""
 
 
 def _ordinary(part):
@@ -105,7 +109,12 @@ def _final_path(kernel, handle):
     if not size:
         raise C.WinError(C.get_last_error())
     if size >= len(path):
-        raise ValueError('SVG input has an unsupported final Windows path')
+        if size > 32768:
+            raise ValueError('Windows path exceeds the local NT path limit')
+        path = C.create_unicode_buffer(size)
+        size = kernel.GetFinalPathNameByHandleW(handle, path, len(path), 2)
+        if not 0 < size < len(path):
+            raise ValueError('Windows volume name changed while reading an open path')
     return path.value
 
 
@@ -117,12 +126,15 @@ def _info(kernel, handle, *, directory):
         if not kernel.GetFileInformationByHandleEx(handle, kind, C.byref(value), C.sizeof(value)):
             raise C.WinError(C.get_last_error())
     if tag.tag or tag.attributes & (stat.FILE_ATTRIBUTE_REPARSE_POINT | stat.FILE_ATTRIBUTE_DEVICE):
-        raise ValueError('SVG input refuses reparse points and devices')
-    if (info.delete_pending or bool(info.directory) != directory
-            or bool(tag.attributes & stat.FILE_ATTRIBUTE_DIRECTORY) != directory):
-        raise ValueError('SVG input requires ordinary directories and a regular file')
-    if not directory and (info.links != 1 or info.size < 0):
-        raise ValueError('SVG input requires a regular file with one hard link and known size')
+        raise WindowsPathAlias('Windows I/O refuses reparse points and devices')
+    if info.delete_pending:
+        raise ValueError('Windows I/O refuses a delete-pending entry')
+    if bool(info.directory) != directory or bool(tag.attributes & stat.FILE_ATTRIBUTE_DIRECTORY) != directory:
+        raise WindowsPathAlias('Windows I/O requires ordinary directories and a regular file')
+    if not directory and info.links != 1:
+        raise WindowsPathAlias('Windows I/O requires a regular file with one hard link')
+    if not directory and info.size < 0:
+        raise ValueError('Windows I/O requires a known file size')
     return info
 
 
@@ -170,16 +182,8 @@ def _read(kernel, handle, limit, size):
     return bytes(data)
 
 
-def read(root, name, *, limit, expected_path):
-    parts = relative_parts(name)
-    drive, parents = _root_parts(root)
-    parts = parents + parts
-    path = drive + '\\'.join(parts)
-    if len(path.encode('utf-16-le')) >= 520:
-        raise ValueError('SVG input requires a conventional-length Windows path')
-    if expected_path is not None and PureWindowsPath(path).parts != expected_path.parts:
-        raise ValueError('SVG dependency identity changed while resolving its relative name')
-
+@contextmanager
+def _volume_root(drive, *, share=_SHARE_READ):
     kernel, nt = _api()
     target = C.create_unicode_buffer(1024)
     if (kernel.GetDriveTypeW(drive) != 3  # DRIVE_FIXED
@@ -187,7 +191,7 @@ def read(root, name, *, limit, expected_path):
             or not _DEVICE.fullmatch(target.value)):
         raise ValueError('SVG input requires a direct fixed local Windows volume mapping')
     with ExitStack() as stack:
-        handle = kernel.CreateFileW(drive, _GENERIC_READ, _SHARE_READ, None, 3,  # OPEN_EXISTING
+        handle = kernel.CreateFileW(drive, _GENERIC_READ, share, None, 3,  # OPEN_EXISTING
                                     0x02000000 | _OPEN_REPARSE, None)  # FILE_FLAG_BACKUP_SEMANTICS
         if handle == _INVALID_HANDLE:
             raise C.WinError(C.get_last_error())
@@ -201,6 +205,20 @@ def read(root, name, *, limit, expected_path):
             raise C.WinError(C.get_last_error())
         if fs.value != 'NTFS':
             raise ValueError('SVG input requires local NTFS')
+        yield kernel, nt, handle, prefix
+
+
+def read(root, name, *, limit, expected_path):
+    parts = relative_parts(name)
+    drive, parents = _root_parts(root)
+    parts = parents + parts
+    path = drive + '\\'.join(parts)
+    if len(path.encode('utf-16-le')) >= 520:
+        raise ValueError('SVG input requires a conventional-length Windows path')
+    if expected_path is not None and PureWindowsPath(path).parts != expected_path.parts:
+        raise ValueError('SVG dependency identity changed while resolving its relative name')
+
+    with _volume_root(drive) as (kernel, nt, handle, prefix), ExitStack() as stack:
         for i, part in enumerate(parts):
             handle = _open_child(stack, kernel, nt, handle, part)
             info = _info(kernel, handle, directory=i < len(parts) - 1)

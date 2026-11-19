@@ -42,7 +42,7 @@ def read_timeline_for_write(path) -> TimelineSnapshot:
     Raises StoreError/OSError on invalid input; never repairs or adopts it.
     """
     s = _kernel()
-    raw = s._read(s._canonical(path), missing=True)
+    raw = s._read_path(path, missing=True)
     doc = s._parse(raw) if raw is not None else None
     if raw is not None:
         check_document(doc)

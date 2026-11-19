@@ -114,7 +114,9 @@ class TimelineStdinTest(unittest.TestCase):
         doc["subtitles"][0]["text"] = "pipe → socket 😀"
         req = v2_request(doc, sha(self.path.read_bytes()), op_id="replace")
         before = tree(self.root)
-        plan = self.cli(wire(req), "plan", transport="socket")
+        # Windows Popen cannot route a Winsock handle through the CRT stdin fd.
+        transport = "pipe" if sys.platform == "win32" else "socket"
+        plan = self.cli(wire(req), "plan", transport=transport)
         self.assertEqual(plan, timeline_write_plan(self.path, req))
         self.assertEqual(before, tree(self.root))
         commit = self.cli(wire(req))
@@ -123,9 +125,9 @@ class TimelineStdinTest(unittest.TestCase):
         second_doc = copy.deepcopy(doc)
         second_doc["subtitles"][0]["text"] = "later"
         second_req = v2_request(second_doc, commit["revision"], op_id="later")
-        later = self.cli(wire(second_req), transport="socket")
+        later = self.cli(wire(second_req), transport=transport)
         before = tree(self.root)
-        replay = self.cli(wire(req), transport="socket")
+        replay = self.cli(wire(req), transport=transport)
         self.assertTrue(replay["replayed"])
         self.assertEqual(replay["revision"], commit["revision"])
         self.assertEqual(replay["current_revision"], later["revision"])

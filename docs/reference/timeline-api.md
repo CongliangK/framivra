@@ -290,13 +290,15 @@ fade 默认 `preserve-content`：保留外侧 fade，内部接缝设 0。切点�
 
 ### 发布与恢复协议
 
-同目录允许多个工程：按实际文件系统顺序解析父路径（包括 symlink 后的 `..`），再加最终文件名确定 canonical 目标与独立 `.vtx-store-<文件名SHA256>/`，新 manifest 绑定该文件名及 canonical 完整位置（已发布的旧版 filename-only manifest 仍可读、不自动改写）；项目叶 symlink/多硬链与非普通文件拒绝。历史不在 cache/out，renderer 只读当前工程，日志不提供另一份 HEAD；不要移动/删改历史、锁文件或只复制工程后期待 undo。status 可创建锁与 manifest，但不恢复/修改工程；inspect/query 始终零写态。
+同目录允许多个工程：POSIX 按实际文件系统顺序解析父路径（包括 symlink 后的 `..`）；Windows 按下述 NTFS 路径规则。再加最终文件名确定 canonical 目标与独立 `.vtx-store-<文件名SHA256>/`，新 manifest 绑定该文件名及 canonical 完整位置（已发布的旧版 filename-only manifest 仍可读、不自动改写）；项目叶 symlink/多硬链与非普通文件拒绝。历史不在 cache/out，renderer 只读当前工程，日志不提供另一份 HEAD；不要移动/删改历史、锁文件或只复制工程后期待 undo。status 可创建锁与 manifest，但不恢复/修改工程；inspect/query 始终零写态。
 
 macOS 在解析父路径后按实际目录项拼写拒绝大小写/Unicode 别名（`path.alias`），不改写旧 history/hash/manifest。状态、恢复与提交在既有目标锁之前取得同父目录 `.vtx-store-parent.lock`，并持有至操作结束，防止两个尚不存在的别名分别创建历史；该名字保留，不能用作工程文件。此锁不存 HEAD、不删除，零写计划不创建它。同父目录不同工程写入因而串行。`store capabilities` 可选 `platform_support.darwin:true` 仅在当前 macOS 具备目录锚定锁且实现这些规则时返回；侧栏在 macOS 必须检查该标记，旧内核保持只读，Linux 原能力握手不变。
 
-初始化先取同目标稳定的外置 `.bootstrap.lock`（仅同步发布，不存工程身份/HEAD，永不删除），在随机 sibling `.initializing-*` 私有目录内 write/flush/fsync manifest → rename manifest → fsync 私有目录 → rename 整个完整目录到 canonical history → fsync 工程父目录，然后才可执行事务。首次 mkdir、半写/fsync、两个 rename 与目录同步任一点进程崩溃，canonical 要么尚未发布，要么已有完整 manifest；下次 status/recover/事务在同一 bootstrap 锁内重试父目录同步。未发布私有目录不可能含运行过的事务，重试另建目录，不扫描选取、不采用也不删除其残件；其存在不阻止安全重新初始化。旧实现或外来 canonical 目录缺 manifest（即使空、仅 lock、完整单个 `.publish-*`、多个或损坏临时）一律 recovery_required 并提示人工检查，绝不猜身份/清证据。已发布新 manifest 的位置不符也拒绝，不能凭同 SHA 接管 decoy。旧版已发布 manifest 不具完整位置绑定，不宣称可鉴别其跨目录复制。初始化失败不返回成功、不改工程，发布后父 fsync 失败下次重试也不会永卡；这不是物理断电保证。
+Windows 原生 `store` 仅接受直接固定盘映射上的本地 NTFS、已存在的普通工程父目录和原样拼写；盘符大小写统一，不跟随 junction/reparse、8.3 或目录项大小写别名，不接受 UNC、设备、`.`/`..`、流名或多硬链。状态、恢复和写事务持同父目录 `.vtx-store-parent.lock` 的原生字节锁；同一锁覆盖初始化、历史、最终 CAS 和提交凭据。目录逐级相对句柄打开，历史在原目录句柄枚举。文件写入独占暂存并 flush；历史目录与工程分别以原句柄 rename 发布，工程替换允许合作只读者持有旧对象。没有 Windows 父目录 fsync 保证；只承诺受控本地工程的合作写者与进程崩溃，工程、暂存与历史须能安全使用父目录权限；暂存及 before/after 副本继承父目录权限，不检查或保留独立文件 ACL。即使非共享项目也不得依赖独立 ACL。文档及单个证据文件上限 32 MiB，CLI stdin/wire 限制不变。`store capabilities` 的 `platform_support.win32` 只表示内核具备该路径，不验证具体目标或授予侧栏写入资格。
 
-顺序固定：同一线程锁+跨进程 flock → 核验已发布 intent（普通提交入口处理 pending；`edit-view` 要求先显式恢复）→ 严格读 → op_id/request_digest 幂等 → 原字节 CAS → 内存操作及共享无素材结构校验 → before/after 完整字节、SHA、完整请求与结果 fsync 并原子发布 intent 目录 → 工程 staging fsync → 最终原字节 CAS → os.replace 工程（线性化点）与父目录 fsync → 持久 commit 结果。没有默认 JSON 回退，不调用 fstxn.locked_update，不嵌套重入锁。
+POSIX 初始化先取同目标稳定的外置 `.bootstrap.lock`（仅同步发布，不存工程身份/HEAD，永不删除），在随机 sibling `.initializing-*` 私有目录内 write/flush/fsync manifest → rename manifest → fsync 私有目录 → rename 整个完整目录到 canonical history → fsync 工程父目录，然后才可执行事务。首次 mkdir、半写/fsync、两个 rename 与目录同步任一点进程崩溃，canonical 要么尚未发布，要么已有完整 manifest；下次 status/recover/事务在同一 bootstrap 锁内重试父目录同步。未发布私有目录不可能含运行过的事务，重试另建目录，不扫描选取、不采用也不删除其残件；其存在不阻止安全重新初始化。旧实现或外来 canonical 目录缺 manifest（即使空、仅 lock、完整单个 `.publish-*`、多个或损坏临时）一律 recovery_required 并提示人工检查，绝不猜身份/清证据。已发布新 manifest 的位置不符也拒绝，不能凭同 SHA 接管 decoy。旧版已发布 manifest 不具完整位置绑定，不宣称可鉴别其跨目录复制。初始化失败不返回成功、不改工程，发布后父 fsync 失败下次重试也不会永卡；这不是物理断电保证。
+
+POSIX 的发布顺序（Windows 保持同样的 CAS/intent/commit 状态机，锁与 I/O 如上）：同一线程锁+跨进程 flock → 核验已发布 intent（普通提交入口处理 pending；`edit-view` 要求先显式恢复）→ 严格读 → op_id/request_digest 幂等 → 原字节 CAS → 内存操作及共享无素材结构校验 → before/after 完整字节、SHA、完整请求与结果 fsync 并原子发布 intent 目录 → 工程 staging fsync → 最终原字节 CAS → os.replace 工程（线性化点）与父目录 fsync → 持久 commit 结果。没有默认 JSON 回退，不调用 fstxn.locked_update，不嵌套重入锁。
 
 初次原字节 CAS 返回 `conflict` 时，本次未发布 intent、未提交；重新读取当前 `content_version`，重新核对编辑意图，确认后才可用新请求提交，不自动 rebase。intent 发布后的最终 CAS 若发现字节变化，本次不替换目标，但返回 `recovery_required` 并保留待决证据，不按普通 `conflict` 处理。
 
@@ -306,7 +308,7 @@ macOS 在解析父路径后按实际目录项拼写拒绝大小写/Unicode 别�
 
 成功 envelope 为 `schema: "framivra.timeline.store/v1"`、operation/ok、op_id/request_digest、base_revision/revision/project_id，首次与重试另带 current_revision/replayed；失败包含 code/message。CLI 成功 exit0，输入/CAS/恢复错误 exit1，不支持的旗标组合 exit2；拒绝 `--dry-run`、渲染旗标与 `--json` 输出文件。
 
-[共享无素材校验](../../vtx/timeline_structure.py) 用于 store 写入及显式带 `_vtx` 的受管工程 validate，检查 schema、ID、源引用、整数帧/区间、EDL、内联/外引字幕冲突和轨重叠；`_vtx` 键存在即适用，坏值、缺字段或未知协议不回退 legacy。未受管工程保持原只读/validate 的 Unicode source ID、高精度扩展数值及精确诊断行为；写入的 strict/ID 限制不扩散到 legacy validate。adopt 不改已有 source.id 或引用：符合上述稳定 ID 规则才可接管，不符合的合法 legacy source ID 明确拒写并保留原字节，不自动重命名/迁移；高精度扩展（含超出 Decimal 指数范围的合法 JSON 数值）在 adopt/status/recover 返回 input.json 失败 envelope，拒写而非舍入，不影响 legacy 只读；此 adopt 是受限显式接管，不是全面兼容迁移。重复 source ID 在 validate 中不再静默覆盖。**提交不等于可渲染**：不探素材、不查实际源帧数、不载入插件，不代替正式 validate/all。保证仅为本地 POSIX 合作线程/进程与进程崩溃；最终 CAS 后仍可能被非合作外写竞态覆盖。Windows/NFS/物理断电未测，不作绝对保证。
+[共享无素材校验](../../vtx/timeline_structure.py) 用于 store 写入及显式带 `_vtx` 的受管工程 validate，检查 schema、ID、源引用、整数帧/区间、EDL、内联/外引字幕冲突和轨重叠；`_vtx` 键存在即适用，坏值、缺字段或未知协议不回退 legacy。未受管工程保持原只读/validate 的 Unicode source ID、高精度扩展数值及精确诊断行为；写入的 strict/ID 限制不扩散到 legacy validate。adopt 不改已有 source.id 或引用：符合上述稳定 ID 规则才可接管，不符合的合法 legacy source ID 明确拒写并保留原字节，不自动重命名/迁移；高精度扩展（含超出 Decimal 指数范围的合法 JSON 数值）在 adopt/status/recover 返回 input.json 失败 envelope，拒写而非舍入，不影响 legacy 只读；此 adopt 是受限显式接管，不是全面兼容迁移。重复 source ID 在 validate 中不再静默覆盖。**提交不等于可渲染**：不探素材、不查实际源帧数、不载入插件，不代替正式 validate/all。保证仅为上述本地 POSIX/NTFS 合作线程与进程、以及进程崩溃；最终 CAS 后仍可能被非合作外写竞态覆盖。网络文件系统和物理断电不在保证范围。
 
 ## 显式 v2 兼容写地基（A1；旧入口尚未迁移）
 
@@ -374,7 +376,7 @@ exact 保留首尾空白、键次序、Unicode escape、数值词法与完整原
 
 ### A2 pinned artifact target：未实现、未验证
 
-当前 path-store 仅支持上文普通本地 POSIX 合作工程；**不能安全代接 snapshot 临时目录**。没有已实现 PinnedArtifactTarget，也没有 snapshot adapter；A1 不代表完整兼容地基完成。
+当前 path-store 仅支持上文普通本地 POSIX/NTFS 合作工程；**不能安全代接 snapshot 临时目录**。没有已实现 PinnedArtifactTarget，也没有 snapshot adapter；A1 不代表完整兼容地基完成。
 
 拟议最小内部边界（设计，不是可调用 API）：`PinnedArtifactTarget(parent_fd, work_fd, final_name, timeline_name, final_path)`。parent_fd/work_fd 必须在已验证、受信任目录打开并用 fstat 固定 dev/inode；所有文件、history、锁与 staging 操作需 dirfd-relative、拒绝 leaf alias，不能在校验后回落字符串 resolve 或 chdir。final_path 仅为最终公开目标与 history manifest 的绑定身份，不能把临时工作路径写成最终契约；拒绝同 SHA decoy history。
 
