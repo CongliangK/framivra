@@ -2,7 +2,7 @@
 
 ## 受限 `gfx` 配置
 
-Windows x64 首个原生配置只支持 `gfx`、单个无字体 SVG 剪辑、无普通素材/字幕/插件、`core` 松散帧缓存。不开放 `all`、单帧预览、打包缓存或带字体工程。未配置时仍拒绝生产准入，不查 PATH、不回退内部验收。
+Windows x64 原生配置只支持 `gfx`、单个 SVG 剪辑、无普通素材/字幕/插件、`core` 松散帧缓存。字体可为空，或按标准 portable-v2 清单的顺序声明锁定的四份 Noto/DejaVu 字体；不接受任意字体。带字体需要完整源码检出或受管 editable 安装提供基线锁，单独 wheel 不提供此配置。不开放 `all`、单帧预览或打包缓存。未配置时仍拒绝生产准入，不查 PATH、不回退内部验收。
 
 运行前用本次进程环境设置 `VTX_WINDOWS_SVG_PORTABLE`（官方 Inkscape 1.4.4 x64 便携解包根，含 `inkscape` 子目录）与 `VTX_WINDOWS_SVG_SCRATCH`（已存在、仅可信账户可写的短 ASCII 暂存根）。工程、便携包与暂存使用可信的固定 NTFS 根，暂存与工程/包不得重叠。工程产品根也必须由可信写者控制；完成标记不是可跨信任边界验证的签名。`python -m vtx -t <timeline.json> gfx` 会启动受监管的 Inkscape 并写 `cache/` 与 `out/receipt.json`。正常暖用仍重做运行身份预检，但不执行帧导出。
 

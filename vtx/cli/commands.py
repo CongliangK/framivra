@@ -1082,8 +1082,8 @@ def _main_owned(execution, ownership):
                 if not portable or not scratch:
                     raise ValueError('Windows SVG requires explicit portable and private scratch roots')
                 from ..render.gfx_svg_win_runtime import owned_runtime
-                scope['_svg_runtime_factory'] = lambda project: ownership.enter_context(
-                    owned_runtime(project, portable, scratch))
+                scope['_svg_runtime_factory'] = lambda c, fonts: ownership.enter_context(
+                    owned_runtime(c, portable, scratch, fonts))
         c = Ctx(tp, execution=execution, **scope)
     except (ValueError, KeyError, TypeError, ZeroDivisionError, OSError) as e:
         # 2026-09-11 扩捕获：timeline 结构缺键（KeyError）/类型错（TypeError）/fps=0
