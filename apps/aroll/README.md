@@ -27,5 +27,9 @@
 
 ```bash
 env python3 apps/aroll/aup3_extract.py <项目.aup3> <输出目录>   # 提取各轨 WAV + structure.json 报告
-env python3 apps/aroll/trim_takes.py <提取目录> <take输出目录>  # 按 VAD 掐头去尾
+env python3 apps/aroll/trim_takes.py "<提取目录>" "<take输出目录>"  # 按 VAD 掐头去尾
 ```
+
+`trim_takes.py` 只扫描提取目录顶层的 `track*.wav`，输入须与提取器的输出格式一致：固定 44 字节头的单声道小端 IEEE float32 WAV。裁剪保持输入采样率（例如 48 kHz），不改输入文件。整数 PCM WAV 不兼容；若首个匹配文件就是这种格式，会报错，可能已建输出目录，但不会写出裁剪 WAV 或索引。
+
+请指定仓外独立的 take 输出目录：裁剪会在其中写入 `takeNN_*.wav` 和 `takes_index.json`，覆盖同名产物。索引中的 `*_samples` 是采样数，`*_s` 是按输入采样率换算并舍入到毫秒的秒数。
