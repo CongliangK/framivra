@@ -21,7 +21,7 @@ from xml.sax.saxutils import escape
 
 from ..runtime import windows_browser as native
 from . import gfx_svg, gfx_svg_win_fontconfig as fontconfig, gfx_svg_win_input as win_input
-from . import gfx_svg_win_system as win_system
+from . import gfx_svg_win_catalog as win_catalog, gfx_svg_win_system as win_system
 from .gfx_cli import _png_stream_invalid_reason
 from .gfx_svg_stage import _FONT_ERROR
 from .gfx_svg_win_snapshot import (_local_path, _normalized_dos_name, _ordinary, _pin_dir, _pin_dirs,
@@ -698,7 +698,8 @@ def _require_staged_font_faces(operation, executable, cwd, staged, pins, launch_
     return counts
 
 
-def _accept_standard_raster(portable_root, *, scratch, project_root, expected_system_scope=None):
+def _accept_standard_raster(portable_root, *, scratch, project_root, expected_system_scope=None,
+                            expected_system_catalogs=None):
     """Attest only the fixed portable-v2 raster, not project or render eligibility.
 
     Use an authorized stable NTFS project root and an exclusive disjoint
@@ -708,10 +709,17 @@ def _accept_standard_raster(portable_root, *, scratch, project_root, expected_sy
 
     Only a trusted internal audit harness may supply expected_system_scope:
     (count, tuple of (relative name, size, stream SHA-256, recorded link count)).
-    This joins held disk streams to sampled names; it is not loader or trust evidence.
+    This joins held disk streams to sampled names, not to loader objects.
+    The same caller may additionally supply expected_system_catalogs: a tuple of
+    (same relative name in scope order, catalog leaf, native SHA-256, optional
+    SHA-256 of signer DER). This requires local, cache-only WinTrust membership
+    for every held disk member before launch, not mapped identity or admission.
+    A signer identity is pinned only for a row supplying a DER digest.
     """
     expected_system_sha = (None if expected_system_scope is None else
                            win_system._validate_scope(expected_system_scope))
+    if expected_system_catalogs is not None:
+        win_catalog._validate_catalogs(expected_system_scope, expected_system_catalogs)
     from PIL import Image
 
     deadline = time.monotonic() + _RASTER_TIMEOUT
@@ -759,6 +767,8 @@ def _accept_standard_raster(portable_root, *, scratch, project_root, expected_sy
         if expected_system_sha is not None:
             held_system, system32, winsxs = win_system._hold_scope(
                 roots, _system_windows_path(), expected_system_scope[1], launch_deadline, _image_device)
+            if expected_system_catalogs is not None:
+                win_catalog._verify_scope_catalogs(roots, held_system, system32, expected_system_catalogs, launch_deadline)
         with _fixed_shell(portable_root, scratch, retain_package_images=True) as context:
             operation, executable, cwd, environment, pins = context
             frames, fonts = cwd / 'frames', cwd / 'fonts'

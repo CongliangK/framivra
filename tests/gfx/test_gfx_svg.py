@@ -1114,6 +1114,89 @@ class WindowsRuntimeSnapshot(unittest.TestCase):
                     shell._accept_standard_raster(None, scratch=None, project_root=None, expected_system_scope=malformed)
             opened.assert_not_called()
 
+    def test_system_catalog_requires_exact_complete_immutable_scope_before_input(self):
+        from vtx.render import gfx_svg_win_shell as shell
+
+        names = ('system32/a.dll', 'winsxs/assembly/b.dll')
+        scope = (2, tuple((name, 1, 'a' * 64, 1) for name in names))
+        a = (names[0], 'A~b.cat', 'b' * 64, 'c' * 64)
+        b = (names[1], a[1], 'd' * 64, None)  # a catalog may cover multiple members
+        shell.win_catalog._validate_catalogs(scope, (a, b))
+        malformed = [(a,), (a, a), (b, a), (a, b, b), [a, b], (list(a), b),
+                     ((a[0], a[1], a[2].upper(), a[3]), b), ((a[0], a[1], a[2], True), b)]
+        malformed += [((a[0], name, *a[2:]), b) for name in (
+            'nul.cat', 'nul .cat', '../a.cat', r'x\a.cat', 'C:a.cat', 'a.cat:ads', 'a.cat.', ' a.cat',
+            'K.cat', 'x.exe', 'a' * 221 + '.cat')]
+        with mock.patch.object(shell, '_locked_runtime_digests') as opened:
+            for disk, catalogs in [(None, (a, b)), *((scope, bad) for bad in malformed)]:
+                with self.subTest(catalogs=catalogs), self.assertRaisesRegex(ValueError, 'system scope coverage|catalog row'):
+                    shell._accept_standard_raster(None, scratch=None, project_root=None,
+                                                  expected_system_scope=disk, expected_system_catalogs=catalogs)
+            opened.assert_not_called()
+
+    def test_system_catalog_rewinds_and_always_closes_attempted_trust(self):
+        import ctypes as C
+        from vtx.render import gfx_svg_win_catalog as catalog
+
+        for case, expected in ((None, None), ('digest', 'digest differs'), ('status', 'trust failed'),
+                               ('state', 'trust failed'), ('deadline', 'deadline expired'),
+                               ('pin', 'signer pin differs'), ('close', 'state close failed')):
+            with self.subTest(case=case):
+                calls = []
+                current = 0
+                digest = b'\xab' * 32
+                cat_path, member = r'C:\fixed\leaf.cat', r'C:\fixed\member.dll'
+
+                def rewind(handle, offset, new_position, whence):
+                    self.assertEqual((handle, offset, new_position, whence), (123, 0, None, 0))
+                    calls.append('rewind')
+                    return True
+
+                def hash_from_handle(admin, handle, size, out, flags):
+                    self.assertEqual((admin, handle, size._obj.value, flags), (456, 123, 32, 0))
+                    calls.append('hash')
+                    out[:] = digest
+                    return True
+
+                def verify(hwnd, action, state):
+                    nonlocal current
+                    data = state._obj
+                    self.assertEqual(hwnd, catalog._INVALID)
+                    self.assertEqual((data.ui, data.revocation, data.choice, data.flags), (2, 0, 2, 0x1010))
+                    info = data.catalog.contents
+                    self.assertEqual((info.catalog, info.member, info.member_handle, info.tag, info.admin),
+                                     (cat_path, member, 123, digest.hex().upper(), 456))
+                    self.assertEqual(C.string_at(info.digest, info.digest_size), digest)
+                    self.assertFalse(info.ctl)
+                    if data.action == 1:
+                        calls.append('verify')
+                        if case != 'state':
+                            data.state = 789
+                        if case == 'deadline':
+                            current = 2
+                        return 1 if case == 'status' else 0  # even a positive LONG is not successful
+                    self.assertEqual(data.action, 2)
+                    self.assertEqual(data.state, None if case == 'state' else 789)
+                    calls.append('close')
+                    return int(case == 'close')
+
+                def check_time(deadline):
+                    if current >= deadline:
+                        raise TimeoutError('deadline expired')
+
+                trust = SimpleNamespace(CryptCATAdminCalcHashFromFileHandle2=hash_from_handle, WinVerifyTrust=verify)
+                with mock.patch.object(catalog, '_signer_sha256', return_value='f' * 64) as signer, \
+                        mock.patch.object(catalog, '_scope_time', side_effect=check_time):
+                    error = (self.assertRaisesRegex(TimeoutError if case == 'deadline' else ValueError, expected)
+                             if expected else contextlib.nullcontext())
+                    with error:
+                        catalog._verify_member(trust, 456, rewind, member, 123, cat_path,
+                                               'a' * 64 if case == 'digest' else digest.hex(),
+                                               'e' * 64 if case == 'pin' else None, 1)
+                self.assertEqual(calls, ['rewind', 'hash'] if case == 'digest' else
+                                 ['rewind', 'hash', 'rewind', 'verify', 'close'])
+                self.assertEqual(signer.call_count, int(case == 'pin'))
+
     def test_system_scope_native_same_handle_lifetime_and_reparse(self):
         from hashlib import sha256
         import time
