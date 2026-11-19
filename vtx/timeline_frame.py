@@ -63,6 +63,9 @@ def _environment():
 
 
 def _render(path, reference, frame, limit, *, prepare_gfx=False, trust_html=False):
+    if sys.platform == 'win32':
+        from .render.preview_windows import render
+        return render(path, reference, frame, limit, prepare_gfx=prepare_gfx, trust_html=trust_html)
     request = []
     try:
         return _render_inner(path, reference, frame, limit, prepare_gfx=prepare_gfx,

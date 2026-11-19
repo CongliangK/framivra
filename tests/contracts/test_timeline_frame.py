@@ -120,6 +120,20 @@ class FrameReadOnly(unittest.TestCase):
             self.assertEqual(frame_timeline(self.path, frame=1)["diagnostics"][0]["code"], "render.not_authorized")
         self.assertEqual(list(self.root.iterdir()), [self.path])
 
+    @unittest.skipUnless(sys.platform == 'win32', 'native Windows preview admission')
+    def test_configured_windows_preview_rejects_unlocked_timeline_before_runtime(self):
+        roots = dict(VTX_WINDOWS_SVG_PORTABLE=str(self.root), VTX_WINDOWS_SVG_SCRATCH=str(self.root),
+                     VTX_WINDOWS_SVG_MEDIA_BIN=str(self.root))
+        version = 'sha256:' + hashlib.sha256(self.path.read_bytes()).hexdigest()
+        with patch.dict(os.environ, roots), \
+                patch('vtx.render.preview_windows._FrameCtx', side_effect=AssertionError('must not construct Ctx')):
+            result = frame_timeline(self.path, frame=1, expected_content_version=version,
+                                    render=True, prepare_gfx=True, include_png=True)
+        self.assertFalse(result['ok'])
+        self.assertIsNone(result['image'])
+        self.assertIn('portable-v2 timeline', result['diagnostics'][0]['message'])
+        self.assertEqual(list(self.root.iterdir()), [self.path])
+
 
 @unittest.skipUnless(os.environ.get("VTX_TEST_FFMPEG") and shutil.which("ffmpeg"),
                      "set VTX_TEST_FFMPEG to ffmpeg executable for real CPU pixels")
