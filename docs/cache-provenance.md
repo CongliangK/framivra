@@ -46,7 +46,7 @@
   冷片按实际导出帧分成独立 Inkscape shell：默认上限为 `min(5, max(1, CPU数//2))`，
   每增加一个 shell 至少需要 120 个待导出帧，小片仍单 shell；`VTX_SVG_WORKERS=1..5`
   可限制上限，设为 `1` 回退串行。每个 shell 独占 HOME、profile、字体副本与字体缓存，
-  完成后以同一上限并行逐张执行完整 PNG 解码/CRC/SHA 校验，全部结束并复核全输入/环境后才发布凭据；失败不发布。
+  完成后以同一上限并行逐张检查 PNG 尺寸和块 CRC，验证 IDAT 流可完整解压并计算文件 SHA256，不重建像素。全部通过并复核全输入/环境后才发布凭据；失败不发布。
   [SVG shell](../vtx/render/gfx_svg_stage.py) 即使退出成功也拒收明确的 Fontconfig error / Pango-CRITICAL，不发布完成凭据；只报告固定短错误，不回显日志，普通警告不拒收。
   取消先通知导出线程停止等待，再逐一终止/等待自有 shell；回收失败仍报错，不把线程退出当作进程已回收。
   调度不改输入语法、输出参数或缓存语义，凭据 `batch_count` 记录实际生产 shell 数；
