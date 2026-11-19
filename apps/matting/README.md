@@ -14,36 +14,30 @@
 
 ## 依赖
 
-- **conda env `comfyui`**（torch GPU 栈 + opencv-python/numpy/Pillow/omegaconf/hydra-core/safetensors/transformers）——推理环境，系统解释器探测不了，故 `app.json` 的 `requires` 为空，依赖探测走下方 init.sh。
-- **两个外部 git 克隆**（与本目录平级，runner 相对路径引入；`init.sh` 仅探测已有资产）：`MatAnyone2/`（github + HF 权重 141MB）、`BiRefNet_HR/`（HF 快照）。
-- **resolve_matte 子链系统依赖**（GUI/系统级，解释器探测不了，全部手动）：DaVinci Resolve 21 Studio（`/opt/resolve`，付费）、xdotool、`/dev/input` 读权限（record_clicks）、uinput（键盘注入验证）、NVIDIA GPU + nvidia-smi（vram_guard）；ComfyUI 服务（127.0.0.1:8188，仅背景图生成，另见 `comfyui_init.sh`）。
+- **conda env `comfyui`**（支持 CUDA 的 PyTorch、提供 `cv2.ximgproc.guidedFilter` 的 OpenCV、NumPy、Pillow、omegaconf、hydra-core、safetensors、transformers）。`app.json` 的 `requires` 为空不代表没有运行时依赖；已有资产用 `init.sh` 探测。
+- **resolve_matte 子链系统依赖**（GUI/系统级，解释器探测不了，全部手动）：DaVinci Resolve 21 Studio（`/opt/resolve`，付费）、xdotool、`/dev/input` 读权限（record_clicks）、uinput（键盘注入验证）、NVIDIA GPU + nvidia-smi（vram_guard）。
 
 ## 健康检查
 
-`env python3 apps/matting/health_check.py`——compile() 纯语法检查本目录与 `resolve_matte/` 下的 .py（零执行零副作用零 __pycache__）；`vt doctor` 经 app.json `health.command` 自动调用。
+从仓库根运行 `env python3 apps/matting/health_check.py`；离线 doctor 的 matting 组件项也经 `app.json` 的 `health.command` 调用同一脚本。它只用 `compile()` 检查本目录与 `resolve_matte/` 下的 Python 语法，不执行被检脚本、不写 `__pycache__`，也不验证依赖、权重或 GPU。
 
-## 开启步骤（默认关闭）
+## 开启步骤
 
-1. 已有资产探测：`bash apps/matting/init.sh`（conda env `comfyui`、两个平级克隆、
-   torch hub ResNet18）；旧 `--download` 为 **BLOCKED**，不会补齐缺件。
-   离线证据可用 `env python3 scripts/policy/model_license_policy.py plan matanyone2-code matanyone2-weights birefnet-hr resnet18-weights` 查看；
-   `plan` 不下载、不安装环境、不授予许可，也不解除未知项或旧入口门禁。
-   ComfyUI 服务另用 `bash apps/matting/comfyui_init.sh` 探测；`--start` 仅启动已配置服务，旧 `--install` 为 **BLOCKED**。
-2. **两个外部 git 克隆，必须与本目录平级**（脚本用相对路径 `sys.path` 引入）：
-   - `MatAnyone2/`（含官方代码 + `pretrained_models/hf2/model.safetensors` 权重）
-   - `BiRefNet_HR/`（含 swint 权重）
-   - 原工程另有 MatAnyone / BiRefNet / RobustVideoMatting 旧版克隆，仅 v1 路线用，可不装。
-3. **Python 依赖**（conda env 内）：opencv-python、numpy、Pillow、torch、omegaconf、hydra-core、safetensors。
-4. **ComfyUI 服务**（127.0.0.1:8188，仅生成背景图时需要）：`bash ~/AI/ComfyUI/start.sh`。
-5. 以上就绪后，把仓库根 `config.local.json` 的 `comfyui.enabled` 置 `true`（当前为状态声明）。
+本节用于准备本地 BiRefNet_HR → MatAnyone2 路线。`comfyui.enabled` 默认为 `false`，是状态声明；改为 `true` 不会启动服务，也不是直接运行抠像脚本的前置条件。
+
+1. 从仓库根用 `bash apps/matting/init.sh` 探测已有资产。它检查 `COMFYUI_PY`（默认 `~/miniconda3/envs/comfyui/bin/python`）能否导入指定模块，以及脚本同目录内的 `MatAnyone2/`（代码和 `pretrained_models/hf2/model.safetensors`）、`BiRefNet_HR/`（只查 `config.json`）和预置的 ResNet18 文件。**看汇总的 `✗` 缺件数，不要用退出码判定就绪**：探测到缺件也会退出 0。旧 `--download` 为 **BLOCKED**，不会补齐缺件。
+2. 缺依赖或缺少已获许可的权重时，不要进入推理。离线证据可用 `env python3 scripts/policy/model_license_policy.py plan matanyone2-code matanyone2-weights birefnet-hr resnet18-weights` 查看；`plan` 不下载、不安装环境、不授予许可，也不解除未知项或旧入口门禁。
+3. 区分能力：发现 FFmpeg 或在 `-encoders` 列表看到 `h264_nvenc`，不等于 GPU 可用。两个本地 runner 都直接使用 CUDA、无 CPU 回退；例如 `torch` 能导入但没有可用 CUDA 时，语法和已有资产探测仍可能通过，首帧 runner 会在 `.cuda()` 处失败。即使 CUDA 可用，单镜头命令也只写 mask 和 alpha；全量快照还需匹配的前景帧、alpha 与背景图，并实际完成合成和 NVENC 编码，才能据产物验收。
+
+ComfyUI HTTP 服务（127.0.0.1:8188）仅用于生成背景图，与抠像解释器分开；另用 `bash apps/matting/comfyui_init.sh` 探测。`--start` 会启动已配置服务并写日志（已在线则不启动）；旧 `--install` 为 **BLOCKED**。
 
 ## 文件清单（原快照清单，随迁移保留）
 
 | 文件 | 用途 |
 |---|---|
 | `run_birefnet_hr.py` | 首帧 → 高分辨率 mask（BiRefNet_HR，2048 档） |
-| `init.sh` | 已有抠像依赖探测（conda env / 两克隆 / torch hub 权重）；旧 `--download` 为 BLOCKED |
-| `comfyui_init.sh` | ComfyUI 背景图服务（127.0.0.1:8188）依赖探测/初始化（仅生成背景图时需要） |
+| `init.sh` | 已有抠像依赖探测（conda env / 本地模型目录 / ResNet18 文件）；旧 `--download` 为 BLOCKED |
+| `comfyui_init.sh` | 探测或启动已配置的 ComfyUI 背景图服务（127.0.0.1:8188） |
 | `run_matanyone2.py` | 主 runner：帧目录 + 首帧 mask → alpha 序列（raw + guided filter 收边） |
 | `run_matanyone.py` | v1 版 runner（MatAnyone，已被 v2 取代，留档） |
 | `post_h3.sh` | H3 成片后处理（找 ComfyUI 输出→补音轨→拉伸→抽质检帧）；路径 env `SRC`/`COMFYUI_OUT`/`OUT_DIR` 覆盖 |
@@ -53,14 +47,16 @@
 | `resolve_matte/` | DaVinci Magic Mask 命令行驱动子链（`matte_pipeline.sh` 一键流水线 + 鼠标/显存基建，详见 `resolve_matte/README.md`） |
 | `docs/` | 测试报告（路线拍板依据）、抠像升级调研、背景替换总调研 |
 
-## 用法（配置完成后）
+## 用法（依赖就绪后）
+
+单镜头抠像会写首帧 mask 与两组 alpha PNG。用 `comfyui` 环境的 `python`，从仓库根进入 `apps/matting/`（模型加载使用相对路径）；先将下列变量设为仓外绝对路径。`FIRST_FRAME` 是 `FRAMES_DIR` 按文件名排序的首个 `.png`，`MASK` 的上级目录须已存在。
 
 ```bash
-# 单镜头抠像（conda comfyui env 解释器）
-python run_matanyone2.py <frames_dir> <mask.png> <out_raw_dir> <out_refined_dir>
-python run_birefnet_hr.py <first_frame.png> <out_mask.png>
-# 达芬奇 Magic Mask 流水线（resolve_matte/）
-env bash apps/matting/resolve_matte/matte_pipeline.sh <工程名> [视频目录]
+cd apps/matting
+python run_birefnet_hr.py "$FIRST_FRAME" "$MASK"
+python run_matanyone2.py "$FRAMES_DIR" "$MASK" "$OUT_RAW_DIR" "$OUT_REFINED_DIR"
 ```
 
-实测性能与坑（首帧静默下载被墙权重、绿残留、发丝收边参数等）见 `docs/测试报告-背景替换与H3重绘.md` §五。
+达芬奇 Magic Mask 是独立子链，会启动或重启 Resolve、创建工程并写导出；前置条件与执行命令见 [Resolve 抠像说明](resolve_matte/README.md)。
+
+路线、历史性能与失败记录（包括 MatAnyone2 光流启动时的 ResNet18 静默联网、绿残留、发丝收边）见[实测报告](docs/测试报告-背景替换与H3重绘.md) §五；不作为当前机器的验收结果或下载指引。
