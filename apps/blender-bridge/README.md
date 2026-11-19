@@ -34,10 +34,12 @@
 cd apps/blender-bridge   # （外部 `_library` 资产一律以工作区绝对路径引用，见文末编排方法论条目）
 env python3 subs_alpha.py <项目>/timeline.json      # ① 字幕透明轨（需先有 cache/subs.ass，vtx 字幕阶段产物）
 blender --background --factory-startup --python json2blend.py -- <项目>/timeline.json <项目>/preview.blend   # ② 生成
-blender --background --python verify_blend.py -- <项目>/timeline.json <项目>/preview.blend                   # ③ 结构校验（退出码 0=全过）
+blender --background --python verify_blend.py -- <项目>/timeline.json <项目>/preview.blend                   # ③ 只读结构校验（证据见下）
 blender <项目>/preview.blend                        # ④ 打开预览（空格播放，拖拽刮擦）
 env python3 audit_bundle.py -t <项目>/timeline.json [--prefix bgm-]   # 分轨审计包五步链
 ```
+
+③ 在 Blender 内回读 timeline 与 `.blend`；须同时看到本次 `[verify]` 汇总的 `失败 0 项` 和退出码 0。该汇总只证明脚本检查的条目结构，不证明实机播放画面正确。
 
 **打开即视频编辑工作区**：json2blend 生成的 .blend 默认活动工作区=「Video Editing」——打开即是时间线+视频预览面板，无需手动切换工作区/场景。实现：以 Blender 官方 `Video_Editing` app template 的 startup.blend 为底（出厂启动文件不含该工作区，headless 下唯一可靠路径），清掉模板示例物件后在模板场景上建 VSE；找不到模板时回落原 Layout（不影响条目生成）。
 
