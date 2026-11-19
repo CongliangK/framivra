@@ -4,8 +4,9 @@ The caller supplies a trusted, stable vendor extraction and owns an exclusive
 scratch parent on a stable local volume mapping. Source and scratch chains
 are pinned and checked for physical overlap before creating the operation.
 Pins protect the opened names, not all writes beneath them. No other writer
-may touch the operation tree. Only the fixed raster can retain its verified
-package-bin image files; the pins bind on-disk streams, not mapped bytes.
+may touch the operation tree. The fixed raster and static inventory retain
+verified package-bin image files only within the operation; the pins bind
+on-disk streams, not mapped bytes.
 
 Each operation streams at most the pinned number of files and bytes into a
 fresh copy, then streams the actual copy again for verification. The copy
@@ -160,11 +161,17 @@ def _image_digest(handle, kernel, size):
     return digest.hexdigest()
 
 
+class _PinnedImage(NamedTuple):
+    handle: int
+    size: int
+    sha256: str
+
+
 def _tree(root, *, destination=None, retain=None):
     """Copy one bounded tree, or authenticate it and optionally retain image pins."""
     image_pins, image_bin = retain if retain is not None else (None, None)
     files, directories, seen = {}, [], set()
-    images = set()
+    images = {}
     file_count = total = image_bytes = 0
 
     def visit(path, relative, depth):
@@ -215,8 +222,9 @@ def _tree(root, *, destination=None, retain=None):
             if file_count > _MAX_FILES or total > _MAX_BYTES:
                 raise ValueError('SVG probe vendor tree exceeds its file or byte bound')
             if image:
-                files[relative] = [size, _image_digest(handle, kernel, size)]
-                images.add(expected)
+                digest = _image_digest(handle, kernel, size)
+                files[relative] = [size, digest]
+                images[relative] = _PinnedImage(handle, size, digest)
                 return
             with path.open('rb') as src:
                 with ExitStack() as stack:
@@ -249,9 +257,9 @@ def _tree(root, *, destination=None, retain=None):
             raise ValueError('SVG probe vendor tree identity mismatch')
         if image_bin is not None:
             executable = image_bin / _ENTRY.split('/')[1]
-            if str(executable) not in images:
+            if _ENTRY not in images:
                 raise ValueError('SVG probe requires the exact pinned package entry')
-            return executable, frozenset(images)
+            return executable, images
         return root / _ENTRY
 
 
@@ -269,8 +277,8 @@ class _SnapshotOperation:
 
 
 @contextmanager
-def _snapshot_operation(portable_root, *, scratch, retain_package_images=False):
-    """Own the verified private copy. Close pins, but never delete while keep is set."""
+def _verified_snapshot(portable_root, *, scratch, retain_package_images):
+    """Scope the original authentication pins to the verified private copy."""
     if sys.platform != 'win32' or sysconfig.get_platform() != 'win-amd64':
         raise ValueError('SVG snapshot requires Windows x64 Python')
     source, scratch = _local_path(portable_root) / 'inkscape', _local_path(scratch)
@@ -287,23 +295,31 @@ def _snapshot_operation(portable_root, *, scratch, retain_package_images=False):
             with _pin_dir(directory) as (directory_handle, _), ExitStack() as images:
                 vendor = directory / 'inkscape'
                 _tree(source, destination=vendor)
-                package_images = None
+                package_images = held = None
                 if retain_package_images:
                     images.enter_context(_pin_dir(vendor))
                     bin_handle, _ = images.enter_context(_pin_dir(vendor / 'bin'))
                     expected_bin = _local_path(_normalized_dos_name(directory_handle)) / 'inkscape' / 'bin'
                     if _normalized_dos_name(bin_handle) != str(expected_bin):
                         raise ValueError('SVG package bin differs from its exact staged path')
-                    executable, package_images = _tree(vendor, retain=(images, expected_bin))
+                    executable, held = _tree(vendor, retain=(images, expected_bin))
+                    package_images = frozenset(str(expected_bin / name.split('/')[1]) for name in held)
                 else:
                     executable = _tree(vendor)
                 cwd = directory / 'shell'
                 cwd.mkdir()
                 operation = _SnapshotOperation(_ShellInputs(vendor, executable, cwd), package_images)
-                yield operation
+                yield operation, held
         finally:
             if operation is None or not operation.keep:
                 shutil.rmtree(directory)
+
+
+@contextmanager
+def _snapshot_operation(portable_root, *, scratch, retain_package_images=False):
+    """Own the verified private copy. Close pins, but never delete while keep is set."""
+    with _verified_snapshot(portable_root, scratch=scratch, retain_package_images=retain_package_images) as (op, _):
+        yield op
 
 
 @contextmanager
