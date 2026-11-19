@@ -199,14 +199,14 @@ _EXP, _EXP_LEN = 1400, 300
 _DIRECT, _FWD = _RVA + 1376, _RVA + _EXP + 200
 
 
-def _add_exports(data, *, base=11):
+def _add_exports(data, *, base=11, forwarder=b'unreached.#7'):
     offset, rva = _RAW + _EXP, _RVA + _EXP
     pack_into('<II', data, _OPT + 112, rva, _EXP_LEN)
     pack_into('<IIHHIIIIIII', data, offset, 0, 0, 0, 0, rva + 100, base, 4, 3,
               rva + 40, rva + 56, rva + 68)
     pack_into('<4I3I3H', data, offset + 40, _DIRECT, _FWD, 0, _DIRECT, rva + 120, rva + 128, rva + 160, 0, 0, 1)
     for start, text in ((100, b'example.dll\0'), (120, b'?Alias\0'),
-                        (128, b'?Mixed@Name/with\\Punctuation\0'), (160, b'forward\0'), (200, b'unreached.#7\0')):
+                        (128, b'?Mixed@Name/with\\Punctuation\0'), (160, b'forward\0'), (200, forwarder + b'\0')):
         data[offset + start:offset + start + len(text)] = text
     return data
 
@@ -236,6 +236,59 @@ class PeExportMetadata(unittest.TestCase):
                 pe._match_export(records, symbol, budget)
         with mock.patch.object(pe, '_PACKAGE_NAME_TEXT', 1), self.assertRaisesRegex(ValueError, 'forwarders.*text budget'):
             pe._match_export(records, {'ordinal': 12}, budget)
+
+    def _bound_images(self, **images):
+        held = {member: snapshot._PinnedImage(data, len(data), sha256(data).hexdigest())
+                for member, data in images.items()}
+        patch = mock.patch.object(pe, '_pinned_reader', return_value=lambda image:
+                                  lambda off, size: image.handle[off:off + size])
+        patch.start()
+        self.addCleanup(patch.stop)
+        return held
+
+    def test_follows_selected_name_and_ordinal_without_basename_fallback(self):
+        held = self._bound_images(
+            a=_add_exports(_sample(), forwarder=b'MiXeD.#7'),
+            b=_add_exports(_sample(), base=6, forwarder=b'other.?Alias'),
+            c=_add_exports(_sample()))
+        rules = {('a', 'mixed.dll'): 'b', ('b', 'other.dll'): 'c'}
+        select = mock.Mock(side_effect=lambda member, name: rules.get((member, name)))
+        start = [('a', {'name': 'forward'})]
+        self.assertEqual(pe._follow_bound_exports(held, start, select), [[
+            {'member': 'a', 'sha256': held['a'].sha256, 'kind': 'forwarder', 'ordinal': 12,
+             'forwarder': 'MiXeD.#7'},
+            {'member': 'b', 'sha256': held['b'].sha256, 'kind': 'forwarder', 'ordinal': 7,
+             'forwarder': 'other.?Alias'},
+            {'member': 'c', 'sha256': held['c'].sha256, 'kind': 'direct', 'ordinal': 11},
+        ]])
+        self.assertEqual(select.call_args_list, [mock.call('a', 'mixed.dll'), mock.call('b', 'other.dll')])
+        def expand_during_selection(member, module):
+            if member == 'b':
+                held['outside/c.dll'] = held['c']
+                return 'outside/c.dll'
+            return rules[(member, module)]
+
+        with self.assertRaisesRegex(ValueError, 'outside the selected held images'):
+            pe._follow_bound_exports(held, start, expand_during_selection)
+
+    def test_rejects_ambiguous_forwarder_cycles_and_exhausted_chain_budgets(self):
+        held = self._bound_images(
+            a=_add_exports(_sample(), forwarder=b'same.#12'),
+            b=_add_exports(_sample(), forwarder=b'same.dll.forward'),
+            c=_add_exports(_sample()))
+        start = {'name': 'forward'}
+        choose = mock.Mock(return_value='a')
+        with self.assertRaisesRegex(ValueError, 'cycle'):
+            pe._follow_bound_exports(held, [('a', start)], choose)
+        choose.assert_called_once_with('a', 'same.dll')
+        choose.reset_mock()
+        with self.assertRaisesRegex(ValueError, 'dotted export forwarder'):
+            pe._follow_bound_exports(held, [('b', start)], choose)
+        choose.assert_not_called()
+        with mock.patch.object(pe, '_MAX_EXPORT_CHAIN', 1), self.assertRaisesRegex(ValueError, 'depth budget'):
+            pe._follow_bound_exports(held, [('a', start)], choose)
+        with mock.patch.object(pe, '_MAX_CHAIN_STEPS', 1), self.assertRaisesRegex(ValueError, 'total step budget'):
+            pe._follow_bound_exports(held, [('c', {'ordinal': 11})] * 2, choose)
 
     def test_rejects_invalid_export_layout_mappings_and_unbounded_text(self):
         start, rva = _RAW + _EXP, _RVA + _EXP
