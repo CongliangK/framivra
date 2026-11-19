@@ -76,8 +76,8 @@ class ManifestValidation(unittest.TestCase):
             self.assertIsNone(data)
             joined = "\n".join(errors)
             self.assertIn("version", joined)
-            self.assertIn("绝对路径", joined)          # entry.cli 拒绝对路径
-            self.assertIn("绝对路径", joined)          # health.command 拒绝对路径
+            for field in ("entry.cli", "health.command"):
+                self.assertTrue(any(field in e and "绝对路径" in e for e in errors), field)
             self.assertIn("不存在", joined)            # docs 缺失
             self.assertIn("nonexistent_hook", joined)  # hooks 值域（已冻结扩展点）
             self.assertIn("{path, key}", joined)       # schema_keys 形状
