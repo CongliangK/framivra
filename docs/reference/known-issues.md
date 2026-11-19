@@ -12,6 +12,11 @@
 | ⑭ | 合成冷建与字节级确定性 | 中 | 逐层 pass 已采用，普通 GC 保留 `vseg_pass`，键种子包含 `with_subs`。历史实测的温态复用一致不能推出清缓存冷建逐位一致：仍登记 overlay 冷建窄带像素差异与 FFV1 容器字节非确定性。清缓存重渲不等于原交付件；既有 R-03 验收口径为视觉等价与温态 md5 全等，字节级闭合未立项，不据此宣称新素材已验收。 |
 | - | `PYTHONUTF8=1` 与 venv 下的解释器身份变体 | 低 | 保留历史风险登记及当时的 `env -u PYTHONUTF8` 规避记录；未据此宣称当前宿主或任意 venv 已复验。 |
 
+## 浏览器启动与收尾
+
+- [CDP 启动诊断](../../vtx/render/gfx_render.py)区分 DevTools HTTP 就绪前进程退出与页面 CDP 握手后 `Page.enable` 超时。退出只报告有界状态，不泄露 argv/profile；超时不证明页面域状态或 renderer/token 根因，不改变 strict/CLI 回退。
+- [Windows 浏览器监管](../../vtx/runtime/windows_browser.py)固定绝对 `.exe`，创建即进私有 Job（Win10+/Server 2016+），仅继承指定 stdio，双管合计有界。先终止本方 Job，在期限内确认活跃进程归零才算收尾成功；根退出、双 EOF 或关句柄均不能证明。CDP 收尾未证时保留主错误及 profile，不回落 CLI。
+
 ## Mac 全片资格
 
 当前 30 秒作品的 Mac 全链、性能和人工视听资格须由最终 engine 与真实环境重新建立，不能从平台实现支持推定通过。执行前核对已有 Inkscape、固定字体与 jsonschema，缺依赖即报告阻塞；不自动安装或改用户环境。Linux 专属 CEF 矩阵不代表 Mac，Darwin 文件事务仍须按实际实现边界核验。操作与依赖唯一 home 见 [30 秒基线](../../templates/demo-timeline-svg/README.md#主性能基线)。
