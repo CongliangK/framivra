@@ -203,7 +203,9 @@ request 为严格 JSON 对象，必需 `operation`、`op_id`、`base_revision`�
 
 **会写工程与持久历史。** `vtx -t PATH store edit-view --request-stdin` 仅接受上方严格的 managed v1 `edit` 请求。CLI 能力另广告 `edit_view:{command:"edit-view",read_schema:"framivra.timeline.read/v1",wire_limit_bytes:8388608,preload_stdin:true}`，不猜版本、不改变普通 plan/commit。`preload_stdin` 允许受管进程仅空管道等待：完整请求及 EOF 之前不读写工程或历史，消费者不得提前缓冲请求体。无独立零写计划：同一锁内完成历史核验、语义校验、原字节 CAS、intent/替换/同步/commit marker；发现 pending 即要求显式恢复，不代办恢复。
 
-首次成功在通常回执上增加 `view:{snapshot,result}`，分别等价于对本次提交字节执行 inspect 和全量无过滤 query；两投影的 `content_version` 等于 `revision`。只证明本次保存的版本，不保证应答到达时无后续写入。预先核对含换行的 8 MiB ASCII 视图应答；超限为 `edit.view_limit`，不发布本次 intent、不动目标文件（锁和历史初始化不属零写保证）。相同请求重放只返回历史身份/状态回执，不附 `edit` 或 `view`，不会把旧视图当成当前。视图是传输附加字段，不入 journal、不改变 digest 或历史格式。传输/落盘结果未知时以原 op_id 检查状态或恢复，不自动重试。
+首次成功在通常回执上增加 `view:{snapshot,result}`，分别等价于对本次提交字节执行 inspect 和全量无过滤 query；两投影的 `content_version` 等于 `revision`。只证明本次保存的版本，不保证应答到达时无后续写入。预先核对含换行的 8 MiB ASCII 视图应答；超限为 `edit.view_limit`，不发布本次 intent、不动目标文件（锁和历史初始化不属零写保证）。相同请求重放只返回历史身份/状态回执，不附 `edit` 或 `view`，不会把旧视图当成当前。视图是传输附加字段，不入 journal、不改变 digest 或历史格式。
+
+DSH 已确认提交但无法采用视图时，不重发写请求：`edit-view` 路径以匹配原请求的提交回执判定已保存，视图不合格时显式刷新或重开；兼容旧内核走 plan → 单次 commit → 分别 inspect/query，首次回读的两个版本都须匹配提交回执的 `revision`，仅彼此相同不够。回读失败不改变已提交的判定。派发后未收到可信回执则不能判定未提交；两条 DSH 路径都不自动重试或换路重发，保留原 `op_id`，按[发布与恢复协议](#发布与恢复协议)核对历史和当前版本。
 
 ### 原始写入 JSON 的公共解析边界
 
@@ -294,9 +296,13 @@ macOS 在解析父路径后按实际目录项拼写拒绝大小写/Unicode 别�
 
 初始化先取同目标稳定的外置 `.bootstrap.lock`（仅同步发布，不存工程身份/HEAD，永不删除），在随机 sibling `.initializing-*` 私有目录内 write/flush/fsync manifest → rename manifest → fsync 私有目录 → rename 整个完整目录到 canonical history → fsync 工程父目录，然后才可执行事务。首次 mkdir、半写/fsync、两个 rename 与目录同步任一点进程崩溃，canonical 要么尚未发布，要么已有完整 manifest；下次 status/recover/事务在同一 bootstrap 锁内重试父目录同步。未发布私有目录不可能含运行过的事务，重试另建目录，不扫描选取、不采用也不删除其残件；其存在不阻止安全重新初始化。旧实现或外来 canonical 目录缺 manifest（即使空、仅 lock、完整单个 `.publish-*`、多个或损坏临时）一律 recovery_required 并提示人工检查，绝不猜身份/清证据。已发布新 manifest 的位置不符也拒绝，不能凭同 SHA 接管 decoy。旧版已发布 manifest 不具完整位置绑定，不宣称可鉴别其跨目录复制。初始化失败不返回成功、不改工程，发布后父 fsync 失败下次重试也不会永卡；这不是物理断电保证。
 
-顺序固定：同一线程锁+跨进程 flock → 验证/恢复所有已发布 intent → 严格读 → op_id/request_digest 幂等 → 原字节 CAS → 内存操作及共享无素材结构校验 → before/after 完整字节、SHA、完整请求与结果 fsync 并原子发布 intent 目录 → 工程 staging fsync → 最终原字节 CAS → os.replace 工程（线性化点）与父目录 fsync → 持久 commit 结果。没有默认 JSON 回退，不调用 fstxn.locked_update，不嵌套重入锁。
+顺序固定：同一线程锁+跨进程 flock → 核验已发布 intent（普通提交入口处理 pending；`edit-view` 要求先显式恢复）→ 严格读 → op_id/request_digest 幂等 → 原字节 CAS → 内存操作及共享无素材结构校验 → before/after 完整字节、SHA、完整请求与结果 fsync 并原子发布 intent 目录 → 工程 staging fsync → 最终原字节 CAS → os.replace 工程（线性化点）与父目录 fsync → 持久 commit 结果。没有默认 JSON 回退，不调用 fstxn.locked_update，不嵌套重入锁。
 
-恢复只补证据：current==after 时补 commit；==before 时记 abort，**不自动 roll-forward**，同 op 重试返回 aborted，欲再试须新 op_id；其他字节、缺失/坏证据或无法判定时 recovery_required，绝不覆盖。create 的 before=null 特例允许仍缺失的目标记 abort。已提交同 op 同 payload 返回原结果与当下 current_revision，不倒退后续编辑；不同 payload 返回 idempotency.conflict。提交替换开始后同步/标记失败为 outcome_unknown（带 op_id），必须相同请求重试或 recover，不得误称未提交。
+初次原字节 CAS 返回 `conflict` 时，本次未发布 intent、未提交；重新读取当前 `content_version`，重新核对编辑意图，确认后才可用新请求提交，不自动 rebase。intent 发布后的最终 CAS 若发现字节变化，本次不替换目标，但返回 `recovery_required` 并保留待决证据，不按普通 `conflict` 处理。
+
+提交替换开始后报 `outcome_unknown`，或派发后未收到可信回执，都不等于未提交。保留原请求及 `op_id`；用 `store status` 按 `operations` 中的原 `op_id` 核对历史状态，不能只凭 `ok`、当前 `head` 或 `current_revision` 判定原操作。需要恢复时显式 `store recover`，恢复只补证据：当前字节等于冻结 after 时补 commit，等于 before 时记 abort，**不自动 roll-forward**；其他字节、缺失/坏证据或无法判定时 `recovery_required`，绝不覆盖。create 的 before=null 特例允许仍缺失的目标记 abort。采用恢复后的当前视图时，用状态/恢复结果的 `current_revision` 核对 inspect/query。
+
+普通 store 提交入口可手动重传**完全相同**的请求；`edit-view` 遇 pending 则拒绝，即使请求完全相同也须先显式 `recover`。已提交的同 op 同 payload 重放只取历史结果与当下 `current_revision`，不倒退后续编辑；同 ID 不同 payload 返回 `idempotency.conflict`。原操作确认 `aborted` 后，同请求重放仍返回 `aborted`；若确需再做，须重新核对并使用新 `op_id`。
 
 成功 envelope 为 `schema: "framivra.timeline.store/v1"`、operation/ok、op_id/request_digest、base_revision/revision/project_id，首次与重试另带 current_revision/replayed；失败包含 code/message。CLI 成功 exit0，输入/CAS/恢复错误 exit1，不支持的旗标组合 exit2；拒绝 `--dry-run`、渲染旗标与 `--json` 输出文件。
 
