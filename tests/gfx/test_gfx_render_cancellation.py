@@ -198,6 +198,27 @@ class RenderCancellationTests(unittest.TestCase):
         self.assertLess(self.events.index('worker-failed'), self.events.index('close'))
         self.assertEqual(self.written, set())
 
+    def test_stage_cancel_token_wakes_render_and_drains_workers(self):
+        cancel = threading.Event()
+
+        def cancel_inflight():
+            if self.entered.wait(2):
+                cancel.set()
+
+        signal_worker = threading.Thread(target=cancel_inflight)
+        with self.environment() as directory:
+            signal_worker.start()
+            try:
+                with self.assertRaisesRegex(render.GfxRenderError, 'cancelled'):
+                    render.render_page('page.html', directory, 1, tabs=1, cancel=cancel)
+            finally:
+                signal_worker.join(3)
+        self.assertTrue(self.finished.is_set())
+        self.assertEqual(self.events.count('stop'), 1)
+        self.assertNotIn('heal', self.events)
+        self.assertLess(self.events.index('worker-failed'), self.events.index('close'))
+        self.assertFalse(self.written)
+
     def test_teardown_waits_for_inflight_write_before_returning(self):
         original_join = threading.Thread.join
         interrupted = False

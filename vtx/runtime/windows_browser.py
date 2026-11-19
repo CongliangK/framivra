@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import errno
 import math
 import os
+import shutil
 import subprocess
 import time
 
@@ -28,6 +29,24 @@ class JobSettlementError(OSError):
 def job_cleanup_unconfirmed(error):
     """An unproved Job shutdown must not be routed to another browser."""
     return isinstance(error, JobSettlementError) or isinstance(error.__cause__, JobSettlementError)
+
+
+def remove_settled_profile(profile):
+    """Remove this invocation's private profile, only after proved Job settlement."""
+    path = os.path.abspath(profile)
+    if not path.startswith('\\\\?\\'):
+        # Browser component directories can contain paths beyond MAX_PATH.
+        path = ('\\\\?\\UNC\\' + path[2:] if path.startswith('\\\\') else '\\\\?\\' + path)
+    for attempt in range(30):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt == 29:
+                raise
+            time.sleep(.1)
 
 
 class _StartupInfo(C.Structure):

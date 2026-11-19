@@ -180,6 +180,7 @@ class CDPStartupMock(unittest.TestCase):
                         mock.patch.object(windows_browser, 'BrowserJob', return_value=job) as start_job, \
                         mock.patch.object(gfx.subprocess, 'Popen', return_value=proc) as popen, \
                         mock.patch.object(gfx.tempfile, 'mkdtemp', return_value='private-profile'), \
+                        mock.patch.object(windows_browser, 'remove_settled_profile') as remove_profile, \
                         mock.patch.object(gfx.shutil, 'rmtree') as rmtree, \
                         mock.patch.object(gfx.urllib.request, 'urlopen', side_effect=http_error) as urlopen:
                     with self.assertRaises(RuntimeError) as caught:
@@ -192,10 +193,13 @@ class CDPStartupMock(unittest.TestCase):
                     start_job.assert_called_once()
                     job.close.assert_called_once_with()
                     popen.assert_not_called()
+                    remove_profile.assert_called_once_with('private-profile')
+                    rmtree.assert_not_called()
                 else:
                     popen.assert_called_once()
                     start_job.assert_not_called()
-                rmtree.assert_called_once_with('private-profile')
+                    remove_profile.assert_not_called()
+                    rmtree.assert_called_once_with('private-profile')
 
     def test_windows_close_failure_keeps_startup_diagnostics(self):
         from vtx.runtime import windows_browser as wb

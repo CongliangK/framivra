@@ -4,7 +4,7 @@
 `python3 vtx/vtx.py ...` 经薄启动器自锚定 repo 根后照常可跑。
 """
 import hashlib, json, os, subprocess, sys, time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from contextvars import ContextVar
 from fractions import Fraction
 from pathlib import Path
@@ -623,7 +623,7 @@ def run_parallel(c: Ctx, tasks, what: str):
     print(f"  ✓ {what}完成（{time.time() - t0:.0f}s）")
 
 
-def run_wave(c: Ctx, jobs):
+def run_wave(c: Ctx, jobs, *, cancel=None):
     """jobs = [(label, fn)] 的 Python 可调用并行波执行器（方案二阶段2，2026-09-12，
     `vtx all` 依赖图流水线）：gfx / audio / video 预编码三路零数据依赖任务重叠执行。
     与 run_parallel 的分工：后者面向「ffmpeg 子进程任务」（label+cmd，io_workers 限流），
@@ -669,7 +669,21 @@ def run_wave(c: Ctx, jobs):
               f"（{time.strftime('%H:%M:%S')}）")
 
     with ThreadPoolExecutor(len(jobs)) as ex:
-        list(ex.map(lambda j: _worker(j[0], j[1][0], j[1][1]), enumerate(jobs)))
+        try:
+            if cancel is None:
+                list(ex.map(lambda j: _worker(j[0], j[1][0], j[1][1]), enumerate(jobs)))
+            else:
+                pending = {ex.submit(_worker, i, label, fn) for i, (label, fn) in enumerate(jobs)}
+                while pending:
+                    # Pre-3.14 Windows Python cannot interrupt an indefinite
+                    # thread lock wait with Ctrl-C; return to Python regularly.
+                    done, pending = wait(pending, timeout=.1, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        future.result()
+        except KeyboardInterrupt:
+            if cancel is not None:
+                cancel.set()  # signal participating workers before executor shutdown waits
+            raise
     if failed:
         _, label, e = min(failed, key=lambda x: x[0])
         if not isinstance(e, SystemExit):

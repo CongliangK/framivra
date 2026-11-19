@@ -15,7 +15,8 @@
 ## 浏览器启动与收尾
 
 - [CDP 启动诊断](../../vtx/render/gfx_render.py)区分 DevTools HTTP 就绪前进程退出与页面 CDP 握手后 `Page.enable` 超时。退出只报告有界状态，不泄露 argv/profile；超时不证明页面域状态或 renderer/token 根因，不改变 strict/CLI 回退。
-- [Windows 浏览器监管](../../vtx/runtime/windows_browser.py)固定绝对 `.exe`，创建即进私有 Job（Win10+/Server 2016+），仅继承指定 stdio，双管合计有界。先终止本方 Job，在期限内确认活跃进程归零才算收尾成功；根退出、双 EOF 或关句柄均不能证明。CDP 收尾未证时保留主错误及 profile，不回落 CLI。
+- [Windows 浏览器监管](../../vtx/runtime/windows_browser.py)固定绝对 `.exe`，创建即进私有 Job（Win10+/Server 2016+），仅继承指定 stdio，双管合计有界。先终止本方 Job，在期限内确认活跃进程归零才算收尾成功；根退出、双 EOF 或关句柄均不能证明。CDP 收尾未证时保留主错误及 profile。
+- [Windows CDP](../../vtx/render/gfx_windows.py)按页调度，仍可并行跑多个页面；不使用页内 `VTX_GFX_SPLIT_FRAMES` / `VTX_GFX_SPLIT_MAX`（与成片分段无关）。页面失败不回落 CLI、不完成认证，重跑时整页重建。读侧按需校验松散 PNG；它不是给 FFmpeg 或桥接消费者移交文件句柄。严格 HTML 依赖策略仍仅支持 POSIX；这与成片 `qc --strict` 无关。
 
 ## Mac 全片资格
 

@@ -124,13 +124,17 @@ class Directory:
             pass
 
     @contextmanager
-    def lock(self, name):
+    def lock(self, name, *, check_cancel=None):
         lock = _windows_api('LockFileEx', W.BOOL, W.HANDLE, W.DWORD, W.DWORD, W.DWORD, W.DWORD,
                             C.POINTER(_Overlapped))
         with self._open(name + '.lock', 0xC0000000, disposition=3, share=3) as (handle, _):
             deadline = time.monotonic() + 120
             offset = _Overlapped()
-            while not lock(handle, 3, 0, 1, 0, C.byref(offset)):
+            while True:
+                if check_cancel is not None:
+                    check_cancel()
+                if lock(handle, 3, 0, 1, 0, C.byref(offset)):
+                    break
                 error = C.get_last_error()
                 if error != 33:
                     raise C.WinError(error)
@@ -170,10 +174,12 @@ class Directory:
             raise C.WinError(self.nt.RtlNtStatusToDosError(status))
 
     @contextmanager
-    def new_directory(self, name):
-        # Exclusive creation, with the same handle retained through rename.
-        with self._open(name, reader._GENERIC_READ | 0x10000, disposition=2,
-                        share=3, directory=True) as (handle, _):
+    def new_directory(self, name, *, movable=True):
+        # A directory to be published needs DELETE for the handle-relative rename.
+        # A pinned scratch directory does not: requesting DELETE prevents a
+        # pathname-based writer from renaming children on Windows.
+        access = reader._GENERIC_READ | (0x10000 if movable else 0)
+        with self._open(name, access, disposition=2, share=3, directory=True) as (handle, _):
             yield Directory(handle, self.kernel, self.nt)
 
     def publish_directory(self, source, name):

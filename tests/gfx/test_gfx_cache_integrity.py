@@ -45,6 +45,174 @@ def stats(n):
                 path_counts={}, timings_ms={}, static_spans=0)
 
 
+@unittest.skipUnless(sys.platform == 'win32', 'native Windows browser page commit')
+class WindowsPageCommit(unittest.TestCase):
+    def setUp(self):
+        from vtx.render.gfx_svg_win_publish import anchored_relative
+        scope = contextlib.ExitStack()
+        self.addCleanup(scope.close)
+        self.root = Path(scope.enter_context(tempfile.TemporaryDirectory(prefix='vtx-win-gfx-')))
+        self.page = scope.enter_context(anchored_relative(self.root))
+        scope.enter_context(self.page.lock(gfx_cli.COMPLETE_FILE))
+        self.context = SimpleNamespace(w=6, h=4, verify_inputs=mock.Mock())
+        self.environment = {'status': 'input-bound'}
+
+    def produce(self, render, *, cancel=None):
+        from vtx.render.gfx_windows import _produce
+        return _produce(self.context, self.page, self.page, self.root, self.root / 'page.html',
+                        2, 'test-key', '', self.environment, render, cancel or threading.Event())
+
+    def test_complete_and_warm_hashes_bind_same_pixels(self):
+        from vtx.render.gfx_windows import _current
+
+        def renderer(_html, scratch, count):
+            for i in range(count):
+                gfx_render._atomic_write_bytes(scratch / f'f{i:04d}.png', png(value=i))
+            return 'fixture'
+
+        self.assertEqual(self.produce(renderer), 'fixture')
+        self.context.verify_inputs.assert_has_calls([mock.call('gfx'), mock.call('gfx')])
+        inspect = lambda: _current(self.page, 2, 'test-key', 6, 4, '', self.environment)
+        self.assertTrue(inspect())
+        self.assertFalse(list(self.root.glob('gfx-cdp-*')))
+        (self.root / 'f0000.png').write_bytes(png(value=92))
+        self.assertFalse(inspect())
+        with self.page.open_read('f0000.png', share=5):
+            self.assertEqual(self.produce(renderer), 'fixture')
+            self.assertTrue(inspect())
+
+    def test_job_not_settled_never_publishes(self):
+        from vtx.runtime.windows_browser import JobSettlementError
+
+        def renderer(_html, scratch, _count):
+            (scratch / 'f0000.png').write_bytes(png(value=1))
+            raise RuntimeError('fixture') from JobSettlementError('unconfirmed')
+
+        with self.assertRaisesRegex(RuntimeError, 'fixture'):
+            self.produce(renderer)
+        self.assertFalse((self.root / gfx_cli.COMPLETE_FILE).exists())
+        self.assertFalse(list(self.root.glob('f*.png')))
+        self.assertFalse(list(self.root.glob('gfx-cdp-*')))
+
+    def test_cancel_during_commit_gate_cannot_certify(self):
+        cancel = threading.Event()
+
+        def renderer(_html, scratch, count):
+            for i in range(count):
+                gfx_render._atomic_write_bytes(scratch / f'f{i:04d}.png', png(value=i))
+            return 'fixture'
+
+        # Cancel at the last input recheck, after live frames have been staged.
+        def verify(_stage):
+            if self.context.verify_inputs.call_count == 2:
+                cancel.set()
+        self.context.verify_inputs.side_effect = verify
+        with self.assertRaisesRegex(gfx_cli.GfxCliError, 'cancelled'):
+            self.produce(renderer, cancel=cancel)
+        self.assertFalse((self.root / gfx_cli.COMPLETE_FILE).exists())
+        self.assertFalse(list(self.root.glob('gfx-cdp-*')))
+
+    @contextlib.contextmanager
+    def formal_context(self, mode, render):
+        from tests.gfx._environment import collect
+        (self.root / 'page.html').write_text('<p>fixture</p>', encoding='utf-8')
+        path = self.root / 'timeline.json'
+        path.write_text(json.dumps(dict(
+            project=dict(fps=30, width=6, height=4, duration_frames=4), sources=[],
+            subtitles=[], audio_tracks=[], video_tracks=[dict(kind='gfx', clips=[
+                dict(src='page.html', dst_in=offset, dur=2) for offset in (0, 2)])])), encoding='utf-8')
+
+        def identity(backend, binary, mode=None):
+            return dict(collect(backend, binary, mode), platform_resolver='windows-x64/1', browser={binary: 'fixture'})
+
+        with mock.patch.dict(os.environ, VTX_GFX='cdp', VTX_CACHE_MODE=mode, VTX_GFX_CACHE_NS=''), \
+                mock.patch.object(gfx_environment, 'collect', side_effect=identity), \
+                mock.patch('vtx.media.encoders.find_chrome', return_value='unit-fixture-chrome'), \
+                mock.patch.object(gfx_render, 'render_page', side_effect=render) as renderer, \
+                mock.patch.object(gfx_cli, 'run_cli_shot') as fallback, contextlib.redirect_stdout(io.StringIO()):
+            yield Ctx(path), renderer
+            fallback.assert_not_called()
+
+    def test_formal_cold_warm_and_corruption_share_one_page(self):
+        from vtx.cache.session import CacheSession
+
+        def render(_html, scratch, count, **_kwargs):
+            for i in range(count):
+                gfx_render._atomic_write_bytes(scratch / f'f{i:04d}.png', png(value=i))
+            return stats(count)
+
+        with self.formal_context('core', render) as (c, renderer):
+            clip = c.tl['video_tracks'][0]['clips'][0]
+            with self.assertRaisesRegex(ValueError, 'rerun vtx gfx'):
+                frame_source.png_source(c, clip).require_ready(0, 1)
+            with self.assertRaisesRegex(gfx_cache_reader.GfxCacheError, 'rerun vtx gfx'):
+                gfx_cache_reader.resolve_frames(c, clip)
+            self.assertFalse(c.cache.exists())
+            c.dry = True
+            cli._gfx(c)
+            renderer.assert_not_called()
+            self.assertFalse(c.cache.exists())
+            c.dry = False
+            cached_mtime = None
+            for step, wanted in enumerate((1, 1, 2)):
+                with CacheSession(c):
+                    cli.gfx(c)
+                self.assertEqual(renderer.call_count, wanted)
+                marker, = (c.cache / 'gfx').glob('*/complete.json')
+                receipt = json.loads((c.out / 'receipt.json').read_bytes())['stages']['gfx']
+                self.assertTrue(receipt['ok'])
+                self.assertTrue(receipt['detail'].startswith('2 gfx clips'))
+                frame = marker.parent / 'f0000.png'
+                clip = c.tl['video_tracks'][0]['clips'][0]
+                source = frame_source.png_source(c, clip)
+                source.require_ready(0, 1)
+                self.assertEqual(gfx_cache_reader.resolve_frames(c, clip), [frame, source.frame_path(1)])
+                self.assertEqual(frame.read_bytes(), png(value=0))
+                if step == 1:
+                    self.assertEqual(frame.stat().st_mtime_ns, cached_mtime)
+                    frame.write_bytes(png(value=92))
+                    with self.assertRaisesRegex(ValueError, 'PNG source not ready'):
+                        source.require_ready(0, 1)
+                else:
+                    cached_mtime = frame.stat().st_mtime_ns
+
+            alias = self.root / 'extra-link.png'
+            os.link(source.frame_path(1), alias)
+            source.require_ready(0, 1)  # exact interval, not a whole-page scan
+            with self.assertRaisesRegex(ValueError, 'one hard link'):
+                gfx_cache_reader.resolve_frames(c, clip)
+            c.dry = True
+            files = {p for p in self.root.rglob('*') if p.is_file()}
+            before = {p: p.read_bytes() for p in files if p.suffix != '.lock'}
+            with self.assertRaisesRegex(ValueError, 'one hard link'):
+                cli._gfx(c)
+            self.assertEqual({p: p.read_bytes() for p in before}, before)
+            self.assertEqual({p for p in self.root.rglob('*') if p.is_file()}, files)
+            self.assertEqual(renderer.call_count, 2)
+
+    def test_cache_off_unconfirmed_job_leaves_no_python_scratch_or_completion(self):
+        from vtx.cache.session import CacheSession
+        from vtx.runtime.windows_browser import JobSettlementError
+        launched = []
+
+        def render(_html, scratch, _count, **_kwargs):
+            launched.append(scratch)
+            (scratch / 'f0000.png').write_bytes(png(value=1))
+            raise RuntimeError('fixture') from JobSettlementError('unconfirmed')
+
+        with self.formal_context('off', render) as (c, renderer):
+            with self.assertRaises(SystemExit) as error, CacheSession(c):
+                work = c.cache
+                cli.gfx(c)
+            self.assertEqual(error.exception.code, 1)
+            renderer.assert_called_once()
+        scratch, = launched
+        self.assertFalse(work.exists())
+        self.assertEqual(scratch.parent, work / hygiene.TMP)
+        self.assertFalse(scratch.exists())
+        self.assertFalse(list(c.cache.rglob(gfx_cli.COMPLETE_FILE)))
+
+
 class CacheIntegrity(unittest.TestCase):
     def setUp(self):
         from tests.gfx._environment import bind_environment
