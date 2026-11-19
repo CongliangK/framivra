@@ -13,7 +13,7 @@ python3 scripts/run_local_tests.py -- bash scripts/run_all_tests.sh
 python3 scripts/run_local_tests.py -- node --test dsh-sidebar/tests/timeline-dom.test.mjs
 ```
 
-侧栏全套在 `dsh-sidebar/` 使用 `npm run test:local`。保护入口默认限制本 UID 的单个测试进程树为 2 GiB、禁用该组 swap，启动前保留 2 GiB 主机可用内存余量；可用 `--memory-mib` 显式设定合适预算。仅一组受保护测试可并行运行；属性校验失败、余量不足或上次同一 systemd 用户管理器的组 OOM 未确认时不启动，不回落裸跑。组 OOM 返回 137；先修失败原因，再由人工单独运行 `python3 scripts/run_local_tests.py --ack-oom` 确认（不运行测试）。此保护不包含另行启动的外部服务，也不能限制其他应用耗尽系统内存。
+侧栏全套在 `dsh-sidebar/` 使用 `npm run test:local`。保护入口默认限制本 UID 的单个测试进程树为 8 GiB，禁用该组 swap；启动前还要求主机留出 2 GiB 可用内存余量（默认合计至少 10 GiB 可用，不是预分配）。可用 `--memory-mib` 指定预算；复验原 2 GiB OOM 时显式传 `--memory-mib 2048`。仅一组受保护测试可并行运行；属性校验失败、余量不足或上次同一 systemd 用户管理器的组 OOM 未确认时不启动，不回落裸跑。组 OOM 返回 137；先修失败原因，再由人工单独运行 `python3 scripts/run_local_tests.py --ack-oom` 确认（不运行测试）。此保护不包含另行启动的外部服务，也不能限制其他应用耗尽系统内存。
 
 ### 全仓测试与跨平台直接入口
 
