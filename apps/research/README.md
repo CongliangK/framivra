@@ -19,7 +19,7 @@
 
 - Python 3（stdlib urllib，零第三方包）—— 4 个 .py 件
 - node（须提供全局 `fetch` 与 `WebSocket`，两个入口直接使用，未内置兼容库）+ PATH 上的 google-chrome —— 2 个 .mjs 件（CDP 端口 9333/9334，`/tmp/chrome-cdp*` 独立 user-data-dir）
-- 网络（bilibili/GitHub/目标站点；本机代理纪律见全局 AGENTS.md）
+- 采集需要网络（B 站、GitHub 或目标站点）；例如 `fetch-site-assets.py` 会发出请求并在指定输出目录写文件。`score_topic.py` 不联网：读取调研目录里已有的 JSON，写入该目录的 `topic_score.json`；`--rubric` 只打印评分锚点表。
 
 ## 请求失败与验证
 
