@@ -7,22 +7,28 @@ The usual CLI and its text, severity, exit codes and receipt behavior remain
 unchanged. Runtime small-canvas fixtures remain valid; unknown keys remain
 warnings.
 
-Read-only usage discovery:
+Read-only usage discovery (`-B` suppresses Python bytecode writes; help exits
+before loading a project):
 
 ```bash
-python3 -m vtx.agent_diagnostics --help
+python3 -B -m vtx.agent_diagnostics --help
 ```
 
 The interface accepts `-t TIMELINE`, one of `validate`, `audit`, or `qc`, and
 `--format agent-json` (default: `text`). QC also accepts `--strict`. Running a
-stage is **writeful**: it retains normal prerequisite checks, downstream receipt
-invalidation, reports and receipts. It does not provide a bypass for missing
-mux receipts or unsafe output paths. It never edits the input timeline.
+stage is **not read-only**, even with JSON output. Loading can read external
+subtitles and declared dependencies as well as the timeline; `validate` can
+invoke media probes or plugin hooks. Stages can write reports, receipts or QC
+cache artifacts. Starting a stage can invalidate [downstream receipts](../cache-provenance.md#阶段回执pr1)
+before a later probe fails. The entry point does not rewrite the input timeline
+or bypass missing mux receipts or unsafe output paths.
 
 ## JSON contract
 
-Standard output is exactly one JSON object, including loading/probe failures.
-It contains `schema_version: 1`, `command`, `exit_code`, `diagnostics`, and
+After argument parsing, a completed `agent-json` invocation writes one JSON
+object to stdout, including when loading or probing fails. Help and argument
+errors are outside this JSON boundary. The object contains `schema_version: 1`,
+`command`, `exit_code`, `diagnostics`, and
 `legacy_output` with captured stdout/stderr. Captured text is for inspection;
 it is never parsed to infer diagnostics. JSON numbers are finite; unavailable
 or non-finite values are null, never invented zero measurements. Output uses
@@ -108,7 +114,11 @@ user timeline, and is not a production auto-editor.
 The structural regression matrix distinguishes the precise predicate, native-operation,
 provider and opaque-interruption evidence defined in the [JSON contract](#json-contract).
 Opaque I/O/callback interruptions retain the original exception as unknown at `$`.
-Unknown opaque failures are not counted as precise hard-gate coverage. Full
+For example, when `ffprobe` exits nonzero while `validate` probes a source,
+`runtime.command` records the child exit as `unknown`: the command failed, but
+that does not identify a failed timeline predicate. Unknown failures do not count
+as precise hard-gate coverage. For separate execution evidence, see
+[Execution observations](../reference/execution-events.md). Full
 Issue #100 acceptance requires the source-operation catalog, independent review,
 repair-to-green fixture and relevant aggregate results on the exact candidate.
 A changed-file count is not a diagnostic-path inventory.
