@@ -14,6 +14,7 @@ import math
 import os
 import shutil
 import stat
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -100,9 +101,11 @@ class Inventory:
 
 
 def _cgroup_dirs(root=None, membership=None, *, require_membership=False):
-    """Visible cgroup-v2 ancestors; optionally require a resolvable leaf."""
+    """Visible cgroup-v2 ancestors; optionally prove the caller's membership."""
     root = _CGROUP_ROOT if root is None else Path(root)
-    membership = Path("/proc/self/cgroup") if membership is None else Path(membership)
+    if membership is None:
+        membership = "/proc/thread-self/cgroup" if require_membership else "/proc/self/cgroup"
+    membership = Path(membership)
     if not (root / "cgroup.controllers").is_file():
         return []
     # A container may mount its cgroup subtree as the visible root. Best-effort
@@ -119,6 +122,13 @@ def _cgroup_dirs(root=None, membership=None, *, require_membership=False):
         current = root / relative
         if not current.is_dir():
             return fallback
+        if require_membership:
+            # The proc path and cgroup mount may be rooted in different
+            # namespaces. A same-named directory is not proof of membership.
+            tid = str(threading.get_native_id())
+            with (current / "cgroup.threads").open(encoding="ascii") as threads:
+                if not any(row.rstrip("\n") == tid for row in threads):
+                    return []
         return [current] + [p for p in current.parents if p == root or root in p.parents]
     except (OSError, StopIteration, UnicodeError):
         return fallback

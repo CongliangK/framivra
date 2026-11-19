@@ -515,6 +515,31 @@ class InventoryTests(unittest.TestCase):
             self.assertEqual(inventory.limits.cpu_millis, 500)
             self.assertEqual(inventory.limits.ram_bytes, 100)
 
+            # The proc path can land on an unrelated but existing leaf when
+            # the visible mount has a different namespace root.
+            leaf = group / 'docker' / 'container-id'
+            leaf.mkdir(parents=True)
+            chain = [leaf, leaf.parent, group]
+            threads = leaf / 'cgroup.threads'
+            tid = threading.get_native_id()
+            self.assertEqual(rb._cgroup_dirs(group, membership), chain)
+            self.assertEqual(rb._cgroup_dirs(group, membership, require_membership=True), [])
+            threads.write_text(f'{tid}0\n')
+            self.assertEqual(rb._cgroup_dirs(group, membership, require_membership=True), [])
+            threads.write_text(f'{tid}0\n{tid}\n')
+            self.assertEqual(rb._cgroup_dirs(group, membership, require_membership=True), chain)
+
+            open_path = Path.open
+
+            def deny_thread_list(path, *args, **kwargs):
+                if path == threads:
+                    raise PermissionError(path)
+                return open_path(path, *args, **kwargs)
+
+            with mock.patch.object(Path, 'open', autospec=True, side_effect=deny_thread_list):
+                self.assertEqual(rb._cgroup_dirs(group, membership, require_membership=True), [])
+                self.assertEqual(rb._cgroup_dirs(group, membership), chain)
+
     def test_cgroup_headroom_caps_measured_inventory(self):
         with tempfile.TemporaryDirectory() as root:
             group = Path(root)
