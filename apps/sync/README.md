@@ -2,7 +2,7 @@
 
 组件 manifest 见 `app.json`；命令使用本目录真实路径，回归测试见本目录 `tests/`。
 
-> **子类标注（ARCHITECTURE §3.1）**：本 app 属「管线前置素材工具」——不进 timeline 管线、无插件钩子；但两件都邻接**不可逆写操作**（repack 替换 voice 轨源、sync 微重采样 conform），纪律 = **幂等 + 备份**：repack 首次运行自动备份占位到 `final_tts_backup/`，替换后正式交付运行完整 `all`（脚本结束打印入口），当前回执与局部诊断前置见 [runbook](../../docs/skill/references/edit.md)；sync 输出为新 out.wav，不覆写输入，conform 后复验残差 max<1.5ms 达标才判过。
+> **子类标注（ARCHITECTURE §3.1）**：本 app 属「管线前置素材工具」——不进 timeline 管线、无插件钩子；但两件都邻接**不可逆写操作**（repack 替换 voice 轨源、sync 微重采样 conform），纪律 = **幂等 + 备份**：repack 首次运行自动备份占位到 `final_tts_backup/`，替换后正式交付运行完整 `all`（脚本结束打印入口），当前回执与局部诊断前置见 [runbook](../../docs/skill/references/edit.md)；sync 的写入警告与验收规则见[开启步骤](#开启步骤)。
 
 ## 用途
 
@@ -26,10 +26,14 @@
 
 以下示例从 Framivra 仓库根执行；`<video_tools>` 替换为仓库绝对路径，`<项目>` 与音视频路径占位符替换为对应绝对路径。方括号表示可选部分，执行前展开或省略。
 
+双系统同步读取 FFmpeg 能解码的相机参考音轨和话筒轨，用 soxr 微重采样并平移话筒轨。示例写出与参考音轨等长的 48 kHz 单声道 PCM16 WAV，不重封装视频。`--max-offset`、`--win`、`--hop`、`--search` 均以秒计；报告的 `a_offset_s` 用秒（终端显示毫秒），`b_drift` 用秒/秒，`drift_ppm` 用 ppm，累计漂移和拟合/复验残差用毫秒。
+
+**写入警告：**为 WAV 和可选 JSON 分别选未存在且互不指向同一文件、也不指向任何输入的路径；脚本不防同路径或覆盖。WAV 在复验前写入；`CHECK` 也会留下 WAV、可写报告且不触发非零退出。验收看 `verdict` 或终端复验结论：有复验结果、最大绝对残差 < 1.5 ms、有效拟合窗至少 3 个，且拟合最大绝对残差 ≤ 10 ms（超过即标记疑似阶跃），才是 `OK`。
+
 ```bash
 cd "<video_tools>"
 # 双系统同步（conda denoise 环境）
-~/miniconda3/envs/denoise/bin/python apps/sync/sync_audio.py "<camera.(wav|mp4|mov)>" "<mic.wav>" "<out.wav>" --report "<项目>/report.json"
+~/miniconda3/envs/denoise/bin/python apps/sync/sync_audio.py "<camera.mp4>" "<mic.wav>" "<新输出.wav>" --report "<项目>/新报告.json"
 # 实录替换（路径指向同一视频项目）
 env python3 apps/sync/repack_voice.py -t "<项目>/timeline.json" [--takes-dir "<项目>/assets/voice_takes"] [窗口ID ...]
 # 替换后正式交付（从仓库根执行，会更新项目 cache/、out/）：
