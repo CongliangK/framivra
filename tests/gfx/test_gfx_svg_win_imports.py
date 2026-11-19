@@ -195,13 +195,96 @@ class PeSymbolMetadata(unittest.TestCase):
                 _parse(data, budget=budget)
 
 
+_EXP, _EXP_LEN = 1400, 300
+_DIRECT, _FWD = _RVA + 1376, _RVA + _EXP + 200
+
+
+def _add_exports(data, *, base=11):
+    offset, rva = _RAW + _EXP, _RVA + _EXP
+    pack_into('<II', data, _OPT + 112, rva, _EXP_LEN)
+    pack_into('<IIHHIIIIIII', data, offset, 0, 0, 0, 0, rva + 100, base, 4, 3,
+              rva + 40, rva + 56, rva + 68)
+    pack_into('<4I3I3H', data, offset + 40, _DIRECT, _FWD, 0, _DIRECT, rva + 120, rva + 128, rva + 160, 0, 0, 1)
+    for start, text in ((100, b'example.dll\0'), (120, b'?Alias\0'),
+                        (128, b'?Mixed@Name/with\\Punctuation\0'), (160, b'forward\0'), (200, b'unreached.#7\0')):
+        data[offset + start:offset + start + len(text)] = text
+    return data
+
+
+class PeExportMetadata(unittest.TestCase):
+    def test_aliases_explicit_ordinal_index_and_inert_forwarder(self):
+        data = _add_exports(_sample())
+        budget, reads = pe._ExportBudget(), []
+
+        def read(start, length):
+            reads.append((start, length))
+            self.assertFalse(start <= _RAW + _DIRECT - _RVA < start + length)
+            return data[start:start + length]
+
+        records = pe._export_records(read, len(data), budget)
+        direct, forwarder = {'kind': 'direct', 'ordinal': 11}, {'kind': 'forwarder', 'ordinal': 12,
+                                                               'forwarder': 'unreached.#7'}
+        for symbol, want in (({'name': '?Alias'}, direct), ({'name': '?Mixed@Name/with\\Punctuation'}, direct),
+                             ({'ordinal': 11}, direct), ({'name': 'forward'}, forwarder),
+                             ({'ordinal': 12}, forwarder), ({'ordinal': 14}, {'kind': 'direct', 'ordinal': 14})):
+            self.assertEqual(pe._match_export(records, symbol, budget), want)
+        self.assertEqual([span for span in reads if span[0] >= _RAW], [(_RAW + _EXP, _EXP_LEN)])
+        for symbol, message in (({'name': '?alias'}, 'name is missing'), ({'name': '11'}, 'name is missing'),
+                                ({'ordinal': 10}, 'outside its range'), ({'ordinal': 15}, 'outside its range'),
+                                ({'ordinal': 13}, 'ordinal is a hole')):
+            with self.subTest(symbol=symbol), self.assertRaisesRegex(ValueError, message):
+                pe._match_export(records, symbol, budget)
+        with mock.patch.object(pe, '_PACKAGE_NAME_TEXT', 1), self.assertRaisesRegex(ValueError, 'forwarders.*text budget'):
+            pe._match_export(records, {'ordinal': 12}, budget)
+
+    def test_rejects_invalid_export_layout_mappings_and_unbounded_text(self):
+        start, rva = _RAW + _EXP, _RVA + _EXP
+        for field, fmt, value, message in (
+                (_OPT + 112, '<I', 0, 'invalid or oversized export directory'),
+                (_OPT + 116, '<I', 700, 'one readable raw section'),
+                (start + 16, '<I', 0xfffffffe, 'ordinal range'),
+                (start + 20, '<I', 0, 'invalid export counts'),
+                (start + 24, '<I', pe._EXPORT_MEMBER_ROWS + 1, 'invalid export counts'),
+                (start + 32, '<I', rva + 40, 'overlapping export tables'),
+                (start + 36, '<I', rva + 301, 'invalid export table range'),
+                (start + 40, '<I', _RVA + 2048, 'outside a logical section'),
+                (start + 44, '<I', rva + _EXP_LEN - 1, 'no bounded terminator'),
+                (start + 44, '<I', rva + 120, 'invalid descriptive export forwarder'),
+                (start + 60, '<I', rva + 120, 'duplicate or unsorted'),
+                (start + 64, '<I', rva + 129, 'overlapping export name'),
+                (start + 68, '<H', 4, 'invalid ordinal index'),
+                (start + 68, '<H', 2, 'invalid ordinal index or hole')):
+            with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, message):
+                data = _add_exports(_sample())
+                data[start + _EXP_LEN - 1] = ord('X')
+                pack_into(fmt, data, field, value)
+                pe._export_records(lambda off, count: data[off:off + count], len(data), pe._ExportBudget())
+
+    def test_rejects_absent_directory_and_cumulative_budgets(self):
+        data = _sample()
+        read = lambda off, count: data[off:off + count]
+        with self.assertRaisesRegex(ValueError, 'no export directory'):
+            pe._export_records(read, len(data), pe._ExportBudget())
+        _add_exports(data)
+        for setting, limit, error in (('_EXPORT_PACKAGE_BYTES', 700, 'package read budget'),
+                                      ('_EXPORT_PACKAGE_ROWS', 13, 'package row budget')):
+            budget = pe._ExportBudget()
+            with self.subTest(setting=setting), mock.patch.object(pe, setting, limit):
+                pe._export_records(read, len(data), budget)
+                with self.assertRaisesRegex(ValueError, error):
+                    pe._export_records(read, len(data), budget)
+
+
 @unittest.skipUnless(sys.platform == 'win32' and sysconfig.get_platform() == 'win-amd64', 'Windows x64 pins')
 class VerifiedPeDeclarationSnapshot(unittest.TestCase):
     def test_authentication_precedes_same_handle_inventory_and_cleanup(self):
-        leaves = {'bin/inkscape.com': _sample((b'MIXED.dll', b'API-MS-test.dll'), (b'outside.drv',), symbols=True),
-                  'bin/Mixed.DLL': _sample((b'inkscape.COM',), (b'libfontconfig-1.dll',), symbols=True),
-                  'bin/libfontconfig-1.dll': _sample(), 'bin/api-ms-test.dll': b'not a PE candidate',
-                  'bin/unreached.exe': b'not declared', 'sub/outside.drv': b'not in bin'}
+        leaves = {'bin/inkscape.com': _add_exports(
+                      _sample((b'MIXED.dll', b'API-MS-test.dll'), (b'outside.drv',), symbols=True), base=65534),
+                  'bin/Mixed.DLL': _add_exports(
+                      _sample((b'inkscape.COM',), (b'libfontconfig-1.dll',), symbols=True), base=65534),
+                  'bin/libfontconfig-1.dll': _add_exports(_sample(), base=65534),
+                  'bin/api-ms-test.dll': b'not a PE candidate', 'bin/unreached.dll': b'not declared',
+                  'sub/outside.drv': b'not in bin'}
         files = {name: [len(data), sha256(data).hexdigest()] for name, data in leaves.items()}
         manifest = {'schema': 'framivra-audit/inkscape-vendor-tree/1', 'directories': ['bin', 'sub'], 'files': files}
         identity = sha256(json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode('ascii')).hexdigest()
@@ -256,12 +339,35 @@ class VerifiedPeDeclarationSnapshot(unittest.TestCase):
                         self.assertEqual(edge.pop('symbols'), [{'name': '?Mixed@Name/with\\Punctuation'},
                                                                {'ordinal': 65535}])
                 self.assertEqual(symbols, result)
+                with mock.patch.object(pe, '_export_records', wraps=pe._export_records) as exports:
+                    joined = pe._inspect_package_exports(root, scratch=scratch)
+                    self.assertEqual(exports.call_count, 3)  # only targets, once each
+                self.assertEqual(joined['schema'], 'framivra/windows-svg-pe-declarations/3')
+                joined['schema'] = 'framivra/windows-svg-pe-declarations/2'
+                for member in joined['members'].values():
+                    for edge in member['ordinary'] + member['delay']:
+                        if edge['kind'] == 'package_candidate':
+                            self.assertEqual(edge.pop('exports'), [
+                                {'kind': 'direct', 'ordinal': 65534},
+                                {'kind': 'forwarder', 'ordinal': 65535, 'forwarder': 'unreached.#7'}])
+                        else:
+                            self.assertNotIn('exports', edge)
+                self.assertEqual(joined, pe._inspect_package_imports(root, scratch=scratch, include_symbols=True))
+                missing = leaves['bin/Mixed.DLL'][:]
+                missing[_RAW + _EXP + 129] = ord('m')
+                (vendor / 'bin/Mixed.DLL').write_bytes(missing)
+                files['bin/Mixed.DLL'][1] = sha256(missing).hexdigest()
+                missing_tree = sha256(json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode('ascii')).hexdigest()
+                with mock.patch.object(snapshot, '_TREE_SHA256', missing_tree):
+                    with self.assertRaisesRegex(ValueError, 'bin/Mixed.DLL: SVG PE requested export name is missing'):
+                        pe._inspect_package_exports(root, scratch=scratch)
+                (vendor / 'bin/Mixed.DLL').write_bytes(leaves['bin/Mixed.DLL'])
                 self.assertEqual(list(scratch.iterdir()), [])
                 with mock.patch.object(pe, '_DLLS', {}), self.assertRaisesRegex(ValueError, 'fixed DLL profile'):
                     pe._inspect_package_imports(root, scratch=scratch)
                 self.assertEqual(list(scratch.iterdir()), [])
-                (vendor / 'bin/unreached.exe').write_bytes(b'NOT declared')  # unchanged shape, bad bytes
+                (vendor / 'bin/unreached.dll').write_bytes(b'NOT declared')  # unchanged shape, bad bytes
                 with mock.patch.object(pe, '_package_declarations', side_effect=AssertionError('parsed before digest')):
                     with self.assertRaisesRegex(ValueError, 'tree identity mismatch'):
-                        pe._inspect_package_imports(root, scratch=scratch)
+                        pe._inspect_package_exports(root, scratch=scratch)
                 self.assertEqual(list(scratch.iterdir()), [])

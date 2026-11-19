@@ -1,9 +1,9 @@
 """Internal no-launch declaration inventory for the fixed Windows SVG package.
 
-Only staged on-disk PE32+ declarations are inspected. The private symbol
-opt-in adds lookup names and ordinals, not binding or export resolution. A
-direct-bin basename match is only a package candidate. No API-set hosts,
-activation contexts, dynamically selected resources, or system images are
+Only staged on-disk PE32+ metadata is inspected. Private opt-ins add lookup
+symbols and, separately, matches to export records of direct-bin candidates.
+Neither a basename nor an export record proves binding. No forwarders,
+API-set hosts, activation contexts, dynamic resources, or system images are
 resolved. The result has no execution or publication authority.
 """
 from bisect import bisect_right
@@ -29,6 +29,11 @@ _MAX_SYMBOL_NAME = 1024  # includes the NUL, not the hint
 _PACKAGE_READS, _PACKAGE_READ_BYTES = 160 * 1024, 16 * 1024**2
 _PACKAGE_THUNKS, _PACKAGE_NAME_TEXT, _SYMBOL_SECONDS = 65536, 2 * 1024**2, 30
 _ORDINAL = 1 << 63
+_EXPORT_DIR_BYTES, _EXPORT_PACKAGE_BYTES = 4 * 1024**2, 16 * 1024**2
+_EXPORT_MEMBER_ROWS, _EXPORT_PACKAGE_ROWS = 48 * 1024, 384 * 1024  # per table, then total slots + names
+_EXPORT_TEXT = re.compile(rb'[ -~]+')
+_FORWARDER_MODULE = re.compile(rb'[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]+)*')
+_FORWARDER_TARGET = re.compile(rb'(?:#[0-9]{1,5}|[^# ][!-~]*)')
 
 
 class _SymbolBudget:
@@ -190,10 +195,8 @@ def _symbol_declarations(rows, metadata, directory, region, read, budget):
     return result
 
 
-def _declarations(read_at, size, *, symbol_budget=None):
-    """Parse module declarations, optionally with symbols, without opening or mapping a path."""
+def _metadata_reader(read_at, size, max_reads, max_bytes, budget):
     reads = total = 0
-    max_reads, max_bytes = (_MAX_READS, _MAX_BYTES) if symbol_budget is None else (_SYMBOL_READS, _SYMBOL_READ_BYTES)
 
     def read(offset, count):
         nonlocal reads, total
@@ -202,15 +205,19 @@ def _declarations(read_at, size, *, symbol_budget=None):
         reads, total = reads + 1, total + count
         if reads > max_reads or total > max_bytes:
             raise ValueError('SVG PE metadata exceeds its read budget')
-        if symbol_budget is not None:
-            symbol_budget.read(count)
+        if budget is not None:
+            budget.read(count)
         data = read_at(offset, count)
-        if symbol_budget is not None:
-            symbol_budget.check_time()
+        if budget is not None:
+            budget.check_time()
         if len(data) != count:
             raise ValueError('SVG PE metadata was truncated')
         return data
 
+    return read
+
+
+def _image_layout(read, size):
     dos = read(0, 64)
     pe, = unpack_from('<I', dos, 60)
     if dos[:2] != b'MZ' or not 64 <= pe <= 64 * 1024:
@@ -233,7 +240,7 @@ def _declarations(read_at, size, *, symbol_budget=None):
         raise ValueError('SVG PE has an invalid PE32+ header layout')
 
     sections = read(section_start, 40 * count)
-    virtual, raw, readable = [], [], []
+    virtual, raw, readable, logical = [], [], [], []
     for i in range(0, len(sections), 40):
         vsize, rva, rsize, offset = unpack_from('<IIII', sections, i + 8)
         characteristics, = unpack_from('<I', sections, i + 36)
@@ -242,6 +249,8 @@ def _declarations(read_at, size, *, symbol_budget=None):
         if not extent or not headers_end <= rva < end <= image_end or rva % section_align:
             raise ValueError('SVG PE has an invalid virtual section range')
         virtual.append((rva, end))
+        if vsize:
+            logical.append((rva, rva + vsize))
         if rsize:
             if not headers_end <= offset <= size - rsize or offset % file_align or rsize % file_align:
                 raise ValueError('SVG PE has an invalid raw section range')
@@ -260,6 +269,14 @@ def _declarations(read_at, size, *, symbol_budget=None):
     def directory(index):
         return unpack_from('<II', opt, 112 + 8 * index) if index < dirs else (0, 0)
 
+    return directory, region, logical
+
+
+def _declarations(read_at, size, *, symbol_budget=None):
+    """Parse module declarations, optionally with symbols, without opening or mapping a path."""
+    max_reads, max_bytes = (_MAX_READS, _MAX_BYTES) if symbol_budget is None else (_SYMBOL_READS, _SYMBOL_READ_BYTES)
+    read = _metadata_reader(read_at, size, max_reads, max_bytes, symbol_budget)
+    directory, region, _ = _image_layout(read, size)
     directories = []
     for index, kind, width in ((1, 'ordinary', 20), (13, 'delay', 32)):
         rva, length = directory(index)
@@ -310,15 +327,143 @@ def _declarations(read_at, size, *, symbol_budget=None):
     return {kind: sorted(rows) for kind, rows in names.items()}
 
 
-def _package_declarations(held, *, include_symbols=False):
+class _ExportBudget:
+    def __init__(self):
+        self.deadline = monotonic() + _SYMBOL_SECONDS
+        self.bytes = self.rows = self.text = 0
+
+    def check_time(self):
+        if monotonic() >= self.deadline:
+            raise ValueError('SVG PE exports exceed their metadata time budget')
+
+    def read(self, count):
+        self.check_time()
+        self.bytes += count
+        if self.bytes > _EXPORT_PACKAGE_BYTES:
+            raise ValueError('SVG PE exports exceed their package read budget')
+
+    def add_rows(self, count):
+        self.rows += count
+        if self.rows > _EXPORT_PACKAGE_ROWS:
+            raise ValueError('SVG PE exports exceed their package row budget')
+
+    def add_text(self, count):
+        self.text += count
+        if self.text > _PACKAGE_NAME_TEXT:
+            raise ValueError('SVG PE matched forwarders exceed their package text budget')
+
+
+def _export_records(read_at, size, budget):
+    read = _metadata_reader(read_at, size, (_EXPORT_DIR_BYTES + 4095) // 4096 + 4,
+                            _EXPORT_DIR_BYTES + 4096 + 64 + 24 + 240, budget)
+    directory, region, logical = _image_layout(read, size)
+    rva, length = directory(0)
+    if not (rva or length):
+        raise ValueError('SVG PE candidate has no export directory')
+    if not rva or rva % 4 or not 40 <= length <= _EXPORT_DIR_BYTES:
+        raise ValueError('SVG PE has an invalid or oversized export directory')
+    offset, _ = region(rva, length)
+    # Read only the directory's one raw-backed span in bounded chunks. No
+    # export address is used to read outside this span, even for a direct match.
+    data = b''.join(read(offset + i, min(4096, length - i)) for i in range(0, length, 4096))
+    flags, _, _, _, dll, base, slots, names, eat, pointers, ordinals = unpack_from('<IIHHIIIIIII', data)
+    if (flags or not 0 < slots <= _EXPORT_MEMBER_ROWS or not 0 <= names <= _EXPORT_MEMBER_ROWS
+            or base + slots > 1 << 32):
+        raise ValueError('SVG PE has invalid export counts or ordinal range')
+    budget.add_rows(slots + names)
+    occupied = [(0, 40)]
+
+    def table(start, count, width):
+        if not count and not start:
+            return ()
+        pos = start - rva
+        if not count or start % width or not 0 <= pos <= length - count * width:
+            raise ValueError('SVG PE has an invalid export table range')
+        occupied.append((pos, pos + count * width))
+        return unpack_from(f'<{count}{"I" if width == 4 else "H"}', data, pos)
+
+    addresses = table(eat, slots, 4)
+    name_pointers = table(pointers, names, 4)
+    indexes = table(ordinals, names, 2)
+    if not _disjoint(occupied):
+        raise ValueError('SVG PE has overlapping export tables')
+
+    def text(address):
+        pos = address - rva
+        if not 0 <= pos < length:
+            raise ValueError('SVG PE export string is outside its directory')
+        end = data.find(b'\0', pos, pos + _MAX_SYMBOL_NAME)
+        if end == -1:
+            raise ValueError('SVG PE export string has no bounded terminator')
+        spelling = data[pos:end]
+        if not _EXPORT_TEXT.fullmatch(spelling):
+            raise ValueError('SVG PE has an invalid export string')
+        occupied.append((pos, end + 1))
+        return spelling
+
+    text(dll)  # Export DLL-name field is data, not package selection.
+    previous, by_name = b'', {}
+    for pointer, index in zip(name_pointers, indexes):
+        spelling = text(pointer)
+        if spelling <= previous:
+            raise ValueError('SVG PE has duplicate or unsorted export names')
+        if index >= slots or not addresses[index]:
+            raise ValueError('SVG PE export name refers to an invalid ordinal index or hole')
+        by_name[spelling.decode('ascii')] = index  # distinct aliases may share an index
+        previous = spelling
+
+    logical.sort()
+    forwarders = {}
+    for address in addresses:
+        if not address:  # unoccupied ordinal slot
+            continue
+        if rva <= address < rva + length:
+            if address not in forwarders:
+                spelling = text(address)
+                module, _, target = spelling.rpartition(b'.')
+                if (not _FORWARDER_MODULE.fullmatch(module) or not _FORWARDER_TARGET.fullmatch(target)
+                        or target.startswith(b'#') and int(target[1:]) > 65535):
+                    raise ValueError('SVG PE has an invalid descriptive export forwarder')
+                forwarders[address] = spelling.decode('ascii')  # share only an identical string record
+        else:
+            # Use only the declared logical section range, never the target
+            # bytes, header space, alignment padding, or a mapped image.
+            index = bisect_right(logical, (address, 1 << 32)) - 1
+            if index < 0 or address >= logical[index][1]:
+                raise ValueError('SVG PE direct export is outside a logical section range')
+    if not _disjoint(occupied):
+        raise ValueError('SVG PE has overlapping export name, forwarder or table records')
+    budget.check_time()
+    return base, by_name, addresses, forwarders
+
+
+def _match_export(records, symbol, budget):
+    base, by_name, addresses, forwarders = records
+    if 'name' in symbol:
+        index = by_name.get(symbol['name'])
+        if index is None:
+            raise ValueError('SVG PE requested export name is missing')
+    else:
+        index = symbol['ordinal'] - base
+        if not 0 <= index < len(addresses):
+            raise ValueError('SVG PE requested export ordinal is outside its range')
+        if not addresses[index]:
+            raise ValueError('SVG PE requested export ordinal is a hole')
+    forwarder = forwarders.get(addresses[index])
+    if forwarder is None:
+        return {'kind': 'direct', 'ordinal': base + index}
+    budget.add_text(len(forwarder))
+    return {'kind': 'forwarder', 'ordinal': base + index, 'forwarder': forwarder}
+
+
+def _pinned_reader():
     # No reopened paths or handle duplication. Read the same original handles
     # used for the staged tree's hashes, after the full manifest has matched.
     seek = snapshot._windows_api('SetFilePointerEx', W.BOOL, W.HANDLE, C.c_int64, C.c_void_p, W.DWORD)
     read = snapshot._windows_api('ReadFile', W.BOOL, W.HANDLE, C.c_void_p, W.DWORD,
                                  C.POINTER(W.DWORD), C.c_void_p)
-    budget = _SymbolBudget() if include_symbols else None
 
-    def read_member(image):
+    def for_image(image):
         def read_at(offset, length):
             data, count = C.create_string_buffer(length), W.DWORD()
             if not seek(image.handle, offset, None, 0):  # FILE_BEGIN
@@ -327,8 +472,14 @@ def _package_declarations(held, *, include_symbols=False):
                 raise C.WinError(C.get_last_error())
             return data[:count.value] if count.value == length else b''
 
-        return _declarations(read_at, image.size, symbol_budget=budget) if budget else _declarations(read_at, image.size)
+        return read_at
 
+    return for_image
+
+
+def _package_declarations(held, *, include_symbols=False):
+    reader = _pinned_reader()
+    budget = _SymbolBudget() if include_symbols else None
     candidates = {}
     for relative in held:
         # Keys are exact direct-bin names authenticated by the snapshot, not
@@ -356,7 +507,7 @@ def _package_declarations(held, *, include_symbols=False):
             if relative not in members:
                 image = held[relative]
                 try:
-                    declarations = read_member(image)
+                    declarations = _declarations(reader(image), image.size, symbol_budget=budget)
                 except ValueError as error:
                     raise ValueError(f'{relative}: {error}') from None
                 members[relative] = {'size': image.size, 'sha256': image.sha256, **{
@@ -388,3 +539,35 @@ def _inspect_package_imports(portable_root, *, scratch, include_symbols=False):
     """Private v1 module inventory; opt into v2 ordered symbol declarations only."""
     with snapshot._verified_snapshot(portable_root, scratch=scratch, retain_package_images=True) as (_, held):
         return _package_declarations(held, include_symbols=True) if include_symbols else _package_declarations(held)
+
+
+def _package_exports(held):
+    report = _package_declarations(held, include_symbols=True)
+    requests = {}
+    for member in report['members'].values():
+        for kind in ('ordinary', 'delay'):
+            for edge in member[kind]:
+                if edge['kind'] == 'package_candidate':
+                    requests.setdefault(edge['member'], []).append(edge)
+    reader, budget = _pinned_reader(), _ExportBudget()
+    for target, edges in requests.items():
+        image = held[target]  # member key already selected by the fixed v2 graph
+        try:
+            records = _export_records(reader(image), image.size, budget)
+            for edge in edges:
+                edge['exports'] = [_match_export(records, symbol, budget) for symbol in edge['symbols']]
+            budget.check_time()
+        except ValueError as error:
+            raise ValueError(f'{target}: {error}') from None
+    report['schema'] = 'framivra/windows-svg-pe-declarations/3'
+    return report
+
+
+def _inspect_package_exports(portable_root, *, scratch):
+    """Private v3: match only existing package-candidate edges; reject missing records.
+
+    Export rows parallel v2 symbol positions. A forwarder row is descriptive
+    only. There is no fallback to v2 if the new check fails.
+    """
+    with snapshot._verified_snapshot(portable_root, scratch=scratch, retain_package_images=True) as (_, held):
+        return _package_exports(held)
