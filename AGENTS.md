@@ -9,7 +9,7 @@
 - [空间管理](<docs/reference/storage-api.md>)删除权归内核；清理须独立确认停写，不向模型开放。
 - macOS授权见接口；目录fd≠proc-fd Path；单帧须全输入前后复核；环境文件批查仅复用本次目录前缀并前后核验，仍重枚举/哈希/查链接；Linux缺RECORD只认元数据所属RPM清单。
 - 制作读[技能](<docs/skill/SKILL.md>)；范本[工作流](<templates/README.md>)、组件[目录](<docs/catalog.md>)。
-- 开发读[架构](<docs/ARCHITECTURE.md>)/[开发](<docs/DEV.md>)；API/事务见[接口](<docs/reference/timeline-api.md>)。
+- 开发先[按行为定位](<docs/DEV.md#从一个行为开始>)，边界以[架构](<docs/ARCHITECTURE.md>)为准；API/事务见[接口](<docs/reference/timeline-api.md>)。
 - 环境见[依赖](<README.md#依赖矩阵>)：Python≥3.9，工具按路径配置；模型默认关；空依赖≠仅需标准库。
 - [安装](<docs/guides/installation.md>)：独立venv/固定身份缓存/内核锁，验收后ready；更新重试固定提交，已检出才可显式重选；macOS venv 链接解释器、先核验已装完整 FFmpeg keg；Win主进程不提权，厂商包UAC；DSH显式连接；登记≠验收。
 - 安装验收：BGM发现不可依赖POSIX，目录发布对部分Windows绝对路径兼容混合斜杠、不改运行数据；GPU用原生锁；Windows并发内存门须实测且探测失败时拒派；hue素材先规范RGB色域，不松QC；冷暖快照计入 Linux core 持久化图形包。
@@ -40,8 +40,8 @@
 
 ## 编辑纪律
 
-- 代码 PR 须同步本指南，记录结构、入口或跨目录约束；[QC](<vtx/inspection/qc.py>) 先统一可表示 RGB 色域，再按统一矩阵/范围采样，变更后重验 QC。
-- 仅留跨目录常驻要点，一点一行；无流水账/平行指南。
+- 仅当全仓入口或跨目录常驻约束改变时更新本指南；其余按[写入与评审](<docs/DOC-CHARTER.md#写入与评审>)归位，不逐 PR 记账。
+- [QC](<vtx/inspection/qc.py>) 先统一可表示 RGB 色域，再按统一矩阵/范围采样，变更后重验 QC。
 - PR 只提交必要业务改动及少量高价值回归，优先扩展已有测试；避免重复 mock、机械源码字符串断言或为数量/覆盖率堆测试。
 - 一次性复现/诊断脚本、截图、原始日志及大体积验收产物默认放仓外，PR 用简短结果与引用说明；仅有明确长期消费者、且经维护者同意的最小夹具或证据可入仓，不借精简删除有效回归、冻结证据或许可证。
 - 一事实一家；迁移修活引用、链权威文档，不留旧壳。
@@ -51,12 +51,7 @@
 ## 基线与性能
 
 - 唯一主基线：30秒/900帧/1080p30 SVG；禁用退役12秒基线，探针不替主片。
-- Windows SVG：[生产身份](<vtx/render/gfx_svg.py>)未获验证即在 PATH/缓存查找前拒绝，不回退内部验收；[锚读](<vtx/render/gfx_svg_win_input.py>)仅认授权稳定根及直连固定 NTFS，原始相对声明先验后并集（`/`、精确路径），逐级拒重解析、同句柄限量验单链接。
-- [Windows SVG-only 回执](<vtx/cache/cache_state.py>)的清单和声明依赖字节沿用项目根句柄读取与限额；缺失、拒读或无法读取均直接失败，不记 MISSING 或回退；不是原子指纹。[影响分析](<vtx/inspection/impact.py>)用调用方原始根和精确相对名复核已观测的 SVG 文件，不以报表绝对路径代替，也不作原子快照。
-- [Windows Fontconfig 检查](<vtx/render/gfx_svg_win_fontconfig.py>)私有 Job 以固定官方 DLL 快照查单 face；900 帧另核对私有字体集四文件的 22 个 face 及索引，结算后清空探针缓存再启动 Inkscape。DLL 与字体用各自只共享读的原句柄限量验单链接和摘要，复制只写已验字节；不证映射字节、渲染选字、加载闭包或产物资格。启动所有权或结算未证不读回执、不删暂存。
-- [Windows SVG 快照](<vtx/render/gfx_svg_win_snapshot.py>)目录句柄拒重解析/物理重叠，验独占包树，不启进程。[内部验收](<vtx/render/gfx_svg_win_shell.py>)固定官方 `.com` 验几何/锁字体单帧、180 帧几何及 portable-v2 `f0135`/900 帧（句柄锚定、锁 SVG/字体）。900 帧锚读锁定时间线/清单及固定声明依赖（声明不选路径、非原子），生产静检、同快照查暂存字体 face；同上下文验版本/资源根及首个 stdout 整行后的根进程活映像路径（包 bin 精确匹配整树验真并持有的只读文件，System32/WinSxS 默认不验文件身份）；同原句柄逐模块用独立卷映射核对 loader 名与 VM 映射名，只在原枚举基址查元数据，要求已提交映像及分配/区域基址一致；对获验的 System32/WinSxS 相对名称集合返版本化摘要；仅可信内部审计可传入冻结字面清单，[验收](<vtx/render/gfx_svg_win_system.py>)在首个 worker 前持有系统盘文件并限量验字节，结算后比对路径集合及按原句柄复核，不更新信任；逐帧验像素，仅返摘要。Job 结算未证不读结果、不删操作目录；路径相符不证映射对象或字节、字形选择、瞬时/子进程/最终加载、成片、缓存或发布资格。
-- [Windows SVG PE](<vtx/render/gfx_svg_win_imports.py>)锚读已验包树固定根的 AMD64 普通/延迟声明（非绑定 IAT），可精确匹配 bin 候选导出。转发链另限调用方逐边选定的原句柄；无选址回退、循环或歧义即拒，不授加载闭包、缓存或生产资格。
-- [Windows SVG 本机目录签名](<vtx/render/gfx_svg_win_catalog.py>)仅限可信内部 900 调用方按冻结磁盘范围逐文件指定 CatRoot basename 和原句柄 SHA-256 Authenticode 摘要，可选签名者 DER 指纹；首个 worker 前以离线 WinTrust 验成员，不枚举目录签名；传目录签名路径而非句柄，不证提供者重读成员，不查吊销或授产品、缓存、QC 资格。
+- Windows SVG：[生产入口与内部验收边界](<docs/reference/windows-svg.md>)。生产身份未证即在 PATH/缓存查找前拒绝，不回退内部验收；改锚读、回执、快照或原生探针前先查对应细则，探针通过不授生产资格。
 - [SVG shell](<vtx/render/gfx_svg_stage.py>) 即使退出成功也拒收明确的 Fontconfig error / Pango-CRITICAL，不发布完成凭据；该诊断只报告固定短错误，不回显日志，普通警告不拒收。
 - portable-v2 基线仅用 `scripts/demo.py prepare/verify`；锁字体与标准库音频，禁混旧输入；预检不授渲染资格，见[SVG 基线](<templates/demo-timeline-svg/README.md>)。
 - [可编辑主 Demo](<templates/demo-workbench/README.md>)同源生成 SVG/HTML，默认由主时间线直引乐谱 JSON，不提交音频；CDP、CEF 与 Inkscape 验收不代替安装、冻结与性能基线。
