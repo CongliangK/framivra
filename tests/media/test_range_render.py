@@ -506,6 +506,7 @@ class TestRangeCachePolicy(unittest.TestCase):
                     stream.write(b'late change')
             return mock.Mock(stdout='3\n')
 
+        real_read = gfx_packed_reader.read_frames
         with mock.patch.object(ranges.RenderPlan, 'composite', composite), \
                 mock.patch.object(ranges, 'mix_audio_wav'), \
                 mock.patch.object(ranges, 'pick_vcodec', return_value=([], 'mock')), \
@@ -537,6 +538,25 @@ class TestRangeCachePolicy(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 render(case)
             cancelled.clear()
+            case = 'saved-during-gfx-recheck'
+            original = timeline.read_bytes()
+
+            def read_while_saving(ctx, clip, start, stop, **kwargs):
+                if clip is upper:
+                    keep = kwargs['keep_recheck']
+                    def keep_with_save(recheck):
+                        def recheck_and_save():
+                            recheck()
+                            timeline.write_bytes(original + b'\n')
+                        keep(recheck_and_save)
+                    kwargs['keep_recheck'] = keep_with_save
+                return real_read(ctx, clip, start, stop, **kwargs)
+
+            with mock.patch.object(gfx_packed_reader, 'read_frames', side_effect=read_while_saving), \
+                    self.assertRaises(SystemExit) as stale:
+                render(case)
+            self.assertEqual(stale.exception.code, 1)
+            timeline.write_bytes(original)
             case = 'changed-pack'
             with self.assertRaisesRegex(ValueError, 'packed gfx changed'):
                 render(case)

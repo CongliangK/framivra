@@ -409,12 +409,13 @@ def _render_range(c, fa, fb, *, draft, staged_gfx=None, gfx_rechecks=(), check_c
         # then recheck the full pinned inputs after all artifact reads.
         if not media_cache_valid(out, frames=fb - fa):
             raise RuntimeError('1080p window lacks a valid media completion record')
-        for source in direct.values():
-            source.verify()
-        c.verify_inputs(None)
         for recheck in gfx_rechecks:
             check_cancel()
             recheck()
+        check_cancel()
+        for source in direct.values():
+            source.verify()
+        c.verify_inputs(None)
         check_cancel()
     print(f"[timing] 音视频 mux + 自检（{fr} 帧）: {time.monotonic() - t:.1f}s")
     print(f"✓ 区间预览：{out}（{enc}，总计 [timing] {time.monotonic() - t0:.1f}s）")

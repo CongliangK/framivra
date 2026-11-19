@@ -126,7 +126,7 @@ def read_frames(c, clip, start, stop, *, check_cancel=None, max_bytes=None, keep
     Optional ``max_bytes`` lowers the per-call budget; ``check_cancel()`` raises
     KeyboardInterrupt to abort cooperatively. A consumer spanning other work can
     take a small ``keep_recheck(recheck)`` reference to the accepted storage and
-    producer identity, and call it after its own final full input check. No pack
+    producer identity, and call it before its own final full input check. No pack
     handle or decoded PNGs are retained by the reference. Nothing is returned
     until all requested bytes and final checks pass.
     """
