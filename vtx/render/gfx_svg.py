@@ -632,11 +632,15 @@ def validate_windows_gfx_profile(c):
         raise ValueError('Windows SVG gfx does not support active plugins')
 
 
-def _context_runtime(c):
+def _context_runtime(c, fonts=None):
     factory = getattr(c, '_svg_runtime_factory', None)
     if sys.platform == 'win32' and factory is not None:
         if c._svg_runtime is None:
-            c._svg_runtime = factory(c.root)
+            if fonts is None:
+                raise ValueError('Windows SVG production runtime requires a validated clip manifest')
+            c._svg_runtime = factory(c, tuple(fonts))
+        if fonts is not None:
+            c._svg_runtime.require_fonts(fonts)
         return contextlib.nullcontext(c._svg_runtime)
     return _runtime_identity_scope()
 
@@ -704,7 +708,7 @@ def _resolved_runtime(c, clip):
     fonts = manifest.get('fonts', [])
     if not isinstance(fonts, list):
         raise ValueError('SVG manifest.fonts must be a list of project-relative files')
-    with _context_runtime(c) as runtime:
+    with _context_runtime(c, fonts) as runtime:
         yield runtime, _resolve_inputs(c, clip, raw, manifest, rate, runtime)
 
 

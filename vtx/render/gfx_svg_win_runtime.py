@@ -1,4 +1,4 @@
-"""Owned Windows raster runtime for the first, font-free SVG gfx profile."""
+"""Owned Windows raster runtime for the explicit SVG gfx profiles."""
 from contextlib import ExitStack, contextmanager
 from io import BytesIO
 import json
@@ -19,6 +19,8 @@ _SIGNERS = frozenset((
     '1721693d3e23c7abf800ae7b86654ed86dceab48c530a57c00d24ef23ff7407e',
 ))
 _PROFILE = 'windows-amd64-inkscape-1.4.4-font-free/v1'
+_FONT_PROFILE = 'windows-amd64-inkscape-1.4.4-portable-v2-fonts/v1'
+_FONT_PATHS = tuple('assets/fonts/' + name for name in shell._FONT_NAMES)
 _LEDGER_LIMIT = svg.MAX_MANIFEST_BYTES
 
 
@@ -30,29 +32,47 @@ def _publish_json(directory, name, value):
 
 
 class _WindowsRasterRuntime:
-    def __init__(self, project, context, identity, held_images, recheck):
+    def __init__(self, project, context, identity, held_images, recheck, font_records=None, staged=()):
         self.project = project
         self.context = context
         self.identity = identity
         self.held_images = held_images
         self.recheck = recheck
+        self.font_records = font_records or {}
+        self.staged = tuple(staged)
+
+    def require_fonts(self, fonts):
+        if tuple(fonts) != tuple(self.font_records):
+            raise ValueError('Windows SVG manifest changed its bound font set')
+
+    def _check_font_directory(self):
+        cwd = self.context[2]
+        if {path.name for path in (cwd / 'fonts').iterdir()} != {path.name for path, _ in self.staged}:
+            raise ValueError('Windows SVG private font directory changed')
 
     def engine_identity(self):
         return self.identity
 
     def fontconfig_identity(self):
+        if self.font_records:
+            return {'mode': 'locked-portable-v2', 'profile': _FONT_PROFILE, 'version': '2.17.1',
+                    'sha256': shell.fontconfig._DLLS[shell.fontconfig._FONTCONFIG][1]}
         return {'mode': 'explicitly-font-free', 'profile': _PROFILE}
 
     def font_faces(self, c, name, sha256, fontconfig):
-        raise ValueError('Windows SVG production profile does not yet support declared fonts')
+        expected, face = self.font_records[name]
+        if sha256 != expected:
+            raise ValueError('Windows SVG declared font changed after staging')
+        return [dict(face)]
 
     def verify(self):
-        operation, executable, cwd, _, _ = self.context
+        operation, executable, _, _, _ = self.context
         if operation.keep:
             raise ValueError('Windows SVG runtime cannot publish with unconfirmed cleanup')
         self.recheck(time.monotonic() + 30)
-        if snapshot._tree(operation.inputs.vendor) != executable or any((cwd / 'fonts').iterdir()):
+        if snapshot._tree(operation.inputs.vendor) != executable:
             raise ValueError('Windows SVG private runtime identity changed')
+        self._check_font_directory()
 
     def update_receipt(self, fingerprint, mutate, *, require_runtime=False):
         from ..cache.cache_state import normalize_receipt
@@ -77,8 +97,9 @@ class _WindowsRasterRuntime:
             return value
 
     def render_page(self, c, clip, record):
-        if c.root != self.project or record['fonts'] or record['engine'] != self.identity:
-            raise ValueError('Windows SVG stage does not match the bound font-free runtime')
+        if c.root != self.project or record['engine'] != self.identity:
+            raise ValueError('Windows SVG stage does not match the bound runtime')
+        self.require_fonts(record['fonts'])
         if svg.digest(svg.canonical(record)) != getattr(c, '_svg_receipt_record', None):
             raise ValueError('Windows SVG stage record does not match the pinned receipt input')
         count, key = record['frame_count'], svg.record_key(record)
@@ -117,8 +138,13 @@ class _WindowsRasterRuntime:
                 c.verify_inputs('gfx')
                 return True
 
-            if any((cwd / 'fonts').iterdir()):
-                raise ValueError('Windows SVG font-free runtime has unexpected fonts')
+            self._check_font_directory()
+            if self.staged:
+                try:
+                    shell.fontconfig._empty_catalog_cache(cwd)
+                except BaseException:
+                    operation.keep = True  # Do not replace rejected bounded cleanup with recursive removal.
+                    raise
             _, frames, names = shell._export_bound_sources(
                 self.context, sources(), c.w, c.h,
                 deadline=time.monotonic() + max(45, min(3600, 5 * count)),
@@ -141,10 +167,24 @@ class _WindowsRasterRuntime:
 
 
 @contextmanager
-def owned_runtime(project, portable, scratch):
+def owned_runtime(c, portable, scratch, fonts):
     from .gfx_environment import _windows_boot
 
-    project, portable, scratch = map(snapshot._local_path, (project, portable, scratch))
+    if fonts and fonts != _FONT_PATHS:
+        raise ValueError('Windows SVG requires the ordered portable-v2 font set or no fonts')
+    project, portable, scratch = map(snapshot._local_path, (c.root, portable, scratch))
+    # Refuse changed bytes before copying the vendor runtime or starting tools.
+    payloads = []
+    if fonts:
+        try:
+            expected_fonts = shell._locked_font_digests()
+        except FileNotFoundError:
+            raise ValueError('Windows SVG portable-v2 fonts require a source checkout or managed editable install') from None
+        for name, expected in zip(fonts, expected_fonts):
+            data = svg.read_input(c, name, limit=shell._FONT_LIMIT)
+            if svg.digest(data) != expected:
+                raise ValueError('Windows SVG portable-v2 font byte identity mismatch')
+            payloads.append((data, expected))
     with ExitStack() as roots:
         pri = snapshot._pin_dirs(roots, project)
         sci = snapshot._pin_dirs(roots, scratch)
@@ -165,14 +205,24 @@ def owned_runtime(project, portable, scratch):
                     # binds the policy; hold these exact generated bytes for use.
                     configs[name] = svg.digest(contents.replace(escape(cwd.as_posix()).encode(), b'$PRIVATE'))
                 context = op, executable, cwd, env, pins
+                staged, font_records = [], {}
+                if payloads:
+                    for index, (name, (data, expected), face) in enumerate(zip(fonts, payloads, shell._RASTER_FONT_FACES)):
+                        target = cwd / 'fonts' / f'font{index}{Path(name).suffix}'
+                        shell._stage_font(data, expected, name, target, pins)
+                        staged.append((target, expected))
+                        font_records[name] = expected, dict(zip(
+                            ('family', 'style', 'index', 'fontconfig_weight', 'file_face_count'), face))
+                    shell._require_staged_font_faces(op, executable, cwd, staged, pins, time.monotonic() + 30)
                 systems, held, recheck = shell._preflight_system_identity(
                     context, images, _SIGNERS, time.monotonic() + 120)
                 files = ('gfx_svg_win_runtime.py', 'gfx_svg_win_shell.py', 'gfx_svg_win_snapshot.py',
                          'gfx_svg_win_loaded.py', 'gfx_svg_win_system.py', 'gfx_svg_win_catalog.py',
-                         'gfx_svg_win_input.py', 'gfx_svg_win_publish.py', '../runtime/windows_browser.py')
+                         'gfx_svg_win_input.py', 'gfx_svg_win_publish.py', 'gfx_svg_win_fontconfig.py',
+                         '../runtime/windows_browser.py')
                 location = Path(__file__).parent
-                identity = {'name': 'inkscape', 'version': shell._INKSCAPE_VERSION, 'profile': _PROFILE,
+                identity = {'name': 'inkscape', 'version': shell._INKSCAPE_VERSION, 'profile': _FONT_PROFILE if staged else _PROFILE,
                             'package': snapshot._TREE_SHA256, 'system': [list(row) for row in systems],
                             'boot': _windows_boot(), 'catalog_signers': sorted(_SIGNERS), 'configuration': configs,
                             'implementation': {name: svg.digest((location / name).read_bytes()) for name in files}}
-                yield _WindowsRasterRuntime(project, context, identity, held, recheck)
+                yield _WindowsRasterRuntime(project, context, identity, held, recheck, font_records, staged)
