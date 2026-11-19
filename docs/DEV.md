@@ -8,7 +8,7 @@
 
 例如，侧栏只改显示时，先看对应视图和显示测试；若改的是“松手后显示哪个版本”，就要沿[编辑事务](reference/timeline-api.md)从宿主请求查到内核回执，再查宿主如何采用结果。跨进程消费者不一定出现在导入关系里。缩小阅读范围不等于缩减必需验证。
 
-怀疑职责混杂时，在 Issue 或 PR 留一个可核对的例子：原以为只需改哪里、实际为何必须联动另一处、哪条调用链或回归能说明问题。若只是入口难找，补指路即可；不凭文件长度或引用数决定拆分。
+怀疑职责混杂时，在 Issue 或 PR 留一个可核对的例子：原以为只需改哪里、实际为何必须联动另一处、哪条调用链或回归能说明问题。若只是约束难找，补链接；若是测试把显示顺序当成对象身份，修测试；若两个本可独立变化的行为被迫一起改，再拆职责。多个入口必须遵守同一条规则时，指明谁决定、在哪里验证，不凭文件长度或引用数拆分。
 
 ## 专题入口
 
@@ -17,7 +17,7 @@
 | 安装与项目验收 | [安装/更新](guides/installation.md)、[公开 Demo](../templates/demo-timeline-svg/README.md#主性能基线)、[代理诊断](guides/agent-diagnostics.md)、[验收包](guides/project-acceptance.md)、[Blender 分轨审计](../apps/blender-bridge/README.md#分轨审计包-audit_bundlepy人机协作交付门) |
 | 时间线数据与编辑迁移 | [只读 API、显式事务首切片与未迁移写入口](reference/timeline-api.md) |
 | 身份、缓存与执行结果 | [缓存/回执](cache-provenance.md)、[执行事件](reference/execution-events.md)、[资源预算](reference/resource-budget.md)、[插件兼容](reference/plugin-core-compatibility.md) |
-| 媒体实现 | [Canvas 导出](skill/references/gfx.md#canvas-导出与静态跨度)、[响度终链](skill/references/edit.md#音频工程build_audio-内置)、[编码色彩边界](reference/known-issues.md#色彩编码)、[Golden 证据](cache-provenance.md#golden-evidence) |
+| 媒体实现 | [Canvas 导出](skill/references/gfx.md#canvas-导出与静态跨度)、[响度终链](skill/references/edit.md#音频工程build_audio-内置)（改共享混音实现前查[缓存文档](cache-provenance.md)的“阶段回执”，即使只改预览）、[编码色彩边界](reference/known-issues.md#色彩编码)、[Golden 证据](cache-provenance.md#golden-evidence) |
 | 组件与未解决问题 | [组件目录](catalog.md)、[已知问题](reference/known-issues.md)；具体命令和输入限制归各组件 README |
 | DSH 外宿主适配器开发 | [侧栏适配器开发](../dsh-sidebar/DEVELOPMENT.md)；其 README 维护接线与验证边界 |
 | 决策与实验依据 | [DSH 单帧预览研究](reports/development-history.md#dsh-单帧预览研究363)、[HTML/CDP 冷暖研究](reports/development-history.md#htmlcdp-工作流研究346)、[历史基准](reports/development-history.md#一性能基准)、[路线资格与证据](reports/development-history.md)、[MG 验收边界](../templates/mg-styles/README.md#验收边界)、[NAVFREE](reports/development-history.md#navfree-免导航截图判负双杀方案-v2-阶段-2) / [BeginFrame 判负](reports/development-history.md#beginframe) |
