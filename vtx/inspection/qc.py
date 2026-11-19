@@ -371,15 +371,9 @@ def qc(c):
             ss = f"{seek:.6f}"
         else:
             ss = "0"
-        # Tags identify sample points, not unique concurrent calls. Each probe
-        # owns its directory; equal frame/tag probes must never share output.
-        temporary = tempfile.TemporaryDirectory(prefix="qc_probe_", dir=c.cache)
-        tmp = Path(temporary.name) / "qc_probe_frame.raw"
-        failed = True  # Local outcome, independent of a caller's handled exception.
-        try:
-            c.run(["ffmpeg", "-v", "error", "-y", "-ss", ss,
-                   "-i", str(path), "-map", "0:v:0", "-an", "-vf", vf, "-frames:v", "1", "-f", "rawvideo", str(tmp)])
-            data = tmp.read_bytes()
+        cmd = ["ffmpeg", "-v", "error", "-y", "-ss", ss, "-i", str(path), "-map", "0:v:0",
+               "-an", "-vf", vf, "-frames:v", "1", "-f", "rawvideo"]
+        def checked(data):
             expected = _QC_GRAY_WIDTH * _QC_GRAY_HEIGHT
             if len(data) != expected:
                 emit(c, f"ffmpeg gray sample: expected {expected} bytes, got {len(data)}",
@@ -388,6 +382,21 @@ def qc(c):
                      source={"provider": "ffmpeg", "resource": str(path),
                              "measurement": "rawvideo", "frame": n, "origin": origin})
                 producer_exit()
+            return data
+        media = getattr(c, '_windows_svg_media', None)
+        if media is not None:
+            result = media.execute(cmd + ['-'], text=False)
+            if result.returncode:
+                raise RuntimeError('Windows SVG QC could not extract the gray sample')
+            return checked(result.stdout)
+        # Tags identify sample points, not unique concurrent calls. Each probe
+        # owns its directory; equal frame/tag probes must never share output.
+        temporary = tempfile.TemporaryDirectory(prefix="qc_probe_", dir=c.cache)
+        tmp = Path(temporary.name) / "qc_probe_frame.raw"
+        failed = True  # Local outcome, independent of a caller's handled exception.
+        try:
+            c.run(cmd + [str(tmp)])
+            data = checked(tmp.read_bytes())
             failed = False
             return data
         finally:
@@ -737,7 +746,7 @@ def qc(c):
     # 与 gates G3 同一权威值、同一回执不重测）——检查项见下方 checks 回填段。
     def loudness():
         policy = getattr(c, 'cache_policy', None)
-        reuse = policy is None or policy.reuse_media
+        reuse = getattr(c, '_windows_svg_media', None) is None and (policy is None or policy.reuse_media)
         hit = loudness_cache.lookup(final, root=c.root) if reuse else None
         cache_source = {"provider": "loudness_cache", "resource": str(final)}
         if hit is not None:
@@ -992,7 +1001,14 @@ def qc(c):
     from ..runtime.quality import qc_quality
     rep["skipped_probes"] = skipped_probes
     rep["quality"] = qc_quality(rep)
-    fstxn.atomic_write(c.out / "qc_report.json", json.dumps(rep, ensure_ascii=False, indent=2), root=c.root)
+    media = getattr(c, '_windows_svg_media', None)
+    report_path = c.out / 'qc_report.json'
+    report_json = json.dumps(rep, ensure_ascii=False, indent=2)
+    if media is None:
+        fstxn.atomic_write(report_path, report_json, root=c.root)
+    else:
+        rep["media_sha256"] = media.qc_identity
+        media.write_aux(report_path, json.dumps(rep, ensure_ascii=False, indent=2))
     failed = [x for x in rep["checks"] if not x["pass"]]
     print("质量标签：" + rep["quality"]["display"] + "（visual_content=unknown）")
     print(f"QC：{len(rep['checks']) - len(failed)}/{len(rep['checks'])} 通过")
@@ -1000,9 +1016,10 @@ def qc(c):
         print(f"⚠ 免检 {len(skipped_probes)} 项（内容键命中段，stat 绑定一致）："
               "段内像素级篡改若同时保持段文件 stat 不变则本模式不查——--strict 恢复全检")
     c.receipt("qc", not failed, f"{len(rep['checks'])-len(failed)}/{len(rep['checks'])}",
-              extra={"skipped_probes": skipped_probes})
+              extra={"skipped_probes": skipped_probes, **({"media_sha256": media.qc_identity} if media else {})})
     # 免检记录每轮刷新（方案三阶段1）：segs/final 重绑当前 stat，checks 按名记忆
     # pass——✗ 项下轮必复测；记录在 exit 判定前写（失败轮同样刷新，失败项记忆
     # 为 False 即「不可免检」，安全性不受影响）。
-    _write_qc_pass_record(c, nb, rep["checks"])
+    if media is None:
+        _write_qc_pass_record(c, nb, rep["checks"])
     if failed: producer_exit(1)

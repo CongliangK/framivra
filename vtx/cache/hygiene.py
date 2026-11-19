@@ -433,8 +433,12 @@ def manifest_record(c, path: Path, stage: str, key: str = ""):
         # 跟随末段符号链接——issue #23（A04）的目标侧免疫保持；锁文件侧守卫见
         # fstxn._flock_for。损坏账本经 _load_manifest 显式失败（取舍见其注释），
         # 由下方既有外层兜底降级为 ⚠ 警告：渲染不受影响，账本不被静默清零。
-        fstxn.locked_update(_manifest_path(c), _mutate,
-                            load=_load_manifest, dump=_dump_manifest, root=c.root)
+        media = getattr(c, "_windows_svg_media", None)
+        if media is not None:
+            media.update_ledger(_manifest_path(c), "entries", _mutate, _dump_manifest)
+        else:
+            fstxn.locked_update(_manifest_path(c), _mutate,
+                                load=_load_manifest, dump=_dump_manifest, root=c.root)
     except InputIdentityError as e:
         c.reject_input_identity(stage, e)
     except Exception as e:
@@ -1037,6 +1041,9 @@ def versions_check(c, product: Path) -> bool:
     # mux 的另一进程可在「读 → 标记 → 写」间隙整份覆盖本进程判定。损坏账本经
     # _load_versions 显式失败上抛（取舍见 _load_ledger 注释）；os.replace 不
     # 跟随末段符号链接，issue #23（A04）目标侧免疫保持。
+    media = getattr(c, "_windows_svg_media", None)
+    if media is not None:
+        return media.update_ledger(f, "versions", _mutate, _dump_versions) is not None
     return fstxn.locked_update(f, _mutate, load=_load_versions,
                                dump=_dump_versions, root=c.root) is not None
 
@@ -1069,7 +1076,11 @@ def versions_record(c, product: Path, label: str):
     # mux（取舍见 _load_ledger 注释）——终片已落盘不受影响，人工修复账本后
     # 重跑 mux 即补记。A04 符号链接免疫同 versions_check。
     try:
-        fstxn.locked_update(f, _mutate, load=_load_versions, dump=_dump_versions, root=c.root)
+        media = getattr(c, "_windows_svg_media", None)
+        if media is not None:
+            media.update_ledger(f, "versions", _mutate, _dump_versions)
+        else:
+            fstxn.locked_update(f, _mutate, load=_load_versions, dump=_dump_versions, root=c.root)
     except InputIdentityError as e:
         c.reject_input_identity(label, e)
 

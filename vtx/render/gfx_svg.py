@@ -620,7 +620,10 @@ def validate_windows_gfx_profile(c):
         return
     tl = c.tl
     tracks = tl.get('video_tracks', [])
-    if (set(tl) - {'version', 'project', 'video_tracks', 'sources', 'audio_tracks', 'subtitles'}
+    if getattr(c, '_svg_all', False):
+        from .gfx_svg_win_media import require_standard_timeline
+        require_standard_timeline(c.timeline_sha256)
+    elif (set(tl) - {'version', 'project', 'video_tracks', 'sources', 'audio_tracks', 'subtitles'}
             or set(tl['project']) - {'fps', 'width', 'height', 'duration_frames', 'cache_dependencies'}
             or any(tl.get(key) for key in ('sources', 'audio_tracks', 'subtitles'))
             or route(c) != 'svg-sequence' or len(tracks) != 1 or len(tracks[0].get('clips', [])) != 1
@@ -690,6 +693,10 @@ def _resolved_runtime(c, clip):
     raw = read_input(c, clip['src'], limit=MAX_MANIFEST_BYTES)
     if len(raw) > MAX_MANIFEST_BYTES:
         raise ValueError('SVG manifest exceeds 8 MiB input limit')
+    if getattr(c, '_svg_all', False):
+        from .gfx_svg_win_shell import _RASTER_MANIFEST_SHA256
+        if digest(raw) != _RASTER_MANIFEST_SHA256:
+            raise ValueError('Windows SVG all requires the locked portable-v2 manifest')
     manifest = json.loads(raw.decode('utf-8'))
     if not isinstance(manifest, dict) or manifest.get('format') != FORMAT:
         raise ValueError(f'SVG manifest.format must be {FORMAT}')
@@ -746,6 +753,14 @@ def _resolve_inputs(c, clip, raw, manifest, rate, runtime):
         add(name, expected_path=expected_path)
     families = {family.strip() for faces in font_faces.values() for face in faces
                 for family in face['family'].split(',')}
+    standard = getattr(c, '_svg_all', False)
+    if standard:
+        from .gfx_svg_win_shell import (_RASTER_SOURCE_DEPS, _RASTER_SVG_SHA256, _fold_frame,
+                                        _locked_runtime_digests, _raster_fold)
+        locked = _locked_runtime_digests()
+        if any(files[name] != locked[name] for name in _RASTER_SOURCE_DEPS):
+            raise ValueError('Windows SVG all portable-v2 dependency bytes changed')
+        fold = _raster_fold(b'svg')
     seen = set()
     reusable = []
     for index, frame in enumerate(frames):
@@ -753,11 +768,16 @@ def _resolve_inputs(c, clip, raw, manifest, rate, runtime):
             raise ValueError('SVG manifest.frames must contain file paths')
         if frame not in seen:
             try:
-                if inspect_svg(add(frame, limit=MAX_SVG_BYTES), c.w, c.h, fonts=fonts, families=families):
+                data = add(frame, limit=MAX_SVG_BYTES)
+                if standard:
+                    _fold_frame(fold, index, data)
+                if inspect_svg(data, c.w, c.h, fonts=fonts, families=families):
                     reusable.append(frame)
             except (ValueError, OSError) as error:
                 raise ValueError(f'SVG frame {index} ({frame}): {error}') from error
             seen.add(frame)
+    if standard and fold.hexdigest() != _RASTER_SVG_SHA256:
+        raise ValueError('Windows SVG all portable-v2 ordered frame bytes changed')
     code_names = ['gfx_svg.py', 'gfx_svg_stage.py', 'gfx_environment.py']
     code = {name: digest(Path(__file__).with_name(name).read_bytes()) for name in code_names}
     return {'producer': PRODUCER, 'manifest': clip['src'], 'files': files,
