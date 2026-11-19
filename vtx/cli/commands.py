@@ -88,6 +88,7 @@ clip 的 scale/x/y/opacity/fade 全部可选（缺省＝全屏不透明），fad
 """
 import argparse, difflib, json, os, shutil, sys, threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from enum import Enum
 from pathlib import Path
 
@@ -202,7 +203,8 @@ def gfx(c: Ctx):
 
 
 def _gfx(c: Ctx):
-    budget_gate(c, "gfx")
+    if getattr(c, '_svg_runtime', None) is None:
+        budget_gate(c, "gfx")
     from ..render import gfx_svg
     from ..runtime.windows_browser import job_cleanup_unconfirmed
     if gfx_svg.route(c) == "svg-sequence":
@@ -813,6 +815,11 @@ def _preview_command(c, a):
 
 
 def _main(execution=None):
+    with ExitStack() as ownership:
+        return _main_owned(execution, ownership)
+
+
+def _main_owned(execution, ownership):
     execution = execution if execution is not None else events.ExecutionContext()
     ap = argparse.ArgumentParser(description="vtx 视频剪辑中间层", allow_abbrev=False)
     ap.add_argument("-t", "--timeline", default="timeline.json", help="timeline.json 路径（默认 ./timeline.json）")
@@ -1067,7 +1074,17 @@ def _main(execution=None):
             print(f'✗ 定向回收失败，已保守停止：{error}'); sys.exit(1)
         return
     try:
-        c = Ctx(tp, execution=execution)   # PR#1：构造期校验 cache_dependencies（缺失/非文件 → 友好报错）
+        scope = {}
+        if sys.platform == 'win32' and a.command == 'gfx' and not policy.dry:
+            portable = os.environ.get('VTX_WINDOWS_SVG_PORTABLE')
+            scratch = os.environ.get('VTX_WINDOWS_SVG_SCRATCH')
+            if portable or scratch:
+                if not portable or not scratch:
+                    raise ValueError('Windows SVG requires explicit portable and private scratch roots')
+                from ..render.gfx_svg_win_runtime import owned_runtime
+                scope['_svg_runtime_factory'] = lambda project: ownership.enter_context(
+                    owned_runtime(project, portable, scratch))
+        c = Ctx(tp, execution=execution, **scope)
     except (ValueError, KeyError, TypeError, ZeroDivisionError, OSError) as e:
         # 2026-09-11 扩捕获：timeline 结构缺键（KeyError）/类型错（TypeError）/fps=0
         # （ZeroDivisionError）/文件缺失（FileNotFoundError）均友好打印而非裸栈
@@ -1152,6 +1169,14 @@ def _main(execution=None):
         except ProjectPathError as e:
             print(f"✗ {e}"); sys.exit(1)
         return
+    if getattr(c, '_svg_runtime', None) is not None:
+        from ..cache.policy import policy_for
+        if policy_for(c).mode != 'core':
+            print('✗ Windows SVG gfx requires core cache mode'); sys.exit(1)
+        if (os.environ.get('VTX_CACHE_BUDGET_GB') or os.environ.get('VTX_GC_AUTO') == '1'
+                or os.environ.get('VTX_CACHE_BUDGET_ACTION', 'warn') != 'warn'):
+            print('✗ Windows SVG gfx does not support cache budget or automatic collection overrides'); sys.exit(1)
+        return _execute_render(c, a)
     if (a.command in ('all', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc')
             or a.command == 'subs' and a.subs_extra[:1] == ['preview']):
         from ..cache.session import CacheSession

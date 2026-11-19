@@ -136,27 +136,64 @@ class _HeldSystemScope:
             if _facts(self.kernel, handle, path, self.device, directory=True) != identity:
                 raise ValueError('Windows SVG system scope parent identity changed')
 
+    def _digest(self, path, handle, facts, deadline):
+        _scope_time(deadline)
+        if _facts(self.kernel, handle, path, self.device, directory=False) != facts:
+            raise ValueError('Windows SVG system scope file metadata changed')
+        rewind = _windows_api('SetFilePointerEx', W.BOOL, W.HANDLE, C.c_longlong, C.c_void_p, W.DWORD)
+        _check(rewind(handle, 0, None, 0), 'SetFilePointerEx (system scope)')
+        buffer, count = C.create_string_buffer(65536), W.DWORD()
+        remaining, digest = facts[3], hashlib.sha256()
+        while remaining:
+            _scope_time(deadline)
+            amount = min(remaining, len(buffer))
+            _check(self.kernel.ReadFile(handle, buffer, amount, C.byref(count), None), 'ReadFile (system scope)')
+            if not 0 < count.value <= amount:
+                raise ValueError('Windows SVG system scope file was short-read')
+            digest.update(buffer[:count.value])
+            remaining -= count.value
+        _check(self.kernel.ReadFile(handle, buffer, 1, C.byref(count), None), 'ReadFile (system scope EOF)')
+        if count.value or _facts(self.kernel, handle, path, self.device, directory=False) != facts:
+            raise ValueError('Windows SVG system scope file identity mismatch')
+        return digest.hexdigest()
+
+    def pin_catalogued_image(self, pins, event_key, verify_signature, deadline, *, console_host=False):
+        """Retain an installed OS image only if the loader object and trust agree."""
+        _scope_time(deadline)
+        name, volume, file_id = event_key
+        path = Path(name)
+        try:
+            parts = path.relative_to(self.root).parts
+        except ValueError:
+            parts = ()
+        if (not (len(parts) == 2 and parts[0].lower() == 'system32'
+                 or len(parts) == 3 and parts[0].lower() == 'winsxs' and parts[1].lower().startswith('amd64_'))
+                or (tuple(part.lower() for part in parts) != ('system32', 'conhost.exe') if console_host
+                    else path.suffix.lower() not in ('.dll', '.drv'))
+                or volume != self.volume
+                or not all(_PART.fullmatch(part.lower()) and _ordinary(part) for part in parts)
+                or len(self.leaves) >= _MAX_LEAVES):
+            raise ValueError('Windows SVG loader selected an unsupported system image')
+        self._parent(pins, path.parent)
+        self._check_parents(deadline)
+        handle = _open_pin(pins, self.kernel, path, directory=False)
+        facts = _facts(self.kernel, handle, path, self.device, directory=False)
+        if (facts[0] != (volume, file_id) or facts[1] != name or facts[4] not in (1, 2)
+                or not 0 < facts[3] <= _MAX_LEAF_BYTES
+                or facts[3] + sum(row[2][3] for row in self.leaves) > _MAX_SCOPE_BYTES):
+            raise ValueError('Windows SVG catalogued image differs from the loader file')
+        digest = self._digest(path, handle, facts, deadline)
+        signer = verify_signature(path, handle, deadline)
+        _scope_time(deadline)
+        if _facts(self.kernel, handle, path, self.device, directory=False) != facts:
+            raise ValueError('Windows SVG catalogued image changed during verification')
+        self.leaves.append((path, handle, facts, digest))
+        return '/'.join(parts).lower(), digest, signer
+
     def verify(self, deadline):
         self._check_parents(deadline)
-        rewind = _windows_api('SetFilePointerEx', W.BOOL, W.HANDLE, C.c_longlong, C.c_void_p, W.DWORD)
-        buffer, count = C.create_string_buffer(65536), W.DWORD()
         for path, handle, facts, expected in self.leaves:
-            _scope_time(deadline)
-            if _facts(self.kernel, handle, path, self.device, directory=False) != facts:
-                raise ValueError('Windows SVG system scope file metadata changed')
-            _check(rewind(handle, 0, None, 0), 'SetFilePointerEx (system scope)')
-            remaining, digest = facts[3], hashlib.sha256()
-            while remaining:
-                _scope_time(deadline)
-                amount = min(remaining, len(buffer))
-                _check(self.kernel.ReadFile(handle, buffer, amount, C.byref(count), None), 'ReadFile (system scope)')
-                if not 0 < count.value <= amount:
-                    raise ValueError('Windows SVG system scope file was short-read')
-                digest.update(buffer[:count.value])
-                remaining -= count.value
-            _check(self.kernel.ReadFile(handle, buffer, 1, C.byref(count), None), 'ReadFile (system scope EOF)')
-            if (count.value or digest.hexdigest() != expected
-                    or _facts(self.kernel, handle, path, self.device, directory=False) != facts):
+            if self._digest(path, handle, facts, deadline) != expected:
                 raise ValueError('Windows SVG system scope file identity mismatch')
         self._check_parents(deadline)
         _scope_time(deadline)

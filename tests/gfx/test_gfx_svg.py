@@ -832,6 +832,58 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
         self.assertEqual({item.name for item in root.iterdir()}, {'timeline.json', 'manifest.json', 'frame.svg'})
 
 
+    def test_explicit_profile_anchors_timeline_before_runtime_creation(self):
+        root = temporary_root(self).resolve()
+        doc = {'version': 2, 'project': {'fps': 30, 'width': 1920, 'height': 1080, 'duration_frames': 1},
+               'video_tracks': [{'kind': 'gfx', 'clips': [dict(format='svg-sequence',
+                                                              src='manifest.json', dst_in=0, dur=1)]}],
+               'sources': [{'path': 'must-not-probe.mp4'}]}
+        timeline = root / 'timeline.json'
+        timeline.write_text(json.dumps(doc), encoding='utf-8')
+        runtime = mock.Mock(side_effect=AssertionError('runtime must not open'))
+        os.link(timeline, root / 'alias.json')
+        with self.assertRaisesRegex(ValueError, 'one hard link'):
+            Ctx(timeline, _svg_runtime_factory=runtime)
+        (root / 'alias.json').unlink()
+        with self.assertRaisesRegex(ValueError, 'without external media'):
+            Ctx(timeline, _svg_runtime_factory=runtime)
+        runtime.assert_not_called()
+        self.assertEqual({path.name for path in root.iterdir()}, {'timeline.json'})
+
+
+    def test_producer_refuses_an_unpinned_record_before_opening_cache(self):
+        from vtx.render.gfx_svg_win_runtime import _WindowsRasterRuntime
+
+        root = temporary_root(self).resolve()
+        runtime = _WindowsRasterRuntime(root, None, {'name': 'fixture'}, None, None)
+        record = {'fonts': [], 'engine': runtime.engine_identity()}
+        ctx = SimpleNamespace(root=root, _svg_receipt_record='prior-record')
+        with self.assertRaisesRegex(ValueError, 'pinned receipt input'):
+            runtime.render_page(ctx, {}, record)
+        self.assertEqual(list(root.iterdir()), [])
+
+    def test_native_marker_and_receipt_publication_rejects_hardlink_targets(self):
+        from vtx.render.gfx_svg_win_publish import anchored
+
+        root = temporary_root(self).resolve()
+        victim = root / 'ordinary.txt'
+        victim.write_bytes(b'original')
+        with anchored(root) as parent, parent.child('out', create=True) as out:
+            os.link(victim, root / 'out' / 'receipt.json')
+            with out.lock('receipt.json'):
+                with self.assertRaisesRegex(ValueError, 'one hard link'):
+                    out.publish('receipt.json', b'wrong')
+                with self.assertRaisesRegex(ValueError, 'one hard link'):
+                    out.remove('receipt.json')
+            self.assertEqual(victim.read_bytes(), b'original')
+            (root / 'out' / 'receipt.json').unlink()
+            with out.lock('receipt.json'):
+                out.publish('receipt.json', b'first')
+                out.publish('receipt.json', b'final')
+                self.assertEqual(out.read('receipt.json', 5), b'final')
+        self.assertEqual({path.name for path in (root / 'out').iterdir()}, {'receipt.json', 'receipt.json.lock'})
+
+
 class LinuxSvgRuntimeDigest(unittest.TestCase):
     """Fresh ldd closure every call, shared byte facts only for runtime files."""
     def setUp(self):

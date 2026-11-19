@@ -191,7 +191,7 @@ def _stage_font(data, expected, name, target, pins):
         raise ValueError('Windows SVG staged font byte identity mismatch')
 
 
-def _settle(operation, job, deadline):
+def _settle(operation, job, deadline, *, can_discard=True):
     try:
         job._close(deadline)
     except OSError as error:
@@ -200,7 +200,8 @@ def _settle(operation, job, deadline):
         if native.job_cleanup_unconfirmed(cancel):
             raise
         raise cancel from native.JobSettlementError('Windows SVG Job settlement interrupted; operation retained')
-    operation.keep = False
+    if can_discard:
+        operation.keep = False
 
 
 class _ImageOrigins(NamedTuple):
@@ -390,39 +391,67 @@ def _sample_raster_images(job, executable, roots, pump_deadline):
     return _query_image_origins(job, executable, roots, deadline)
 
 
-def _run_owned(operation, argv, cwd, environment, stdin, *, deadline, capture_limit, phase, image_roots=None):
+def _run_owned(operation, argv, cwd, environment, stdin, *, deadline, capture_limit, phase,
+               image_roots=None, held_images=None):
     job = native._OwnedJob(argv, capture_limit=capture_limit)
     if deadline is None:
         deadline = time.monotonic() + _TIMEOUT
+    launch_options = {}
+    events, launched = None, False
+    if held_images is not None:
+        from .gfx_svg_win_loaded import _ImageEvents
+        if image_roots is not None:
+            raise ValueError('Windows SVG cannot combine a pathname sample with image binding')
+        events = _ImageEvents(job, *held_images)
+        launch_options['debug_images'] = True
+
+    def settle(*, verify):
+        confirmed = False
+        try:
+            if events is not None and (launched or job._info.process):
+                # CreateProcessW can succeed before launch-local handles close.
+                rejection = events.stop(deadline, verify=verify)
+                confirmed = True
+                if rejection is not None:
+                    raise rejection
+            else:
+                confirmed = launched
+        finally:
+            _settle(operation, job, deadline, can_discard=confirmed)
+
     operation.keep = True  # revoke cleanup authority before CreateProcessW can run a writer
     try:
         job._launch(argv, subprocess.PIPE, subprocess.PIPE, stdin=stdin,
-                    cwd=str(cwd), environment=environment)
+                    cwd=str(cwd), environment=environment, **launch_options)
+        launched = True
         pump_deadline = deadline - _SETTLE_RESERVE
         sample = None if image_roots is None else _sample_raster_images(job, Path(argv[0]), image_roots, pump_deadline)
-        if not job._pump(pump_deadline):
+        pump = job._pump if events is None else events.pump
+        if not pump(pump_deadline):
             raise TimeoutError(f'Windows SVG {phase} did not exit and close both outputs in time')
     except BaseException as primary:
         try:
-            _settle(operation, job, deadline)
-        except native.JobSettlementError as cleanup:
+            settle(verify=False)
+        except (OSError, ValueError) as cleanup:
             raise primary from cleanup
         except KeyboardInterrupt as cleanup:
             if isinstance(primary, KeyboardInterrupt):
                 raise primary from cleanup.__cause__
             raise
         raise
-    _settle(operation, job, deadline)
+    settle(verify=True)
     return job, sample
 
 
-def _run(operation, executable, cwd, environment, stdin, *, deadline=None, capture_limit=None, image_roots=None):
+def _run(operation, executable, cwd, environment, stdin, *, deadline=None, capture_limit=None, image_roots=None,
+         held_images=None):
     if deadline is not None and time.monotonic() >= deadline - _SETTLE_RESERVE:
         raise TimeoutError('Windows SVG sequence did not stage in time')
     if capture_limit is None:
         capture_limit = _LIMIT if deadline is None else _SEQUENCE_CAPTURE_LIMIT
     job, sample = _run_owned(operation, [str(executable), '--shell'], cwd, environment, stdin,
-                             deadline=deadline, capture_limit=capture_limit, phase='shell', image_roots=image_roots)
+                             deadline=deadline, capture_limit=capture_limit, phase='shell', image_roots=image_roots,
+                             held_images=held_images)
     if job.proc.returncode != 0:
         raise ValueError(f'Windows SVG shell failed ({job.proc.returncode})')
     _, stderr = job._output()
@@ -431,7 +460,37 @@ def _run(operation, executable, cwd, environment, stdin, *, deadline=None, captu
     return sample
 
 
-def _require_runtime_facts(operation, executable, cwd, environment, pins, launch_deadline):
+def _preflight_system_identity(context, package_images, signer_pins, deadline):
+    """Resolve system libraries using the actual owned shell, without raster output."""
+    operation, executable, cwd, environment, pins = context
+    host, system32, _ = win_system._hold_scope(pins, _system_windows_path(), (), deadline, _image_device)
+    entry = package_images['bin/inkscape.com'].handle
+    images = tuple(image.handle for image in package_images.values())
+    records = []
+    with win_catalog._installed_catalogs(pins, host, system32, signer_pins, deadline) as verify:
+        # The OS can create its console host for a child. Select that exact
+        # system executable independently; CREATE events never extend scope.
+        console = system32 / 'conhost.exe'
+        with ExitStack() as candidate:
+            handle = win_system._open_pin(candidate, host.kernel, console, directory=False)
+            facts = win_system._facts(host.kernel, handle, console, host.device, directory=False)
+            records.append(host.pin_catalogued_image(pins, (facts[1], *facts[0]), verify, deadline, console_host=True))
+        console_pin = host.leaves[-1][1]
+        helpers = (console_pin, package_images['bin/gdbus.exe'].handle)
+
+        def certify(key, event_deadline):
+            records.append(host.pin_catalogued_image(pins, key, verify, min(deadline, event_deadline)))
+
+        with _fixed_stdin(cwd, b'quit\n') as stdin:
+            _run(operation, executable, cwd, environment, stdin, deadline=deadline,
+                 capture_limit=_FACTS_CAPTURE_LIMIT, held_images=(entry, images + (console_pin,), certify, helpers))
+    host.verify(deadline)
+    if len(records) < 2:
+        raise ValueError('Windows SVG preflight did not certify any system libraries')
+    return tuple(sorted(records)), (entry, images + tuple(row[1] for row in host.leaves), None, helpers), host.verify
+
+
+def _require_runtime_facts(operation, executable, cwd, environment, pins, launch_deadline, *, held_images=None):
     deadline = min(launch_deadline, time.monotonic() + _FACTS_TIMEOUT)
     share = operation.inputs.vendor / 'share'
     pins.enter_context(_pin_dir(share))
@@ -445,7 +504,8 @@ def _require_runtime_facts(operation, executable, cwd, environment, pins, launch
         if time.monotonic() >= deadline - _SETTLE_RESERVE:
             raise TimeoutError('Windows SVG runtime facts deadline expired before launch')
         job, _ = _run_owned(operation, [str(executable), flag], cwd, environment, None,
-                            deadline=deadline, capture_limit=_FACTS_CAPTURE_LIMIT, phase='runtime query')
+                            deadline=deadline, capture_limit=_FACTS_CAPTURE_LIMIT, phase='runtime query',
+                            held_images=held_images)
         if time.monotonic() >= deadline:
             raise TimeoutError('Windows SVG runtime facts deadline expired')
         if job.proc.returncode != 0:
@@ -698,6 +758,35 @@ def _require_staged_font_faces(operation, executable, cwd, staged, pins, launch_
     return counts
 
 
+def _export_bound_sources(context, indexed_sources, width, height, *, deadline, capture_limit,
+                          image_roots=None, held_images=None):
+    """Render already-validated source bytes in the caller's owned runtime."""
+    operation, executable, cwd, environment, pins = context
+    frames = cwd / 'frames'
+    frames.mkdir()
+    pins.enter_context(_pin_dir(frames))
+    actions, outputs = [], []
+    for index, data in indexed_sources:
+        _raster_time(deadline)
+        stem = f'f{index:04d}'
+        target = cwd / (stem + '.svg')
+        with target.open('xb') as stream:
+            stream.write(data)
+        handle, info, _, directory = pins.enter_context(_pin_entry(target))
+        if _read_pinned(handle, info, directory, len(data)) != data:
+            raise ValueError('Windows SVG staged raster source changed')
+        outputs.append(stem + '.png')
+        actions.append(_EXPORT.format(stem=stem, width=width, height=height, png='frames/' + outputs[-1]))
+    script = (''.join(actions) + 'quit\n').encode('ascii')
+    _require_runtime_facts(operation, executable, cwd, environment, pins, deadline, held_images=held_images)
+    with _fixed_stdin(cwd, script) as stdin:
+        origins = _run(operation, executable, cwd, environment, stdin, deadline=deadline,
+                       capture_limit=capture_limit, image_roots=image_roots, held_images=held_images)
+    # The child never receives project/output paths. Return its expected
+    # names only after _run has positively settled the Job.
+    return origins, frames, outputs
+
+
 def _accept_standard_raster(portable_root, *, scratch, project_root, expected_system_scope=None,
                             expected_system_catalogs=None):
     """Attest only the fixed portable-v2 raster, not project or render eligibility.
@@ -733,7 +822,6 @@ def _accept_standard_raster(portable_root, *, scratch, project_root, expected_sy
     _require_raster_timeline(project_root, font_paths, runtime_digests, launch_deadline)
     _require_raster_manifest(project_root, frame_paths, font_paths)
 
-    outputs = tuple(stem + '.png' for stem in stems)
     width, height = _STANDARD_SIZE
     svg = _raster_fold(b'svg')
     sources, remaining = [], _RASTER_SVG_TOTAL
@@ -755,8 +843,6 @@ def _accept_standard_raster(portable_root, *, scratch, project_root, expected_sy
         except ValueError as error:
             raise ValueError(f'Windows SVG canonical raster static frame {i}: {error}') from error
 
-    actions = (''.join(_EXPORT.format(stem=stem, width=width, height=height, png='frames/' + png)
-                       for stem, png in zip(stems, outputs)) + 'quit\n').encode('ascii')
     with ExitStack() as roots:
         project_ids = _pin_dirs(roots, _local_path(project_root))
         scratch_ids = _pin_dirs(roots, _local_path(scratch))
@@ -771,9 +857,7 @@ def _accept_standard_raster(portable_root, *, scratch, project_root, expected_sy
                 win_catalog._verify_scope_catalogs(roots, held_system, system32, expected_system_catalogs, launch_deadline)
         with _fixed_shell(portable_root, scratch, retain_package_images=True) as context:
             operation, executable, cwd, environment, pins = context
-            frames, fonts = cwd / 'frames', cwd / 'fonts'
-            frames.mkdir()
-            pins.enter_context(_pin_dir(frames))
+            fonts = cwd / 'fonts'
             pins.enter_context(_pin_dir(fonts))
             staged_fonts = []
             for i, (name, expected) in enumerate(zip(_FONT_NAMES, _locked_font_digests(runtime_digests))):
@@ -784,20 +868,11 @@ def _accept_standard_raster(portable_root, *, scratch, project_root, expected_sy
                 staged_fonts.append((target, expected))
             font_catalog_faces = _require_staged_font_faces(operation, executable, cwd, staged_fonts, pins,
                                                             launch_deadline)
-            for stem, data in zip(stems, sources):
-                _raster_time(launch_deadline)
-                target = cwd / (stem + '.svg')
-                with target.open('xb') as stream:
-                    stream.write(data)
-                handle, info, _, directory = pins.enter_context(_pin_entry(target))
-                if _read_pinned(handle, info, directory, len(data)) != data:
-                    raise ValueError('Windows SVG staged canonical raster source changed')
-            _require_runtime_facts(operation, executable, cwd, environment, pins, launch_deadline)
             image_roots = (_raster_image_roots(pins, operation.package_images) if held_system is None else
                            (operation.package_images, system32, winsxs))
-            with _fixed_stdin(cwd, actions) as stdin:
-                image_origins = _run(operation, executable, cwd, environment, stdin, deadline=launch_deadline,
-                                     capture_limit=_RASTER_CAPTURE_LIMIT, image_roots=image_roots)
+            image_origins, frames, outputs = _export_bound_sources(
+                context, enumerate(sources), width, height, deadline=launch_deadline,
+                image_roots=image_roots, capture_limit=_RASTER_CAPTURE_LIMIT)
 
             # _run can return only after confirmed Job settlement. No directory
             # enumeration or PNG reads occur on its failure path.

@@ -117,14 +117,17 @@ def _archive_stale_receipt(f: Path, fingerprint: str, *, root):
 
 
 class Ctx:
-    def __init__(self, timeline_path: Path, *, execution=None, diagnostics=None):
+    def __init__(self, timeline_path: Path, *, execution=None, diagnostics=None, _svg_runtime_factory=None):
+        self._svg_runtime_factory = _svg_runtime_factory
+        self._svg_runtime = None
         self.execution = execution if execution is not None else events.ExecutionContext()
         if diagnostics is not None:
             self.diagnostics = diagnostics
         self.tl_path = timeline_path
         self.root = timeline_path.parent
         try:
-            self.timeline_bytes = timeline_path.read_bytes()
+            from ..render.gfx_svg import read_timeline_input
+            self.timeline_bytes = read_timeline_input(self)
         except OSError as error:
             emit(self, str(error), rule_id='load.timeline_file', measured={'path': str(timeline_path)},
                  threshold={'readable_file': True})
@@ -171,13 +174,15 @@ class Ctx:
         # 指纹；解析前锁定、解析后复核，避免内存字幕和身份来自不同版本。
         # Pin before resolving external subtitles so changes during loading are
         # caught too. Hash exactly the bytes parsed above, not a second read.
+        from ..render import gfx_svg
+        gfx_svg.validate_windows_gfx_profile(self)
         validate_cache_dependencies(self)
         from ..render.gfx_backend import selected, identity
         from ..cache.hygiene import gfx_cache_ns
-        from ..render import gfx_svg
         if gfx_svg.route(self) == 'svg-sequence':
             self.gfx_backend = {'requested_backend': 'svg-sequence',
-                                'identity': gfx_svg.engine_identity(),
+                                'identity': (gfx_svg.engine_identity(self) if self._svg_runtime is not None
+                                              else gfx_svg.engine_identity()),
                                 'namespace': gfx_svg.NAMESPACE, 'experimental': True}
         else:
             self.gfx_backend = {"requested_backend": selected(), "identity": identity(),
@@ -390,7 +395,8 @@ class Ctx:
         observation = None
 
         def _mutate(rec):
-            _archive_stale_receipt(f, self.input_fingerprint, root=self.root)   # ⑮ 指纹翻转旁证轮转
+            if self._svg_runtime is None:
+                _archive_stale_receipt(f, self.input_fingerprint, root=self.root)   # ⑮ 指纹翻转旁证轮转
             if ok:
                 verify_input_identity(self)
             rec["timeline"] = self.timeline_sha256
@@ -415,6 +421,8 @@ class Ctx:
         def write(ref):
             nonlocal observation
             observation = ref
+            if self._svg_runtime is not None:
+                return self._svg_runtime.update_receipt(self.input_fingerprint, _mutate, require_runtime=ok)
             return fstxn.locked_update(f, _mutate,
                                       load=lambda p: load_receipt(p, self.input_fingerprint), root=self.root)
 
@@ -436,7 +444,8 @@ class Ctx:
 
         def _mutate(rec):
             verify_input_identity(self)
-            _archive_stale_receipt(f, self.input_fingerprint, root=self.root)
+            if self._svg_runtime is None:
+                _archive_stale_receipt(f, self.input_fingerprint, root=self.root)
             dependencies = {'audio': ['prepare'], 'mux': ['video', 'audio'],
                             'mux_draft': ['video_draft', 'audio'], 'qc': ['mux']}
             if any(operation(self, lambda: t.get('kind') == 'gfx',
@@ -464,8 +473,11 @@ class Ctx:
         # 与 receipt() 同一 fstxn 事务（原同持 _receipt_lock——锁下沉见 __init__ 注）：
         # 依赖门判定与下游撤销的读-改-写跨进程同样串行化；门失败（RuntimeError）
         # 时 tmp 清残件、receipt.json 保持旧值。dry 早退在锁外。
-        fstxn.locked_update(f, _mutate,
-                            load=lambda p: load_receipt(p, self.input_fingerprint), root=self.root)
+        if self._svg_runtime is not None:
+            self._svg_runtime.update_receipt(self.input_fingerprint, _mutate)
+        else:
+            fstxn.locked_update(f, _mutate,
+                                load=lambda p: load_receipt(p, self.input_fingerprint), root=self.root)
 
     def src_path(self, sid):
         return self.root / next(s for s in self.tl["sources"] if s["id"] == sid)["path"]
