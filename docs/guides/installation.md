@@ -56,7 +56,7 @@ Windows 主流程须普通非提升 PowerShell；提升写态在引导下载前�
 
 **一般直接重跑同一命令即可恢复，不用删根重装。** 若安装器明确指出旧 macOS 源码的运行态 PATH 会遮住合格工具，使用 `--update` 更新 owned source 后重试。无新更新事务时复用原 owned source commit；Python 计划在解释器/平台/需求身份不变时复用，身份变化或新更新事务才重解析。`--update` 开启更新事务；一旦批准目标，失败重试（包括再次带 `--update`）先恢复该 commit/stage 和已完成的依赖计划，不因 main 前移另起事务。`.source-progress.json` 记录已批准 commit 与唯一自有 stage；继续其 Git 获取/验证，不收养未知克隆，不 reset/clean 开发目录。origin、所有权、HEAD、干净状态和 ignored→tracked 碰撞仍检查；异常目录不静默删除。
 
-安装日志的 `Source commit` 是实际验收的源码提交。若上次 `--update` 已经完成 Git 检出，但旧源码无法通过验收，而上游已修复，则给原引导命令加 `--update --restart-update`（写操作），显式重新选取目标并完整验收。该选项不会覆盖尚在进行的源码 checkout journal，也不删除原下载缓存；若新尝试中断，去掉 `--restart-update` 再续跑。
+安装日志的 `Source commit` 只标明本次选定的源码，不代表已通过验收。若上次 `--update` 已完成受管源码检出，且该提交导致的验证失败已在上游修复，可用 `--update --restart-update` 显式重新选源（联网写操作）。此操作要求已有受管检出且根目录无 `.source-progress.json`。默认 `main` 由引导器重新解析；若原命令固定了旧 SHA 或 tag，须改选包含修复的目标。重新选源不删除下载缓存，也不跳过依赖准备或制作验收；只有全部验收通过才登记 `ready`。若新尝试中断，保留本次选源参数，只去掉 `--restart-update` 续跑。
 
 根 `.install.lock` 是内核 advisory lock：**不删除“stale”锁文件**；文件保留不表示锁仍被占用，持锁进程退出后自动释放，活锁冲突明确失败。HTTP 部分文件、Git stage、pip 计划与系统包缓存各由对应层恢复；断点恢复不承诺跨层原子回滚，也不绕过任何原有 ready 判据。
 
