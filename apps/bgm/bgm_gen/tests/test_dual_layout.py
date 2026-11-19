@@ -47,12 +47,6 @@ def _bgm_render(proj_path, out_dir, *flags, env=None, timeout=300):
                        cwd=helpers.WORKSPACE, timeout=timeout, env_extra=env)
 
 
-def _copy_minimal(d, name="proj.json"):
-    p = os.path.join(d, name)
-    _write(p, helpers.load_json(MINIMAL))
-    return p
-
-
 # 微工程（v3.3 fast 预算找补）：增量用例组专属渲染基座——2 轨纯 synth
 # （kick/lead，无 sf2/fluidsynth 子进程）× 8 拍 @120 = 4s，实测单渲 1.7s vs
 # minimal 2.8s（增量组 7 渲 × ~1.1s ≈ 回收 7.8s，预算 ≤75s 找补）。位级锚点
