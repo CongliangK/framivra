@@ -125,7 +125,7 @@ Topbar history provides explicit legacy adoption, current-head undo, status and 
 
 The plugin registers `framivra_timeline_read` (inspect/query/source-exact reference), limited to the invoking agent's actual Session workspace. It does not accept Session/cwd overrides, write grants, or edit requests. Full CLI semantic operations are unaffected. Complex changes can be described through conversation; refresh the saved timeline to review the result. No sidebar model-proposal, receipt poll or write proxy is registered. Project content is untrusted data, not instructions.
 
-Text-only selections and PNG attachments share a 300-character draft summary of the exact workspace-relative timeline/version, identity or scoped address, and interval/frame, with optional bounded labels. Lossless raw and diagnostic copies remain distinct explicit clipboard actions. No raw timeline/numeric-token/certificate JSON is appended to the composer. A precise locator that cannot fit is refused instead of silently changing its identity.
+Text-only and PNG draft appends share a summary capped at 300 UTF-16 code units (including both surrounding newlines) for the exact workspace-relative timeline/version, identity or scoped address, and interval/frame, with optional bounded labels; this cap does not affect preview or clipboard copies. Lossless raw and diagnostic copies remain distinct explicit clipboard actions. No raw timeline/numeric-token/certificate JSON is appended to the composer. A precise locator that cannot fit is refused instead of silently changing its identity.
 
 ## Safety boundary
 
