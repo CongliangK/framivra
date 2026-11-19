@@ -38,7 +38,7 @@ ASR 只负责产出字幕素材，消费与烧录由内核 `subtitles_src` 定�
 | 职责 | 实现 home（均在 `vtx/`） | 边界 |
 |---|---|---|
 | 输入与时间线 | `timeline.schema.json`、`pipeline/constraints.py`、`pipeline/infra.Ctx`、`pipeline/stages.validate`、`preview.html` | schema 是结构权威，validate 是执行校验权威，preview 是预览权威；只读预览不替代 validate，低分辨率测试上下文不等于正式项目规格 |
-| 时间线操作 | `inspection/diffcmd.py`、`inspection/timeline_diff.py`、`inspection/impact.py`、`media/subs.py`、`pipeline/range.py` | diff/snapshot/subs/区间预览辅助迭代（[耗时估算](#耗时估算)）；subs 的 render/preview/check 是信息性命令，不自动进入流水线 |
+| 时间线操作 | `inspection/diffcmd.py`、`inspection/timeline_diff.py`、`inspection/impact.py`、`media/subs.py`、`pipeline/range.py` | diff/snapshot/subs/[区间预览](#区间渲染)辅助迭代（[耗时估算](#耗时估算)）；subs 的 render/preview/check 是信息性命令，不自动进入流水线 |
 | 图形 | `render/gfx_backend.py`、`render/gfx_render.py`、`render/gfx_cli.py`、`render/gfx_cef.py`、`render/gfx_electron*.py`、`render/gfx_svg*.py`、`render/frame_source.py` | HTML 默认 CDP，支持显式 CLI、需 native worker 的 Alpha CEF、可选 Electron 复现；SVG 序列独立处理 Inkscape/字体/完成证书；FrameSource 是帧消费抽象，不是第二渲染后端 |
 | 音视频 | `pipeline/stages.py`、`media/audio_filters.py`、`pipeline/composite.py`、`media/encoders.py`、`inspection/qc.py`、`media/subtitles_src.py` | prepare 抽取源音频，audio 混音终链，video 分段合成/字幕烧录，mux 探测 libfdk_aac 并回落、原子封装与记录 VERSIONS/history，qc 判定产物 |
 | 身份与恢复 | `cache/cache_state.py`、`cache/hygiene.py`、`runtime/fstxn.py`、`cache/recovery.py`、`media/loudness_cache.py` | 内容键、回执依赖、原子写、完成标记与跨进程锁共同决定复用；不是全源文件防篡改证明 |
@@ -54,13 +54,29 @@ HTML strict 依赖闭包**仅适用 CDP**；环境身份/资源闭包不承诺�
 
 **耗时估算。** timeline diff 的 `estimated_seconds` / `estimate_basis` 是迭代规划启发式：[当前实现与常量](../vtx/inspection/timeline_diff.py)为权威。video 按失效 vseg 帧数 / max(1, 新 timeline 总帧数) × draft 全片常数 + 失效 clip 重编码估计；当前计算不切换 formal 常数。其余需重跑阶段按固定值或源计数估算，gfx 为单页经验下限，页多可能低估；分项求和不是并行调度实测墙钟。[历史 voice-ime 校准](https://github.com/CongliangK/framivra/blob/3d9e6622d5d06eecf55ffbe2075da1fa994f93f5/docs/reports/development-history.md)不保证新机器、素材或冷建耗时；输出的 ±30% 是校准口径，不是精度承诺。
 
-项目时基允许值由 `pipeline/constraints.py` 定义，schema/只读预览镜像同判；NTSC 标签归一为精确 N/1001，整数帧窗口不自动换基。视频编码、拼接与帧元数据使用有理数时钟；48kHz 音频以 `S(f)=round(f×48000/fps)` 映射项目绝对帧端点（半采样向上），事件/区间长度取端点差，禁止逐帧舍入后累乘。事件源采样窗为 `[S(in)-S(in-src_in), S(out)-S(in-src_in))`，共享一次量化的源→项目平移，拆分不产生内部采样断点；与孤立源端点舍入最多差一采样，真实源尾不足时补静音。
+<a id="区间渲染"></a>
+
+**区间渲染。** [区间实现](../vtx/pipeline/range.py)沿用整片切点集（含窗外片段边界）、段级合成与字幕机制，只合成段与窗口的交集，只预编码相交的普通片段，但仍检查窗外普通素材与预编码任务冲突。CLI draft 校验全项目 GFX 就绪；单帧与 draft 区间共用 [GFX 暖读认证](cache-provenance.md#核心-gfx-压缩)，坏包不降级，也不启动图形渲染器。窗口选法及缓存写入见[剪辑配方](skill/references/edit.md#r2--时间线编排clip-窗口--轨道--字幕)。
+
+内部 `render_1080p_window` 不是公开 API 或宿主授权边界。调用方须提供可信、已校验且通过插件与环境预检的 1920×1080 执行上下文、稳定工程根及 `cache/preview/` 下空的独占物理目录；只接受工程内左闭右开的整数帧窗口，不缩放或改写时间线。拒绝活动插件和相交 GFX，不读取窗外 GFX 帧；所有渲染写入隔离于该目录。窗口抽音沿用 §2.2；仅经 [PCM 资格核验](../vtx/media/preview_pcm.py)的 48 kHz 双声道 s16 WAV 可直读，不符合格式资格则正常抽取，身份变化不得降级。返回前验证媒体完成记录并复核钉住的输入；不发布正式阶段回执，也不授予宿主播放资格。窗口混音的增益语义见[响度终链](#12-响度终链)。
+
+<a id="帧率与时钟"></a>
+
+**帧率与时钟。** 项目时基允许值由 [constraints](../vtx/pipeline/constraints.py) 定义，schema/只读预览镜像同判；NTSC 标签归一为精确 N/1001，整数帧窗口不自动换基。FFmpeg 视频编码、拼接与帧元数据使用有理数时钟；正式与区间 concat 共用帧端点算法：相对各自起点累计端点，按微秒量化后取差，不逐段舍入时长累加。
+
+48kHz 音频以 `S(f)=round(f×48000/fps)` 映射项目绝对帧端点（半采样向上），事件/区间长度取端点差，禁止逐帧舍入后累乘。事件源采样窗为 `[S(in)-S(in-src_in), S(out)-S(in-src_in))`，共享一次量化的源→项目平移，拆分不产生内部采样断点；与孤立源端点舍入最多差一采样，真实源尾不足时补静音。内部原尺寸 MP4 的 movie 时基取精确帧率分子与 48 kHz 的最小公倍数，使编辑列表能准确表示帧与采样端点；[回归](../tests/media/test_range_render.py)核验视频呈现时间戳与音频呈现终点，不只数帧。
 
 ### 1.2 响度终链
 
-`audio` / `all` 的 `out/audio.wav` 是归一化与限幅终态，无需项目侧可选步骤补安全链。`mix_audio_wav` 采用测量后静态增益，输出链为 `volume=…dB,aformat=sample_fmts=s16,alimiter=limit=0.599:level=false:latency=true`；整片与区间预览同增益、同限幅，s16 中间量化不能视为可删细节。
+`audio` / `all` 的 `out/audio.wav` 是归一化与限幅终态，无需项目侧可选步骤补安全链。正式整片、CLI draft 区间和内部原尺寸窗口共用 `mix_audio_wav` 的混音与静态增益算法，输出链均为 `volume=…dB,aformat=sample_fmts=s16,alimiter=limit=0.599:level=false:latency=true`；s16 中间量化不能视为可删细节。共用算法和限幅参数，不代表实际增益或终态响度相同。
 
-| 终态判据 | 行为 |
+| 路径 | 实际增益来源 |
+|---|---|
+| 正式整片（`audio` / `all`） | 实测全片原始混音的整合响度 I，取目标与实测值之差，不沿用旧增益。 |
+| CLI draft 区间 | 只读整片 audio 回执；输入及实现指纹匹配且有可用的 `gain_db` 时复用该增益，跳过窗口首测。否则窗口自测；指纹失配时告警。 |
+| 内部原尺寸窗口 | 不读取正式回执或增益，始终按窗口自测；结果不代表整片响度。 |
+
+| 正式整片终态判据 | 行为 |
 |---|---|
 | 目标响度 | -14 LUFS |
 | I 偏离目标 ≤1.5 LU | 静默通过 |
@@ -68,7 +84,7 @@ HTML strict 依赖闭包**仅适用 CDP**；环境身份/资源闭包不承诺�
 | I 偏离 >3 LU、TP >-1.0 dBFS、I/TP 解析失败 | 硬 FAIL，不放宽阈值掩盖增益或限幅问题 |
 | 整片音频时长 | 与期望值偏差最多 ±1 采样，超出 FAIL |
 
-`build_audio` 执行测量→增益/限幅→复测→时长校验→回执；仅整片路径写 `post_loudness`（含 input/output I、gain、target、tp_dbfs 与输出 sha256）。阶段依赖通过后，`Ctx.begin_stage("audio")` 用同一文件事务撤销 audio 及 `DOWNSTREAM["audio"]` 的成功记录，避免中断留下陈旧 PASS。`raw_i` 只是归档值，不免首测、不用于二次施增益；range 仅经指纹校验复用 `gain_db`，陈旧回执回落窗口自测并告警。
+`build_audio` 执行测量→增益/限幅→复测→时长校验→回执；仅整片路径写 `post_loudness`（含 input/output I、gain、target、tp_dbfs 与输出 sha256）。阶段依赖通过后，`Ctx.begin_stage("audio")` 用同一文件事务撤销 audio 及 `DOWNSTREAM["audio"]` 的成功记录，避免中断留下陈旧 PASS。`raw_i` 只是归档值，不免首测、不用于二次施增益。两种区间预览均不走上述整片复测、时长与回执门。
 
 干跑不落产物、不修改回执。独立既有 WAV 维护不是该阶段事务，不更新或撤销 audio/mux/qc 回执，不能用于补签或验收新 WAV；其写态与重复处理风险归 [音频工程](skill/references/edit.md#既有-wav-维护)。
 

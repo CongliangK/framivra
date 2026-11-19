@@ -1,63 +1,39 @@
 # Framivra 智能体指南
 
-## 项目与入口
-
-- timeline.json/素材→帧精确视频/混音/QC/缓存；[内核](<vtx/>)永不可关
-- [应用](<apps/>)产素材/辅助结果；[插件](<plugins/>)扩时间线，启用不忽略依赖/失败；已知不可用声明先于 probe 拒绝，源声明在 prepare/range 裸缓存前同拒。
-- [侧栏](<dsh-sidebar/README.md>)独立发行：完整合成非单页，预览共用整数播放头、成片联动非合成证书；单行工具栏，帧步进与轨道高度在时间线；字幕轨置顶与轨高/专注视图只改显示；宽屏文件列表独立滚动；单帧拒绝其他插件，官方 BGM 仅作无声画面引用、不执行；HTML信任≠沙箱；拖动复用已保存片段视图；启用直接剪辑后松手走内核校验/CAS，新内核单事务返回已提交字节同版本视图，旧内核走计划/提交/双读且均匹配回执，非法保留原位；吸附/闭合同轨空隙不改时基或他轨；授权/历史在顶栏，模型工具只读不代理写入；会话草稿只附 ≤300 字符的定位摘要，不发送。
-- 侧栏按宿主与内核能力分开报告读、整帧与事务；Windows 不把静态协议声明或成片播放当成内核帧合成、写入资格。
-- [空间管理](<docs/reference/storage-api.md>)删除权归内核；清理须独立确认停写，不向模型开放。
-- macOS授权见接口；目录fd≠proc-fd Path；单帧须全输入前后复核；环境文件批查仅复用本次目录前缀并前后核验，仍重枚举/哈希/查链接；Linux缺RECORD只认元数据所属RPM清单。
-- 制作读[技能](<docs/skill/SKILL.md>)；范本[工作流](<templates/README.md>)、组件[目录](<docs/catalog.md>)。
-- 开发先[按行为定位](<docs/DEV.md#从一个行为开始>)，边界以[架构](<docs/ARCHITECTURE.md>)为准；API/事务见[接口](<docs/reference/timeline-api.md>)。
-- 环境见[依赖](<README.md#依赖矩阵>)：Python≥3.9，工具按路径配置；模型默认关；空依赖≠仅需标准库。
-- [安装](<docs/guides/installation.md>)：独立venv/固定身份缓存/内核锁，验收后ready；更新重试固定提交，已检出才可显式重选；macOS venv 链接解释器、先核验已装完整 FFmpeg keg；Win主进程不提权，厂商包UAC；DSH显式连接；登记≠验收。
-- 安装验收：BGM发现不可依赖POSIX，目录发布对部分Windows绝对路径兼容混合斜杠、不改运行数据；GPU用原生锁；Windows并发内存门须实测且探测失败时拒派；hue素材先规范RGB色域，不松QC；冷暖快照计入 Linux core 持久化图形包。
-- BGM v2 轨 `$ref` 装载/merge 仅接受工程内相对路径：Windows 根相对、带盘符及设备路径先拒绝，仍须 realpath 越界检查；POSIX 反斜杠为普通文件名字符。插件签名与 asset_dependencies 共用标准库筛选及静态路径检查，仅展开 v2 直接纯非空字符串引用；以工程词法父目录为基准拒绝越界及非普通文件，按 loader 先 normpath 后 realpath 取文件，缺失记 MISSING；沿用 loader 根目录 base 的严格前缀限制；不证明原始文本逐组件不越界，检查与打开非原子，不能防 TOCTOU 或工程内硬链接指向外部内容。
-- 侧栏沿用[宿主主题](<dsh-sidebar/DESIGN.md>)，切换不重建输入或触发写态；保留黑舞台/轨道语义色，失效不留可用成功提示；高级定位浮层展开时工具栏暂停吸顶，折叠恢复。
-- [音乐原生验收](<apps/bgm/README.md#macos-原生验收>)用隔离配置与原创输入走完整链；基础、可选引擎、人工听审分别记账，缺资产不算通过。
-- IndexTTS 的 `probe` 和 `gen` 共用原生解释器发现；找到解释器不代表许可允许推理。
-- [CDP 启动诊断](<vtx/render/gfx_render.py>)区分 DevTools HTTP 就绪前进程退出与页面 CDP 握手后初始化 `Page.enable` 超时；退出只报告有界状态，不泄露 argv/profile，超时不证明页面域状态或 renderer/token 根因，不改 strict/CLI 回退。
-- [Windows 浏览器监管](<vtx/runtime/windows_browser.py>)固定绝对 `.exe`，创建即进私有 Job（Win10+/Server 2016+），仅继承指定 stdio；双管合计有界，先终止本方 Job，期限内确认活跃进程归零才算收尾成功；根退出、双 EOF 或关句柄兜底均不作证明。CDP 收尾未证时保留主错误及 profile，不回落 CLI。
-
-## 常用命令
-
-- 离线体检：`env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor`；联网会fetch 写入。
-- 链接预演：`python3 vt.py --fix-links --dry`；实改前核对目标/权限。
-- 渲染：`python3 vtx/vtx.py -t <timeline.json> all`（写缓存/产物）；前置见[交付链](<docs/skill/references/edit.md>)。
-- 测试：本机 Linux / DSH 全量、侧栏 DOM 与真实工具回归一律用[本机限额入口](<CONTRIBUTING.md#本机-linux先隔离再运行>)；组 OOM 后停止重跑，由人工排查并确认；复验显式使用事故时的限额。其他平台、局部选测见[贡献指南](<CONTRIBUTING.md#测试入口>)。
-- 文档必跑：`bash scripts/doc_gates.sh`；报告 PASS/FAIL/SKIP/UNRUN；冒烟、语法检查不等于业务或全量验证。
+Framivra 把时间线和素材变成帧精确的音视频，并负责缓存与 QC。先看下面的权限边界，再按任务选一个入口；不用通读所有专题。
 
 ## 写态红线
 
-- CI（工作流、门禁、选测/分片、判据、检查设置）改前说明必要性/影响及验证/回滚，获用户明确批准后限范围修改。
-- 未授权不动CI；禁删减/跳测、松门禁或绕必需检查刷绿，先修根因。
-- 视频项目/素材放仓外；cache/out为产物非源件；示例默认零写态，写操作警示。
-- 不手改 catalog 生成区；manifest/registry 改动须[重注并过门](<docs/DOC-CHARTER.md#单一事实来源>)。
-- [VERSION](<VERSION>)、[pyproject](<pyproject.toml>)、[内核版本](<vtx/__init__.py>)改一必三；遵循[冻结规则](<docs/releases.md>)。
-- 技能/工作流改前公告并经[消费面评审](<docs/DOC-CHARTER.md#消费面>)，改后核对入口。
-- 退役先审计引用/恢复路径；不篡改冻结证据，不删活契约、证据、许可或问题。
+- **CI**（工作流、门禁、选测/分片、判据、检查设置）：改前说明必要性、影响、验证和回滚，取得用户明确批准才可限范围修改。不删减或跳测、不松门禁或绕必需检查刷绿。
+- **工程与缓存**：视频项目/素材放仓外；cache/out 是产物，不是源件。示例默认零写态，写操作须警示。[空间清理](docs/reference/storage-api.md)归内核，须独立确认停写，不向模型开放删除。
+- **契约与消费面**：契约/API 变更须维护方同意及独立对抗审查；[技能/工作流](docs/DOC-CHARTER.md#消费面)改前公告并评审，改后核对入口。
+- **生成与冻结**：不手改 catalog 生成区；manifest/registry 改动须[重注并过门](docs/DOC-CHARTER.md#单一事实来源)。[VERSION](VERSION)、[pyproject](pyproject.toml)、[内核版本](vtx/__init__.py)改一必三，遵守[冻结规则](docs/releases.md)。退役先审计引用与恢复路径，不篡改冻结证据，不删活契约、证据、许可或未结问题。
+
+## 项目与入口
+
+| 你要判断什么？ | 从哪里读 |
+|---|---|
+| 这个行为由谁决定，谁依赖它，怎么验证？ | 从[开发入口](docs/DEV.md#从一个行为开始)按行为定位，再查[架构职责表](docs/ARCHITECTURE.md#11-执行与状态)。`vtx/` 内核永不可关；应用产素材，插件扩时间线；已启用的依赖或失败不能忽略。已知不可用声明先于 probe 拒绝，源声明在 prepare/range 裸缓存前同拒。 |
+| 侧栏操作会不会写盘？模型工具能不能代写？ | [用户操作与平台资格](dsh-sidebar/README.md)、[手动编辑与回执](dsh-sidebar/DEVELOPMENT.md#manual-editing-writes-require-explicit-authorization)、[界面设计](dsh-sidebar/DESIGN.md)。侧栏独立发行；模型工具只读，人工写入走[内核事务](docs/reference/timeline-api.md)。预览、成片播放不授写入或合成资格。 |
+| 改音画、缓存或平台实现会影响什么？ | [区间渲染](docs/ARCHITECTURE.md#区间渲染)、[帧率与时钟](docs/ARCHITECTURE.md#帧率与时钟)、[混音增益](docs/ARCHITECTURE.md#12-响度终链)、[正式阶段回执](docs/cache-provenance.md#正式阶段身份与增益)、[BGM 引用与身份](docs/cache-provenance.md#音乐组件输入身份)。浏览器排错看[启动与收尾](docs/reference/known-issues.md#浏览器启动与收尾)。 |
+| 安装成功是否等于可以使用？ | [安装/更新](docs/guides/installation.md)和[依赖矩阵](README.md#依赖矩阵)：Python ≥3.9、模型默认关，空 Python 依赖不等于只需标准库。安装登记不替代验收，Windows 主进程不提权；IndexTTS 的 probe/gen 共用解释器发现，发现不等于获许可推理。 |
+| 制作而不是改代码？ | 先查[制作技能](docs/skill/SKILL.md)，再按需选[工作流](templates/README.md)或[组件](docs/catalog.md)。音乐用[原生验收](apps/bgm/README.md#macos-原生验收)：隔离配置与原创输入走完全链，基础、可选引擎、人工听审分别记账。 |
+
+## 常用命令
+
+- 离线体检：`env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor`；联网会 fetch 并写入。链接预演：`python3 vt.py --fix-links --dry`；实际修复前核对目标与权限。
+- 渲染：`python3 vtx/vtx.py -t <timeline.json> all` 会写缓存和产物，前置见[交付链](docs/skill/references/edit.md)。
+- 本机 Linux / DSH 全量、侧栏 DOM 与真实工具回归必须走[本机限额入口](CONTRIBUTING.md#本机-linux先隔离再运行)。组 OOM 后停止重跑，由人工排查并确认；复验显式使用事故时的限额。其他平台、局部选测见[贡献指南](CONTRIBUTING.md#测试入口)。
+- 文档必跑 `bash scripts/doc_gates.sh`。报告 PASS/FAIL/SKIP/UNRUN，冒烟与语法检查不等于业务或全量验收。
 
 ## 编辑纪律
 
-- 仅当全仓入口或跨目录常驻约束改变时更新本指南；其余按[写入与评审](<docs/DOC-CHARTER.md#写入与评审>)归位，不逐 PR 记账。
-- [QC](<vtx/inspection/qc.py>) 先统一可表示 RGB 色域，再按统一矩阵/范围采样，变更后重验 QC。
-- PR 只提交必要业务改动及少量高价值回归，优先扩展已有测试；避免重复 mock、机械源码字符串断言或为数量/覆盖率堆测试。
-- 一次性复现/诊断脚本、截图、原始日志及大体积验收产物默认放仓外，PR 用简短结果与引用说明；仅有明确长期消费者、且经维护者同意的最小夹具或证据可入仓，不借精简删除有效回归、冻结证据或许可证。
-- 一事实一家；迁移修活引用、链权威文档，不留旧壳。
-- 实现后独立复审并交维护者；契约/API 变更须维护方同意及独立对抗审查。
-- 遵守[文档规则](<docs/DOC-CHARTER.md>)；预算数字仅由[预算快照](<scripts/doc_budget.snapshot.json>)维护，调整须维护者明确授权并保留真实度量；现文另测，不改门禁或伪造快照掩盖超限。
+- 入口或跨目录常驻约束改变才改本指南。其余按[写入与评审](docs/DOC-CHARTER.md#写入与评审)归位；一事实一家，迁移修活链接，不留旧壳。现文字数另测，不改门禁或未经维护者授权调整[预算快照](scripts/doc_budget.snapshot.json)。
+- 只提交必要改动，优先扩展已有高价值回归，不堆重复 mock 或机械源码字符串断言。实现后独立复审并交维护者。
+- 一次性脚本、截图、日志和大体积验收产物放仓外，PR 引用结果；仅有长期消费者且经维护者同意的最小夹具或证据可入仓。
 
 ## 基线与性能
 
-- 唯一主基线：30秒/900帧/1080p30 SVG；禁用退役12秒基线，探针不替主片。
-- Windows SVG：[生产入口与内部验收边界](<docs/reference/windows-svg.md>)。生产身份未证即在 PATH/缓存查找前拒绝，不回退内部验收；改锚读、回执、快照或原生探针前先查对应细则，探针通过不授生产资格。
-- [SVG shell](<vtx/render/gfx_svg_stage.py>) 即使退出成功也拒收明确的 Fontconfig error / Pango-CRITICAL，不发布完成凭据；该诊断只报告固定短错误，不回显日志，普通警告不拒收。
-- portable-v2 基线仅用 `scripts/demo.py prepare/verify`；锁字体与标准库音频，禁混旧输入；预检不授渲染资格，见[SVG 基线](<templates/demo-timeline-svg/README.md>)。
-- [可编辑主 Demo](<templates/demo-workbench/README.md>)同源生成 SVG/HTML，默认由主时间线直引乐谱 JSON，不提交音频；CDP、CEF 与 Inkscape 验收不代替安装、冻结与性能基线。
-- [portable-v2 锁定运行时源](<templates/demo-timeline-svg/benchmark/portable-v2.json>)须以 LF 检出（含 Windows）；[属性规则](<.gitattributes>)仅补齐既有 Python 规则未覆盖的锁成员，核验仍按原始字节。
-- 同输入/质量/环境/后端/配置分冷暖测全链；留身份/哈希/证据；未测UNRUN，探针非整体提速；SVG有界调度/串行回退见[缓存](<docs/cache-provenance.md#产物身份>)。
-- [事件](<docs/reference/execution-events.md>)跨阶段回执绑定实际嵌套任务，区间不相加冒充墙钟。
-- [区间渲染](<vtx/pipeline/range.py>)只预编码相交普通片，切点取全片，draft 全验图形；内部原尺寸窗口限已验上下文与独占目录，共用合成/混音，仅直读确证的 48kHz 双声道 PCM，其余正常抽取；拒活动插件及相交 GFX，不授正式回执或宿主播放资格。GFX 单帧/有界区间共用暖读认证，坏包不降级。
-- 帧率由[constraints](<vtx/pipeline/constraints.py>)统一；FFmpeg用精确时基，音频按绝对帧端点取采样；正式/区间concat共用端点；原尺寸区间 MP4 的 movie 时基取帧率分子与 48 kHz 的最小公倍数，回归核验呈现时间戳和音频终点，不只数帧。
-- [CEF 帧证明](<experiments/gfx_cef_worker/README.md>)的拒收/非推进回调只能计账，不得推进 signed 阶段、冻结候选或写输出；推进须 owned 快照及对应绘制后 JS 围栏，保留完整见证/字节 veto；修复须重编并绑定 worker 二进制身份。
+- 主基线仅用[30 秒 / 900 帧 / 1080p30 SVG](templates/demo-timeline-svg/README.md)：`scripts/demo.py prepare/verify`，禁混旧输入或使用退役 12 秒基线。[锁定运行时源](templates/demo-timeline-svg/benchmark/portable-v2.json)按[属性规则](.gitattributes)以 LF 检出、验原始字节。预检、探针或[可编辑 Demo](templates/demo-workbench/README.md)不替代主片、安装或发布验收。
+- 同输入、质量、环境、后端和配置分冷暖测全链，保留身份、哈希和证据。[事件区间](docs/reference/execution-events.md)不相加冒充墙钟。[QC 采样](docs/cache-provenance.md#qc-段像素免检)先统一可表示 RGB 色域，按统一矩阵/范围采样，变更后重验 QC。
+- [Windows SVG](docs/reference/windows-svg.md) 生产身份未证即在 PATH/缓存查找前拒绝，不回退内部验收；[SVG 缓存与调度](docs/cache-provenance.md#产物身份)和 [CEF 帧证明](experiments/gfx_cef_worker/README.md)各有独立验证边界，不以探针授权交付。
