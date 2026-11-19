@@ -28,8 +28,8 @@ class PreviewSvgScopeTests(unittest.TestCase):
         self.root = Path(temp.name).resolve()
         for name, value in [('engine_identity', {'fixture': 'engine'}),
                             ('fontconfig_identity', {'fixture': 'fontconfig', 'executable': '/fixture/fc-scan'}),
-                            ('_font_faces', [{'family': 'fixture', 'style': 'Regular', 'index': 0}])]:
-            mock = patch.object(gfx_svg, name, return_value=value)
+                            ('font_faces', [{'family': 'fixture', 'style': 'Regular', 'index': 0}])]:
+            mock = patch.object(gfx_svg._PosixRuntimeIdentity, name, return_value=value)
             mock.start()
             self.addCleanup(mock.stop)
         self.clip = dict(format='svg-sequence', src='manifest.json', dst_in=0, dur=2)
@@ -102,7 +102,7 @@ class PreviewSvgScopeTests(unittest.TestCase):
             original = png_artifact.read_png
             def mutate(*args, **kwargs):
                 result = original(*args, **kwargs)
-                gfx_svg.engine_identity.return_value = {'fixture': 'changed runtime'}
+                gfx_svg._PosixRuntimeIdentity.engine_identity.return_value = {'fixture': 'changed runtime'}
                 return result
             with patch.object(png_artifact, 'read_png', side_effect=mutate):
                 with self.assertRaises(InputIdentityError):

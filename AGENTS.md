@@ -51,7 +51,7 @@
 ## 基线与性能
 
 - 唯一主基线：30秒/900帧/1080p30 SVG；禁用退役12秒基线，探针不替主片。
-- [Windows SVG 读输入](<vtx/render/gfx_svg_win_input.py>)先验原始相对声明，依赖并集用 `/` 并核对精确路径；仅接受调用方授权的稳定项目根与直连固定 NTFS 映射，句柄逐级拒绝重解析，同一文件句柄验单链接并限量读取；不授 Windows SVG 渲染资格。
+- Windows SVG：[生产身份](<vtx/render/gfx_svg.py>)未获验证即在 PATH/缓存查找前拒绝，不回退内部验收；[锚读](<vtx/render/gfx_svg_win_input.py>)仅认授权稳定根及直连固定 NTFS，原始相对声明先验后并集（`/`、精确路径），逐级拒重解析、同句柄限量验单链接。
 - [Windows SVG-only 回执](<vtx/cache/cache_state.py>)的清单和声明依赖字节沿用项目根句柄读取与限额；缺失、拒读或无法读取均直接失败，不记 MISSING 或回退；不是原子指纹。[影响分析](<vtx/inspection/impact.py>)用调用方原始根和精确相对名复核已观测的 SVG 文件，不以报表绝对路径代替，也不作原子快照。
 - [Windows Fontconfig 检查](<vtx/render/gfx_svg_win_fontconfig.py>)私有 Job 以固定官方 DLL 快照查单 face；900 帧另核对私有字体集四文件的 22 个 face 及索引，结算后清空探针缓存再启动 Inkscape。DLL 与字体用各自只共享读的原句柄限量验单链接和摘要，复制只写已验字节；不证映射字节、渲染选字、加载闭包或产物资格。启动所有权或结算未证不读回执、不删暂存。
 - [Windows SVG 快照](<vtx/render/gfx_svg_win_snapshot.py>)目录句柄拒重解析/物理重叠，验独占包树，不启进程。[内部验收](<vtx/render/gfx_svg_win_shell.py>)固定官方 `.com` 验几何/锁字体单帧、180 帧几何及 portable-v2 `f0135`/900 帧（句柄锚定、锁 SVG/字体）。900 帧锚读锁定时间线/清单及固定声明依赖（声明不选路径、非原子），生产静检、同快照查暂存字体 face；同上下文验版本/资源根及首个 stdout 整行后的根进程活映像路径（包 bin 精确匹配整树验真并持有的只读文件，System32/WinSxS 默认不验文件身份）；同原句柄逐模块用独立卷映射核对 loader 名与 VM 映射名，只在原枚举基址查元数据，要求已提交映像及分配/区域基址一致；对获验的 System32/WinSxS 相对名称集合返版本化摘要；仅可信内部审计可传入冻结字面清单，[验收](<vtx/render/gfx_svg_win_system.py>)在首个 worker 前持有系统盘文件并限量验字节，结算后比对路径集合及按原句柄复核，不更新信任；逐帧验像素，仅返摘要。Job 结算未证不读结果、不删操作目录；路径相符不证映射对象或字节、字形选择、瞬时/子进程/最终加载、成片、缓存或发布资格。
