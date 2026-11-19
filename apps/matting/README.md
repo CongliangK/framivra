@@ -26,6 +26,7 @@
 本节用于准备本地 BiRefNet_HR → MatAnyone2 路线。`comfyui.enabled` 默认为 `false`，是状态声明；改为 `true` 不会启动服务，也不是直接运行抠像脚本的前置条件。
 
 1. 从仓库根用 `bash apps/matting/init.sh` 探测已有资产。它检查 `COMFYUI_PY`（默认 `~/miniconda3/envs/comfyui/bin/python`）能否导入指定模块，以及脚本同目录内的 `MatAnyone2/`（代码和 `pretrained_models/hf2/model.safetensors`）、`BiRefNet_HR/`（只查 `config.json`）和预置的 ResNet18 文件。**看汇总的 `✗` 缺件数，不要用退出码判定就绪**：探测到缺件也会退出 0。旧 `--download` 为 **BLOCKED**，不会补齐缺件。
+   默认探测并非完全离线：还会向 `http://127.0.0.1:8188` 发送 HTTP 请求，查看可选的 ComfyUI 是否应答，但不会启动服务，也不要求服务应答才能抠像。
 2. 缺依赖或缺少已获许可的权重时，不要进入推理。离线证据可用 `env python3 scripts/policy/model_license_policy.py plan matanyone2-code matanyone2-weights birefnet-hr resnet18-weights` 查看；`plan` 不下载、不安装环境、不授予许可，也不解除未知项或旧入口门禁。
 3. 区分能力：发现 FFmpeg 或在 `-encoders` 列表看到 `h264_nvenc`，不等于 GPU 可用。两个本地 runner 都直接使用 CUDA、无 CPU 回退；例如 `torch` 能导入但没有可用 CUDA 时，语法和已有资产探测仍可能通过，首帧 runner 会在 `.cuda()` 处失败。即使 CUDA 可用，单镜头命令也只写 mask 和 alpha；全量快照还需匹配的前景帧、alpha 与背景图，并实际完成合成和 NVENC 编码，才能据产物验收。
 
