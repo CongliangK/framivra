@@ -113,7 +113,7 @@ const trackKey = item => `${item.family}:${item.track_index}`
 const trackId = track => track.family === 'subtitles' ? 'subtitles' : track.data?.id
 const trackLabel = track => label(track.data, `${familyName(kindOfTrack(track))} ${track.track_index + 1}`)
 
-export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onOpenHistory, editActionLabel = '启用编辑', onUndo, compact = false, selectionTools, focusTool }) {
+export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, recoveryPending, onOpenEdits, onOpenHistory, editActionLabel = '启用编辑', onUndo, compact = false, selectionTools, focusTool }) {
   const extent = React.useMemo(() => displayExtent(snapshot, result), [snapshot, result])
   const fps = snapshot.document?.project?.fps
   const clock = React.useMemo(() => projectClock(fps), [fps])
@@ -173,6 +173,11 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
   const pointerTails = useRef(new Set())
   const [ghost, setGhost] = useState()
   const [feedback, setFeedback] = useState()
+  // Retire only the recovery prompt once the editor has cleared its unknown
+  // lock after authoritative readback, not on a revision or callback change.
+  useLayoutEffect(() => {
+    if (recoveryPending === false && feedback?.history) setFeedback(undefined)
+  }, [recoveryPending, feedback?.history])
   const [saving, setSaving] = useState()
   const directOwner = useRef()
   useLayoutEffect(() => () => { directOwner.current = undefined }, [])
