@@ -94,7 +94,6 @@ from pathlib import Path
 # v2 §1.4 包化：模块内全部相对导入（外部一律 from vtx import / import vtx.xxx；
 # sys.path 锚定由 vtx/vtx.py 薄启动器或 python3 -m vtx / pip 安装保证）。
 from .. import main, _stage_receipt_name
-from ..pipeline.composite import build_video, prepare_layers
 from ..media.encoders import find_chrome
 from ..render import gfx_cli
 from ..cache import hygiene
@@ -106,6 +105,17 @@ from ..pipeline.infra import (Ctx, ProjectPathError, ensure_inside_project,
 from ..inspection.qc import qc
 from ..pipeline.stages import audit, build_audio, mux, prepare, validate
 from ..media.subs import run_subs
+
+
+# Keep read/store invocations out of the video compositor's import tree.
+def build_video(c, layers=None):
+    from ..pipeline.composite import build_video as run
+    return run(c, layers=layers)
+
+
+def prepare_layers(c, *, run_tasks=None):
+    from ..pipeline.composite import prepare_layers as run
+    return run(c, run_tasks=run_tasks)
 
 
 # ---------------------------------------------------------------- gfx
@@ -869,7 +879,7 @@ def _main(execution=None):
     ap.add_argument("--trust-html", action="store_true", help="timeline frame only: trust visible saved HTML and its scripts; requires --prepare-gfx; not a sandbox")
     ap.add_argument("--request", metavar="PATH", help="store only: strict JSON request file (store writes; store plan is zero-write)")
     ap.add_argument("--request-stdin", action="store_true",
-                    help="store [plan] (max 8388608 bytes) or storage clean (max 4096 bytes): strict UTF-8 JSON request through EOF; exclusive with --request")
+                    help="store [plan|edit-view] (max 8388608 bytes) or storage clean (max 4096 bytes): strict UTF-8 JSON request through EOF; exclusive with --request")
     ap.add_argument("--family", help="query only: video | audio | subtitles")
     ap.add_argument("--track-index", help="query only: zero-based transient track position")
     ap.add_argument("--block-index", help="query only: zero-based transient block position")

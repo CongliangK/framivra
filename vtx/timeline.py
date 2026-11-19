@@ -134,6 +134,10 @@ def _load(path, operation, *, raw=False, max_bytes=None):
     if max_bytes is not None and len(payload) > max_bytes:
         _error(result, "input.limit", "", "timeline exceeds input byte limit", limit_bytes=max_bytes)
         return result
+    return _load_bytes(result, payload, raw=raw)
+
+
+def _load_bytes(result, payload, *, raw=False):
     result["content_version"] = "sha256:" + hashlib.sha256(payload).hexdigest()
     try:
         text = _raw_text(payload) if raw else payload.decode("utf-8")
@@ -265,7 +269,20 @@ def query_timeline(path, *, family=None, track_index=None, block_index=None,
     Returned data is complete, not a rendering projection. Addresses are only
     meaningful in the returned content_version; there are no stable block IDs.
     """
-    result = _load(path, "query")
+    return _query_loaded(_load(path, "query"), family=family, track_index=track_index,
+                         block_index=block_index, frame=frame, interval=interval)
+
+
+def _inspect_query_bytes(payload):
+    """Both public read projections from one immutable stored byte sequence."""
+    snapshot = _load_bytes(dict(_result("inspect"), document=None), payload)
+    snapshot["coverage"] = _coverage(snapshot["document"])
+    query = dict(snapshot, operation="query", diagnostics=list(snapshot["diagnostics"]))
+    return {"snapshot": snapshot, "result": _query_loaded(query)}
+
+
+def _query_loaded(result, *, family=None, track_index=None, block_index=None,
+                  frame=None, interval=None):
     doc = result.pop("document")
     result.update(tracks=[], blocks=[], coverage=_coverage(doc))
     if not result["ok"]:
