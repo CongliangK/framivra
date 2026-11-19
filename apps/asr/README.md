@@ -1,12 +1,7 @@
 # asr —— Qwen3-ASR + ForcedAligner 字幕产线
 
-组件声明见 `app.json`（kind=app）；健康检查为 `asr_cli.py --help`，不加载模型。
-`asr.enabled` 在所有执行入口生效；环境、模型与输入法资产隔离。HTTP 请求前核对本机进程身份及监听 socket 归属，GPU/显存准入只读 `nvidia-smi` 预算，不访问 IME 端点。准入实现唯一入口为 `independence.py`；拒绝的配置与准备边界见下文。
-
-音频/视频 → sidecar 转写（字级时间戳）→ 文本规范化 → 锚定式断句聚合 → 帧级
-`timeline.json subtitles[]` 合并（保护其他字段、写前备份）+ 独立 SRT。模块自有轻量
-sidecar（stdlib http.server，默认 **127.0.0.1:18085**；18081 为语音输入法 sidecar
-专用端口，本仓绝不绑定/探测/复用——issue #140/#141 铁律）。
+音频/视频 → 独立 sidecar 转写 → 文本规范化、字级时间戳聚合 → 独立 SRT 或帧级
+`timeline.json subtitles[]`。组件声明见 `app.json`；默认关闭，不借用语音输入法（IME）的环境、模型或服务。
 
 模块协议与准备边界以本页为准；[原始设计记录](https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md)仅供溯源。
 
@@ -14,28 +9,29 @@ sidecar（stdlib http.server，默认 **127.0.0.1:18085**；18081 为语音输�
 
 | 文件 | 用途 |
 |---|---|
-| `sidecar_server.py` | 转写服务：Qwen3-ASR + ForcedAligner，`/health` `/warm` `/transcribe`；words[] 加工（text↔items 对齐）；OOM 换挡 + 空闲卸载。**运行于 qwen-asr 解释器**（通常由 client 自动拉起） |
-| `client.py` | HTTP 客户端（stdlib http.client；不走环境代理、不跟随重定向）+ 音频抽取（ffmpeg 16k mono wav）+ sidecar 进程管理（pid 三因子归属）+ config 容错读取；`ensure_sidecar/transcribe/warm` 受 enabled 门禁与拉起前显存预检约束（issue #142） |
-| `independence.py` | **独立性与安全准入单一接口（issue #141/#142）**：IME 锚定路径拒绝、遗留键迁移错误、base_url 18081 拒绝、解释器依赖来源验证、模型链接关系校验（`verify_dir_assets`）、PID 三因子归属、`asr.enabled` 严格门禁（`asr_enabled/require_enabled`）、通用 GPU/显存准入（`gpu_admission`+并发 `admission_lease`）、资产清单（版本/来源/SHA256）接口 |
+| `sidecar_server.py` | Qwen3-ASR + ForcedAligner 服务，延迟加载模型，生成 `words[]` |
+| `client.py` | 解释器/模型发现、sidecar 生命周期、ffmpeg 音频抽取、HTTP 客户端 |
+| `independence.py` | 独立性、归属、启用与显存准入的权威实现；提供资产清单（版本/来源/SHA256）校验接口 |
 | `textnorm.py` | 文本规范化 N1-N7（内化自 ibus-voice-ime text_postprocess 确定性子集 + ctypes libopencc 繁简软依赖） |
 | `segline.py` | 字级时间戳 → 断句聚合 → 帧（锚定式；split_line/allocate 内化自 voice-ime make_subs.py，时间改字级锚定） |
 | `srt_out.py` | 独立 SRT 1.0 写出（HH:MM:SS,mmm） |
 | `tl_merge.py` | subtitles[] 适配器（只声明字幕范围 + 字幕备份；经公开 timeline publisher 提交） |
 | `asr_cli.py` | 总入口：`sidecar` / `transcribe` / `srt` / `timeline` / `batch` |
-| `init.sh` | 已有 Framivra 专属解释器/模型检查与本地 sidecar 冒烟；不补齐缺失资产，旧 `--download` 入口为 **BLOCKED**；**绝不借用输入法环境/模型** |
-| `tests/` | 单测（零模型零 GPU 零网络）+ fixtures |
+| `init.sh` | 已有独立资产检查与本地 sidecar 冒烟，见「开启步骤」 |
+| `tests/` | 隔离测试与 fixtures |
 
 ## 用法
 
-以下运行命令要求已独立准备并审核环境与模型，且显式启用 ASR；准备边界见下文「开启步骤」。
+从完整源码仓根运行；内核 wheel 不包含此 app，30 秒 SVG 发布基线也不验收 ASR。见[发行资格](../../docs/releases.md#冻结验收与发布)。
+先按[开启步骤](#开启步骤默认关闭)审核并准备独立资产、显式启用。客户端使用 Linux `/proc` 证明端点归属；缺少该证据即拒绝，不把 macOS/Windows 的路径发现或 init 冒烟当作原生转写资格。
+
+**运行提示**：以下命令会抽取临时 WAV、发本地请求，必要时自动启动 sidecar。`srt`/`batch` 会写输出和报告；`timeline --dry-run` 仍执行转写，只是不写 timeline、备份、history 或字幕审计报告。
 
 ```bash
-bash apps/asr/init.sh                                        # 检查已有独立资产；含本地 sidecar 冒烟，非安装器
-env python3 apps/asr/asr_cli.py sidecar start                # 拉起 sidecar（日志 ~/.local/state/framivra/asr/sidecar.log）
-env python3 apps/asr/asr_cli.py transcribe 口播.wav --timestamps --json
-env python3 apps/asr/asr_cli.py srt 口播.mp4 -o out.srt      # 音视频皆可（自动抽 16k wav）
-env python3 apps/asr/asr_cli.py timeline 成片.wav -t <项目>/timeline.json --dry-run
-env python3 apps/asr/asr_cli.py batch <目录|清单.txt> -o <输出目录>
+env python3 apps/asr/asr_cli.py transcribe "/path/to/口播.wav" --timestamps --json
+env python3 apps/asr/asr_cli.py srt "/path/to/口播.mp4" -o "/path/to/项目/out.srt"
+env python3 apps/asr/asr_cli.py timeline "/path/to/成片.wav" -t "/path/to/项目/timeline.json" --dry-run
+env python3 apps/asr/asr_cli.py batch "/path/to/清单.txt" -o "/path/to/输出目录"
 ```
 
 `timeline` 子命令：读 `project.fps/duration_frames`，subtitles[] 就地合并（旧值备份进
@@ -52,36 +48,34 @@ Python 旧四参 `merge_subtitles` 仍可调用，但无早期参数只在 helpe
 
 客户端仅接受 `http://127.0.0.1:<port>` 或 `http://localhost:<port>`（离线归一到
 IPv4 loopback）。自有端口可配；远程主机、IPv6/其他回环别名、路径前缀、凭据、查询和
-fragment 均拒绝。每次 HTTP 前要求项目 PID/启动时刻/脚本身份及 LISTEN socket inode
-归属于同一进程；无可读 Linux `/proc` 证据时 fail closed，不先发 health 猜测归属。
-手动常驻启动须使用专属解释器 `-I`，且没有有效归属记录时客户端不会探测或复用；建议
-通过 `asr_cli sidecar start` 启动。此元数据前检不消除检查到连接之间的竞态，遵循仓库
+fragment 均拒绝。客户端不走环境代理、不跟随重定向；每次 HTTP 前离线核对项目
+PID 记录、启动时刻、脚本/端口及同进程的 LISTEN socket inode，不能靠 `/health` 反证归属。
+手动常驻启动须用专属解释器 `-I`，但仅启动不建立客户端所需的归属记录；需单独启动时用
+`asr_cli.py sidecar start`。元数据前检不消除检查到连接之间的竞态，遵循仓库
 [不新增本地 TOCTOU 加固的边界](../../CONTRIBUTING.md#信号实验隔离)，不宣称竞态证明。
 
 | 端点 | 方法 | 请求 | 响应 |
 |---|---|---|---|
-| `/health` | GET | — | `{"status":"ok","model":"…","aligner":"…或null","port":18085,"version":1}` |
-| `/warm` | POST | `{}` | `{"ok":true}`（模型预上 GPU） |
-| `/transcribe` | POST | `{"audio":"<本地wav路径>","language":"Chinese","timestamps":true}` | `{"text":"…","words":[{"w":"字","s":0.833,"e":0.913},…],"degraded_ranges":[[起,止],…],"duration_s":12.34}` |
+| `/health` | GET | — | `{"status":"ok","model":"…","aligner":"…或null","port":18085,"version":1}`（不加载模型） |
+| `/warm` | POST | `{}` | `{"ok":true}`（尝试加载或恢复到配置设备，不做转写） |
+| `/transcribe` | POST | `{"audio":"<本地wav路径>","language":"Chinese","timestamps":true}` | `{"text":"…","words":[{"w":"字","s":0.833,"e":0.913},…],"degraded_ranges":[[起,止],…],"duration_s":12.34}`；不请求时间戳时仅返回 `text` |
 
-- 错误统一 `{"error":"中文可行动信息"}` + 4xx/5xx；音频不存在 400；`timestamps:true`
-  但 aligner 未加载 409（须独立准备并配置 aligner，见「开启步骤」；init 不会下载）。
-  对齐时间窗非有限数、倒退、负值、越过实际时长（仅容许 1ms 舍入误差），或无法核实时长，
-  同样返回 409；不会通过排序、夹取或均分伪造有效字幕，CLI 不写 SRT/审计产物。
+- 错误为 4xx/5xx + `{"error":"中文可行动信息"}`；缺 `audio` 或文件不存在返回 400。
+  `timestamps:true` 但服务没有 aligner 路径时返回 409；仅转写文本可以不配置 aligner。
+  非空 `words` 的时间窗非有限、倒退、为负、超出实际时长（容许 1ms 舍入误差），或时长无法核实，也返回 409，不排序、夹取或均分修复。
+  `srt`/`timeline` 遇此错误退出 1，不写字幕或字幕审计；`batch` 记录该条失败、继续处理其余条目，最终写汇总并退出 1。
 - **words 为 sidecar 加工格式，非 qwen-asr 原生 items**（0.0.6 原生为 token 级、无标点、秒
   制）：words[] = 单字粒度（拉丁连续串拆单字符共享 token 时间窗）、含标点（零宽锚 =
   前实字 {s,e}）、单位秒 3 位小数；`degraded_ranges` 为 text↔items 失配区段（text 字符
-  索引 [起,止]，该段字时间已线性插值兜底）；全失配时 `words=[]`（客户端回退整句均分
-  并显著告警）。
+  索引 [起,止]，该段字时间已线性插值兜底）。全失配时 `words=[]`；字幕子命令有文本时
+  告警并回退整句均分，不再具备字级锚定。此降级与无效非空时间窗返回 409 不同。
 - **长音频直接透传**：qwen-asr 0.0.6 按有时间戳 180s / 纯文本 1200s 的目标长度，
   在 ±5s 低能量边界分块并拼回；这不是总输入时长上限，也不保证识别文字完整。
   sidecar/client 零切分逻辑，每块默认最多生成 1024 tokens；单调时间戳也不能证明无漏转。
-- **端口防御（issue #141）**：`--port 18081` 直接拒绝（fail-closed，不探测）；启动
-  前探测端口占用，被占则报错退出（不静默换端口）。共驻降档链已删除（探测输入法本身
-  即被禁止）。
-- **enabled 门禁（issue #142，实际执行非纸面默认）**：下表入口在 `asr.enabled`
-  未启用（严格解析：仅 `true/1/yes/on`；**未配置/坏配置一律视为禁用**）时零请求零
-  拉起零加载，直接中文诊断退出：
+- **端口防御（#141）**：18081 专属语音输入法，禁止绑定、探测或复用。默认 18085；
+  自有端口被占则报错，不静默换端口。
+- **enabled 门禁（#142）**：只有布尔 `true` 或字符串 `true/1/yes/on` 启用；
+  未配置或无效值按禁用处理。下表为禁用态行为，诊断和准备例外仍受独立性校验：
 
   | 入口 | 禁用态行为 | 豁免（语义明确，非绕过） |
   |---|---|---|
@@ -93,22 +87,17 @@ fragment 均拒绝。每次 HTTP 前要求项目 PID/启动时刻/脚本身份�
   | `asr_cli sidecar stop` | **允许**（回收自有残留服务，安全收敛动作） | 本行即豁免语义 |
   | `vt.py doctor`（asr 段） | 不探测 sidecar（零 HTTP），报告禁用态 | — |
 
-- **进程归属三因子（issue #142）**：pid 记录（JSON：`pid/start_time/port`，落
-  `~/.local/state/framivra/asr/`）+ `/proc cmdline`（sidecar_server.py+端口）+
-  `/proc stat` 启动时刻比对。stop/restart/故障回收前必须三因子全过：陈旧 PID、
-  PID 重用（启动时刻失配）、伪造记录、端口被外部进程抢答 → 只报错不发信号，
-  记录保留供排查；健康但无法归属的服务一律拒绝复用（零 warm/transcribe 试错）。
+- **停止与复用不是同一检查**：有有效 PID 记录且 `/proc` 证实脚本、端口和启动时刻后，
+  `stop` 才能向自有进程发信号，即使 HTTP 已不可用；确认原进程退出才报成功。
+  身份不符不发信号并保留记录；不可解析的 PID 记录会清除且不发信号。复用另须通过上文的监听归属和健康检查。
 - **通用资源准入（issue #142，与 IME 端点零依赖）**：模型加载（client 拉起前预检
   + sidecar `_load_locked` 准入）前经 `gpu_admission` 只读 `nvidia-smi` 比对显存
   预算（`asr.vram_budget_mib` 配置优先并传入服务，缺省粗估：1.7B≈6144 / 0.6B≈3072 MiB）：
   使用驱动报告的 `memory.free`，不把 `total-used` 中的驱动保留量算作可用显存。
-  预算不是硬上限或显存预留，长音频应按实测显式配置（下述 0.6B 验收使用 8192 MiB）；
-  不足 → 安全拒绝（绝不停止/卸载/重配任何外部服务，含语音输入法）；`nvidia-smi`
-  不可用且设备为 GPU → **fail-closed 拒绝**（不拿「先 OOM 再换小模型」当唯一保护，
-  诊断给出 CPU 出路）；设备 `cpu` → 显存门 N/A 放行。并发准入经项目状态根 `flock`
-  （`admission_lease`）串行「查显存→加载」临界区；运行期 OOM 只把自有模型迁回 CPU
-  并清自有显存缓存（`recover_after_oom`），返回 503 中文诊断；加载 OOM 的同根
-  companion 降档保留为**次级**保护。
+  预算不是硬上限或显存预留，长音频应按实测配置。不足，或 GPU 路线无法使用 `nvidia-smi`，
+  均拒绝；`cpu` 仅跳过显存门。`admission_lease` 串行「查显存→加载」；加载 OOM 的同根
+  companion 降档是次级保护。转写中 OOM 尝试迁回自有模型至 CPU、清自有缓存并返回 503；
+  不停止、卸载或重配外部服务。默认空闲 5 分钟卸载到 CPU 也不等于用 CPU 推理。
 
 ## 文本规范化规则表（textnorm.py）
 
@@ -124,69 +113,45 @@ fragment 均拒绝。每次 HTTP 前要求项目 PID/启动时刻/脚本身份�
 
 断句（segline.py，锚定式）：句末标点切句 → 句内超 limit=18 贪心回退句中标点 →
 无标点先试 N4 软切再硬切（latin_safe_cut 回退拉丁/数字词边界，「Qwen3-ASR」不被拆）；
-行时间 = 首字 s … 末字 e；`in=floor(s*fps)`、`out=ceil(e*fps)`；最短 18 帧（0.6s，
-audit 同阈值）；相邻去重叠不破 `in+min_dur` 下限（极冲突保留重叠+告警）；速率 ≤9 字/s
-（len 含标点，audit 同口径，超限有隙扩隙/无隙告警）；越界整行丢弃（保序）。
+行时间 = 首字 s … 末字 e；`in=floor(s*fps)`、`out=ceil(e*fps)`；默认最短 18 帧（30fps 时为 0.6s）；相邻去重叠不破 `in+min_dur` 下限（极冲突保留重叠并告警）；默认速率目标 ≤9 字/s（含标点，有隙扩隙、无隙告警）；越界整行丢弃（保序）。
 
 ## 产物落位
 
 - 临时 16k wav → `<项目>/cache/tmp/<runid>/`（退出即删；输入不在项目内退 /tmp 小件）；
-- SRT / 审计摘要 / timeline 备份 / batch 报告 → `<项目>/cache/reports/`（无项目上下文时落输出同目录）；
-- 合并后的 subtitles[] 只写回 timeline.json 本体；
+- `srt` 写 `-o` 指定的文件，审计摘要在同目录（摘要写失败不撤回 SRT）；`batch` 在 `-o` 指定目录写各条 SRT 和汇总。
+- `timeline` 改写指定的时间线；字幕数组备份和审计报告在该时间线旁的 `cache/reports/`。
 - sidecar 日志/PID → `~/.local/state/framivra/asr/`（项目状态根，不进仓库不进项目，
   与输入法的任何状态目录完全独立）。
 
 ## 依赖（默认关闭）
 
 - **app 级（manifest requires，doctor 可探测）**：ffmpeg / ffprobe（16k wav 抽取与时长探测）；系统 python3 ≥3.9 stdlib（CLI 全部子命令零第三方依赖）。
-- **sidecar 级（专属 venv 环境依赖，不进 requires，README 落实）**：qwen-asr + torch
-  装在 **Framivra 专属环境 `apps/asr/.venv`**（绝不借用输入法环境；依赖来源经
-  `independence.verify_module_from_own_env` 验证必须来自该环境根内）；Qwen3-ASR-1.7B/0.6B +
-  Qwen3-ForcedAligner-0.6B 模型装在**专属根 `~/.local/share/framivra/asr/models`**
-  （同型号允许独立部署，禁止 symlink/hardlink/共享缓存借用输入法权重——
-  `independence.py` 资产清单接口固定版本/来源/SHA256 记账）；`bash apps/asr/init.sh`
-  仅检查已有独立资产并冒烟，不创建环境、不安装包、不下载模型。
+- **sidecar 级（不随 app 或发行包安装）**：专属解释器先查 `asr.python`，再查
+  `apps/asr/.venv/bin/python`；`qwen_asr` 和 `torch` 必须来自所选解释器自己的环境。
+  ASR 在 `asr.model_dir`、默认专属根 `~/.local/share/framivra/asr/models` 中查找模型子目录，
+  优先 1.7B，找不到才选 0.6B。运行时优先使用存在的 `asr.aligner_dir`，否则在这两个根找 `Qwen3-ForcedAligner-0.6B`；init 对显式路径不回退。
+  发现不等于权重已加载、资产清单 SHA256 已验证或用途已获准；不允许通过链接或共享缓存借用 IME 资产。
 - **旧配置迁移**：`VT_ASR_IME_ROOT` / `asr.ime_root` 出现即报迁移错误（fail-closed，
   不静默换算）；`asr.python` / `asr.model_dir` / `asr.aligner_dir` / `asr.base_url`
   显式配置同样过独立性校验，指向输入法资产/端口即拒绝。
 
 ## 健康检查
 
-`env python3 apps/asr/asr_cli.py --help` 退出码 0（app.json health.command；CLI 面系统 python3 即可跑，不涉 sidecar/模型）。sidecar 运行态另经 `asr_cli.py sidecar status` / `GET /health` 探测。
+`env python3 apps/asr/asr_cli.py --help` 是 manifest 的命令健康检查，不启动服务、不加载模型。
+`sidecar status` 则会向已证明归属的服务发本地 `/health` 请求；健康只表明服务应答，不表明推理成功。
 
 ## 开启步骤（默认关闭）
 
-> `asr.enabled` 自 #142 起为实际执行门禁（见上表）；`asr.device_map`（默认
-> `cuda:0`，接受 `"cpu"`）与 `asr.vram_budget_mib`（正数 MiB，缺省按档
-> 估计）参与资源准入。CPU 参数通过显存门（N/A）不代表真实 CPU 转写已验收。
+1. 先按[第三方许可与模型下载边界](../../docs/third-party-licenses.md#下载与运行政策)审核并独立准备解释器、依赖和模型。
+   [`plan` 检查](../../docs/third-party-licenses.md#零写态检查)只读取证据，不下载、不安装、不授予用途许可。
+   旧 `bash apps/asr/init.sh --download` 在探测和联网前 **BLOCKED（退出码 4）**；固定快照下载不安装 `qwen-asr`/`torch`，也不解除旧门禁。
+2. 非默认资产路径先写入生效配置（`VTX_CONFIG` 优先，否则仓库根 `config.local.json`），保持禁用。
+   `bash apps/asr/init.sh` 检查既有专属解释器、一档 ASR 权重与 ForcedAligner，成功后会临时启动本地服务并请求 `/health`。
+   它不创建环境、不安装、不下载、不改配置，也不加载模型；通过不等于转写已验收。
+3. 就绪后才在同一生效配置设 `"asr": {"enabled": true}`（保留已有 ASR 配置键）。
+   `asr.device_map` 默认 `cuda:0`，可设 `"cpu"`；`asr.vram_budget_mib` 为正数 MiB，见上文准入规则。
 
-1. 先阅读 [第三方许可与模型下载边界](../../docs/third-party-licenses.md)。旧
-   `bash apps/asr/init.sh --download` 在配置探测、建 venv、pip 和模型请求之前
-   **BLOCKED（退出码 4）**；它不是可用的安装路线。以下 `plan <asset>` 仅离线显示
-   单资产证据与限制，不下载、不安装，也不表示已获得用途许可：
-
-   ```bash
-   env python3 scripts/policy/model_license_policy.py plan qwen-asr-1.7b
-   ```
-
-   另行确认许可、固定官方快照、证据哈希和用途后，受支持的单资产下载接口才可使用；
-   **固定快照下载不安装 qwen-asr/torch 运行环境，也不解除旧 init 下载门禁**。
-   缺失的独立环境/依赖仍须另行审核和准备；不得借用输入法环境、模型或共享缓存。
-2. 已独立准备资产后，`bash apps/asr/init.sh` 检查解释器 `config.asr.python` →
-   `apps/asr/.venv`，模型 `config.asr.model_dir` → 专属根
-   `~/.local/share/framivra/asr/models`（Qwen3-ASR-1.7B / 0.6B 任一档 +
-   **Qwen3-ForcedAligner-0.6B**；显式 `asr.aligner_dir` 优先），并执行本地
-   `--once-health` 冒烟。检查统一读取 `VTX_CONFIG`，缺失或不独立的资产先拒绝，
-   不自动补齐；冒烟不加载真实模型、不验证转写质量。
-3. 确认独立环境与资产就绪后，才把解释器/模型路径和显式启用项写进仓库根
-   `config.local.json`（写配置是独立操作；init 不自动改）：
-   `"asr": { "enabled": true, "python": "<apps/asr/.venv>/bin/python", "model_dir": "~/.local/share/framivra/asr/models" }`
-   （`base_url` 默认 `http://127.0.0.1:18085`，无需写）。
-4. 日常使用无需手动起 sidecar：`srt`/`timeline`/`batch` 会自动拉起并等健康。
-
-空闲 5 分钟自动卸载到 CPU 释放显存；这与 CPU 实际推理验收不同。下述独立
-CPU 冒烟不证明 GPU 支持、显存占用或输入法共驻安全；GPU 实测仍为 UNRUN。
-与输入法的 GPU 竞争由 #142 通用资源准入处理，绝不停/降输入法。
+下列独立 CPU 短样本与受控 GPU 样本各有验收范围。长音频漏转仍未解决，单调时间戳不能证明完整；借用 IME 环境的历史记录不适用于现行部署。
 
 ## 已验证版本
 
@@ -264,29 +229,18 @@ qwen-asr 0.0.6、transformers 4.57.6，离线推理，`device_map=cuda:0`、预�
   钉版指纹 model.safetensors sha256 前 12 位 `47831d0e82f9`——独立部署时按
   `independence.py` 资产清单接口重新记账）。
 
-## 端口说明
-
-| 端口 | 归属 |
-|---|---|
-| 18081 | 语音输入法 sidecar 专用端口——本仓**绝不绑定/探测/复用**（绑定即 fail-closed 报错；issue #141） |
-| 18085 | 本模块 sidecar 默认端口（`--port` / config `asr.base_url` 可改；指向 18081 即拒绝） |
-
 ## 集成入口
 
 仓级初始化使用 `vt.py init`，操作见 [快速开始](../../README.md#快速开始clone-即用零安装步骤)；[配置模板](../../config.example.json)与[编排接口](../../docs/skill/references/edit.md)分别维护配置和项目文件契约。
 
 ## 测试
 
+局部回归使用隔离夹具，会写临时数据并启动本地测试服务，不加载真实模型或使用 GPU。全仓入口及本机限制见[贡献指南](../../CONTRIBUTING.md#测试入口)。
+
 ```bash
-cd apps/asr && env python3 -m unittest discover -s tests -t . -v   # 零真实模型、零 GPU，仅隔离 fixture/mock 服务
-# 或仓根统一入口：bash scripts/run_all_tests.sh（自动发现 apps/*/tests）
+cd apps/asr && env python3 -m unittest discover -s tests -t . -v
 ```
 
-覆盖：textnorm golden ≥8、segline 边界全套（floor/ceil、行宽 18、行首无标点硬断言、
-min_dur≥18、去重叠不破下限+极冲突保留重叠、越界整行丢弃、rate≤9 含标点口径 8.5/9.5
-两例）、words[] 构造 golden（数字变形、拉丁跨 -/. 吸收、标点零宽锚、失配插值
-degraded_ranges、全失配回退）、srt golden、tl_merge（逐键相等/备份/dry-run/损坏保护）、
-client mock sidecar（转写/4xx/超时/>200s 透传不切分、健康归属校验/拒绝复用任意健康服务）、
-independence 对抗矩阵（遗留 env/键、18081 URL 矩阵、IME 路径/symlink/硬链接注入、
-依赖来源注入、外部 pid 拒发信号、资产清单 SHA256 正反例、复用链成员已删除）、
-init 离线回归（许可门禁不变、下载只写专属根、IME 零调用）。
+关键反例见 `tests/test_endpoint_ownership.py`（PID 匹配但 listener 不归属，零 HTTP）、
+`tests/test_alignment_validity.py`（倒退时间窗 409，不写 SRT/审计）、
+`tests/test_init_independent_assets.py`（解释器与资产独立性）；独立的 `tests/test_init_offline.sh` 保留旧下载拒绝断言。
