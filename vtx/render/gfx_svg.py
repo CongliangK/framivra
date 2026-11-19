@@ -110,7 +110,9 @@ def read_input(c, name, *, limit=None, expected_path=None):
     """Bound the read itself, rather than allocating first and checking later."""
     limit = MAX_INPUT_BYTES if limit is None else limit
     if os.name == 'nt':
-        from .gfx_svg_win_input import read
+        from .gfx_svg_win_input import read, relative_parts
+        if getattr(c, '_svg_runtime_factory', None) is not None and relative_parts(name)[0].lower() in ('cache', 'out'):
+            raise ValueError('Windows SVG gfx inputs cannot reference product directories')
         if type(limit) is not int or not 0 <= limit <= MAX_INPUT_BYTES:
             raise ValueError('SVG input exceeds byte budget')
         return read(c.root, name, limit=limit, expected_path=expected_path)
@@ -583,6 +585,13 @@ class _PosixRuntimeIdentity:
         return _font_faces(fontconfig['executable'], str(input_path(c, name)), sha256,
                            digest(canonical(fontconfig)))
 
+    @staticmethod
+    def rasterize(record, staging, *, root, indices, outputs):
+        from .gfx_svg_stage import run_shell_batches
+        return run_shell_batches(record['engine']['executable'], staging, record['frame_count'],
+                                 record['width'], record['height'], root=root,
+                                 indices=indices, outputs=outputs)
+
 
 @contextlib.contextmanager
 def _runtime_identity_scope():
@@ -598,8 +607,42 @@ def _runtime_identity_scope():
     yield _PosixRuntimeIdentity()
 
 
-def engine_identity():
-    with _runtime_identity_scope() as runtime:
+def read_timeline_input(c):
+    if sys.platform == 'win32' and getattr(c, '_svg_runtime_factory', None) is not None:
+        from .gfx_svg_win_input import read
+        return read(c.root, c.tl_path.name, limit=MAX_MANIFEST_BYTES, expected_path=c.tl_path)
+    return c.tl_path.read_bytes()
+
+
+def validate_windows_gfx_profile(c):
+    """Reject unsupported Timeline I/O before resolving any asset pathname."""
+    if sys.platform != 'win32' or getattr(c, '_svg_runtime_factory', None) is None:
+        return
+    tl = c.tl
+    tracks = tl.get('video_tracks', [])
+    if (set(tl) - {'version', 'project', 'video_tracks', 'sources', 'audio_tracks', 'subtitles'}
+            or set(tl['project']) - {'fps', 'width', 'height', 'duration_frames', 'cache_dependencies'}
+            or any(tl.get(key) for key in ('sources', 'audio_tracks', 'subtitles'))
+            or route(c) != 'svg-sequence' or len(tracks) != 1 or len(tracks[0].get('clips', [])) != 1
+            or set(tracks[0]) - {'name', 'kind', 'clips'}
+            or set(tracks[0]['clips'][0]) - {'format', 'src', 'dst_in', 'dur', 'cache_dependencies'}):
+        raise ValueError('Windows SVG gfx profile requires one SVG clip without external media, subtitles or plugins')
+    from ..pluginlib.hooks import active_plugins
+    if active_plugins(c):
+        raise ValueError('Windows SVG gfx does not support active plugins')
+
+
+def _context_runtime(c):
+    factory = getattr(c, '_svg_runtime_factory', None)
+    if sys.platform == 'win32' and factory is not None:
+        if c._svg_runtime is None:
+            c._svg_runtime = factory(c.root)
+        return contextlib.nullcontext(c._svg_runtime)
+    return _runtime_identity_scope()
+
+
+def engine_identity(c=None):
+    with _context_runtime(c) as runtime:
         return runtime.engine_identity()
 
 
@@ -631,6 +674,13 @@ def _dependency_members(c, clip):
 
 def resolve(c, clip):
     """Re-read every declared input; returned record carries full file hashes."""
+    with _resolved_runtime(c, clip) as (_, record):
+        return record
+
+
+@contextlib.contextmanager
+def _resolved_runtime(c, clip):
+    """Keep live renderer authority separate from the serializable cache key."""
     if route(c) != 'svg-sequence' or not is_svg(clip):
         raise ValueError('SVG sequence resolver requires an explicit SVG-only gfx timeline')
     raw = read_input(c, clip['src'], limit=MAX_MANIFEST_BYTES)
@@ -654,8 +704,8 @@ def resolve(c, clip):
     fonts = manifest.get('fonts', [])
     if not isinstance(fonts, list):
         raise ValueError('SVG manifest.fonts must be a list of project-relative files')
-    with _runtime_identity_scope() as runtime:
-        return _resolve_inputs(c, clip, raw, manifest, rate, runtime)
+    with _context_runtime(c) as runtime:
+        yield runtime, _resolve_inputs(c, clip, raw, manifest, rate, runtime)
 
 
 def _resolve_inputs(c, clip, raw, manifest, rate, runtime):

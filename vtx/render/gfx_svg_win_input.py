@@ -126,14 +126,17 @@ def _info(kernel, handle, *, directory):
     return info
 
 
-def _open_child(stack, kernel, nt, parent, part):
+def _child_attributes(parent, part):
     # CreateFileW cannot take a directory handle. Use the user-mode NT open
     # interface with a single name and a held RootDirectory, never a path lookup.
     size = len(part.encode('utf-16-le'))
     buffer = C.create_unicode_buffer(part, size // 2 + 1)
     name = _UnicodeString(size, size + 2, C.cast(buffer, W.LPWSTR))
-    attributes = _ObjectAttributes(C.sizeof(_ObjectAttributes), parent, C.pointer(name),
-                                   _DONT_REPARSE, None, None)
+    return _ObjectAttributes(C.sizeof(_ObjectAttributes), parent, C.pointer(name), _DONT_REPARSE, None, None), buffer
+
+
+def _open_child(stack, kernel, nt, parent, part):
+    attributes, buffer = _child_attributes(parent, part)
     handle = W.HANDLE()
     status = nt.NtOpenFile(C.byref(handle), _GENERIC_READ | 0x00100000,  # SYNCHRONIZE
                            C.byref(attributes), C.byref(_IoStatusBlock()),

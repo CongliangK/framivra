@@ -1,5 +1,15 @@
 # Windows SVG：生产入口与内部验收边界
 
+## 受限 `gfx` 配置
+
+Windows x64 首个原生配置只支持 `gfx`、单个无字体 SVG 剪辑、无普通素材/字幕/插件、`core` 松散帧缓存。不开放 `all`、单帧预览、打包缓存或带字体工程。未配置时仍拒绝生产准入，不查 PATH、不回退内部验收。
+
+运行前用本次进程环境设置 `VTX_WINDOWS_SVG_PORTABLE`（官方 Inkscape 1.4.4 x64 便携解包根，含 `inkscape` 子目录）与 `VTX_WINDOWS_SVG_SCRATCH`（已存在、仅可信账户可写的短 ASCII 暂存根）。工程、便携包与暂存使用可信的固定 NTFS 根，暂存与工程/包不得重叠。工程产品根也必须由可信写者控制；完成标记不是可跨信任边界验证的签名。`python -m vtx -t <timeline.json> gfx` 会启动受监管的 Inkscape 并写 `cache/` 与 `out/receipt.json`。正常暖用仍重做运行身份预检，但不执行帧导出。
+
+[运行时](<../../vtx/render/gfx_svg_win_runtime.py>)锁定官方包、私有字体配置、经离线目录签名验证的系统文件和原句柄。[发布](<../../vtx/render/gfx_svg_win_publish.py>)在同一缓存页锁下锚读验证或写入逐帧 PNG，最后提交完成标记，写回执沿用原指纹及撤销语义。加载事件约束实际 Job 的文件身份，不证明映射内存字节；Job 是进程所有权边界，不是权限沙箱。
+
+## 内部证据
+
 - Windows SVG：[生产身份](<../../vtx/render/gfx_svg.py>)未获验证即在 PATH/缓存查找前拒绝，不回退内部验收；[锚读](<../../vtx/render/gfx_svg_win_input.py>)仅认授权稳定根及直连固定 NTFS，原始相对声明先验后并集（`/`、精确路径），逐级拒重解析、同句柄限量验单链接。
 - [Windows SVG-only 回执](<../../vtx/cache/cache_state.py>)的清单和声明依赖字节沿用项目根句柄读取与限额；缺失、拒读或无法读取均直接失败，不记 MISSING 或回退；不是原子指纹。[影响分析](<../../vtx/inspection/impact.py>)用调用方原始根和精确相对名复核已观测的 SVG 文件，不以报表绝对路径代替，也不作原子快照。
 - [Windows Fontconfig 检查](<../../vtx/render/gfx_svg_win_fontconfig.py>)私有 Job 以固定官方 DLL 快照查单 face；900 帧另核对私有字体集四文件的 22 个 face 及索引，结算后清空探针缓存再启动 Inkscape。DLL 与字体用各自只共享读的原句柄限量验单链接和摘要，复制只写已验字节；不证映射字节、渲染选字、加载闭包或产物资格。启动所有权或结算未证不读回执、不删暂存。

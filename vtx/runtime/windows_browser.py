@@ -240,7 +240,7 @@ class _OwnedJob:
         self._capture_limit = _CAPTURE_LIMIT if capture_limit is None else capture_limit
         self.proc = _Process(api, self._info, argv)
 
-    def _launch(self, args, stdout, stderr, *, stdin=None, cwd=None, environment=None):
+    def _launch(self, args, stdout, stderr, *, stdin=None, cwd=None, environment=None, debug_images=False):
         api = self._api
         self._job.value = _check(api.CreateJobObjectW(None, None), 'CreateJobObjectW')
         limits = _ExtendedLimits()
@@ -273,6 +273,8 @@ class _OwnedJob:
             with _startup(api, self._job.value, stdio) as startup, _remember_interrupt(interrupted):
                 cmd = C.create_unicode_buffer(subprocess.list2cmdline(args))
                 flags = _EXTENDED_STARTUPINFO
+                if debug_images:
+                    flags |= 1  # DEBUG_PROCESS: the creating thread owns the event queue.
                 if environment is not None:
                     flags |= 0x400 | 0x08000000  # CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW
                 _check(api.CreateProcessW(args[0], cmd, None, None, True, flags, environment,
