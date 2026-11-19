@@ -8,6 +8,7 @@ an explicit rerun of gfx, never fabricated frames or a successful receipt.
 """
 import contextlib
 import hashlib
+import sys
 import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -133,6 +134,7 @@ class PngSequence:
     environment_check: object = field(default=None, repr=False, compare=False)
     interval_check: object = field(default=None, repr=False, compare=False)
     _png_facts: object = field(default=None, repr=False, compare=False)
+    _native_ready: object = field(default=None, repr=False, compare=False)
 
     @property
     def time_base(self):
@@ -163,6 +165,8 @@ class PngSequence:
 
     def _require_ready(self, start, stop, facts=None):
         self._interval(start, stop)
+        if self._native_ready is not None and self._native_ready(start, stop):
+            return
         expected = (self.interval_check(start, stop) if self.interval_check is not None
                     else self.environment_check() if self.environment_check is not None else None)
         for frame in range(start, stop):
@@ -238,5 +242,21 @@ def png_source(c, clip):
             directory, clip['dur'], directory.name, c.w, c.h,
             backend_ns=gfx_cache_ns() or None, environment=expected,
             dependency_digest=digest(resolve(c, clip)) if strict else None)['sha256']
+    def native_ready(start, stop):
+        from .gfx_dependencies import policy
+        from .gfx_environment import certificate
+        expected = certificate(c)
+        if (not expected or expected['axes'].get('platform_resolver') != 'windows-x64/1'
+                or expected['axes'].get('backend') != 'cdp' or policy(c) == 'strict'):
+            return False
+        from .gfx_windows import require_interval
+        try:
+            require_interval(c, directory, clip['dur'], start, stop,
+                             namespace=gfx_cache_ns() or None, environment=expected)
+        except (OSError, ValueError) as error:
+            raise ValueError(f'PNG source not ready: {directory}; rerun vtx gfx ({error})') from error
+        return True
+
     return PngSequence(directory, identity, clip["dur"], c.fps, c.w, c.h,
-                       environment_check=check_environment)
+                       environment_check=check_environment,
+                       _native_ready=native_ready if sys.platform == 'win32' else None)

@@ -235,6 +235,10 @@ def _gfx(c: Ctx):
     from ..render.gfx_environment import certificate
     environment = certificate(c) if any(t.get('kind') == 'gfx' and t.get('clips')
                                          for t in c.tl['video_tracks']) else None
+    if (sys.platform == 'win32' and not strict and backend == 'cdp'
+            and environment and environment['axes'].get('platform_resolver') == 'windows-x64/1'):
+        from ..render.gfx_windows import render_stage
+        return render_stage(c, backend_ns, environment, directory_for=gfx_dir, cdp_via=_cdp_via)
     mixed_pages = set()
     use_cdp = backend == "cdp"
     cdp_mod = None
@@ -569,9 +573,17 @@ def _run_all_pipeline(c: Ctx, until=None):
     def _pre_layers():                               # —— 波内预编码路：无门无回执 ——
         c._pre_layers = events.task(c, "video", kind="preencode").call(prepare_layers, c)
 
-    run_wave(c, [("gfx", _stage_job("gfx", by_name["gfx"])),
-                 ("audio", _stage_job("audio", by_name["audio"])),
-                 ("video 预编码", _pre_layers)])
+    jobs = [("gfx", _stage_job("gfx", by_name["gfx"])),
+            ("audio", _stage_job("audio", by_name["audio"])),
+            ("video 预编码", _pre_layers)]
+    if sys.platform == 'win32':
+        c._windows_cdp_cancel = threading.Event()
+        try:
+            run_wave(c, jobs, cancel=c._windows_cdp_cancel)
+        finally:
+            del c._windows_cdp_cancel
+    else:
+        run_wave(c, jobs)
     if until == "gfx":
         return 0   # 波结束即止：audio 回执/seg 缓存已就绪，video 尾不跑
     qc_exit = 0

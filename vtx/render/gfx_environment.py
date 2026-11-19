@@ -639,7 +639,8 @@ def _collect_windows(backend, binary, mode):
             'python_runtime': _python_runtime(),
             'implementation': _files([_ROOT / p for p in ('render/gfx_environment.py', 'runtime/file_clone.py', 'render/gfx_backend.py',
                 'render/gfx_render.py', 'render/gfx_cli.py', 'render/gfx_cef.py', 'render/cef_client.py', 'runtime/windows_browser.py',
-                'render/browser_paths.py')])}
+                'render/browser_paths.py') + (('render/gfx_windows.py', 'render/gfx_svg_win_publish.py',
+                'render/gfx_svg_win_input.py', 'render/gfx_svg_win_snapshot.py') if backend == 'cdp' else ())])}
 
 
 class EnvironmentError(ValueError):

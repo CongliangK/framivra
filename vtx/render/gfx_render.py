@@ -179,8 +179,12 @@ _WS_FRAME_MAX = 1 << 30   # 单帧 1GiB 防御上限：流错乱时防内存爆
 class WSConn:
     # Tab owns this scope; control frames and partial reads share its deadline.
     _deadline = None
+    _interrupted = False
+    _cancel = None
 
     def _remaining(self):
+        if self._interrupted or (self._cancel is not None and self._cancel.is_set()):
+            raise ConnectionError('WebSocket interrupted')
         if self._deadline is None:
             return None
         remaining = self._deadline - time.monotonic()
@@ -206,7 +210,8 @@ class WSConn:
         finally:
             self.sock.settimeout(previous)
 
-    def __init__(self, port, path, timeout=20):
+    def __init__(self, port, path, timeout=20, *, cancel=None):
+        self._cancel = cancel
         self._io_guard = threading.Lock()
         self._rbuf = bytearray()   # 握手响应同包尾随的帧字节（罕见），交 recv 消费
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
@@ -223,9 +228,10 @@ class WSConn:
             f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n"
             f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
             "Sec-WebSocket-Version: 13\r\n\r\n").encode())
+        receive = self._recv_windows if sys.platform == 'win32' and self._cancel is not None else self.sock.recv
         buf = b""
         while b"\r\n\r\n" not in buf:
-            chunk = self.sock.recv(4096)
+            chunk = receive(4096)
             if not chunk:
                 raise ConnectionError("ws handshake failed")
             buf += chunk
@@ -265,12 +271,37 @@ class WSConn:
     def send_text(self, text):
         self._send_frame(0x1, text.encode())
 
+    def _recv_windows(self, n):
+        # Winsock shutdown need not wake CPython's readiness wait. Keep the
+        # socket alive and observe interruption without extending either timeout.
+        previous = self.sock.gettimeout()
+        deadline = None if previous is None else time.monotonic() + previous
+        try:
+            while True:
+                remaining = self._remaining()
+                wait = .1 if remaining is None else min(.1, remaining)
+                if deadline is not None:
+                    wait = min(wait, deadline - time.monotonic())
+                if wait <= 0:
+                    raise TimeoutError('WebSocket receive timeout')
+                self.sock.settimeout(wait)
+                try:
+                    data = self.sock.recv(n)
+                except (TimeoutError, socket.timeout):
+                    continue
+                self._remaining()
+                return data
+        finally:
+            self.sock.settimeout(previous)
+
     def _recv_exact(self, n):
         self._remaining()
         buf = bytearray(self._rbuf[:n])
         del self._rbuf[:len(buf)]
+        receive = (self._recv_windows if sys.platform == 'win32' and isinstance(self.sock, socket.socket)
+                   else self.sock.recv)
         while len(buf) < n:
-            chunk = self._io(self.sock.recv, n - len(buf))
+            chunk = self._io(receive, n - len(buf))
             if not chunk:
                 raise ConnectionError("ws closed")
             buf += chunk
@@ -314,6 +345,7 @@ class WSConn:
                 return op, bytes(frag)
 
     def interrupt(self):
+        self._interrupted = True
         # Keep the fd open until its receiving worker settles. On macOS a close
         # racing the socket's readiness wait can otherwise strand that wait.
         try:
@@ -335,8 +367,8 @@ class WSConn:
 class Tab:
     """一个 page target 的 CDP 会话（线程独占）。"""
 
-    def __init__(self, port, ws_path, width=1920, height=1080):
-        self.ws = WSConn(port, ws_path)
+    def __init__(self, port, ws_path, width=1920, height=1080, *, cancel=None):
+        self.ws = WSConn(port, ws_path, cancel=cancel) if cancel is not None else WSConn(port, ws_path)
         try:
             self._mid = 0
             self.request_policy = None
@@ -498,6 +530,7 @@ class Browser:
         self.proc = None
         self.windows_job = None
         self._windows_cleanup = None
+        self._cancel = None
         self.port = None
         self.user_data_dir = None
         self.tab_ws_urls = []
@@ -511,7 +544,12 @@ class Browser:
         if not self.chrome:
             raise RuntimeError("no chrome found")
 
+    def _check_cancel(self):
+        if self._cancel is not None and self._cancel.is_set():
+            raise GfxRenderError('Windows CDP rendering cancelled')
+
     def start(self):
+        self._check_cancel()
         self._find_chrome()
         from .gfx_environment import CHROME_VISUAL_FLAGS
         s = socket.socket()
@@ -564,6 +602,7 @@ class Browser:
                 self.proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
+            self._check_cancel()
             try:
                 urllib.request.urlopen(
                     f"http://127.0.0.1:{self.port}/json/version", timeout=1)
@@ -587,6 +626,7 @@ class Browser:
             f"http://127.0.0.1:{self.port}/json/new?about:blank", method="PUT")
         self.tab_ws_urls = []
         for _ in range(self.tabs_n):
+            self._check_cancel()
             info = json.load(urllib.request.urlopen(req, timeout=5))
             url = info["webSocketDebuggerUrl"]
             self.tab_ws_urls.append("/" + url.split("/", 3)[3])
@@ -597,7 +637,9 @@ class Browser:
         tabs = []
         try:
             for u in self.tab_ws_urls:
-                tabs.append(Tab(self.port, u, self.width, self.height))
+                self._check_cancel()
+                options = {'cancel': self._cancel} if self._cancel is not None else {}
+                tabs.append(Tab(self.port, u, self.width, self.height, **options))
         except BaseException:
             for t in tabs:
                 t.close()
@@ -637,7 +679,11 @@ class Browser:
                 self.proc.wait(5)
         self.proc = None
         if self.user_data_dir:
-            # Windows releases file handles asynchronously after job termination.
+            if sys.platform == 'win32':
+                from ..runtime.windows_browser import remove_settled_profile
+                remove_settled_profile(self.user_data_dir)
+                self.user_data_dir = None
+                return
             for attempt in range(30):
                 try:
                     shutil.rmtree(self.user_data_dir)
@@ -873,7 +919,7 @@ def _atomic_write_bytes(path, data, *, root=None):
 
 def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 width=1920, height=1080, progress=None, frames=None, ctx=None,
-                dependency_record=None):
+                dependency_record=None, cancel=None):
     """渲一页 → outdir/f{:04d}.png × n（已存在的帧跳过）。
 
     ctx（issue #103 可选）：vtx gfx 阶段传入 Ctx 后，常驻 Chrome 交
@@ -911,6 +957,11 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     if dependency_record is not None:
         return render_strict_page(html_path, outdir, n_frames, chrome_path,
                                   width, height, frames, ctx, dependency_record)
+    def check_cancel():
+        if cancel is not None and cancel.is_set():
+            raise GfxRenderError('Windows CDP rendering cancelled')
+
+    check_cancel()
     if not _HAS_NUMPY:
         raise GfxRenderError("numpy unavailable")
     tabs_n = tabs or int(os.environ.get("VTX_GFX_TABS", "4"))
@@ -929,6 +980,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     # Browser 构造/启动放在 work 空判之后（v2 阶段 1 页内分片）：全缓存块零
     # Chrome；ms_total 仍从启动完成后起算（与旧语义一致，不含浏览器启动耗时）
     browser = Browser(chrome_path, tabs_n, width, height, ctx=ctx)
+    if cancel is not None:
+        browser._cancel = cancel
     try:
         browser.start()
     except BaseException as primary:
@@ -940,6 +993,10 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     pool = []
     owned_tabs = []             # Only sessions not yet closed; protected by browser.lock.
     stopping = threading.Event()
+
+    def cancelled():
+        return stopping.is_set() or (cancel is not None and cancel.is_set())
+
     threads = []
     settled = [threading.Event() for _ in range(tabs_n)]
     t0 = time.monotonic()
@@ -1051,7 +1108,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             try:
                 new_pool = None
                 with browser.lock:
-                    if stopping.is_set():
+                    if cancelled():
                         return
                     if browser.generation == gen[0]:
                         browser.hard_restart()
@@ -1060,7 +1117,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                         for tab in owned_tabs[:]:
                             tab.close()
                             owned_tabs.remove(tab)
-                        if stopping.is_set():
+                        if cancelled():
                             return
                         new_pool = browser.open_tabs()
                         owned_tabs.extend(new_pool)
@@ -1080,12 +1137,12 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             抛错时本帧自动转回导航路径（不耗重试预算，页级一次性告警）。"""
             nf = navfree
             retries = 0
-            while not stopping.is_set():
+            while not cancelled():
                 try:
                     if idx >= len(pool):
                         raise ConnectionError("tab lost after browser restart")
                     png, path, timing = do_frame(pool[idx], i, navfree=nf)
-                    if stopping.is_set():
+                    if cancelled():
                         return False
                     t0 = time.monotonic()
                     _atomic_write_bytes(os.path.join(outdir, f"f{i:04d}.png"), png, root=ctx.root if ctx is not None else None)
@@ -1098,7 +1155,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                     gen[0] = browser.generation
                     return True
                 except Exception:
-                    if stopping.is_set():
+                    if cancelled():
                         return False
                     if nf:
                         # navfree 失败 → 本帧转导航路径；绝不静默（页级告警一次）
@@ -1128,7 +1185,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             except Exception:
                 nf_tab = False    # 首导航失败 → 本 tab 逐帧导航（各帧自会重试/自愈）
         for i in queues[idx]:
-            if stopping.is_set():
+            if cancelled():
                 break
             shot_with_heal(i, navfree=nf_tab)
         # 收尾：写本 worker 的观测槽位（每槽只被所属线程写一次，无竞争）
@@ -1138,7 +1195,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         try:
             # A native thread may bootstrap after an interrupted start returns.
             # Such a late target must not touch browser state or scratch output.
-            if stopping.is_set():
+            if cancelled():
                 return
             worker(idx)
         finally:
@@ -1148,8 +1205,10 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
 
     primary = None
     try:
+        check_cancel()
         pool = browser.open_tabs()
         owned_tabs.extend(pool)
+        check_cancel()
         pool[0].navigate(f"{base_uri}?f={work[0]}")
         time.sleep(0.15)
         # Canvas 导出通道（PR#1）先于透明检测：opt-in 页直出画布 PNG（自带精确 alpha），
@@ -1237,9 +1296,14 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             # 缩减后 work 可能清空（缺失帧全是已缓存头帧的跨度成员）→ 零线程收尾
             threads = [threading.Thread(target=run_worker, args=(k,)) for k in range(tabs_n)]
             for t in threads:
+                check_cancel()
                 t.start()
-            for t in threads:
+            for idx, t in enumerate(threads):
+                if cancel is not None:
+                    while not settled[idx].wait(.1):
+                        check_cancel()
                 t.join()
+            check_cancel()
     except BaseException as error:
         primary = error
         raise
@@ -1297,6 +1361,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     dt = (time.monotonic() - t0) * 1000
     # —— 特性 2 延后复制：头帧已由本次渲染落盘，缺失成员字节复制头帧文件 ——
     for head, members in deferred_spans:
+        check_cancel()
         head_path = os.path.join(outdir, f"f{head:04d}.png")
         try:
             with file_clone.validated_source(
