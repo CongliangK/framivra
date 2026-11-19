@@ -522,7 +522,12 @@ def _observed_stage(c, name, fn, *, capture_exit=False):
             if session is not None and not code:
                 session.completed.add(name)
             return code
-        result = fn(c)
+        media = getattr(c, '_windows_svg_media', None)
+        if name == 'qc' and media is not None:
+            with media.qc_scope(c):
+                result = fn(c)
+        else:
+            result = fn(c)
         if session is not None:
             session.completed.add(name)
         return result
@@ -1075,22 +1080,27 @@ def _main_owned(execution, ownership):
         return
     try:
         scope = {}
-        if sys.platform == 'win32' and a.command == 'gfx' and not policy.dry:
+        if sys.platform == 'win32' and a.command in ('gfx', 'all') and not policy.dry:
             portable = os.environ.get('VTX_WINDOWS_SVG_PORTABLE')
             scratch = os.environ.get('VTX_WINDOWS_SVG_SCRATCH')
-            if portable or scratch:
+            media_bin = os.environ.get('VTX_WINDOWS_SVG_MEDIA_BIN') if a.command == 'all' else None
+            if (a.command == 'gfx' and (portable or scratch)) or media_bin:
                 if not portable or not scratch:
                     raise ValueError('Windows SVG requires explicit portable and private scratch roots')
+                if media_bin and (a.draft or a.frames is not None or a.gpu or a.until is not None):
+                    raise ValueError('Windows SVG all requires full-size CPU rendering without stage truncation')
                 from ..render.gfx_svg_win_runtime import owned_runtime
+                scope['_svg_all'] = bool(media_bin)
                 scope['_svg_runtime_factory'] = lambda c, fonts: ownership.enter_context(
-                    owned_runtime(c, portable, scratch, fonts))
+                    owned_runtime(c, portable, scratch, fonts, media_bin=media_bin))
         c = Ctx(tp, execution=execution, **scope)
     except (ValueError, KeyError, TypeError, ZeroDivisionError, OSError) as e:
         # 2026-09-11 扩捕获：timeline 结构缺键（KeyError）/类型错（TypeError）/fps=0
         # （ZeroDivisionError）/文件缺失（FileNotFoundError）均友好打印而非裸栈
         print(f"✗ timeline 无效：{e}"); sys.exit(1)
     c.dry = policy.dry   # 所有阶段读取同一显式策略；PLAN 下不得 mkdir
-    c.draft = a.draft; c.frames = a.frames; c.gpu = a.gpu; c.strict = a.strict
+    c.draft = a.draft; c.frames = a.frames; c.gpu = a.gpu
+    c.strict = a.strict or getattr(c, '_svg_all', False)
     c.keep_versions = a.keep_versions if a.keep_versions is not None else 2
     # 区间渲染（方案五阶段1）：解析窗口帧区间；独立命名空间路径，绕过 receipt 依赖门
     if range_flags:
@@ -1225,7 +1235,7 @@ def _execute_render(c, a):
         todo = [next(s for s in STAGES if s[0] == a.command)]
     names = [s[0] for s in todo] if a.command == "all" else [a.command]
     qc_exit = 0
-    if a.command == "all" and _pipeline_enabled():
+    if a.command == "all" and _pipeline_enabled() and not getattr(c, '_svg_all', False):
         # 方案二阶段2：all 默认走依赖图（串行头 → 并行波 → 串行尾）；
         # VTX_PIPELINE=0 回退下方线性序列（独立 A/B 开关）；
         # 方案三阶段3：--until 截断在依赖图内按阶段族映射（见 _run_all_pipeline）
@@ -1235,7 +1245,7 @@ def _execute_render(c, a):
             print(f"== {name} ==")
             # PR#1：阶段开始前做依赖门 + 撤销下游旧成功（失败重跑不得保留旧 QC PASS）。
             # draft 模式的 video/mux 记为 video_draft/mux_draft。
-            if name == "qc" and a.command == "all":
+            if name == "qc" and a.command == "all" and not getattr(c, '_svg_all', False):
                 # 2026-09-14 裁定（同流水线路径）：all 内 qc 失败不阻断 finish——
                 # 捕获退出码交 main 汇总；单阶段 `vtx qc` 仍走下方 fn(c) 冒泡退出
                 qc_exit = _observed_stage(c, name, fn, capture_exit=True)
@@ -1255,7 +1265,7 @@ def _execute_render(c, a):
     # 收尾失败以退出码 1 结束但产物已就绪（final.mp4 不受影响——失败可见即可）。
     finish_failed = False
     if (a.command == "all" and a.until in (None, "qc")
-            and not c.draft and not c.dry):
+            and not c.draft and not c.dry and not getattr(c, '_svg_all', False)):
         from ..pluginlib import hooks as _plugin_hooks
         with events.task(c, "finish", kind="stage").scope() as observation:
             _finish_errs = _plugin_hooks.run_finish(c)

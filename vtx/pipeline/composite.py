@@ -767,7 +767,12 @@ class RenderPlan:
         lset = self.layers if layer_set is None else layer_set
         # B03（issue #27 / F-05）：布局延迟创建——cli 不再无条件 mkdir cache/，
         # 段目录自建（parents 兜底 fresh 项目直渲本目录的首个落笔点）。
-        vdir = c.cache / tag; fstxn.mkdir(vdir, root=self.c.root)
+        vdir = c.cache / tag
+        media = getattr(c, "_windows_svg_media", None)
+        if media is None:
+            fstxn.mkdir(vdir, root=self.c.root)
+        else:
+            media.ensure_dir(vdir)
         bounds = [(L["cl"]["dst_in"], L["cl"]["dst_in"] + L["cl"]["dur"]) for L in lset]
         cuts = choose_cutpoints(bounds, c.dur, self.nseg)
         edges = [0] + cuts + [c.dur]
@@ -790,7 +795,7 @@ class RenderPlan:
             segp = vdir / f"seg{si:02d}_{a:06d}_{self._seg_content_key(a, b, sl, with_subs, sfile)}.mp4"
             # 段缓存（PR#1 内容键化）：存在且流头帧数==段长即跳过——键已含全部内容
             # 决定因素（字幕/图层/上游内容/参数），命中即安全；帧数检查是便宜兜底。
-            if media_cache_valid(segp, b - a):
+            if media_cache_valid(segp, b - a, c=c):
                 events.cache_hit(c, "media_cache_valid", frames=[a, b])
                 print(f"  ✓ 段 {si} [{a},{b}) 已缓存"); return segp
             self.composite(sl, segp, with_subs, a=a, b=b, sub_file=sfile)
@@ -864,27 +869,41 @@ class RenderPlan:
         lst = vdir / "list.txt"
         # PR#1（Windows 实测）：相对路径 concat 项在含 '#' 等特殊字符的目录下会被
         # 按清单目录做 URL 基准解析出错；绝对 POSIX 路径 + 引号转义规避（-safe 0 已带）。
-        fstxn.atomic_write(lst, _concat_manifest(
-            ((path, a, b) for path, a, b in zip(segs, edges, edges[1:])), c.fps),
-            root=self.c.root)
+        manifest = _concat_manifest(((path, a, b) for path, a, b in zip(segs, edges, edges[1:])), c.fps)
+        media = getattr(c, '_windows_svg_media', None)
+        if media is None:
+            fstxn.atomic_write(lst, manifest, root=self.c.root)
+        else:
+            media.write_aux(lst, manifest)
         # 记录本代段缓存对应的合成代码摘要（R7）：vtx diff 据此在 timeline 侧 0 失效
         # 时仍能提示「代码摘要已漂移 → 磁盘段缓存全冷重建」，避免影响面误报温态。
         if not c.dry:
             try:
-                fstxn.atomic_write(vdir / ".graph_digest", _graph_code_digest(), root=self.c.root)
+                if media is None:
+                    fstxn.atomic_write(vdir / ".graph_digest", _graph_code_digest(), root=self.c.root)
+                else:
+                    media.write_aux(vdir / ".graph_digest", _graph_code_digest())
             except OSError:
                 pass
-        c.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
-               "-c", "copy", str(out_path)])
+        concat = ["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i"]
+        if media is None:
+            c.run(concat + [str(lst), "-c", "copy", str(out_path)])
+        else:
+            with media.concat_input(c, ((p, b - a) for p, a, b in zip(segs, edges, edges[1:])), manifest) as private:
+                c.run(concat + [str(private), "-c", "copy", str(out_path)])
         # 内置正确性自检：容器元数据总帧数必须精确 == project.duration_frames
         # （dry-run 下产物不落地，探测必空 → 跳过自检；否则冷态 all --dry-run 在此误报退出）
         if c.dry:
             print(f"  [dry-run] 跳过拼接自检（产物未产出，帧数以段切点计算为准 = {c.dur}）")
             return enc
-        fr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
-                             "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(out_path)],
-                            capture_output=True, text=True,
-                            encoding="utf-8", errors="replace").stdout.strip()
+        probe = ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(out_path)]
+        if media is not None:
+            result = media.execute(probe)
+            fr = result.stdout.strip() if not result.returncode else ""
+        else:
+            fr = subprocess.run(probe, capture_output=True, text=True, encoding="utf-8",
+                                errors="replace").stdout.strip()
         if not (fr.isdigit() and int(fr) == c.dur):
             print(f"✗ 分段拼接自检失败：总帧数 {fr or '?'} ≠ {c.dur}（段边界丢帧/垫帧泄漏，禁止交付）")
             sys.exit(1)
@@ -913,7 +932,8 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None):
     整片与区间共用同一份 cache/seg——区间渲染不得另造键或另写命名空间。本函数只做
     seg/gfx 缓存侧副作用；manifest 记账与回执由调用方负责（区间渲染不记账不写回执）。
     """
-    fstxn.mkdir(c.cache / "seg", root=c.root)
+    if getattr(c, "_windows_svg_media", None) is None:
+        fstxn.mkdir(c.cache / "seg", root=c.root)
     tracks = c.tl["video_tracks"]
     # 统一预处理：全屏 clip（无 scale/x/y）经 transform 归一到项目分辨率；窗口 clip 按 scale 缩放。
     # Native alpha、opacity<1 或 fade → ProRes 4444；不透明源 → libx264/NVENC。所有轨道等价。
@@ -1068,7 +1088,7 @@ def build_video(c: Ctx, layers=None):
     W, H = ((c.w // 2) // 2 * 2, (c.h // 2) // 2 * 2) if draft else (c.w, c.h)
     if layers is None:
         layers = prepare_layers(c)
-    with frame_source.png_consumer_scope(layers) as layers:
+    with frame_source.png_consumer_scope(layers, c=c) as layers:
         tracks = c.tl["video_tracks"]
         for L in layers:                      # 记账：本时间轴的全部 seg（含缓存命中）
             if not L["gfx"] and L["seg"].exists() and not c.dry:
@@ -1076,7 +1096,11 @@ def build_video(c: Ctx, layers=None):
         plan = RenderPlan(c=c, draft=draft, f=f, W=W, H=H, nframes=nframes,
                           nseg=int(os.environ.get("VTX_VIDEO_SEGMENTS", str(DEFAULT_SEGMENTS))),
                           layers=layers)
-        plan.write_global_ass(c.cache / ("subs_draft.ass" if draft else "subs.ass"))
+        # The locked Windows demo has no subtitles; don't hand an empty but
+        # mutable project-side ASS path to a native child.
+        with_subs = getattr(c, '_windows_svg_media', None) is None
+        if with_subs:
+            plan.write_global_ass(c.cache / ("subs_draft.ass" if draft else "subs.ass"))
         # 默认 8（阶段三 2026-09-10 调优：voice-ime 实测 N=8 89.8s vs N=6 112.9s，-20%；
         # 20 帧含段边界灰度差均值 0.135/最大帧均值 1.195，与 N=6 相对单 graph golden 同级——
         # 偏差为段边界 ±1 帧固有，非 N=8 特有。NVENC 8 并发会话实测可用，探测失败自动回落串行）
@@ -1085,9 +1109,9 @@ def build_video(c: Ctx, layers=None):
         # --frames 与分段冲突（头窗截短逻辑基于全片坐标），回落旧单 graph；
         # VTX_VIDEO_SEGMENTS=1 回落旧单 graph（行为逐字节等价）。
         if nseg <= 1 or (draft and nframes):
-            enc = plan.composite(layers, out_main, True)
+            enc = plan.composite(layers, out_main, with_subs)
         else:
-            enc = plan.render_segmented(out_main, tag="vseg_draft" if draft else "vseg")
+            enc = plan.render_segmented(out_main, with_subs=with_subs, tag="vseg_draft" if draft else "vseg")
         # qc_clean = 仅底轨（tracks[0]）的基准画面，供 QC 做上层窗口生效比对（草稿跳过）。
         # Native-alpha 底轨也需要这个真实黑画布基准，原始 RGB 不能替代 alpha 合成。
         # 历史性能升级（2026-09-10）：仅当底轨是 gfx（无源视频可提帧）时才渲全片基准轨——

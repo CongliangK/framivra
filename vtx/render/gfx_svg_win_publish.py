@@ -57,6 +57,29 @@ class Directory:
         with self._open(name, reader._GENERIC_READ) as (handle, info):
             return reader._read(self.kernel, handle, limit, info.size)
 
+    @contextmanager
+    def open_read(self, name):
+        with self._open(name, reader._GENERIC_READ) as (handle, info):
+            yield handle, info.size
+
+    def chunks(self, handle, size, *, limit):
+        """Stream a still-held, read-only leaf from the beginning, without reopening it."""
+        if not 0 < size <= limit:
+            raise ValueError('Windows SVG media exceeds its byte budget or is empty')
+        buffer = C.create_string_buffer(min(size, 1024 * 1024))
+        count = W.DWORD()
+        remaining = size
+        while remaining:
+            amount = min(remaining, len(buffer))
+            if not self.kernel.ReadFile(handle, buffer, amount, C.byref(count), None):
+                raise C.WinError(C.get_last_error())
+            if not count.value:
+                raise ValueError('Windows SVG media ended before its certified size')
+            remaining -= count.value
+            yield buffer[:count.value]
+        if reader._info(self.kernel, handle, directory=False).size != size:
+            raise ValueError('Windows SVG media changed during streaming')
+
     def _check_existing(self, name):
         try:
             with self._open(name, reader._GENERIC_READ):
@@ -94,6 +117,9 @@ class Directory:
             pass
 
     def publish(self, name, payload):
+        self.publish_chunks(name, (payload,))
+
+    def publish_chunks(self, name, chunks):
         if not reader._ordinary(name):
             raise ValueError('Windows SVG publication requires an ordinary leaf name')
         self._check_existing(name)
@@ -111,8 +137,9 @@ class Directory:
         with self._open('.svg-' + secrets.token_hex(16) + '.tmp', 0xC0010000, disposition=2) as (handle, _):
             try:
                 count = W.DWORD()
-                if not write(handle, payload, len(payload), C.byref(count), None) or count.value != len(payload):
-                    raise OSError('Windows SVG publication could not write the full file')
+                for payload in chunks:
+                    if not write(handle, payload, len(payload), C.byref(count), None) or count.value != len(payload):
+                        raise OSError('Windows SVG publication could not write the full file')
                 if not flush(handle):
                     raise C.WinError(C.get_last_error())
                 # FileRenameInformation acts on the opened source, never on a reopened tmp name.

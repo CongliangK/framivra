@@ -124,6 +124,43 @@ class MediaRecovery(unittest.TestCase):
         wav(Path(cmd[-1]))
         return subprocess.CompletedProcess(cmd, 0, '', '')
 
+    @unittest.skipUnless(sys.platform == 'win32', 'native media publication')
+    def test_windows_owned_media_requires_same_inputs_and_preserves_old_file_on_abort(self):
+        from types import SimpleNamespace
+        from vtx.render.gfx_svg_win_media import WindowsSvgMedia
+        from vtx.render.gfx_svg_win_publish import anchored
+
+        scratch = self.root / 'scratch'
+        scratch.mkdir()
+        # Exercise actual NTFS transactions without requiring FFmpeg in the unit suite.
+        media = WindowsSvgMedia.__new__(WindowsSvgMedia)
+        media.project, media.scratch = self.root, scratch
+        media.operation = SimpleNamespace(keep=False)
+        media.identity = {'profile': 'fixture'}
+        media.published = {}
+        self.c._windows_svg_media = media
+        with anchored(scratch) as media.directory:
+            recovery.atomic_ffmpeg(self.c, self.cmd, self.encode)
+            record = recovery.completion_marker(self.target)
+            saved = (self.target.read_bytes(), record.read_bytes())
+            self.assertTrue(recovery.media_cache_valid(self.target, c=self.c))
+            self.assertFalse(recovery.media_cache_valid(self.target))
+            previous = self.c.input_fingerprint
+            self.c.input_fingerprint = 'fixture-mismatch'
+            self.assertFalse(recovery.media_cache_valid(self.target, c=self.c))
+            self.c.input_fingerprint = previous
+            alias = self.target.with_name('other.wav')
+            alias.write_bytes(saved[0])
+            recovery.completion_marker(alias).write_bytes(saved[1])
+            self.assertFalse(recovery.media_cache_valid(alias, c=self.c))
+
+            def late_abort():
+                raise RuntimeError('reject before rename')
+
+            with self.assertRaisesRegex(RuntimeError, 'reject before rename'):
+                recovery.atomic_ffmpeg(self.c, self.cmd, self.encode, before_commit=late_abort)
+            self.assertEqual((self.target.read_bytes(), record.read_bytes()), saved)
+
     def test_success_publishes_verified_media_and_warm_hit(self):
         recovery.atomic_ffmpeg(self.c, self.cmd, self.encode)
         self.assertTrue(self.target.exists())

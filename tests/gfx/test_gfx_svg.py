@@ -847,6 +847,8 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
         (root / 'alias.json').unlink()
         with self.assertRaisesRegex(ValueError, 'without external media'):
             Ctx(timeline, _svg_runtime_factory=runtime)
+        with self.assertRaisesRegex(ValueError, 'exact portable-v2 timeline'):
+            Ctx(timeline, _svg_runtime_factory=runtime, _svg_all=True)
         runtime.assert_not_called()
         self.assertEqual({path.name for path in root.iterdir()}, {'timeline.json'})
 
@@ -861,6 +863,46 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'pinned receipt input'):
             runtime.render_page(ctx, {}, record)
         self.assertEqual(list(root.iterdir()), [])
+
+    def test_composition_reads_only_locked_certified_frames(self):
+        from vtx.render.gfx_svg_win_runtime import _WindowsRasterRuntime
+
+        root = temporary_root(self).resolve()
+        cwd = root / 'private'
+        cwd.mkdir()
+        runtime = _WindowsRasterRuntime(root, (None, None, cwd), ENGINE, None, None)
+        record = {'engine': ENGINE, 'fonts': [], 'width': 2, 'height': 2, 'frame_count': 1}
+        ctx = SimpleNamespace(root=root, _svg_runtime=runtime,
+                              _svg_receipt_record=gfx_svg.digest(gfx_svg.canonical(record)),
+                              verify_inputs=mock.Mock())
+        clip = dict(format='svg-sequence', src='manifest.json', dst_in=0, dur=1)
+        key = gfx_svg.record_key(record)
+        page = root / 'cache' / 'gfx_exp' / gfx_svg.NAMESPACE / key
+        page.mkdir(parents=True)
+        frame = page / 'f0000.png'
+        frame.write_bytes(png(2, 2))
+        (page / 'f0001.png').write_bytes(b'not part of the sequence')
+        marker = {'format': 'framivra-svg-completion/v1', 'key': key, 'input': record,
+                  'sha256': [gfx_svg.digest(frame.read_bytes())]}
+        (page / gfx_svg.COMPLETE_FILE).write_bytes(gfx_svg.canonical(marker))
+        ctx.cache, ctx.fps, ctx.w, ctx.h = root / 'cache', 30, 2, 2
+        from vtx.render.frame_source import png_consumer_scope
+        with mock.patch.object(gfx_svg, 'resolve', return_value=record), mock.patch.object(runtime, 'verify'):
+            source = png_source(ctx, clip)
+            with png_consumer_scope([{'gfx': True, 'cl': clip, 'source': source}], c=ctx) as layers:
+                consumer = layers[0]['source']
+                self.assertEqual(consumer.identity, source.identity)
+                self.assertNotEqual(consumer.directory, page)
+                self.assertEqual([p.name for p in consumer.directory.iterdir()], ['f0000.png'])
+                frame.write_bytes(b'replaced public frame')
+                self.assertEqual(consumer.input_args()[-1], str(consumer.directory / 'f%04d.png'))
+                with self.assertRaises(PermissionError):
+                    consumer.frame_path(0).write_bytes(b'cannot change pinned input')
+            runtime.context = (None, None, cwd / 'new-operation')
+            runtime.context[2].mkdir()
+            with self.assertRaisesRegex(ValueError, 'invalid output PNG'):
+                with png_consumer_scope([{'gfx': True, 'cl': clip, 'source': source}], c=ctx):
+                    self.fail('corrupt frame reached compositor')
 
     def test_native_marker_and_receipt_publication_rejects_hardlink_targets(self):
         from vtx.render.gfx_svg_win_publish import anchored

@@ -22,6 +22,14 @@ _PROFILE = 'windows-amd64-inkscape-1.4.4-font-free/v1'
 _FONT_PROFILE = 'windows-amd64-inkscape-1.4.4-portable-v2-fonts/v1'
 _FONT_PATHS = tuple('assets/fonts/' + name for name in shell._FONT_NAMES)
 _LEDGER_LIMIT = svg.MAX_MANIFEST_BYTES
+_PNG_LIMIT = 64 * 1024 * 1024
+
+
+def _png_digest(data, width, height):
+    reason = _png_stream_invalid_reason(BytesIO(data), len(data), width=width, height=height)
+    if reason:
+        raise ValueError(f'Windows SVG invalid output PNG: {reason}')
+    return svg.digest(data)
 
 
 def _publish_json(directory, name, value):
@@ -96,15 +104,61 @@ class _WindowsRasterRuntime:
             _publish_json(out, 'receipt.json', value)
             return value
 
-    def render_page(self, c, clip, record):
+    def _require_record(self, c, record):
         if c.root != self.project or record['engine'] != self.identity:
             raise ValueError('Windows SVG stage does not match the bound runtime')
         self.require_fonts(record['fonts'])
         if svg.digest(svg.canonical(record)) != getattr(c, '_svg_receipt_record', None):
             raise ValueError('Windows SVG stage record does not match the pinned receipt input')
+
+    @contextmanager
+    def _locked_page(self, key, *, create):
+        with ExitStack() as pins:
+            page = pins.enter_context(anchored(self.project))
+            for part in ('cache', 'gfx_exp', svg.NAMESPACE, key):
+                page = pins.enter_context(page.child(part, create=create))
+            pins.enter_context(page.lock(svg.COMPLETE_FILE))
+            yield page
+
+    @staticmethod
+    def _certified_frames(page, marker, record, key):
+        hashes = svg.verify_completion(json.loads(marker), record, record['frame_count'], key)
+        for index, expected in enumerate(hashes):
+            name = f'f{index:04d}.png'
+            data = page.read(name, _PNG_LIMIT)
+            if _png_digest(data, record['width'], record['height']) != expected:
+                raise ValueError('Windows SVG cached PNG does not match its completion record')
+            yield name, data, expected
+
+    @contextmanager
+    def composition_frames(self, c, record):
+        """Freeze only the certified interval for FFmpeg's path-based image2 demuxer."""
+        self._require_record(c, record)
+        c.verify_inputs('video')
+        key = svg.record_key(record)
+        directory = self.context[2] / 'composition-frames'
+        directory.mkdir()
+        hashes = []
+        with ExitStack() as pins:
+            pins.enter_context(snapshot._pin_dir(directory))
+            with self._locked_page(key, create=False) as page:
+                marker = page.read(svg.COMPLETE_FILE, _LEDGER_LIMIT)
+                for name, data, expected in self._certified_frames(page, marker, record, key):
+                    target = directory / name
+                    with target.open('xb') as stream:
+                        stream.write(data)
+                    handle, info, _, is_directory = pins.enter_context(snapshot._pin_entry(target))
+                    if shell._read_pinned(handle, info, is_directory, len(data)) != data:
+                        raise ValueError('Windows SVG frozen composition frame changed')
+                    hashes.append(expected)
+            self.verify()
+            c.verify_inputs('video')
+            yield directory, tuple(hashes)
+
+    def render_page(self, c, clip, record):
+        self._require_record(c, record)
         count, key = record['frame_count'], svg.record_key(record)
         operation, _, cwd, _, _ = self.context
-        limit = 64 * 1024 * 1024
         started = time.monotonic()
 
         def sources():
@@ -114,26 +168,14 @@ class _WindowsRasterRuntime:
                     raise ValueError('Windows SVG stage input changed before rendering')
                 yield index, data
 
-        def fingerprint(data):
-            reason = _png_stream_invalid_reason(BytesIO(data), len(data), width=c.w, height=c.h)
-            if reason:
-                raise ValueError(f'Windows SVG invalid output PNG: {reason}')
-            return svg.digest(data)
-
-        with ExitStack() as pins:
-            page = pins.enter_context(anchored(self.project))
-            for part in ('cache', 'gfx_exp', svg.NAMESPACE, key):
-                page = pins.enter_context(page.child(part, create=True))
-            pins.enter_context(page.lock(svg.COMPLETE_FILE))
+        with self._locked_page(key, create=True) as page:
             try:
-                marker = page.read(svg.COMPLETE_FILE, svg.MAX_MANIFEST_BYTES)
+                marker = page.read(svg.COMPLETE_FILE, _LEDGER_LIMIT)
             except FileNotFoundError:
                 marker = None
             if marker is not None:
-                hashes = svg.verify_completion(json.loads(marker), record, count, key)
-                for index, expected in enumerate(hashes):
-                    if fingerprint(page.read(f'f{index:04d}.png', limit)) != expected:
-                        raise ValueError('Windows SVG cached PNG does not match its completion record')
+                for _ in self._certified_frames(page, marker, record, key):
+                    pass
                 self.verify()
                 c.verify_inputs('gfx')
                 return True
@@ -153,8 +195,8 @@ class _WindowsRasterRuntime:
             shell._require_outputs(frames, names)
             hashes = []
             for name in names:
-                data = shell._read_png(operation, frames / name, limit=limit)
-                hashes.append(fingerprint(data))
+                data = shell._read_png(operation, frames / name, limit=_PNG_LIMIT)
+                hashes.append(_png_digest(data, c.w, c.h))
                 page.publish(name, data)
             c.verify_inputs('gfx')
             if svg.resolve(c, clip) != record:
@@ -167,11 +209,11 @@ class _WindowsRasterRuntime:
 
 
 @contextmanager
-def owned_runtime(c, portable, scratch, fonts):
+def owned_runtime(c, portable, scratch, fonts, *, media_bin=None):
     from .gfx_environment import _windows_boot
 
-    if fonts and fonts != _FONT_PATHS:
-        raise ValueError('Windows SVG requires the ordered portable-v2 font set or no fonts')
+    if (fonts or media_bin is not None) and fonts != _FONT_PATHS:
+        raise ValueError('Windows SVG requires the ordered portable-v2 font set')
     project, portable, scratch = map(snapshot._local_path, (c.root, portable, scratch))
     # Refuse changed bytes before copying the vendor runtime or starting tools.
     payloads = []
@@ -190,6 +232,9 @@ def owned_runtime(c, portable, scratch, fonts):
         sci = snapshot._pin_dirs(roots, scratch)
         if pri[-1] in sci or sci[-1] in pri:
             raise ValueError('Windows SVG scratch overlaps the project')
+        if media_bin is not None:
+            from .gfx_svg_win_media import WindowsSvgMedia, _STANDARD_TOOLS, bind_standard_audio
+            c._svg_audio_digests = bind_standard_audio(roots, project)
         with snapshot._verified_snapshot(portable, scratch=scratch, retain_package_images=True) as (op, images):
             with ExitStack() as pins:
                 executable, cwd = op.inputs.executable, op.inputs.cwd
@@ -225,4 +270,16 @@ def owned_runtime(c, portable, scratch, fonts):
                             'package': snapshot._TREE_SHA256, 'system': [list(row) for row in systems],
                             'boot': _windows_boot(), 'catalog_signers': sorted(_SIGNERS), 'configuration': configs,
                             'implementation': {name: svg.digest((location / name).read_bytes()) for name in files}}
-                yield _WindowsRasterRuntime(project, context, identity, held, recheck, font_records, staged)
+                media_state = None
+                if media_bin is not None:
+                    from types import SimpleNamespace
+                    media_state = SimpleNamespace(keep=False)
+                    media_scratch = cwd / 'media'
+                    media_scratch.mkdir()
+                    c._windows_svg_media = WindowsSvgMedia(pins, project, media_scratch, media_state,
+                                                          media_bin, _STANDARD_TOOLS, ctx=c)
+                try:
+                    yield _WindowsRasterRuntime(project, context, identity, held, recheck, font_records, staged)
+                finally:
+                    if media_state is not None and media_state.keep:
+                        op.keep = True

@@ -117,9 +117,12 @@ def _archive_stale_receipt(f: Path, fingerprint: str, *, root):
 
 
 class Ctx:
-    def __init__(self, timeline_path: Path, *, execution=None, diagnostics=None, _svg_runtime_factory=None):
+    def __init__(self, timeline_path: Path, *, execution=None, diagnostics=None, _svg_runtime_factory=None,
+                 _svg_all=False):
         self._svg_runtime_factory = _svg_runtime_factory
         self._svg_runtime = None
+        self._svg_all = _svg_all
+        self._windows_svg_media = None
         self.execution = execution if execution is not None else events.ExecutionContext()
         if diagnostics is not None:
             self.diagnostics = diagnostics
@@ -218,6 +221,13 @@ class Ctx:
         self._pre_layers = None
 
     # ---- 基础设施 ----
+    def execute_media_tool(self, argv, *, text=True):
+        media = getattr(self, '_windows_svg_media', None)
+        if media is not None:
+            return media.execute(argv, text=text)
+        options = dict(encoding='utf-8', errors='replace') if text else {}
+        return subprocess.run(argv, capture_output=True, text=text, **options)
+
     def run(self, cmd, need=True, *, before_commit=None, after_commit=None):
         """Execute a command; commit callbacks are for owned, need=True media only.
 
@@ -233,8 +243,7 @@ class Ctx:
         from ..cache.recovery import atomic_ffmpeg
         observation = events.task(self, kind="process")
         def execute(argv):
-            return observation.attempt(subprocess.run, argv, capture_output=True, text=True,
-                                       encoding="utf-8", errors="replace")
+            return observation.attempt(self.execute_media_tool, argv)
         try:
             with observation.scope():
                 r = (atomic_ffmpeg(self, cmd, execute, before_commit=before_commit,
@@ -539,6 +548,15 @@ def _run_ffmpeg_task(c: Ctx, label: str, cmd, nvenc: bool = False):
     if c.dry and is_ffmpeg_cmd(cmd):
         print("[dry-run]", " ".join(map(str, cmd))[:300] + (" …" if len(cmd) > 20 else ""))
         return
+    media = getattr(c, '_windows_svg_media', None)
+    if media is not None:
+        if nvenc:
+            raise ValueError('Windows SVG media currently requires CPU encoding')
+        observe = events.current(c)
+        r = observe.attempt(media.execute, cmd) if observe else media.execute(cmd)
+        if r.returncode:
+            raise RuntimeError(f'{label}: ' + r.stderr[-1500:])
+        return r
     if nvenc:
         # R-07h S5 重试武装（机制本体=encoders.nvenc_retry_run）：失败入重试队列，
         # 至多 N=2 次指数退避后原 argv 原样重发（cmd 列表对象原样重用——编码命令

@@ -2,11 +2,17 @@
 
 ## 受限 `gfx` 配置
 
-Windows x64 原生配置只支持 `gfx`、单个 SVG 剪辑、无普通素材/字幕/插件、`core` 松散帧缓存。字体可为空，或按标准 portable-v2 清单的顺序声明锁定的四份 Noto/DejaVu 字体；不接受任意字体。带字体需要完整源码检出或受管 editable 安装提供基线锁，单独 wheel 不提供此配置。不开放 `all`、单帧预览或打包缓存。未配置时仍拒绝生产准入，不查 PATH、不回退内部验收。
+Windows x64 原生配置只支持 `gfx`、单个 SVG 剪辑、无普通素材/字幕/插件、`core` 松散帧缓存。字体可为空，或按标准 portable-v2 清单的顺序声明锁定的四份 Noto/DejaVu 字体；不接受任意字体。带字体需要完整源码检出或受管 editable 安装提供基线锁，单独 wheel 不提供此配置。不开放任意工程的 `all`、单帧预览或打包缓存。未配置时仍拒绝生产准入，不查 PATH、不回退内部验收。
 
 运行前用本次进程环境设置 `VTX_WINDOWS_SVG_PORTABLE`（官方 Inkscape 1.4.4 x64 便携解包根，含 `inkscape` 子目录）与 `VTX_WINDOWS_SVG_SCRATCH`（已存在、仅可信账户可写的短 ASCII 暂存根）。工程、便携包与暂存使用可信的固定 NTFS 根，暂存与工程/包不得重叠。工程产品根也必须由可信写者控制；完成标记不是可跨信任边界验证的签名。`python -m vtx -t <timeline.json> gfx` 会启动受监管的 Inkscape 并写 `cache/` 与 `out/receipt.json`。正常暖用仍重做运行身份预检，但不执行帧导出。
 
 [运行时](<../../vtx/render/gfx_svg_win_runtime.py>)锁定官方包、私有字体配置、经离线目录签名验证的系统文件和原句柄。[发布](<../../vtx/render/gfx_svg_win_publish.py>)在同一缓存页锁下锚读验证或写入逐帧 PNG，最后提交完成标记，写回执沿用原指纹及撤销语义。加载事件约束实际 Job 的文件身份，不证明映射内存字节；Job 是进程所有权边界，不是权限沙箱。
+
+## 锁定 portable-v2 主片的 `all`
+
+在上述两个 SVG 根之外，设置 `VTX_WINDOWS_SVG_MEDIA_BIN` 指向已验的 Gyan FFmpeg 9.0.2 full 静态版 `bin`（固定 `ffmpeg.exe` 和 `ffprobe.exe` 字节）。只接受 portable-v2 的原始时间线、帧、字体、声明依赖和两份 WAV。`python -m vtx -t <timeline.json> all` 是写操作：执行正式阶段、写缓存及封装，并默认做严格 QC。仅 CPU/完整输出、不运行插件；阶段串行，视频分段仍由 `VTX_VIDEO_SEGMENTS` 控制。
+
+FFmpeg 在私有 Job 中处理被锁定的素材、认证帧和中间媒体；私有拼接清单只引用已认证段。媒体出 Job 后完整解码并提交，暖认证绑定目标、输入和工具，QC 回执绑定本轮实际终片和参考视频。工程、工具与暂存根须由可信写者控制；这些检查不提供权限沙箱，也不开放通用 Windows 工程合成。
 
 ## 内部证据
 

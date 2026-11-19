@@ -418,10 +418,15 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     # Keys are str(), so native key comparisons cannot fail on mixed JSON types.
     sources = _get(c, c.tl, 'sources', '$', [])
     visual_bgm = getattr(c, '_visual_bgm_source_ids', ())
+    audio = getattr(c, '_svg_audio_digests', {})
     for index, s in sorted(_SourceEntries(c, sources), key=source_key):
         origin = f'$.sources[{index}]'
-        p = _path(c, _field(c, s, 'path', origin), origin + '.path')
+        name = _field(c, s, 'path', origin)
         prefix = _text(c, _get(c, s, 'path', origin, ''), origin + '.path') + ':'
+        if audio:
+            h.update(_encode(c, prefix + 'locked-wav:' + audio[name] + '\n', origin + '.path'))
+            continue
+        p = _path(c, name, origin + '.path')
         if visual_bgm and s['id'] in visual_bgm:
             # PNG scope binds the declared score bytes, not its audio runtime.
             digest = 'visual-bgm-json:' + (file_digest(p) if p.is_file() else 'MISSING')
@@ -489,6 +494,10 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     # #47 record adds path/closure identity without reordering native failures.
     _append_gfx_dependency_identity(c, h, gfx_inputs, pin_svg=owned_svg and timeline_bytes is not None)
     from ..render import gfx_svg
+    if getattr(c, '_svg_all', False):
+        if not audio or c._windows_svg_media is None:
+            raise ValueError('Windows SVG all requires bound audio and media tools before fingerprinting')
+        h.update(b'windows-svg-media|' + gfx_svg.canonical(c._windows_svg_media.identity))
     if gfx_svg.route(c) != 'svg-sequence':
         # Selected renderer and namespace revoke downstream success as well.
         from ..render.gfx_backend import identity

@@ -72,16 +72,19 @@ def _current_png_fingerprint(path, verified_size):
 
 
 @contextlib.contextmanager
-def png_consumer_scope(layers):
+def png_consumer_scope(layers, *, c=None):
     """Bind fresh source views; preparation and escaped views gain no trust.
 
-    This does not open an SVG input snapshot scope. All existing input,
-    environment and completion checks still run on every consumer call.
+    With an owned Windows runtime, bind the certified SVG bytes to a private
+    sequence for this operation. Other sources retain their existing checks
+    on every consumer call.
     """
     from .gfx_svg import SequenceSnapshot
     scope = _PngConsumerScope()
     sources = {}
     scoped_layers = []
+    runtime = getattr(c, '_svg_runtime', None)
+    frozen = contextlib.ExitStack()
     try:
         for layer in layers:
             view = dict(layer)
@@ -91,7 +94,11 @@ def png_consumer_scope(layers):
                     binding = _PngConsumerFacts(scope)
                     changes = {'_png_facts': binding}
                     snapshot = getattr(source.interval_check, '__self__', None)
-                    if (type(snapshot) is SequenceSnapshot
+                    if runtime is not None and type(snapshot) is SequenceSnapshot:
+                        directory, hashes = frozen.enter_context(runtime.composition_frames(c, snapshot.record))
+                        changes.update(directory=directory, environment_check=lambda hashes=hashes: hashes,
+                                       interval_check=None)
+                    elif (type(snapshot) is SequenceSnapshot
                             and getattr(source.interval_check, '__func__', None)
                             is SequenceSnapshot.check_interval
                             and snapshot.scope is not None):
@@ -108,6 +115,7 @@ def png_consumer_scope(layers):
         yield scoped_layers
     finally:
         scope.invalidate()
+        frozen.close()
 
 
 @dataclass(frozen=True)
