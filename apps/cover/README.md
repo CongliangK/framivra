@@ -19,7 +19,7 @@
 
 ## 开启步骤
 
-以下示例从 Framivra 仓库根执行；`<video_tools>` 替换为仓库绝对路径，`<项目>` 与原图占位符替换为对应绝对路径。
+以下示例从 Framivra 仓库根执行；将占位符替换为对应绝对路径。`--bg-src` 须指向可解码的本地原图，缺图时预处理失败，不会改用纯色背景。Chromium 按 `Noto Sans CJK SC`、`霞鹜新晰黑`、`sans-serif` 回退，脚本不验证实际使用的字体。**写入提示：** `all` 会在 `<项目>/cover` 写入背景图、HTML、元数据、PNG/JPG、`previews/` 和 QC 回执；可能覆盖同名文件，失败不回滚，建议用新目录。单跑 `qc` 也会写入 `cover_qc.json`。本地生成或 QC 通过不代表素材获授权，也不代表平台接受或已发布。
 
 ```bash
 cd "<video_tools>"
