@@ -678,6 +678,31 @@ class TestOutJsonArchive(unittest.TestCase):
             self.assertEqual(rep["params"]["g3_tp"], -1.0)
             self.assertEqual(rep["params"]["skip"], ["G1"])
 
+    def test_windows_cli_accepts_utf8_project_gates_under_legacy_stdio(self):
+        if os.name != 'nt':
+            self.skipTest('Windows legacy pipe encoding')
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            timeline, gates = root / '时间线.json', root / '门槛.json'
+            timeline.write_text(json.dumps({
+                'project': {'fps': 30, 'duration_frames': 90},
+                'audio_tracks': [{'name': '配音😀', 'events': [{}]}],
+            }, ensure_ascii=False), encoding='utf-8')
+            command = [sys.executable, '-B', content_gates.__file__, '-t', str(timeline),
+                       '--media', str(root / 'missing.mp4'), '--skip', 'G1',
+                       '--project-gates', str(gates)]
+            env = dict(os.environ, PYTHONIOENCODING='ascii:strict', PYTHONUTF8='0')
+            for expected, glyph, status, code in ((1, '✓', 'PARTIAL', 0), (2, '✗', 'FAIL', 1)):
+                with self.subTest(expected=expected):
+                    gates.write_text(json.dumps({'配音😀_events': expected}, ensure_ascii=False), encoding='utf-8')
+                    result = subprocess.run(command, cwd=root, env=env, capture_output=True, timeout=30)
+                    self.assertEqual(result.stderr, b'', result)
+                    self.assertEqual(result.returncode, code, result)
+                    stdout = result.stdout.decode('utf-8')
+                    self.assertIn(f'{glyph} PG:配音😀_events:', stdout)
+                    self.assertEqual(stdout.splitlines()[-1], status)
+            self.assertCountEqual(root.iterdir(), (timeline, gates))
+
     def test_default_no_out_file(self):
         # 默认（无 --out）不落任何留档件——既有行为兼容
         with tempfile.TemporaryDirectory() as d:
