@@ -38,8 +38,9 @@ from .base import (BaseEngine, EngineError, default_out, measure_wav,
 
 def _ff(args, timeout=300):
     """跑 ffmpeg，返回 (returncode, stdout+stderr)。"""
+    # Native FFmpeg logs Unicode paths as UTF-8 even under a legacy Windows ACP.
     r = subprocess.run(["ffmpeg", "-hide_banner", "-nostats"] + args,
-                       capture_output=True, text=True, timeout=timeout)
+                       capture_output=True, encoding='utf-8', errors='replace', timeout=timeout)
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
 

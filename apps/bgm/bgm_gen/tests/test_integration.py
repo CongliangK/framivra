@@ -97,21 +97,29 @@ def test_health_and_import_do_not_load_gpu_libraries(fresh_env, tmp_path):
 
 def test_fresh_synth_project_end_to_end(fresh_env, tmp_path):
     assert shutil.which("ffmpeg"), "FFmpeg is the documented base render dependency"
-    out = tmp_path / "render"
-    command = ["python3", str(APP / "bgm.py"), "render", str(APP / "examples/synth.json"), "-o", str(out), "-q"]
-    result = subprocess.run(command, cwd=tmp_path, env=fresh_env, capture_output=True, text=True, timeout=90)
+    out = tmp_path / '音 # render'
+    env = {**fresh_env, 'PYTHONIOENCODING': 'utf-8'}
+    if os.name == 'nt':
+        # Native FFmpeg writes UTF-8 diagnostics even with Python UTF-8 mode off.
+        env['PYTHONUTF8'] = '0'
+    python = sys.executable if os.name == 'nt' else 'python3'
+    command = [python, str(APP / "bgm.py"), "render", str(APP / "examples/synth.json"), "-o", str(out), "-q"]
+    result = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, encoding='utf-8', timeout=90)
     assert result.returncode == 0, result.stderr
+    assert 'UnicodeDecodeError' not in result.stderr
     report = json.loads(result.stdout)
     assert report["duration_s"] == 4
     assert report["name"] == "synth-demo"  # project identity, never last stem name
     assert report["qc_ok"] is True
     for name in ("mix.flac", "mix_master.wav", "mix_premaster.wav", "qc.json", "project.json", "stems/keys.synth.wav", "stems/keys.bus.wav"):
         assert (out / name).stat().st_size > 0
-    assert json.loads((out / "qc.json").read_text())["ok"] is True
+    qc = json.loads((out / "qc.json").read_text(encoding='utf-8'))
+    assert qc['ok'] is True
+    assert qc['measured']['key_top3'], 'the real analysis subprocess must return key measurements'
     # A second independent render must reproduce the audio, not rely on old out/.
     again = tmp_path / "again"
     command[-2] = str(again)
-    other = subprocess.run(command, cwd=tmp_path, env=fresh_env, capture_output=True, text=True, timeout=90)
+    other = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, encoding='utf-8', timeout=90)
     assert other.returncode == 0, other.stderr
     assert (out / "mix.flac").read_bytes() == (again / "mix.flac").read_bytes()
 
@@ -140,6 +148,8 @@ def test_project_qc_uses_explicit_runtime_without_reloading_defaults(fresh_env, 
     # requiring a second installed Python or replacing the real QC subprocesses.
     config.write_text(json.dumps({"python_system": shutil.which("ffmpeg")}))
     monkeypatch.setenv("MUSIC_RUNTIME", str(config))
+    # Owned analysis must not inherit a console codec that cannot print its results.
+    monkeypatch.setenv('PYTHONIOENCODING', 'ascii:strict')
     default_reads, script_calls = [], []
     load_runtime, run = qc.load_runtime, subprocess.run
 
@@ -160,7 +170,7 @@ def test_project_qc_uses_explicit_runtime_without_reloading_defaults(fresh_env, 
         before = len(script_calls)
         result = render_project(str(APP / "examples/synth.json"),
                                 str(tmp_path / name), quiet=True, runtime=runtime)
-        report = json.loads(Path(result["qc"]).read_text())
+        report = json.loads(Path(result["qc"]).read_text(encoding='utf-8'))
         assert result["qc_ok"] is True
         assert report["measured"]["key_top3"]
         assert report["measured"]["bpm_top3"]
