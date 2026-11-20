@@ -19,8 +19,10 @@ CLI_PYTHON = sys.executable if os.name == 'nt' else 'python3'
 
 
 def _run_bgm(*args, cwd, env):
+    # POSIX retains its locale unless the fixture explicitly requests UTF-8.
+    encoding = 'utf-8' if os.name == 'nt' or env.get('PYTHONIOENCODING') == 'utf-8' else None
     return subprocess.run([CLI_PYTHON, str(APP / 'bgm.py'), *args], cwd=cwd, env=env,
-                          capture_output=True, encoding='utf-8', timeout=90)
+                          capture_output=True, text=True, encoding=encoding, timeout=90)
 
 
 @pytest.fixture
