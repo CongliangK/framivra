@@ -10,8 +10,12 @@ from ..render.browser_paths import find_chrome_candidate
 
 def has_quarter_turn(stream):
     """Match FFmpeg autorotation's transpose threshold for a stream display matrix."""
-    for side in stream.get('side_data_list') or ():
-        if not isinstance(side, dict) or side.get('side_data_type') != 'Display Matrix':
+    side_data = stream.get('side_data_list', [])
+    if not isinstance(side_data, list) or any(not isinstance(side, dict) or
+            not isinstance(side.get('side_data_type'), str) for side in side_data):
+        return None
+    for side in side_data:
+        if side['side_data_type'] != 'Display Matrix':
             continue
         # ffprobe prints the angle as an integer. Reconstruct av_display_rotation_get
         # from its fixed-point matrix to distinguish e.g. 89.5 from 88.5 degrees.
@@ -91,7 +95,8 @@ def probe_video_alpha(path):
         raise ValueError(f'video source metadata unavailable: {path}')
     data = json.loads(result.stdout)
     streams = data.get('streams', []) if isinstance(data, dict) else []
-    if not isinstance(streams, list) or not streams or not isinstance(streams[0], dict):
+    if (not isinstance(streams, list) or not streams or not isinstance(streams[0], dict)
+            or streams[0].get('codec_type') != 'video'):
         raise ValueError(f'video stream unavailable: {path}')
     return video_alpha_info(streams[0], data.get('pixel_formats', []))
 

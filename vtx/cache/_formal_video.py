@@ -73,7 +73,11 @@ def _read_record(path):
     if not stat.S_ISREG(before.st_mode) or before.st_size > _LIMIT:
         raise ValueError('invalid formal video record')
     flags = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
-    with os.fdopen(os.open(path, flags), 'rb') as stream:
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError as error:
+        raise ValueError('formal video record disappeared during opening') from error
+    with os.fdopen(fd, 'rb') as stream:
         current = os.fstat(stream.fileno())
         if not stat.S_ISREG(current.st_mode) or not os.path.samestat(before, current):
             raise ValueError('formal video record changed during opening')
@@ -93,7 +97,10 @@ def _unaffected_legacy_sources(c, native):
     probe = c.probe if native is not None else probe_video_alpha
     try:
         for sid in names:
-            if probe(c.src_path(sid)).get('quarter_turn', False) is not False:
+            info = probe(c.src_path(sid))
+            if native is not None and info.get('has_video') is not True:
+                return False
+            if info.get('quarter_turn', False) is not False:
                 return False
     except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError):
         return False

@@ -288,8 +288,26 @@ class SamplingMediaContract(unittest.TestCase):
             'subtitles': [], 'audio_tracks': [{'name': 'tone', 'events': [
                 {'src': 'source', 'in': 0, 'out': 60, 'volume': 1.0}]}]}))
         env = dict(os.environ, VTX_PIPELINE='0', VTX_VIDEO_SEGMENTS='1', VTX_SEG_NVENC='0')
-        self.command([sys.executable, REPO/'vtx/vtx.py', '-t', timeline, 'all', '--until', 'mux'],
-                     env=env, cwd=REPO)
+        cli = [sys.executable, '-B', '-X', 'utf8', REPO/'vtx/vtx.py', '-t', timeline]
+        self.command([*cli, 'all', '--until', 'mux'], env=env, cwd=REPO)
+        from vtx.cache._formal_video import proof_name
+        out = self.root / 'out'
+        video_proof, final_proof = (out / proof_name(leaf) for leaf in ('video_noaudio.mp4', 'final.mp4'))
+        final = out / 'final.mp4'
+        before = final.read_bytes()
+        final_proof.write_bytes(b'null')  # Malformed is not a missing legacy proof.
+        rejected = subprocess.run(list(map(str, [*cli, 'qc', '--strict'])), cwd=REPO,
+                                  env=env, capture_output=True, timeout=180)
+        self.assertEqual(rejected.returncode, 1, rejected.stdout + rejected.stderr)
+        self.assertIn('当前视频产物缺少有效几何证明', rejected.stdout.decode('utf-8'))
+        final_proof.unlink()
+        video_proof.unlink()
+        self.command([*cli, 'qc', '--strict'], env=env, cwd=REPO)
+        self.assertEqual(final.read_bytes(), before)
+        self.assertFalse(final_proof.exists(), 'do not adopt the legacy artifact')
+        self.command([*cli, 'mux'], env=env, cwd=REPO)
+        self.assertTrue(final_proof.is_file())
+        self.assertFalse(video_proof.exists(), 'mux did not rerender or adopt video')
         c = Ctx(timeline, diagnostics=[]); c.strict = True
         code, _, report = _run_qc(c)
         self.assertEqual(code, 0, report)
