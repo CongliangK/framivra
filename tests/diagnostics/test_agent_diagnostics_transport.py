@@ -58,8 +58,10 @@ class UnicodeTransport(unittest.TestCase):
             # deliberately ASCII-only human terminal are outside this comparison.
             human = self.invoke(value, 'utf-8:strict', agent=False)
             self.assertEqual(human.returncode, 0)
-            self.assertEqual(report['legacy_output']['stdout'], human.stdout.decode('utf-8'))
-            self.assertEqual(human.stderr, b'')
+            # The agent captures text before the platform's pipe newline translation.
+            for stream in ('stdout', 'stderr'):
+                text = getattr(human, stream).decode('utf-8').replace(os.linesep, '\n')
+                self.assertEqual(report['legacy_output'][stream], text)
 
     def test_surrogate_source_id_failure_still_has_a_document(self):
         value = timeline()

@@ -27,6 +27,7 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
+from tests._support import cli_python
 from vtx.pipeline.range import (parse_timespec, range_label, window_from_clip,
                         window_from_track, select_segments)
 
@@ -188,9 +189,9 @@ class TestCliGuards(unittest.TestCase):
 
     def _run(self, *extra):
         return subprocess.run(
-            ["env", "python3", "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
+            [*cli_python(), "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
              "-t", str(REPO / "tests" / "fixtures_nonexist.json"), "video", *extra],
-            capture_output=True, text=True, cwd=str(REPO))
+            capture_output=True, encoding="utf-8", cwd=REPO, timeout=120)
 
     def test_range_requires_draft_video(self):
         r = self._run("--range", "0", "6")
@@ -222,9 +223,9 @@ class TestCliGuards(unittest.TestCase):
             p = Path(d) / "timeline.json"
             p.write_text(json.dumps(tl), encoding="utf-8")
             r = subprocess.run(
-                ["env", "python3", "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
+                [*cli_python(), "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
                  "-t", str(p), "video", "--draft", "--track", "ghost"],
-                capture_output=True, text=True, cwd=str(REPO))
+                capture_output=True, encoding="utf-8", cwd=REPO, timeout=120)
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("空轨", r.stdout)
             self.assertIn("ghost", r.stdout)
@@ -242,9 +243,9 @@ class TestCliGuards(unittest.TestCase):
             p = Path(d) / "timeline.json"
             p.write_text(json.dumps(tl), encoding="utf-8")
             r = subprocess.run(
-                ["env", "python3", "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
+                [*cli_python(), "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
                  "-t", str(p), "video", "--draft", "--range", "abc", "6"],
-                capture_output=True, text=True, cwd=str(REPO))
+                capture_output=True, encoding="utf-8", cwd=REPO, timeout=120)
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("无法解析时间点", r.stdout)
             self.assertFalse((Path(d) / "cache" / "preview").exists())
@@ -256,9 +257,9 @@ class TestCliGuards(unittest.TestCase):
             p = Path(d) / "timeline.json"
             p.write_text(json.dumps(self._min_tl()), encoding="utf-8")
             r = subprocess.run(
-                ["env", "python3", "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
+                [*cli_python(), "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
                  "-t", str(p), "video", "--draft", "--range", "0", "6", "--dry-run"],
-                capture_output=True, text=True, cwd=str(REPO))
+                capture_output=True, encoding="utf-8", cwd=REPO, timeout=120)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertIn("[dry-run]", r.stdout)
             self.assertNotIn("自检失败", r.stdout)
@@ -277,9 +278,9 @@ class TestCliGuards(unittest.TestCase):
                 # exactly at the requested start (no active overlap).
                 with self.subTest(start=start):
                     r = subprocess.run(
-                        ["env", "python3", "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
+                        [*cli_python(), "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
                          "-t", str(p), "video", "--draft", "--range", start, end],
-                        capture_output=True, text=True, cwd=str(REPO))
+                        capture_output=True, encoding="utf-8", cwd=REPO, timeout=120)
                     self.assertNotEqual(r.returncode, 0)
                     self.assertIn("先运行", r.stdout)
                     self.assertIn("gfx/page.html", r.stdout)
@@ -1146,9 +1147,9 @@ class TestRangeIntegration(unittest.TestCase):
             proj = root / "proj"; proj.mkdir()
             (proj / "timeline.json").write_text(json.dumps(tl), encoding="utf-8")
             r = subprocess.run(
-                ["env", "python3", "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
+                [*cli_python(), "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
                  "-t", str(proj / "timeline.json"), "video", "--draft", "--range", "2", "5"],
-                capture_output=True, text=True, cwd=str(REPO))
+                capture_output=True, encoding="utf-8", cwd=REPO, timeout=120)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             out = proj / "cache" / "preview" / "range_2.000_5.000.mp4"
             self.assertTrue(out.exists(), "产物应落在 cache/preview/")

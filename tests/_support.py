@@ -12,6 +12,11 @@ import wave
 _SCRIPTS_DIR = Path(__file__).resolve().parents[1] / 'scripts'
 
 
+def cli_python():
+    """Native Windows Python, preserving the POSIX AppImage escape hatch."""
+    return [sys.executable] if os.name == 'nt' else ['env', 'python3']
+
+
 def temporary_root(test):
     temporary = tempfile.TemporaryDirectory()
     test.addCleanup(temporary.cleanup)

@@ -42,7 +42,7 @@ sys.path.insert(0, str(REPO))
 
 from tests._support import full_hd_timeline as _tl
 
-from tests._support import _make_plugin_dir
+from tests._support import _make_plugin_dir, cli_python
 
 from vtx.cache import hygiene
 from vtx.cache.cache_state import receipt_fingerprint
@@ -522,8 +522,8 @@ def _synth_assets(root: Path):
 class ThreeBranchCli(unittest.TestCase):
     def _run(self, tl_path):
         return subprocess.run(
-            ["env", "python3", str(REPO / "vtx" / "vtx.py"), "-t", str(tl_path), "validate"],
-            capture_output=True, text=True, cwd=str(REPO))
+            [*cli_python(), "-X", "utf8", str(REPO / "vtx" / "vtx.py"), "-t", str(tl_path), "validate"],
+            capture_output=True, encoding="utf-8", cwd=REPO, timeout=60)
 
     def _proj(self, root: Path, **src_over):
         tl = {"version": 2,
