@@ -101,7 +101,9 @@ export function usePreviewSessionAccess({ opened, sessionId, project, tabSignal,
           !Number.isSafeInteger(grant.maxWindows) || grant.maxWindows < 1 || grant.maxWindows > previewSessionLimits.windows) {
         return release(record, '宿主未返回有效的限时、限次授权。')
       }
-      if (grant.continuation !== (continuation ? true : undefined)) return release(record, '宿主回执不匹配已经选择的连续播放许可。')
+      // Only owner opt-in adds continuation to the adapter qualification;
+      // an unsolicited Host flag must not stop ordinary single-window playback.
+      if (continuation && grant.continuation !== true) return release(record, '宿主未确认连续播放的独立许可。')
       if (grant.readWarmSvg !== (readWarmSvg ? true : undefined)) return release(record, '宿主回执不匹配已经选择的暖 SVG 读取许可。')
       if (grant.firstFrame !== (firstFrame ? true : undefined) || (firstFrame && grant.continuation === true))
         return release(record, '宿主回执不匹配已经选择的临时首图许可。')
