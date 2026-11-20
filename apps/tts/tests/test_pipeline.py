@@ -24,6 +24,22 @@ import tts_cli  # noqa: E402
 
 
 class TestIndexTTSInterpreter(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "native Windows CLI streams")
+    def test_probe_under_legacy_redirected_encoding(self):
+        with tempfile.TemporaryDirectory(prefix="tts-probe-") as tmp:
+            home = Path(tmp)
+            config = home / "config.json"
+            config.write_text("{}", encoding="utf-8")
+            env = dict(SystemRoot=os.environ["SystemRoot"], USERPROFILE=str(home), PATH="",
+                       VTX_CONFIG=str(config), PYTHONUTF8="0", PYTHONIOENCODING="cp936")
+            result = subprocess.run([sys.executable, "-s", "-B", tts_cli.__file__, "probe"],
+                                    cwd=home, env=env, capture_output=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            stdout = result.stdout.decode("utf-8")
+            self.assertIn("✗ repo", stdout)
+            self.assertIn("IndexTTS 推理仍受许可策略阻断", stdout)
+            self.assertEqual(result.stderr, b"")
+
     def test_init_template_uses_native_conda_default(self):
         template = Path(tts_cli.REPO_ROOT) / "config.example.json"
         cfg = json.loads(template.read_text(encoding="utf-8"))
@@ -66,6 +82,37 @@ class TestIndexTTSInterpreter(unittest.TestCase):
                 self.assertEqual(run.call_args.args[0][0], str(fallback))
                 cfg["tts"]["python"] = sys.executable
                 self.assertEqual(tts_cli._indextts_python(str(repo)), sys.executable)
+
+
+class TestEdgeTTSExecutable(unittest.TestCase):
+    def test_probe_and_gen_agree_on_native_default_and_overrides(self):
+        cfg = json.loads((Path(tts_cli.REPO_ROOT) / "config.example.json").read_text(encoding="utf-8"))
+        layout = ("Scripts", "edge-tts.exe") if os.name == "nt" else ("bin", "edge-tts")
+        self.assertEqual(Path(tts_cli.DEFAULT_EDGE_BIN), Path.home().joinpath("miniconda3", *layout))
+        with tempfile.TemporaryDirectory(prefix="edge executable ") as tmp:
+            root = Path(tmp)
+            default = root.joinpath(*layout)
+            default.parent.mkdir()
+            default.touch()
+            explicit = root / default.name
+            explicit.touch()
+            spec = root / "spec.json"
+            spec.write_text('{"windows": []}', encoding="utf-8")
+            args = argparse.Namespace(spec=str(spec), engine="edge", ids=None, dry_run=False,
+                                      project=str(root), edge_voice=None, only_missing=False)
+            for value, path_command, expected in ((cfg["tts"]["edge_bin"], None, default),
+                                                  (str(explicit), str(default), explicit),
+                                                  (str(root / "missing"), str(default), default)):
+                with self.subTest(value=value), \
+                     patch.object(tts_cli, "load_config", return_value={"tts": {"edge_bin": value}}), \
+                     patch.object(tts_cli, "DEFAULT_EDGE_BIN", str(default)), \
+                     patch.object(tts_cli.shutil, "which", side_effect=lambda name: path_command if name == "edge-tts" else None), \
+                     patch.object(edge_worker, "run") as run, contextlib.redirect_stdout(io.StringIO()) as output:
+                    tts_cli.cmd_probe(None)
+                    self.assertIn(f"✓ edge-tts — {expected}", output.getvalue())
+                    tts_cli.cmd_gen(args)
+                    run.assert_called_once()
+                    self.assertEqual(run.call_args.args[3], str(expected))
 
 
 def synth_raw(path, amp=0.2, dur=3.0, freq=440, rate=22050):

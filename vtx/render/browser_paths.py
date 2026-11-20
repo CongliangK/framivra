@@ -15,12 +15,14 @@ def chrome_install_paths(platform, *, include_user=True):
         pf86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
         paths = [rf"{w}\Google\Chrome\Application\chrome.exe",
                  rf"{pf86}\Google\Chrome\Application\chrome.exe"]
-        if include_user:
-            local = os.environ.get("LOCALAPPDATA", "")
+        local = os.environ.get("LOCALAPPDATA") if include_user else None
+        if local:
             paths.append(rf"{local}\Google\Chrome\Application\chrome.exe")
         # 系统自带 Edge 默认装 (x86) 目录；仅安装 Edge 也保留该候选。
         paths.extend((rf"{w}\Microsoft\Edge\Application\msedge.exe",
                       rf"{pf86}\Microsoft\Edge\Application\msedge.exe"))
+        if local:
+            paths.append(rf"{local}\Microsoft\Edge\Application\msedge.exe")
         return tuple(paths)
     if platform == "darwin":
         return ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",

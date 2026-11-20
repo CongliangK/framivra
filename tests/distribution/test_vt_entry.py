@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import venv
 from pathlib import Path
 from unittest import mock
 
@@ -390,6 +391,30 @@ class PythonProbeEncoding(unittest.TestCase):
                     ok, detail = self.vt._probe_health(self.manifest, self.root)
                 self.assertEqual(ok, code == 0)
                 self.assertEqual(detail, "exit %d｜可用 中文路径🐈" % code)
+
+    @unittest.skipUnless(sys.platform == "win32", "native Windows venv layout")
+    def test_health_uses_launching_venv_not_path_python3(self):
+        selected = self.root / "selected venv"
+        alternative = self.root / "other venv"
+        for target in (selected, alternative):
+            venv.EnvBuilder(with_pip=False).create(target)
+        selected_scripts = selected / "Scripts"
+        other_scripts = alternative / "Scripts"
+        # An earlier interpreter basename used to win even from a later PATH
+        # directory. Copy a real redirector so the test never needs a Store alias.
+        shutil.copyfile(other_scripts / "python.exe", other_scripts / "python3.exe")
+        self.script.write_text("import sys\nprint(sys.prefix.rsplit('\\\\', 1)[-1], '✓')\n",
+                               encoding="utf-8")
+        env = dict(self.env, PATH=os.pathsep.join(map(str, (selected_scripts, other_scripts))),
+                   PATHEXT=".EXE", NoDefaultCurrentDirectoryInExePath="1")
+        code = ("import json, pathlib, sys; sys.path.insert(0, sys.argv[1]); import vt; "
+                "print(json.dumps(vt._probe_health(json.loads(sys.argv[3]), pathlib.Path(sys.argv[2]))))")
+        result = subprocess.run([str(selected_scripts / "python.exe"), "-I", "-B", "-c", code,
+                                 str(REPO), str(self.root), json.dumps(self.manifest)],
+                                env=env, cwd=self.root, capture_output=True, text=True,
+                                encoding="utf-8", timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), [True, "exit 0｜selected venv ✓"])
 
     def test_health_timeout_remains_failure_and_is_forwarded(self):
         with self.legacy_defaults(), \

@@ -29,7 +29,7 @@
     "repo": "~/AI/IndexTTS/repo",
     "python": null,
     "voice_ref": "~/音乐/5_G_Resemble仅降噪.wav",
-    "edge_bin": "~/miniconda3/bin/edge-tts",
+    "edge_bin": null,
     "purpose": "IndexTTS-2.5 口播占位语音（apps/tts/，参数化收编 voice-ime 产线）+ edge-tts 兜底",
     "howto": "已有资产探测: bash apps/tts/init.sh；旧 --download 与未审查 IndexTTS 辅助链为 BLOCKED，见 docs/third-party-licenses.md；独立 edge CLI 见 apps/tts/README.md"
   },

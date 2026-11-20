@@ -31,8 +31,8 @@
   --fix-links [--dry]    重建六件挂载符号链接（docs/skill 三件 + vtx/scripts/templates）；
                          清理仅指向本仓退役 skills 的旧链接；VT_MOUNT_ROOT 可隔离
 
-子进程纪律（全局 AGENTS.md argv[0] 劫持 / §5.1）：一律 shutil.which 定位 python3，
-禁 sys.executable；零 spec_from_file_location、零跨目录 import——原 init.py 对
+Python 子进程：原生 Windows 复用当前解释器；POSIX 用 shutil.which 定位 python3，
+避免本机 AppImage 的 argv[0] 劫持；零 spec_from_file_location、零跨目录 import——原 init.py 对
 asr/client.py、imgen/secrets.py 的 spec 复用已废除（asr/imgen 现无探针子命令，
 保留为 config_key 型健康检查 = 读 config 判断；P2 迁移时各 app README 落实探针后
 doctor 改走 manifest health.command 子进程探测）。
@@ -71,9 +71,13 @@ from vtx.pluginlib.manifest import load_manifest as _load_manifest  # noqa: E402
 from vtx.render.browser_paths import chrome_names, chrome_install_paths, find_chrome_candidate  # noqa: E402
 
 
-def py3() -> str:
-    """python3 解释器路径（shutil.which——禁 sys.executable：本机 AppImage argv[0]
-    劫持会使其指向错误解释器，见全局 AGENTS.md）。找不到返回 None 由调用方报错。"""
+def py3():
+    """Return the interpreter for init and manifest health Python children."""
+    if OS == "win32":
+        # The active venv has python.exe, not python3.exe. A lookup for the
+        # latter can jump past it to a different Python or a Windows Store alias.
+        return sys.executable or None
+    # Keep using the external interpreter in POSIX AppImages.
     return shutil.which("python3") or shutil.which("python")
 
 

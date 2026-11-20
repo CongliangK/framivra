@@ -572,6 +572,24 @@ sys.exit(7)
                     with self.assertRaisesRegex(RuntimeError, '^no chrome found$'):
                         gfx_render.Browser()._find_chrome()
 
+    def test_per_user_edge_matches_installer_discovery(self):
+        import vt
+        from scripts.install_source import native_browser
+        from vtx.media import encoders
+        from vtx.render import browser_paths
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            edge = root / 'user' / 'Microsoft/Edge/Application/msedge.exe'
+            edge.parent.mkdir(parents=True)
+            edge.touch()  # Discovery only; no browser launch.
+            with patch.dict(os.environ, {'PATH': '', 'VTX_CHROME': '',
+                                         'PROGRAMFILES': str(root / 'machine'),
+                                         'PROGRAMFILES(X86)': str(root / 'machine86'),
+                                         'LOCALAPPDATA': str(root / 'user')}):
+                for discover in (native_browser, vt.find_chrome, encoders.find_chrome):
+                    self.assertEqual(Path(discover()), edge)
+                self.assertNotIn(str(edge), browser_paths.chrome_install_paths('win32', include_user=False))
+
     def test_browser_consumer_owns_devnull_child(self):
         self.isolated('_browser_fixture', cwd=Path(self.python).parent)
 
@@ -697,6 +715,70 @@ time.sleep(15)
         self.assertEqual(pipes.call_count, 2)
         # Job + NUL + both ends of each real pipe; each original live handle closes once.
         self.assertEqual(sorted(Counter(call.args[0] for call in closed.call_args_list).values()), [1] * 6)
+
+@unittest.skipUnless(os.name == 'nt', 'native Windows executable search')
+class WindowsManagedTools(unittest.TestCase):
+    def test_receipt_rejects_shadow_in_actual_python_image_directory(self):
+        import shutil
+
+        repo = Path(__file__).resolve().parents[2]
+        base = Path(getattr(sys, '_base_executable', sys.executable))
+        system = Path(os.environ['SystemRoot']) / 'System32'
+        code = '''import json, os, subprocess, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from vtx.runtime.managed import configure_environment
+root = Path(sys.argv[2])
+selected = root / 'selected tools/ffmpeg.exe'
+actual = subprocess.check_output(['ffmpeg'], timeout=5)
+expected = subprocess.check_output([str(selected)], timeout=5)
+before = dict(os.environ)
+try:
+    ready = configure_environment(root / 'venv', root / 'source')
+except RuntimeError as error:
+    assert dict(os.environ) == before, 'failed qualification changed the environment'
+    print(json.dumps([actual == expected, str(error)]))
+else:
+    print(json.dumps([actual == expected, ready]))
+'''
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            app = root / 'base Python'
+            selected = root / 'selected tools'
+            for directory in (app, selected, root / 'source', root / 'venv/Scripts'):
+                directory.mkdir(parents=True)
+            # Own the application directory without changing the real Python install.
+            for dependency in (*base.parent.glob('python*.dll'), *base.parent.glob('vcruntime*.dll')):
+                shutil.copyfile(dependency, app / dependency.name)
+            python = app / base.name
+            shutil.copyfile(base, python)
+
+            tools = {name: str(selected / (name + '.exe'))
+                     for name in ('ffmpeg', 'ffprobe', 'git', 'sox', 'chrome')}
+            for name in ('ffprobe', 'git', 'sox', 'chrome'):
+                Path(tools[name]).touch()
+            shutil.copyfile(system / 'hostname.exe', tools['ffmpeg'])
+            config = root / 'config.json'
+            config.write_text('{}', encoding='utf-8')
+            (root / 'installation.json').write_text(json.dumps(dict(
+                schema='framivra.installation/v1', status='ready', profile='non-ai', renderer='cdp',
+                sourceRoot=str(root / 'source'), commit='a' * 40, configFile=str(config),
+                environment={}, tools=tools)), encoding='utf-8')
+            env = dict(SystemRoot=os.environ['SystemRoot'], PATH=str(selected),
+                       PYTHONHOME=sys.base_prefix, NoDefaultCurrentDirectoryInExePath='1')
+
+            def verify():
+                result = subprocess.run([str(python), '-S', '-B', '-c', code, str(repo), str(root)],
+                                        cwd=root, env=env, capture_output=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', 'replace'))
+                return json.loads(result.stdout)
+
+            self.assertEqual(verify(), [True, True])
+            shutil.copyfile(system / 'whoami.exe', app / 'ffmpeg.exe')
+            matches, error = verify()
+            self.assertFalse(matches, 'fixture must reproduce native application-directory shadowing')
+            self.assertIn('executable search shadows selected tools: ffmpeg', error)
+
 
 @unittest.skipUnless(os.name == 'nt', 'Windows renderer resolver required')
 class WindowsEnvironment(unittest.TestCase):

@@ -8,6 +8,7 @@ No model, service, credential, project, or existing developer checkout is change
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from functools import partial
 import json
 import importlib.util
 import os
@@ -90,14 +91,14 @@ def command(argv, *, cwd=None, env=None, capture=False, timeout=1800):
     return result.stdout.strip() if capture else ''
 
 
-def git(*args, cwd=None):
+def git(*args, cwd=None, executable='git'):
     # No downloaded hooks, Git user filters/templates, or interactive credentials.
     env = dict(os.environ, GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull,
                GIT_TERMINAL_PROMPT='0')
     for key in list(env):
         if key.startswith('GIT_') and key not in ('GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL', 'GIT_TERMINAL_PROMPT'):
             env.pop(key)
-    return command(['git', '-c', 'core.hooksPath=' + os.devnull,
+    return command([executable, '-c', 'core.hooksPath=' + os.devnull,
                     '-c', 'http.lowSpeedLimit=1', '-c', 'http.lowSpeedTime=60', *args], cwd=cwd,
                    env=env, capture=True, timeout=None)
 
@@ -279,23 +280,23 @@ def verify_native_tools(found):
     # libfdk_aac and GPU remain optional. Render/decode/QC are unchanged.
 
 
-def check_source(source, previous, repository):
+def check_source(source, previous, repository, run_git):
     physical(source)
     physical(source / '.git')
     if not (source / '.git').is_dir():
         raise InstallError('Existing source is not an independent managed Git checkout')
     if not previous or previous.get('sourceRoot') != str(source) or previous.get('repository') != repository:
         raise InstallError('Existing source has no matching installation ownership record; developer clones are not adopted.')
-    if git('-C', source, 'remote', 'get-url', 'origin') != repository:
+    if run_git('-C', source, 'remote', 'get-url', 'origin') != repository:
         raise InstallError('Source origin differs from the installation repository')
-    if git('-C', source, 'status', '--porcelain', '--untracked-files=all'):
+    if run_git('-C', source, 'status', '--porcelain', '--untracked-files=all'):
         raise InstallError('Source has local changes; refusing update. Back up changes; no reset/clean was performed.')
-    if git('-C', source, 'rev-parse', 'HEAD') != previous.get('commit'):
+    if run_git('-C', source, 'rev-parse', 'HEAD') != previous.get('commit'):
         raise InstallError('Source has local commits; refusing to overwrite them')
 
 
-def validate_git_source(source, commit):
-    rows = git('-C', source, 'ls-tree', '-r', '-z', commit, '--', *REQUIRED_SOURCE).split('\0')
+def validate_git_source(source, commit, run_git):
+    rows = run_git('-C', source, 'ls-tree', '-r', '-z', commit, '--', *REQUIRED_SOURCE).split('\0')
     files = {}
     for row in rows:
         if row:
@@ -326,7 +327,9 @@ def validate_ownership(record, root, repository):
         raise InstallError('Existing installation receipt has no matching ownership; unrelated environments are not adopted')
 
 
-def update_source(root, repository, ref, update=False, source_commit=None):
+def update_source(root, repository, ref, update=False, source_commit=None, *, run_git=None):
+    if run_git is None:
+        run_git = git
     if not (repository == REPOSITORY or Path(repository).is_absolute()):
         raise InstallError('Only the official HTTPS repository or an explicitly trusted absolute local repository is supported')
     if not re.fullmatch(r'(?:main|v\d+\.\d+\.\d+(?:-rc\.\d+)?|[0-9a-f]{40})', ref):
@@ -349,12 +352,12 @@ def update_source(root, repository, ref, update=False, source_commit=None):
         # local commit. Dirty or unrelated heads remain refusal, never reset.
         if (approved and pending.get('kind') == 'update' and previous
                 and pending.get('oldCommit') == previous.get('commit')
-                and git('-C', source, 'rev-parse', 'HEAD') == pending['commit']):
+                and run_git('-C', source, 'rev-parse', 'HEAD') == pending['commit']):
             previous = dict(previous, commit=pending['commit'], ref=pending['ref'], status='preparing')
-            check_source(source, previous, repository)
+            check_source(source, previous, repository, run_git)
             atomic_json(record, previous)
             recovered_checkout = True
-        check_source(source, previous, repository)
+        check_source(source, previous, repository, run_git)
         continuing_update = (approved and pending.get('kind') == 'update' and pending.get('ref') == ref
                              and pending.get('oldCommit') == previous.get('commit'))
         if (not update and not continuing_update) or recovered_checkout:
@@ -376,7 +379,7 @@ def update_source(root, repository, ref, update=False, source_commit=None):
         commit = ref
     else:
         target = 'refs/heads/main' if ref == 'main' else 'refs/tags/' + ref
-        remote = git('ls-remote', repository, target, target + '^{}')
+        remote = run_git('ls-remote', repository, target, target + '^{}')
         identities = {name: sha for sha, name in (line.split() for line in remote.splitlines())}
         commit = identities.get(target + '^{}', identities.get(target))
     if not commit or not re.fullmatch('[0-9a-f]{40}', commit):
@@ -385,20 +388,20 @@ def update_source(root, repository, ref, update=False, source_commit=None):
         atomic_json(record, dict(previous, status='preparing'))
         atomic_json(progress, dict(schema='framivra.source-progress/v1', kind='update',
                     repository=repository, ref=ref, commit=commit, oldCommit=previous['commit']))
-        git('-C', source, 'fetch', '--depth=1', 'origin', commit)
+        run_git('-C', source, 'fetch', '--depth=1', 'origin', commit)
         try:
-            validate_git_source(source, commit)
+            validate_git_source(source, commit, run_git)
         except SourceCompatibilityError:
             # The target was explicitly rejected, not interrupted. Do not keep
             # retrying an incompatible release or silently install the old one.
             physical(progress).unlink()
             raise
-        incoming = git('-C', source, 'ls-tree', '-r', '--name-only', '-z', commit).split('\0')
-        ignored = git('-C', source, 'ls-files', '-o', '-i', '--exclude-standard', '-z').split('\0')
+        incoming = run_git('-C', source, 'ls-tree', '-r', '--name-only', '-z', commit).split('\0')
+        ignored = run_git('-C', source, 'ls-files', '-o', '-i', '--exclude-standard', '-z').split('\0')
         incoming, ignored = [x for x in incoming if x], [x for x in ignored if x]
         if any(a == b or a.startswith(b + '/') or b.startswith(a + '/') for a in incoming for b in ignored):
             raise InstallError('Incoming source conflicts with ignored local files; update refused')
-        git('-C', source, 'checkout', '--detach', commit)
+        run_git('-C', source, 'checkout', '--detach', commit)
     else:
         if reuse:
             name = pending.get('stage', '')
@@ -413,33 +416,33 @@ def update_source(root, repository, ref, update=False, source_commit=None):
         if not (stage / '.git').exists():
             if stage.exists() and any(stage.iterdir()):
                 raise InstallError('Owned source staging contains unexpected files; not overwritten')
-            git('init', stage)
+            run_git('init', stage)
         try:
-            origin = git('-C', stage, 'remote', 'get-url', 'origin')
+            origin = run_git('-C', stage, 'remote', 'get-url', 'origin')
         except InstallError:
             origin = ''
         if not origin:
-            git('-C', stage, 'remote', 'add', 'origin', repository)
+            run_git('-C', stage, 'remote', 'add', 'origin', repository)
         elif origin != repository:
             raise InstallError('Owned source staging origin changed; not adopted')
-        if git('-C', stage, 'status', '--porcelain', '--untracked-files=all'):
+        if run_git('-C', stage, 'status', '--porcelain', '--untracked-files=all'):
             raise InstallError('Source staging has local changes; not overwritten')
         try:
-            git('-C', stage, 'cat-file', '-e', commit + '^{commit}')
+            run_git('-C', stage, 'cat-file', '-e', commit + '^{commit}')
         except InstallError:
-            git('-C', stage, 'fetch', '--depth=1', 'origin', commit)
+            run_git('-C', stage, 'fetch', '--depth=1', 'origin', commit)
         try:
-            validate_git_source(stage, commit)
+            validate_git_source(stage, commit, run_git)
         except SourceCompatibilityError:
             physical(progress).unlink()
             raise
-        git('-C', stage, 'checkout', '--detach', commit)
-        if git('-C', stage, 'rev-parse', 'HEAD') != commit:
+        run_git('-C', stage, 'checkout', '--detach', commit)
+        if run_git('-C', stage, 'rev-parse', 'HEAD') != commit:
             raise InstallError('Downloaded source commit identity mismatch')
         atomic_json(record, dict(previous or {}, schema=SCHEMA, status='preparing', repository=repository,
                                 sourceRoot=str(source), commit=commit, ref=ref, sourceApproved=True))
         stage.rename(physical(source))
-    if git('-C', source, 'rev-parse', 'HEAD') != commit:
+    if run_git('-C', source, 'rev-parse', 'HEAD') != commit:
         raise InstallError('Downloaded source commit does not match the approved identity')
     for name in REQUIRED_SOURCE:
         if not (source / name).is_file():
@@ -457,10 +460,12 @@ def runtime_env(root, found):
         env.pop(key, None)
     binary = root / 'venv' / ('Scripts' if sys.platform == 'win32' else 'bin')
     tool_paths = list(found.values())
-    if sys.platform == 'darwin':
-        # A shared bin directory (e.g. Git or SoX's) can also contain the
-        # linked, unqualified FFmpeg. Put the verified pair ahead of it.
-        tool_paths[:0] = [found[name] for name in ('ffmpeg', 'ffprobe') if name in found]
+    if sys.platform in ('darwin', 'win32'):
+        # Git/SoX or a shared shims directory can also contain unqualified
+        # FFmpeg. The installer and the ready CLI must both prefer the pair.
+        tool_paths = [found[name] for name in ('ffmpeg', 'ffprobe', 'git', 'sox', 'chrome') if name in found]
+    if sys.platform == 'win32':
+        env.setdefault('NoDefaultCurrentDirectoryInExePath', '1')
     env.update(PATH=os.pathsep.join(dict.fromkeys([str(binary), *(str(Path(x).parent) for x in tool_paths), env.get('PATH', '')])),
                VTX_CHROME=found['chrome'], VTX_GFX='cdp', VTX_NO_NVENC='1',
                VTX_CONFIG=str(root / 'config.json'), FRAMIVRA_VERIFY_ROOT=str(root),
@@ -512,18 +517,37 @@ def prepare_configuration(root, source, python):
     atomic_json(target, value)
 
 
-def verify_macos_tool_paths(root, python, env, tools):
-    # A retry can reuse an older owned source; check its post-ready PATH order,
-    # not this installer's explicit probe environment, before publishing ready.
+def verify_runtime_tool_paths(root, python, env, tools):
+    # A retry may run older owned source. Check its actual ready order as well
+    # as the installer's probe order before publishing ready.
     code = '''import json, os, shutil, sys
 from pathlib import Path
 from vtx.runtime import managed
 root, tools = Path(sys.argv[1]), json.loads(sys.argv[2])
 legacy = ('git', 'ffmpeg', 'ffprobe', 'sox', 'chrome')
 order = getattr(managed, 'tool_search_order', lambda: legacy)()
-path = os.pathsep.join([str(root / 'venv/bin'), *(str(Path(tools[name]).parent) for name in order)])
-print(json.dumps([name for name in ('ffmpeg', 'ffprobe')
-                  if not (exe := shutil.which(name, path=path)) or Path(exe).resolve() != Path(tools[name])]))
+windows = sys.platform == 'win32'
+scripts = 'venv/Scripts' if windows else 'venv/bin'
+ready_paths = [str(root / scripts), *(str(Path(tools[name]).parent) for name in order)]
+if windows:
+    def mismatches(paths):
+        shadowed = []
+        for name in ('ffmpeg', 'ffprobe', 'git', 'sox'):
+            candidates = (Path(d.strip(chr(34))) / (name + '.exe') for d in paths if d)
+            selected = next((p for p in candidates if p.is_file()), None)
+            if selected is None or selected.resolve() != Path(tools[name]).resolve():
+                shadowed.append(name)
+        return shadowed
+    check = getattr(managed, 'shadowed_windows_tools', None)
+    if check is not None:
+        bad = sorted(set(check(ready_paths, tools) + check(os.environ['PATH'].split(os.pathsep), tools)))
+    else:
+        bad = sorted(set(mismatches(ready_paths) + mismatches(os.environ['PATH'].split(os.pathsep))))
+else:
+    path = os.pathsep.join(ready_paths)
+    bad = [name for name in ('ffmpeg', 'ffprobe')
+           if not (exe := shutil.which(name, path=path)) or Path(exe).resolve() != Path(tools[name])]
+print(json.dumps(bad))
 '''
     shadowed = json.loads(command([python, '-I', '-c', code, root, json.dumps(tools)],
                                   env=env, cwd=root, capture=True, timeout=60))
@@ -558,7 +582,12 @@ def verify(root, source, python, env, *, verify_render=False):
 
 
 def env_tool(env, name):
-    value = shutil.which(name, path=env['PATH'])
+    if sys.platform == 'win32':
+        # CreateProcess searches .exe for bare native command names, not PATHEXT.
+        candidates = (Path(d.strip('"')) / (name + '.exe') for d in env['PATH'].split(os.pathsep) if d)
+        value = next((str(p) for p in candidates if p.is_file()), None)
+    else:
+        value = shutil.which(name, path=env['PATH'])
     if not value:
         raise InstallError('Tool not available in the managed environment: ' + name)
     return value
@@ -626,8 +655,15 @@ def install(args):
         found = prepare_tools(args.no_system, root, args.network, args.yes)
         native_metadata = found.pop('_native_metadata', None)
         verify_native_tools(found)
-        # Private Git must work now, without reopening the user's terminal or
-        # changing any persisted PATH. Every subsequent child inherits this only.
+        source_git = git
+        if sys.platform == 'win32':
+            selected = Path(found.get('git') or '')
+            if not selected.is_absolute() or not selected.is_file() or (os.name == 'nt' and selected.suffix.lower() != '.exe'):
+                raise InstallError('Windows source checkout requires a selected absolute Git executable')
+            # CreateProcess can prefer the parent directory over PATH even when
+            # we pass a different PATH to the child. Bind argv[0] explicitly.
+            source_git = partial(git, executable=str(selected))
+        # Keep native tools available to subprocesses without persisting PATH.
         os.environ['PATH'] = os.pathsep.join(dict.fromkeys([
             *(str(Path(value).parent) for value in found.values()), os.environ.get('PATH', '')]))
         ownership = dict(previous or dict(schema=SCHEMA, repository=args.repo,
@@ -636,7 +672,8 @@ def install(args):
         atomic_json(root / 'installation.json', dict(ownership, status='preparing', sourceApproved=bool(resuming),
                     updateRequested=args.update, requestedRef=args.ref,
                     pythonDependenciesPrepared=bool(resuming and previous.get('pythonDependenciesPrepared'))))
-        commit = update_source(root, args.repo, args.ref, args.update and not resuming, args.source_commit)
+        commit = update_source(root, args.repo, args.ref, args.update and not resuming, args.source_commit,
+                               run_git=source_git)
         print('[install] Source commit: ' + commit +
               (' (resuming; use --update --restart-update to select a new target)' if resuming and args.update else ''),
               flush=True)
@@ -663,8 +700,8 @@ def install(args):
         if font_environment != expected:
             raise InstallError('Font installer returned an unexpected runtime environment')
         env.update(font_environment)
-        if sys.platform == 'darwin':
-            verify_macos_tool_paths(root, python, env, found)
+        if sys.platform in ('darwin', 'win32'):
+            verify_runtime_tool_paths(root, python, env, found)
         capabilities, evidence = verify(root, source, python, env, verify_render=args.verify_render)
         vtx = root / 'venv' / ('Scripts/vtx.exe' if sys.platform == 'win32' else 'bin/vtx')
         executable = vtx

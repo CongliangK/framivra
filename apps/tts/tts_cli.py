@@ -36,7 +36,8 @@ _CONDA_PY = ("python.exe",) if os.name == "nt" else ("bin", "python")
 _VENV_PY = ("Scripts", "python.exe") if os.name == "nt" else ("bin", "python")
 DEFAULT_TTS_PY = os.path.join(os.path.expanduser("~/miniconda3/envs/indextts"), *_CONDA_PY)
 DEFAULT_VOICE_REF = os.path.expanduser("~/音乐/5_G_Resemble仅降噪.wav")
-DEFAULT_EDGE_BIN = os.path.expanduser("~/miniconda3/bin/edge-tts")
+_CONDA_EDGE = ("Scripts", "edge-tts.exe") if os.name == "nt" else ("bin", "edge-tts")
+DEFAULT_EDGE_BIN = os.path.join(os.path.expanduser("~/miniconda3"), *_CONDA_EDGE)
 EXIT_ENGINE_FAIL = 3  # indextts_worker 同款（OOM 等），触发 edge 降级提示
 
 
@@ -58,6 +59,11 @@ def _indextts_python(repo):
     configured = tts_cfg("python", DEFAULT_TTS_PY)
     fallback = os.path.join(repo, ".venv", *_VENV_PY)
     return next((py for py in (configured, fallback) if os.path.isfile(py)), None)
+
+
+def _edge_executable():
+    configured = tts_cfg("edge_bin", DEFAULT_EDGE_BIN)
+    return configured if os.path.isfile(configured) else shutil.which("edge-tts")
 
 
 def new_runid() -> str:
@@ -123,10 +129,8 @@ def cmd_gen(a):
 
     if engine == "edge":
         import edge_worker
-        edge_bin = tts_cfg("edge_bin", DEFAULT_EDGE_BIN)
-        if not os.path.exists(edge_bin) and shutil.which("edge-tts"):
-            edge_bin = shutil.which("edge-tts")
-        if not os.path.exists(edge_bin):
+        edge_bin = _edge_executable()
+        if edge_bin is None:
             raise SystemExit(f"✗ edge-tts 未找到（config tts.edge_bin / PATH），"
                              f"跑 bash apps/tts/init.sh")
         edge_worker.run(windows, project, runid, edge_bin,
@@ -187,11 +191,9 @@ def cmd_probe(a):
     rec("音色参考", os.path.exists(vr),
         vr if os.path.exists(vr) else f"{vr} 缺（放任意 5-10s 干声，改 config tts.voice_ref）")
 
-    eb = tts_cfg("edge_bin", DEFAULT_EDGE_BIN)
-    if not os.path.exists(eb) and shutil.which("edge-tts"):
-        eb = shutil.which("edge-tts")
-    rec("edge-tts", os.path.exists(eb),
-        eb if os.path.exists(eb) else "PATH 亦无（pip install -i https://pypi.tuna.tsinghua.edu.cn/simple edge-tts）")
+    eb = _edge_executable()
+    rec("edge-tts", eb is not None,
+        eb or "PATH 亦无（pip install -i https://pypi.tuna.tsinghua.edu.cn/simple edge-tts）")
 
     gpu = shutil.which("nvidia-smi")
     ok_gpu = False
@@ -241,4 +243,8 @@ def main():
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        # Redirected Windows streams can use a legacy code page without ✓/✗.
+        for stream in (sys.stdout, sys.stderr):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     main()

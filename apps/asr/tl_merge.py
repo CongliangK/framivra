@@ -182,6 +182,9 @@ def merge_subtitles(timeline_path, new_subs, dry_run=False, reports_dir=None, *,
 
 if __name__ == "__main__":
     import argparse
+    if os.name == "nt":
+        for stream in (sys.stdout, sys.stderr):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description="stdin subtitles json → 合并进 timeline.json")
     ap.add_argument("-t", "--timeline", required=True)
     ap.add_argument("--dry-run", action="store_true")
