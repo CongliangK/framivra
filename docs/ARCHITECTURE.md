@@ -68,7 +68,7 @@ Linux [固定 wheel launcher](../scripts/README.md#按职责查找) 是供受信
 
 **帧率与时钟。** 项目时基允许值由 [constraints](../vtx/pipeline/constraints.py) 定义，schema/只读预览镜像同判；NTSC 标签归一为精确 N/1001，整数帧窗口不自动换基。FFmpeg 视频编码、拼接与帧元数据使用有理数时钟；正式与区间 concat 共用帧端点算法：相对各自起点累计端点，按微秒量化后取差，不逐段舍入时长累加。
 
-48kHz 音频以 `S(f)=round(f×48000/fps)` 映射项目绝对帧端点（半采样向上），事件/区间长度取端点差，禁止逐帧舍入后累乘。事件源采样窗为 `[S(in)-S(in-src_in), S(out)-S(in-src_in))`，共享一次量化的源→项目平移，拆分不产生内部采样断点；与孤立源端点舍入最多差一采样，真实源尾不足时补静音。内部原尺寸 MP4 的 movie 时基取精确帧率分子与 48 kHz 的最小公倍数，使编辑列表能准确表示帧与采样端点；[回归](../tests/media/test_range_render.py)核验视频呈现时间戳与音频呈现终点，不只数帧。
+48kHz 音频以 `S(f)=round(f×48000/fps)` 映射项目绝对帧端点（半采样向上），事件/区间长度取端点差，禁止逐帧舍入后累乘。事件源采样窗为 `[S(in)-S(in-src_in), S(out)-S(in-src_in))`，共享一次量化的源→项目平移，拆分不产生内部采样断点；与孤立源端点舍入最多差一采样，真实源尾不足时补静音。内部原尺寸 MP4 的 movie 时基取精确帧率分子与 48 kHz 的最小公倍数，使编辑列表能准确表示帧与采样端点；[不规则多段 B 帧拼接用例](https://github.com/CongliangK/framivra/blob/89d56a28908a45a4c07633703520e48a69deaa48/tests/media/test_range_render.py#L605-L637)逐帧比较视频呈现时间，[内部原尺寸窗口用例](https://github.com/CongliangK/framivra/blob/89d56a28908a45a4c07633703520e48a69deaa48/tests/media/test_range_render.py#L821-L840)核对视频包 PTS 及 48 kHz AAC 非负 PTS 包的连续性和呈现终点，证据限于这些用例，不作 draft 或整片验收。
 
 ### 1.2 响度终链
 
