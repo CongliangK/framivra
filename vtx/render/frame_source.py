@@ -199,8 +199,16 @@ class PngSequence:
             self._interval(start, stop)
         # Deliberately no input -frames:v/-t derived from stop: legacy compositor
         # controls output bounds and EOF/repeat. Preserve its optional draft -t.
+        # image2 expands the entire input path, so escape percents in the
+        # directory separately from the frame-number placeholder in the leaf.
+        pattern = str(self.directory / 'f').replace('%', '%%') + '%04d.png'
         return ["-reinit_filter", "0", "-framerate", fps_expression(self.fps), "-start_number", str(start),
-                *options, "-i", str(self.directory / "f%04d.png")]
+                *options, "-i", pattern]
+
+
+def single_png_output(path):
+    """Write a single PNG to a literal pathname, not an image2 sequence."""
+    return ['-frames:v', '1', '-f', 'image2', '-update', '1', str(path)]
 
 
 def png_source(c, clip):

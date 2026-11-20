@@ -1115,7 +1115,7 @@ def render_source_frame(c, clip, frame, directory):
                'format=yuva420p', *_clip_alpha_filters(clip, c.spf)]
     command = ['ffmpeg', '-v', 'error', '-y', '-ss', f'{seek:.6f}',
                '-i', str(c.src_path(clip['src'])), '-map', '0:v:0', '-an',
-               '-vf', ','.join(filters), '-frames:v', '1', '-pix_fmt', 'rgba']
+               '-vf', ','.join(filters), '-pix_fmt', 'rgba']
     source = frame_source.PngSequence(directory, 'qc-source-frame', 1, c.fps,
                                       width or c.w, height or c.h)
     layer = dict(cl={'dst_in': 0, 'dur': 1}, source=source, gfx=True,
@@ -1124,7 +1124,7 @@ def render_source_frame(c, clip, frame, directory):
     plan = RenderPlan(c, False, 1, c.w, c.h)
     media = getattr(c, '_windows_svg_media', None)
     if media is None:
-        c.run(command + [str(directory / 'f0000.png')])
+        c.run(command + frame_source.single_png_output(directory / 'f0000.png'))
         plan.composite([layer], output, False, a=0, b=1)
     else:
         from ..render.gfx_svg_win_publish import anchored
@@ -1135,7 +1135,7 @@ def render_source_frame(c, clip, frame, directory):
         if directory.parent != media.scratch:
             raise ValueError('Windows SVG QC reference requires its private work directory')
         with anchored(directory) as parent:
-            result = media.execute(command + ['-c:v', 'png', '-f', 'image2pipe', '-'], text=False)
+            result = media.execute(command + ['-frames:v', '1', '-c:v', 'png', '-f', 'image2pipe', '-'], text=False)
             if result.returncode or result.stderr.strip() or not result.stdout:
                 raise RuntimeError('Windows SVG QC could not decode the fresh source frame')
             parent.write_new('f0000.png', result.stdout)
