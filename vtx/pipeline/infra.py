@@ -118,10 +118,12 @@ def _archive_stale_receipt(f: Path, fingerprint: str, *, root):
 
 class Ctx:
     def __init__(self, timeline_path: Path, *, execution=None, diagnostics=None, _svg_runtime_factory=None,
-                 _svg_all=False):
+                 _svg_all=False, _svg_standard=None):
         self._svg_runtime_factory = _svg_runtime_factory
         self._svg_runtime = None
+        self._svg_receipt_records = {}
         self._svg_all = _svg_all
+        self._svg_standard = _svg_standard
         self._windows_svg_media = None
         self.execution = execution if execution is not None else events.ExecutionContext()
         if diagnostics is not None:

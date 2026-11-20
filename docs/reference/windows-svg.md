@@ -1,16 +1,20 @@
 # Windows SVG：生产入口与内部验收边界
 
-## 受限 `gfx` 配置
+## 普通 SVG-sequence 工程
 
-Windows x64 原生配置只支持 `gfx`、单个 SVG 剪辑、无普通素材/字幕/插件、`core` 松散帧缓存。字体可为空，或按标准 portable-v2 清单的顺序声明锁定的四份 Noto/DejaVu 字体；不接受任意字体。带字体需要完整源码检出或受管 editable 安装提供基线锁，单独 wheel 不提供此配置。不开放任意工程的 `all`、单帧预览或打包缓存。未配置时仍拒绝生产准入，不查 PATH、不回退内部验收。
+Windows x64 原生支持多轨、多剪辑的静态 SVG-sequence；允许配合普通本地音视频，不支持同一时间线混用 HTML 与 SVG 图形轨，也不支持字幕、激活插件、GPU、草稿/区间合成或打包缓存。保持 `core` 模式。未配置或身份校验失败时拒绝，不查 PATH，也不回退内部验收。
 
-运行前用本次进程环境设置 `VTX_WINDOWS_SVG_PORTABLE`（官方 Inkscape 1.4.4 x64 便携解包根，含 `inkscape` 子目录）与 `VTX_WINDOWS_SVG_SCRATCH`（已存在、仅可信账户可写的短 ASCII 暂存根）。工程、便携包与暂存使用可信的固定 NTFS 根，暂存与工程/包不得重叠。工程产品根也必须由可信写者控制；完成标记不是可跨信任边界验证的签名。`python -m vtx -t <timeline.json> gfx` 会启动受监管的 Inkscape 并写 `cache/` 与 `out/receipt.json`。正常暖用仍重做运行身份预检，但不执行帧导出。
+- `VTX_WINDOWS_SVG_PORTABLE` 指向官方 Inkscape 1.4.4 x64 便携解包根（含 `inkscape`）；`VTX_WINDOWS_SVG_SCRATCH` 指向已存在、仅可信账户可写的短 ASCII 暂存根，不能含 `;` 或 `%`（媒体阶段）。
+- 时间线交付、严格 QC 和单帧预览另需 `VTX_WINDOWS_SVG_MEDIA_BIN`，指向字节锁定的 Gyan FFmpeg 9.0.2 full 静态版 `bin`。工程、工具、暂存根必须位于可信的固定 NTFS 且互不重叠。普通源须为工程内精确相对名的单文件 WAV、MP4、MOV 等[支持格式](<../../vtx/render/gfx_svg_win_media.py>)；不接收外部路径、播放列表或网络源。
+- 字体可为空，或声明工程内可信的 TTF/OTF/TTC/OTC 文件。每组字体独立暂存和查询，使用已绑定的字体字节和私有 Fontconfig，不回退系统字体。相同输入可以复用认证帧；使用不同字体或更换字节会改变缓存身份。
 
-[运行时](<../../vtx/render/gfx_svg_win_runtime.py>)锁定官方包、私有字体配置、经离线目录签名验证的系统文件和原句柄。[发布](<../../vtx/render/gfx_svg_win_publish.py>)在同一缓存页锁下锚读验证或写入逐帧 PNG，最后提交完成标记，写回执沿用原指纹及撤销语义。加载事件约束实际 Job 的文件身份，不证明映射内存字节；Job 是进程所有权边界，不是权限沙箱。
+`python -m vtx -t <timeline.json> gfx` 写 `cache/` 和 `out/receipt.json`；若计划随后单独运行 `video`，请从 `gfx` 起保持同一媒体工具配置。`all` 写缓存、回执和成片，执行原有严格 QC；只栅格化可用 `gfx`，没有可测音频的工程不会因此自动满足成片 QC。`qc --strict` 重新验证当前已认证成片及需要的参考画面，不重新合成。单帧可使用 `timeline frame --render --include-png --prepare-gfx`：只在私有暂存中准备当前帧并内联返回 PNG，不写工程缓存或正式回执；它不表示连续预览或压缩成片逐像素一致。
+
+原生[运行时](<../../vtx/render/gfx_svg_win_runtime.py>)锁定官方包、私有字体配置和通过离线目录签名验证的系统文件。[发布](<../../vtx/render/gfx_svg_win_publish.py>)在缓存页锁下验证或发布 PNG，最后写完成标记。完成标记不是跨信任边界的签名；Job 监管进程所有权，不证明映射内存字节，也不是权限沙箱。
 
 ## 锁定 portable-v2 主片的 `all`
 
-在上述两个 SVG 根之外，设置 `VTX_WINDOWS_SVG_MEDIA_BIN` 指向已验的 Gyan FFmpeg 9.0.2 full 静态版 `bin`（固定 `ffmpeg.exe` 和 `ffprobe.exe` 字节）。三个变量仅为本次主片操作配置；不要在普通项目的环境里全局设置。暂存路径也不能含 `%`，且不得与媒体工具目录重叠。只接受 portable-v2 的原始时间线、帧、字体、声明依赖和两份 WAV。
+当原始时间线与 portable-v2 完全一致时，采用锁定配置，额外核对清单、逐帧字节、字体、声明依赖和两份 WAV。任何锁定输入验证失败都不回退到普通配置。三个环境变量仅为当前操作设置。
 
 从源码按[主片准备说明](../../templates/demo-timeline-svg/README.md#准备与正式运行)执行。PowerShell 示例（`$Project` 指向可信固定 NTFS 上一个全新、仓库 / HOME / 缓存外的目录，`$Fonts` 指向四份锁定字体所在目录；父目录和私有暂存必须已存在）：
 

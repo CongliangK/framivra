@@ -348,7 +348,7 @@ def _append_gfx_dependency_identity(c, h, gfx_inputs, *, pin_svg=False):
             facts = gfx_svg.canonical(gfx_svg.resolve(c, clip))
             h.update(b'svg-sequence|' + facts)
             if pin_svg:
-                c._svg_receipt_record = hashlib.sha256(facts).hexdigest()
+                c._svg_receipt_records[gfx_svg.canonical(clip)] = hashlib.sha256(facts).hexdigest()
             continue
         if not exists and policy(c) == 'legacy':
             continue
@@ -423,6 +423,7 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     sources = _get(c, c.tl, 'sources', '$', [])
     visual_bgm = getattr(c, '_visual_bgm_source_ids', ())
     audio = getattr(c, '_svg_audio_digests', {})
+    owned_sources = getattr(c, '_svg_source_digests', None)
     # The ordinary isolated preview supervisor reads its own bound descriptors;
     # normal receipt callers preserve pathname reads and missing-source behavior.
     project_digest = getattr(c, '_project_input_digest', None)
@@ -432,6 +433,9 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
         prefix = _text(c, _get(c, s, 'path', origin, ''), origin + '.path') + ':'
         if audio:
             h.update(_encode(c, prefix + 'locked-wav:' + audio[name] + '\n', origin + '.path'))
+            continue
+        if owned_sources is not None:
+            h.update(_encode(c, prefix + 'held-media:' + owned_sources[name] + '\n', origin + '.path'))
             continue
         p = _path(c, name, origin + '.path')
         if visual_bgm and s['id'] in visual_bgm:
@@ -508,8 +512,8 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     _append_gfx_dependency_identity(c, h, gfx_inputs, pin_svg=owned_svg and timeline_bytes is not None)
     from ..render import gfx_svg
     if getattr(c, '_svg_all', False):
-        if not audio or c._windows_svg_media is None:
-            raise ValueError('Windows SVG all requires bound audio and media tools before fingerprinting')
+        if (not audio and owned_sources is None) or c._windows_svg_media is None:
+            raise ValueError('Windows SVG delivery requires bound sources and media tools before fingerprinting')
         h.update(b'windows-svg-media|' + gfx_svg.canonical(c._windows_svg_media.identity))
     if gfx_svg.route(c) != 'svg-sequence':
         # Selected renderer and namespace revoke downstream success as well.

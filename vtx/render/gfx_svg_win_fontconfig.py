@@ -62,6 +62,10 @@ _DLLS = {
 _SYSTEM32, _DLL_LOAD_DIR = 0x800, 0x100
 _MAX_FONT = 32 * 1024 * 1024
 _MAX_FACES, _MAX_TEXT, _MAX_RESULT = 64, 256, 8192
+_PROJECT_MAX_FONTS, _PROJECT_MAX_FACES = 64, 512
+_PROJECT_MAX_FAMILY_NAMES, _PROJECT_MAX_FAMILY_BYTES = 16, 1024
+_PROJECT_MAX_RESULT, _PROJECT_CACHE_LIMIT = 4 * 1024 * 1024, 16 * 1024 * 1024
+_PROJECT_LEAF = re.compile(r'font[0-9]{1,2}\.(?:ttf|otf|ttc|otc)')
 _TIMEOUT, _SETTLE_RESERVE = 15, 2
 _REPLY = 'result.json'
 
@@ -248,7 +252,7 @@ def _require_empty_catalog_cache(cwd):
             raise _Rejected('Fontconfig catalog cache is not empty')
 
 
-def _empty_catalog_cache(cwd):
+def _empty_catalog_cache(cwd, *, project=False):
     # The caller holds the cache directory pinned and proved the worker settled.
     # No recursive cleanup and no read or reuse of cache contents.
     cache = cwd / 'font-cache'
@@ -264,7 +268,7 @@ def _empty_catalog_cache(cwd):
         info = _handle_info(handle, kernel, 1, _StandardInfo())
         forbidden = stat.FILE_ATTRIBUTE_REPARSE_POINT | stat.FILE_ATTRIBUTE_DIRECTORY | stat.FILE_ATTRIBUTE_DEVICE
         if (tag.tag or tag.attributes & forbidden or info.directory or info.delete_pending
-                or info.links != 1 or not 0 <= info.size <= 256 * 1024):
+                or info.links != 1 or not 0 <= info.size <= (_PROJECT_CACHE_LIMIT if project else 256 * 1024)):
             raise _Rejected('Fontconfig probe left an invalid cache file')
         discard = W.BOOL(True)  # FileDispositionInfo: delete this held file on close
         if not kernel.SetFileInformationByHandle(handle, 4, C.byref(discard), C.sizeof(discard)):
@@ -284,7 +288,24 @@ def _catalog_string(address):
     raise _Rejected('Fontconfig catalog string is missing or exceeds its bound')
 
 
-def _catalog(library, cwd):
+def _project_families(get_string, pattern, first):
+    names, size = [first], len(first)
+    for i in range(1, _PROJECT_MAX_FAMILY_NAMES + 1):
+        value = C.c_void_p()
+        status = get_string(pattern, b'family', i, C.byref(value))
+        if status in (1, 3):  # NoMatch, NoId
+            return b','.join(dict.fromkeys(names)).decode('utf-8')
+        if status != 0 or i == _PROJECT_MAX_FAMILY_NAMES:
+            break
+        name = _catalog_string(value.value)
+        size += 1 + len(name)
+        if size > _PROJECT_MAX_FAMILY_BYTES:
+            break
+        names.append(name)
+    raise _Rejected('Fontconfig project family metadata is out of bounds')
+
+
+def _catalog(library, cwd, *, project_files=None):
     ptr, integer, string = C.c_void_p, C.c_int, C.c_char_p
 
     class FontSet(C.Structure):  # public FcFontSet ABI, borrowed from config
@@ -323,9 +344,14 @@ def _catalog(library, cwd):
         if not result:
             raise _Rejected('Fontconfig catalog is unavailable')
         fs = result.contents
-        if fs.nfont != len(_CATALOG_ROWS) or fs.sfont < fs.nfont or not fs.fonts:
+        fixed = project_files is None
+        count_ok = (fs.nfont == len(_CATALOG_ROWS) if fixed
+                    else len(project_files) <= fs.nfont <= _PROJECT_MAX_FACES)
+        if not count_ok or fs.sfont < fs.nfont or not fs.fonts:
             raise _Rejected('Fontconfig catalog face count differs')
-        slots = {encoded(fonts / leaf): i for i, leaf in enumerate(_CATALOG_LEAVES)}
+        leaves = _CATALOG_LEAVES if fixed else project_files
+        slots = {encoded(fonts / leaf): i for i, leaf in enumerate(leaves)}
+        faces = [[] for _ in leaves]
         get_s = bind('FcPatternGetString', integer, ptr, string, integer, C.POINTER(ptr))
         get_i = bind('FcPatternGetInteger', integer, ptr, string, integer, C.POINTER(integer))
         get_w = bind('FcPatternGetDouble', integer, ptr, string, integer, C.POINTER(C.c_double))
@@ -343,18 +369,37 @@ def _catalog(library, cwd):
             path = _catalog_string(field(get_s, b'file', ptr())).replace(b'\\', b'/')
             if path not in slots:
                 raise _Rejected('Fontconfig catalog path is outside the staged set')
-            row = (slots[path], field(get_i, b'index', integer()),
-                   _catalog_string(field(get_s, b'family', ptr())),
-                   _catalog_string(field(get_s, b'style', ptr())), field(get_w, b'weight', C.c_double()))
-            if row not in remaining:
-                raise _Rejected('Fontconfig catalog face inventory differs')
-            remaining.remove(row)
-        return _CATALOG_COUNTS
+            slot = slots[path]
+            index = field(get_i, b'index', integer())
+            family = _catalog_string(field(get_s, b'family', ptr()))
+            if fixed:
+                row = (slot, index, family, _catalog_string(field(get_s, b'style', ptr())),
+                       field(get_w, b'weight', C.c_double()))
+                if row not in remaining:
+                    raise _Rejected('Fontconfig catalog face inventory differs')
+                remaining.remove(row)
+            else:
+                # A variable pattern can have range weights or no style.
+                # Do not apply the fixed static face contract to those rows.
+                if (index < 0 or (index & 0xffff) >= _MAX_FACES or len(faces[slot]) >= _MAX_FACES):
+                    raise _Rejected('Fontconfig project face metadata is out of bounds')
+                style = ptr()
+                status = get_s(pattern, b'style', 0, C.byref(style))
+                if status not in (0, 1, 3):  # Match, NoMatch, NoId
+                    raise _Rejected('Fontconfig project style metadata is invalid')
+                style = _catalog_string(style.value).decode('utf-8') if status == 0 else ''
+                faces[slot].append((index, _project_families(get_s, pattern, family), style))
+        if fixed:
+            return _CATALOG_COUNTS
+        if not all(faces):
+            raise _Rejected('Fontconfig catalog omitted a declared project font')
+        return [[{'index': index, 'family': family, 'style': style}
+                 for index, family, style in sorted(set(rows))] for rows in faces]
     finally:
         destroy(config)
 
 
-def _catalog_inputs(stack, cwd, digests):
+def _catalog_inputs(stack, cwd, digests, leaves=_CATALOG_LEAVES):
     stack.enter_context(_pin_dir(cwd))
     fonts, cache, cfg = cwd / 'fonts', cwd / 'font-cache', cwd / 'fonts.conf'
     for path in (fonts, cache):
@@ -366,7 +411,7 @@ def _catalog_inputs(stack, cwd, digests):
     with os.scandir(cache) as entries:
         if next(entries, None) is not None:
             raise _Rejected('Fontconfig catalog cache is not initially empty')
-    required = set(_CATALOG_LEAVES)
+    required = set(leaves)
     with os.scandir(fonts) as entries:
         for entry in entries:
             if entry.name not in required:
@@ -375,14 +420,14 @@ def _catalog_inputs(stack, cwd, digests):
     if required:
         raise _Rejected('Fontconfig staged catalog is incomplete')
     verified = []
-    for leaf, sha in zip(_CATALOG_LEAVES, digests):
+    for leaf, sha in zip(leaves, digests):
         font = _pin_file(stack, fonts / leaf, _MAX_FONT)
         _verified(font, sha, 'font')
         verified.append((font, sha))
     return verified
 
 
-def _inspect(bundle, font, expected, index, sample, *, catalog=None):
+def _inspect(bundle, font, expected, index, sample, *, catalog=None, project_cwd=None):
     # Worker-only; standalone face mode does not parse config or scan dirs.
     # The OS and CPython installation are trusted.
     kernel = _kernel()
@@ -401,8 +446,12 @@ def _inspect(bundle, font, expected, index, sample, *, catalog=None):
             font_name = 'font' + font.suffix.lower()
             inputs.append((font, font_name, _MAX_FONT, expected, 'font'))
         else:
-            cwd = _local_path(bundle) / 'shell'
-            staged = _catalog_inputs(stack, cwd, catalog)
+            cwd = _local_path(bundle) / 'shell' if project_cwd is None else project_cwd
+            if project_cwd is None:
+                staged = _catalog_inputs(stack, cwd, catalog)
+            else:
+                leaves, digests = zip(*catalog)
+                staged = _catalog_inputs(stack, cwd, digests, leaves)
         copies = []
         for path, name, limit, sha, label in inputs:
             source = _pin_file(stack, path, limit, exact=label == 'bundled DLL')
@@ -437,7 +486,8 @@ def _inspect(bundle, font, expected, index, sample, *, catalog=None):
         if catalog is None:
             face = _query(library, font_name, index, sample)
         else:
-            counts = _catalog(library, cwd)
+            counts = (_catalog(library, cwd) if project_cwd is None
+                      else _catalog(library, cwd, project_files=leaves))
             _check_catalog_config(cwd / 'fonts.conf')
             for font, sha in staged:
                 _verified(font, sha, 'font')
@@ -503,15 +553,31 @@ def _run_worker(argv, directory, operation, *, deadline=None, kind='face'):
     settle()
 
 
+def _project_catalog_request(bundle, cwd, files):
+    if (cwd.parent != bundle or not re.fullmatch(r'shell(?:-[1-9][0-9]*)?', cwd.name)
+            or not str(bundle).isascii() or not 1 <= len(files) <= _PROJECT_MAX_FONTS
+            or any(not _PROJECT_LEAF.fullmatch(leaf) or leaf.split('.')[0] != f'font{i}'
+                   or not re.fullmatch(r'[0-9a-f]{64}', sha) for i, (leaf, sha) in enumerate(files))):
+        raise _Rejected('Fontconfig project catalog requires bounded private staging')
+
+
 def _worker():
     args = sys.argv[1:]
-    kind = 'catalog' if args[0] == 'catalog' else 'face'
+    kind = args[0] if args[0] in ('catalog', 'project-catalog') else 'face'
     try:
         if kind == 'catalog':
             _, bundle, *digests = args
             if _local_path(bundle) != Path.cwd().parent or len(digests) != len(_CATALOG_LEAVES):
                 raise _Rejected('Fontconfig catalog requires the fixed private staging layout')
             result = _inspect(bundle, None, None, None, None, catalog=digests)
+        elif kind == 'project-catalog':
+            _, bundle, cwd, *pairs = args
+            bundle, cwd = map(_local_path, (bundle, cwd))
+            if bundle != Path.cwd().parent or len(pairs) % 2:
+                raise _Rejected('Fontconfig project catalog requires the private staging layout')
+            files = tuple(zip(pairs[::2], pairs[1::2]))
+            _project_catalog_request(bundle, cwd, files)
+            result = _inspect(bundle, None, None, None, None, catalog=files, project_cwd=cwd)
         else:
             bundle, font, sha, index, sample = args
             result = _inspect(bundle, font, sha, int(index), json.loads(sample))
@@ -598,7 +664,25 @@ def _inspect_catalog(bundle, digests, *, operation, deadline):
     return _CATALOG_COUNTS
 
 
-def _worker_reply(argv, scratch, operation, deadline, kind):
+def _inspect_project_catalog(bundle, cwd, staged, *, operation, deadline):
+    if operation.keep:
+        raise _Rejected('Fontconfig project check requires confirmed prior Job settlement')
+    bundle, cwd = map(_local_path, (bundle, cwd))
+    files = tuple((target.name, sha) for target, sha in staged)
+    _project_catalog_request(bundle, cwd, files)
+    if (bundle / 'inkscape' != operation.inputs.vendor
+            or any(target.parent != cwd / 'fonts' for target, _ in staged)):
+        raise _Rejected('Fontconfig project catalog requires the private staging layout')
+    reply = _worker_reply(['project-catalog', str(bundle), str(cwd), *(part for row in files for part in row)],
+                          bundle, operation, deadline, 'project-catalog', limit=_PROJECT_MAX_RESULT)
+    if (reply.get('fontconfig_version') != 21701 or reply.get('fontconfig_sha256') != _DLLS[_FONTCONFIG][1]
+            or not isinstance(reply.get('faces_by_file'), list) or len(reply['faces_by_file']) != len(files)
+            or not all(isinstance(faces, list) and faces for faces in reply['faces_by_file'])):
+        raise _Rejected('Fontconfig project catalog reply is invalid')
+    return reply['faces_by_file']
+
+
+def _worker_reply(argv, scratch, operation, deadline, kind, *, limit=_MAX_RESULT):
     stack = ExitStack()
     with _after(stack.close, f'Fontconfig {kind} scratch pins could not be released'):
         _pin_dirs(stack, scratch)
@@ -614,10 +698,10 @@ def _worker_reply(argv, scratch, operation, deadline, kind):
                 raise TimeoutError(f'Fontconfig {kind} check deadline expired before reply')
             try:
                 with (directory / _REPLY).open('rb') as stream:
-                    data = stream.read(_MAX_RESULT + 1)
+                    data = stream.read(limit + 1)
             except OSError:
                 raise _Rejected(f'Fontconfig {kind} reply could not be read') from None
-            if len(data) > _MAX_RESULT:
+            if len(data) > limit:
                 raise _Rejected(f'Fontconfig {kind} reply exceeds its bound')
             reply = json.loads(data)
             if 'error' in reply:

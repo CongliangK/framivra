@@ -221,7 +221,7 @@ def render_stage(c):
         for clip in track['clips']:
             total += 1
             with gfx_svg._resolved_runtime(c, clip) as (runtime, record):
-                if getattr(c, '_svg_runtime', None) is runtime:
+                if getattr(c, '_svg_runtime', None) is not None:
                     warm += int(runtime.render_page(c, clip, record))
                     continue
                 key = gfx_svg.record_key(record)
