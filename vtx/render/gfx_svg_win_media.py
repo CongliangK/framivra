@@ -32,6 +32,7 @@ _SOURCE_FORMATS = {
 }
 _MARKER_LIMIT = 16 * 1024
 _PRIVATE_OUTPUT = ContextVar('windows_svg_private_output', default=None)
+_AUDIO_GRAPH = ContextVar('windows_svg_audio_graph', default=None)
 _STANDARD_TIMELINE = 'a7008c2e5b2833da13021c3a1ccb46a09068ca1775b6724328563d2d37f7d105'
 # Raw LF bytes of the frozen input lock (the Git blob and source archives).
 _STANDARD_INPUTS = 'b4a687a8cdaf3166b0f74f30015ef9c24ff8d1a27cdd9f491e5e4b78ea3d1bb0'
@@ -166,6 +167,15 @@ class WindowsSvgMedia:
                     argv[option:option] = options
             yield argv
 
+    @contextmanager
+    def audio_graph_scope(self):
+        """Allow file-backed transport only for the kernel's generated mix graph."""
+        token = _AUDIO_GRAPH.set(self)
+        try:
+            yield
+        finally:
+            _AUDIO_GRAPH.reset(token)
+
     def execute(self, cmd, *, text=True, capture_limit=16 * 1024 * 1024):
         if not 0 < capture_limit <= 64 * 1024 * 1024:
             raise ValueError('Windows SVG media capture exceeds its byte budget')
@@ -175,7 +185,20 @@ class WindowsSvgMedia:
         # unresolved ownership. Only propagate the sticky failure back upward.
         state = SimpleNamespace(keep=False)
         try:
-            with self.command_inputs(cmd) as argv:
+            with self.command_inputs(cmd) as argv, ExitStack() as graph_inputs:
+                if cmd[0] == 'ffmpeg' and _AUDIO_GRAPH.get() is self and '-filter_complex' in argv:
+                    # Size the final argv: absolute tool, authorized input
+                    # options, and the actual staged WAV are already present.
+                    from ..pipeline.stages import _windows_audio_argument_units
+                    if _windows_audio_argument_units(argv) > 32767:
+                        index = argv.index('-filter_complex')
+                        graph = argv[index + 1].encode('utf-8')
+                        path = graph_inputs.enter_context(self.private_input(graph, '.graph'))
+                        argv[index:index + 2] = ['-/filter_complex', str(path)]
+                        if _windows_audio_argument_units(argv) > 32767:
+                            graph_inputs.close()  # No child was launched; remove the private graph now.
+                            raise RuntimeError('Windows SVG 混音输入参数仍超过进程命令行长度上限；'
+                                               '请减少单次混音的音频事件或缩短工程路径。')
                 from .gfx_svg_win_subtitles import job_environment
                 job, _ = shell._run_owned(state, argv, self.scratch, job_environment(self, cmd), None,
                                           deadline=time.monotonic() + 600, capture_limit=capture_limit,

@@ -157,6 +157,57 @@ class TestWindowsAudioGraphTransport(unittest.TestCase):
             self.assertEqual(len(files), 2)
             self.assertTrue(all(not p.parent.exists() for p in files))
 
+    def test_owned_svg_job_sizes_the_authorized_argv_and_refuses_residual_overflow(self):
+        from contextlib import contextmanager
+        from vtx.render import gfx_svg_win_media as native
+
+        media = native.WindowsSvgMedia.__new__(native.WindowsSvgMedia)
+        media.scratch = Path('private')
+        media.operation = SimpleNamespace(keep=False)
+        media.environment = object()
+        active = []
+        graph = 'anull' + 'x' * 11000
+
+        @contextmanager
+        def command_inputs(cmd):
+            yield ['X:/locked/ffmpeg.exe', '-i', 'i' * input_size, *cmd[1:]]
+
+        @contextmanager
+        def private_input(data, suffix):
+            self.assertEqual(data, graph.encode('utf-8'))
+            self.assertEqual(suffix, '.graph')
+            active.append(True)
+            try:
+                yield media.scratch / 'sample.graph'
+            finally:
+                active.pop()
+
+        def launch(_state, args, _cwd, _env, _stdin, **options):
+            if input_size == 22500:
+                index = args.index('-/filter_complex')
+                self.assertEqual(args[index + 1], str(media.scratch / 'sample.graph'))
+                self.assertTrue(active)
+            else:
+                self.assertIn('-filter_complex', args)
+                self.assertFalse(active)
+            self.assertEqual(args[-3:], ['-f', 'null', '-'])
+            return SimpleNamespace(proc=SimpleNamespace(returncode=0), _output=lambda: (b'', b'')), None
+
+        media.command_inputs = command_inputs
+        media.private_input = private_input
+        c = SimpleNamespace(dry=False, run=media.execute, _windows_svg_media=media)
+        with mock.patch.object(stages.sys, 'platform', 'win32'), \
+                mock.patch.object(native.shell, '_run_owned', side_effect=launch) as start:
+            for input_size in (100, 22500):
+                stages._run_audio_graph(c, ['ffmpeg'], graph, ['-f', 'null', '-'])
+                self.assertFalse(active)
+            input_size = 33000
+            with self.assertRaisesRegex(RuntimeError, '命令行长度上限'):
+                stages._run_audio_graph(c, ['ffmpeg'], graph, ['-f', 'null', '-'])
+            self.assertEqual(start.call_count, 2)
+            self.assertFalse(active)
+            self.assertFalse(media.operation.keep)
+
     def test_budget_accounts_for_atomic_destination_expansion(self):
         graph = 'x' * 32600
         c = SimpleNamespace(dry=False)
