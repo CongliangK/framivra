@@ -7,7 +7,7 @@ export const AGENT_WIRE_LIMIT = 256 * 1024
 // operations serialized onto the 8 MiB --request-stdin transport, plus envelope
 // overhead. Rejected with a stable 413 before any text/JSON allocation.
 export const CONTROL_REQUEST_LIMIT = 8 * 1024 * 1024 + 64 * 1024
-export async function boundedText(message, limit, signal) {
+export async function boundedText(message, limit, signal, { preserveBOM = false } = {}) {
   const length = message.headers.get('content-length')
   if (length !== null && (!/^(0|[1-9][0-9]*)$/.test(length) || Number(length) > limit)) {
     await message.body?.cancel().catch(() => {})
@@ -35,7 +35,7 @@ export async function boundedText(message, limit, signal) {
     const bytes = new Uint8Array(size)
     let at = 0
     for (const chunk of chunks) { bytes.set(chunk, at); at += chunk.byteLength }
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: preserveBOM }).decode(bytes)
   } finally {
     signal?.removeEventListener('abort', abort)
     if (!complete) await reader.cancel().catch(() => {})

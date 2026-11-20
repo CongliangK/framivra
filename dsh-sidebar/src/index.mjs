@@ -2,7 +2,7 @@ import z from '@deepseek-ai/schemastery'
 import { createPreviewHost } from './host.mjs'
 import { createKernelManagement } from './kernel-management.mjs'
 import { registerTimelineTools } from './tools.mjs'
-import { DEFAULT_VTX_EXECUTABLE, DEFAULT_TRUSTED_PATH, DEFAULT_LOG_MAX_PER_MINUTE, MAX_LOG_MAX_PER_MINUTE, VTX_EXECUTABLE_PATTERN, TRUSTED_PATH_PATTERN, DEFAULT_VTX_CONFIG_FILE, VTX_CONFIG_FILE_PATTERN } from './configuration.mjs'
+import { DEFAULT_VTX_EXECUTABLE, DEFAULT_TRUSTED_PATH, DEFAULT_LOG_MAX_PER_MINUTE, MAX_LOG_MAX_PER_MINUTE, DEFAULT_PREVIEW_WINDOW_EXECUTABLE, PREVIEW_WINDOW_EXECUTABLE_PATTERN, VTX_EXECUTABLE_PATTERN, TRUSTED_PATH_PATTERN, DEFAULT_VTX_CONFIG_FILE, VTX_CONFIG_FILE_PATTERN } from './configuration.mjs'
 
 export const name = 'framivra-dsh-sidebar'
 export const inject = ['connection', 'sessions', 'workingDirectory', 'fs', 'subprocess', 'tools']
@@ -25,6 +25,7 @@ export const Config = z.object({
     z.const('vtx'),
     z.string().pattern(VTX_EXECUTABLE_PATTERN),
   ]).default(DEFAULT_VTX_EXECUTABLE).volatile().description('Host-trusted vtx executable: the literal "vtx" (searched on trustedPath) or an absolute path on the host; native Windows should select venv\\Scripts\\vtx.exe directly. Must not point inside a session workspace.'),
+  previewWindowExecutable: z.string().pattern(PREVIEW_WINDOW_EXECUTABLE_PATTERN).default(DEFAULT_PREVIEW_WINDOW_EXECUTABLE).volatile().description('Isolated Linux Host only: absolute physical path to the administrator-approved fixed-wheel window launcher in a private profile outside all Session workspaces. Empty disables windows; never replaces vtxExecutable.'),
   trustedPath: z.string().pattern(TRUSTED_PATH_PATTERN).default(DEFAULT_TRUSTED_PATH).volatile().description('Host-trusted colon-separated search PATH for the vtx executable. Every segment must be an absolute host path; empty or relative segments are rejected. The separator stays ":" per the Host contract.'),
   // Sanitized-diagnostics rate cap. Bounds and the reader live in
   // ./configuration.mjs (single home); the Host re-validates on every use so
@@ -63,6 +64,10 @@ export function apply(ctx, config = {}) {
   }))
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/framivra/frame', methods: ['POST'], requestBody: 'streaming', fetch: host.frame,
+  }))
+  // Separate owner-only render path; never registered as a model tool.
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: '/api/framivra/window', methods: ['POST'], requestBody: 'streaming', fetch: host.window,
   }))
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/framivra/media', methods: ['GET', 'HEAD'], requestBody: 'buffered', fetch: host.media,

@@ -10,7 +10,7 @@ const validGesture = operation => operation && (['block.move', 'block.trim'].inc
 const unknownResult = answer => answer?.code === 'outcome_unknown' || answer?.outcome === 'unknown'
 
 export function ManualEditor({ sessionId, opened, result, selection, selected, frame, tabSignal, call,
-  onCommitted, onGestureReady, onEditState, onQuickReady, onUndoReady, onEnableReady, onGrantDead, suspended = false, stale = false, historyRef }) {
+  onCommitted, onGestureReady, onEditState, onQuickReady, onUndoReady, onEnableReady, onGrantDead, beforeWrite, afterWrite, suspended = false, stale = false, historyRef }) {
   const base = opened.snapshot.content_version, head = opened.snapshot.document?._vtx?.head
   const managed = opened.snapshot.document?._vtx?.protocol === 1
   const [write, setWrite] = useState()
@@ -21,7 +21,7 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
   const active = useRef(), epoch = useRef(0), request = useRef()
   const openHistory = () => { if (historyRef?.current) historyRef.current.open = true }
   useLayoutEffect(() => () => request.current?.abort(), [])
-  useLayoutEffect(() => { epoch.current++ }, [selection, selected, frame, base, opened.grant, suspended])
+  useLayoutEffect(() => { epoch.current++ }, [selection, selected, frame, base, opened.grant, suspended, stale])
   const reason = suspended ? '请等待空间操作结束。' : busy ? '正在处理中' : unknown ? '请打开历史与恢复' : dirty || stale ? '请刷新工程' : !write ? '请先启用编辑' : !managed ? '请先接管旧工程' : ''
   const report = (patch) => {
     flags.current = { ...flags.current, ...patch }
@@ -46,8 +46,15 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
     request.current = controller
     const send = (verb, extra) => call(sessionId, payload(verb, extra), signal)
     let operationId, dispatched = false, applied = false, statusObserved = false
+    const pausesPreview = writeAction || action === 'authorize-write'
     report({ busy: true }); setMessage({ text: direct ? '正在保存…' : '处理中…' })
     try {
+      const reaping = pausesPreview ? beforeWrite?.() : undefined
+      if (reaping) {
+        if (!await reaping) throw Object.assign(new Error('音画预览回收未确认。'), { code: 'FRAME_BUSY' })
+        signal.throwIfAborted()
+        if (start !== epoch.current || request.current !== controller) throw staleError()
+      }
       let answer
       if (direct && editView) {
         // Release is the final authorized intent. The same kernel transaction
@@ -105,6 +112,7 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
         report({ dirty: false, unknown: applied || answer.pending === false ? false : flags.current.unknown || answer.pending === true })
         if (action === 'undo') setUndoneRevision(answer.revision)
       }
+      if (pausesPreview) afterWrite?.()
       setMessage({ text: receiptMessage(direct ? 'commit' : action, answer) })
       return direct ? { ok: true, op_id: operationId, answer } : answer
     } catch (cause) {

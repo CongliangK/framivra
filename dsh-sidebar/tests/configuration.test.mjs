@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   DEFAULT_VTX_EXECUTABLE, DEFAULT_TRUSTED_PATH, ConfigurationError,
-  validateVtxExecutable, validateTrustedPath, configurationFingerprint,
+  validateVtxExecutable, validatePreviewWindowExecutable, validateTrustedPath, configurationFingerprint,
   isVolatileConfig, readConfiguration, VTX_EXECUTABLE_PATTERN, TRUSTED_PATH_PATTERN,
 } from '../src/configuration.mjs'
 import { Config } from '../src/index.mjs'
@@ -33,6 +33,23 @@ test('vtxExecutable validation: literal vtx, POSIX/Windows absolute accepted; re
   assert.equal(validateVtxExecutable('vtx'), 'vtx')
   for (const value of ['/usr/local/bin/vtx', '/opt/trusted/vtx', 'C:\\tools\\vtx.exe', '\\\\server\\share\\vtx.exe']) assert.equal(validateVtxExecutable(value), value)
   for (const value of ['bin/vtx', './vtx', 'vtxx', '', ' vtx', 'vtx ', 42, null]) assert.throws(() => validateVtxExecutable(value), ConfigurationError)
+})
+
+test('independent window launcher is disabled by default and joins the exact Host snapshot only when configured', () => {
+  assert.equal(Config.dict.previewWindowExecutable.meta.default, '')
+  assert.equal(Config.dict.previewWindowExecutable.meta.volatile, true)
+  assert.equal(validatePreviewWindowExecutable(undefined), '')
+  for (const path of ['preview_window_wheel.py', '/opt/../launcher', '/opt//launcher', '/opt/launcher/', '/opt/launcher\n', 'C:\\opt\\launcher.exe', null]) {
+    assert.throws(() => validatePreviewWindowExecutable(path), ConfigurationError)
+  }
+  let path = '/opt/private profile/preview_window_wheel.py'
+  const source = { previewWindowExecutable: { get: () => path } }
+  assert.equal(isVolatileConfig(source), true)
+  const selected = readConfiguration(source)
+  assert.equal(selected.previewWindowExecutable, path)
+  path = ''
+  assert.notEqual(readConfiguration(source).fingerprint, selected.fingerprint)
+  assert.deepEqual(readConfiguration(source), readConfiguration(undefined))
 })
 
 test('trustedPath validation: colon-separated absolute segments only', () => {

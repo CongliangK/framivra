@@ -1,6 +1,7 @@
 import { domTextExcerpt } from './dom-diagnostics.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import React, { act } from 'react'
 import { JSDOM } from 'jsdom'
 import { stringifyJSON } from '../src/json.mjs'
@@ -177,7 +178,7 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
   assert(document.querySelector('video') === null, 'no native video in live mode')
   await act(async () => button('成片渲染').click())
   assert(document.body.textContent.includes('暂无成片；不会自动启动整片渲染。'))
-  await act(async () => button('实时真预览').click())
+  await act(async () => button('固定帧预览').click())
   nextVersion = `sha256:${'b'.repeat(64)}`
   await submit(1)
   await settle(() => document.body.textContent.includes('旧块已隐藏'))
@@ -242,6 +243,316 @@ test('actual React DOM: references abort on selection/session/unmount, not playh
   await act(async () => reads[4].finish('AFTER_UNMOUNT'))
   assert(document.body.textContent === '', 'body remains empty after unmount and a late response')
   assert.deepEqual(copies, ['CURRENT_B'], 'late unmounted copy cannot publish to Clipboard')
+})
+
+test('window recovery remains available without a valid view and only closes/cancels the retired grant', async t => {
+  const { root, button, submit } = await mount(t)
+  const oldFetch = globalThis.fetch, tab = new AbortController()
+  t.after(() => { globalThis.fetch = oldFetch })
+  const windowCap = { schema: 'framivra.timeline.preview-window/v1', inline_media: true, prepare_inputs: true }
+  const opened = grant => ({ grant, snapshot, media: [], host: { ops: ['preview-window'] }, capabilities: { capabilities: { preview_window: windowCap } } })
+  const calls = []
+  let opens = 0, cancels = 0, finishOpen
+  const pendingOpen = new Promise(resolve => { finishOpen = resolve })
+  globalThis.fetch = async (path, init) => {
+    const request = JSON.parse(init.body)
+    calls.push({ path, request })
+    if (request.op === 'open') return Response.json(++opens === 1 ? opened('old') : await pendingOpen)
+    if (request.op === 'query') return new Response(stringifyJSON(full))
+    if (request.op === 'close') return Response.json({ ok: true })
+    if (request.op === 'cancel') return ++cancels === 1 ? Response.json({ ok: false }, { status: 502 }) : Response.json({ ok: true, reaped: true })
+    assert.equal(request.op, 'render')
+    return Response.json({ ok: false, error: 'BAD_GRANT' }, { status: 403 })
+  }
+  const useTabInfo = () => ({ tab: { signal: tab.signal } })
+  const click = label => act(async () => button(label).click())
+  const configure = async () => {
+    await click('音画窗口')
+    for (const input of document.querySelectorAll('[aria-label="单窗口音画监看"] input')) await act(async () => input.click())
+  }
+  await act(async () => root.render(h(PreviewBody, { useTabInfo, sessionId: 'one' })))
+  await submit(0)
+  await settle(() => button('音画窗口'))
+  await configure(); await click('生成当前音画窗口')
+  await settle(() => !button('音画窗口') && button('重试回收音画窗口'))
+  const initial = calls.find(call => call.request.op === 'render').request
+  await click('刷新保存版本')
+  assert.deepEqual(calls.filter(call => call.request.op === 'close').map(call => call.request.grant), ['old'], 'failed cleanup does not delay revoking old grant')
+  assert.equal(button('音画窗口'), undefined, 'replacement is still loading')
+  await click('重试回收音画窗口')
+  assert.deepEqual(calls.filter(call => call.request.op === 'cancel'), Array.from({ length: 2 }, () => ({ path: '/api/framivra/window',
+    request: { sessionId: 'one', grant: 'old', op: 'cancel', operationId: initial.operationId } })))
+  await act(async () => finishOpen(opened('new')))
+  await settle(() => button('音画窗口'))
+  await configure(); await click('生成当前音画窗口')
+  const newRender = calls.filter(call => call.request.op === 'render').at(-1).request
+  assert.equal(newRender.grant, 'new')
+  assert.notEqual(newRender.operationId, initial.operationId)
+  await act(async () => tab.abort())
+})
+
+test('undo waits for the one in-flight manual window cancellation', async t => {
+  const { root, button, submit, change } = await mount(t)
+  const oldFetch = globalThis.fetch, tab = new AbortController()
+  t.after(() => { globalThis.fetch = oldFetch })
+  const revised = `sha256:${'b'.repeat(64)}`
+  const managed = { ...snapshot, document: { ...snapshot.document, _vtx: { protocol: 1, head: 'saved-head' } } }
+  const opened = { grant: 'open', snapshot: managed, media: [], host: { ops: ['preview-window'] }, capabilities: { capabilities: {
+    preview_window: { schema: 'framivra.timeline.preview-window/v1', inline_media: true, prepare_inputs: true },
+  } } }
+  const calls = []
+  let acknowledge, renderSignal, saved = version
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(init.body)
+    calls.push(request)
+    switch (request.op) {
+    case 'open': return Response.json(opened)
+    case 'query': return Response.json({ ...full, content_version: saved })
+    case 'inspect': return Response.json({ ...managed, content_version: saved })
+    case 'authorize-write': return Response.json({ ok: true, writeGrant: 'write' })
+    case 'render':
+      renderSignal = init.signal
+      return new Promise(resolve => renderSignal.addEventListener('abort', () => resolve(new Response()), { once: true }))
+    case 'cancel': return new Promise(resolve => { acknowledge = () => resolve(Response.json({ ok: true, reaped: true })) })
+    case 'undo':
+      saved = revised
+      return Response.json({ ok: true, revision: revised })
+    case 'close': return Response.json({ ok: true })
+    default: assert.fail(`unexpected request: ${request.op}`)
+    }
+  }
+  const click = label => act(async () => {
+    const action = button(label)
+    assert(action && !action.disabled, `expected enabled action: ${label}`)
+    action.click()
+  })
+  await act(async () => root.render(h(PreviewBody, { useTabInfo: () => ({ tab: { signal: tab.signal } }), sessionId: 'one' })))
+  await submit(0)
+  await settle(() => button('音画窗口'))
+  await change(document.querySelector('input[inputmode="numeric"]'), '5')
+  await click('启用编辑')
+  await click('音画窗口')
+  for (const input of document.querySelectorAll('[aria-label="单窗口音画监看"] input')) await act(async () => input.click())
+  await click('生成当前音画窗口')
+  await settle(() => renderSignal)
+  await click('撤销当前版本')
+  await settle(() => acknowledge)
+  const render = calls.find(({ op }) => op === 'render')
+  assert.equal(renderSignal.aborted, true)
+  assert.deepEqual(calls.filter(({ op }) => op === 'cancel' || op === 'undo'), [
+    { op: 'cancel', sessionId: 'one', grant: 'open', operationId: render.operationId },
+  ], 'undo does not race the pending reap or send another cancellation')
+  await act(async () => acknowledge())
+  await settle(() => calls.some(({ op }) => op === 'undo'))
+  assert.deepEqual(calls.filter(({ op }) => ['render', 'cancel', 'undo'].includes(op)).map(({ op }) => op), ['render', 'cancel', 'undo'])
+  await act(async () => tab.abort())
+})
+
+test('automatic window stays held after a drag conflict, then uses a verified same-track save and rejects an unrelated undo readback', async t => {
+  const { root, button, submit, change, Simulate } = await mount(t)
+  const oldFetch = globalThis.fetch, tab = new AbortController()
+  t.after(() => { globalThis.fetch = oldFetch })
+  const committed = `sha256:${'b'.repeat(64)}`, undone = `sha256:${'c'.repeat(64)}`, unrelated = `sha256:${'d'.repeat(64)}`
+  const inspected = revision => ({ ...snapshot, content_version: revision, document: { ...snapshot.document, _vtx: { protocol: 1, head: revision } } })
+  const queried = revision => ({ ...full, content_version: revision,
+    tracks: tracks.map(track => ({ ...track, data: { ...track.data, id: track.address } })),
+    blocks: blocks.map(block => ({ ...block, data: { ...block.data, id: block.address },
+      range: revision === committed && block.address === '/t/0/b/0' ? [15, 35] : block.range })) })
+  const windowCap = { schema: 'framivra.timeline.preview-window/v1', inline_media: true, prepare_inputs: true }
+  const opened = { grant: 'open', snapshot: inspected(version), media: [], host: { ops: ['preview-window'] }, capabilities: { capabilities: {
+    frame: { inline_png: { flag: '--include-png' } }, preview_window: windowCap,
+  } } }
+  const reads = new Map(), rendered = [], plans = []
+  let write, savedRevision = version, conflict = true, reaps = 0
+  globalThis.fetch = async (path, init) => {
+    assert.equal(path, '/api/framivra/control')
+    const { op, query, operations } = JSON.parse(init.body)
+    if (op === 'open') return Response.json(opened)
+    if (op === 'reference') return Response.json({ content_version: savedRevision,
+      selection: { blocks: query.block_addresses.map(address => ({ address, stable_id: address })) } })
+    if (op === 'authorize-write') return Response.json({ ok: true, writeGrant: 'independent-write' })
+    if (op === 'plan') { plans.push(operations); return Response.json({ ok: true, planToken: 'plan' }) }
+    if (op === 'commit' && conflict) return Response.json({ ok: false, code: 'conflict' })
+    if (op === 'commit' || op === 'undo') {
+      write = op; reads.clear()
+      savedRevision = op === 'commit' ? committed : unrelated
+      return Response.json({ ok: true, revision: op === 'commit' ? committed : undone, current_revision: unrelated })
+    }
+    if (write && ['inspect', 'query'].includes(op)) return new Promise(resolve => reads.set(op, value => resolve(Response.json(value))))
+    if (op === 'query') return Response.json(queried(version))
+    return Response.json({ ok: true })
+  }
+  const previewSession = {
+    qualification: { capability: 'preview-session', version: 1 }, ownerId: 'host-owner', revoked: tab.signal,
+    grant: { id: 'auto', ownerId: 'host-owner', sessionId: 'one', project: 'timeline.json', openGrant: 'open', expiresAt: Date.now() + 60_000 },
+    request(op, request, signal) {
+      if (op === 'cancel') {
+        reaps++
+        return Response.json({ ok: true, reaped: true, operationId: request.operationId, grantId: 'auto', ownerId: 'host-owner', openGrant: 'open' })
+      }
+      assert.equal(op, 'render')
+      rendered.push([request.contentVersion, request.frame]); return new Promise(resolve => signal.addEventListener('abort', () => resolve(new Response()), { once: true }))
+    },
+  }
+  const useTabInfo = () => ({ tab: { signal: tab.signal } })
+  const click = label => act(async () => {
+    const action = button(label)
+    assert(action && !action.disabled, `expected enabled action: ${label}`)
+    action.click()
+  })
+  await act(async () => root.render(h(PreviewBody, { useTabInfo, sessionId: 'one', previewSession })))
+  await submit(0)
+  await settle(() => button('音画窗口'))
+  const frameInput = () => document.querySelector('input[inputmode="numeric"]')
+  await change(frameInput(), '5')
+  await click('启用编辑')
+  await act(async () => document.querySelector('.fv-clip[aria-label^="选择块 /t/0/b/0"]').click())
+  await click('音画窗口')
+  assert.deepEqual(rendered, [[version, 5]])
+  const move = async () => {
+    const clip = document.querySelector('.fv-clip[aria-label^="选择块 /t/0/b/0"]')
+    assert.equal(clip.getAttribute('data-movable'), 'true')
+    document.querySelector('.fv-ruler').getBoundingClientRect = () => ({ left: 0, width: 200 })
+    clip.closest('.fv-track').getBoundingClientRect = () => ({ top: 0, bottom: 20 })
+    const target = { pointerId: 1, clientX: 40, clientY: 10, altKey: true }
+    await act(async () => Simulate.pointerDown(clip, { pointerId: 1, button: 0, clientX: 10, clientY: 10 }))
+    await act(async () => Simulate.pointerMove(clip, target))
+    // A real drag can hold the ghost long enough for the old worker to be fully reaped before pointer-up.
+    await settle(() => !button('取消并回收音画窗口'))
+    assert(document.querySelector('[aria-label="未保存拖动 ghost"]'))
+    await act(async () => Simulate.pointerUp(clip, target))
+  }
+  await move()
+  assert.equal(reaps, 1)
+  assert.deepEqual(plans, [[{ op: 'block.move', id: '/t/0/b/0', track_id: '/t/0', at: 15 }]])
+  await settle(() => button('退出编辑')?.disabled === false)
+  assert.deepEqual(rendered, [[version, 5]], 'reconnecting after a conflict must not render the stale saved binding')
+  assert.equal(reads.size, 0)
+  conflict = false
+  await move()
+  await settle(() => reads.size === 2)
+  await change(frameInput(), '7')
+  await change(frameInput(), '8')
+  await act(async () => reads.get('inspect')(inspected(committed)))
+  assert.deepEqual(rendered, [[version, 5]], 'one read cannot authorize the next version')
+  await act(async () => reads.get('query')(queried(committed)))
+  await settle(() => rendered.length === 2)
+  assert.deepEqual(rendered, [[version, 5], [committed, 8]])
+  await click('撤销当前版本')
+  await settle(() => write === 'undo' && reads.size === 2)
+  await act(async () => { reads.get('inspect')(inspected(unrelated)); reads.get('query')(queried(unrelated)) })
+  await settle(() => !button('音画窗口'))
+  assert.deepEqual(rendered, [[version, 5], [committed, 8]], 'matching the undo receipt is mandatory even when the two reads agree')
+  await act(async () => tab.abort())
+})
+
+test('preview band follows the held verified A/V only, across playability, superseded requests, the last frame and revocation', async t => {
+  const { root, dom, button, submit, change } = await mount(t)
+  const oldFetch = globalThis.fetch, tab = new AbortController()
+  t.after(() => { globalThis.fetch = oldFetch })
+  const { Event, HTMLMediaElement } = dom.window
+  HTMLMediaElement.prototype.pause = HTMLMediaElement.prototype.load = function () {}
+  const quality = { capability: 'preview-session', version: 1, ownerId: 'owner' }
+  const opened = { grant: 'open', snapshot, media: [], host: { ops: ['preview-window'] }, previewSession: quality, capabilities: { capabilities: {
+    preview_window: { schema: 'framivra.timeline.preview-window/v1', inline_media: true, prepare_inputs: true, input_epoch: true },
+  } } }
+  const grant = { id: 'auto', ownerId: 'owner', sessionId: 'one', project: 'timeline.json', openGrant: 'open', expiresAt: Date.now() + 60_000, maxWindows: 10 }
+  const renders = new Map(), inputEpoch = `sha256:${'e'.repeat(64)}`
+  const bytes = Buffer.from('fixture window bytes'), digest = createHash('sha256').update(bytes).digest('hex')
+  let acknowledgeRevoke
+  globalThis.fetch = (_path, init) => {
+    const request = JSON.parse(init.body)
+    if (request.op === 'open') return Response.json(opened)
+    if (request.op === 'query') return Response.json(full)
+    if (request.op === 'authorize-preview-session') return Response.json({ ok: true, grant })
+    if (request.op === 'revoke-preview-session') return new Promise(resolve => { acknowledgeRevoke = () => resolve(Response.json({ ok: true, revoked: true, grantId: grant.id })) })
+    if (['session-render', 'render'].includes(request.op)) return new Promise(resolve => renders.set(request.frame, () => resolve(new Response(bytes, { headers: {
+      'Content-Type': 'video/mp4', 'X-Framivra-Version': version, 'X-Framivra-SHA256': digest,
+      'X-Framivra-Start': String(request.frame), 'X-Framivra-End': String(Math.min(100, request.frame + 30)),
+      ...(request.op === 'session-render' ? { 'X-Framivra-Input-Epoch': inputEpoch } : {}),
+    } })))) // Intentionally permits an aborted request to complete late.
+    return Response.json({ ok: true, reaped: true, operationId: request.operationId, ownerId: grant.ownerId, grantId: grant.id, openGrant: grant.openGrant })
+  }
+  const useTabInfo = () => ({ tab: { signal: tab.signal } })
+  const click = label => act(async () => { const node = button(label); assert(node && !node.disabled, label); node.click() })
+  const pin = frame => change(document.querySelector('input[inputmode="numeric"]'), String(frame))
+  const status = () => document.querySelector('[aria-label="预览状态带"] [role="status"]').textContent
+  const segment = state => document.querySelector(`.fv-preview-band [data-status="${state}"]`)
+  const video = () => document.querySelector('.fv-program-stage[data-mode="window"] video')
+  const emit = (node, name) => act(async () => node.dispatchEvent(new Event(name)))
+  async function decoded(node, duration) {
+    for (const [key, value] of Object.entries({ videoWidth: 1920, videoHeight: 1080, currentSrc: node.getAttribute('src'), duration, readyState: 2 })) {
+      Object.defineProperty(node, key, { value, writable: true, configurable: true })
+    }
+    await emit(node, 'loadeddata')
+  }
+  const canplay = node => { node.readyState = 3; return emit(node, 'canplay') }
+
+  await act(async () => root.render(h(PreviewBody, { useTabInfo, sessionId: 'one' })))
+  await submit(0)
+  await settle(() => button('音画窗口'))
+  assert.match(status(), /未就绪/)
+  assert.match(document.querySelector('[aria-label="预览状态带"]').textContent, /仅视频.*不计入音画/)
+  await pin(39)
+  await click('音画窗口')
+  for (const input of document.querySelectorAll('[aria-label="单窗口音画监看"] fieldset input')) await act(async () => input.click())
+  await click('开启当前工程自动预览')
+  await settle(() => renders.has(39))
+  assert.match(status(), /已请求合成 \[39, 69\)/)
+  assert(segment('rendering'))
+  await pin(69)
+  await settle(() => renders.has(69))
+  await act(async () => renders.get(69)())
+  await settle(video)
+  const current = video()
+  assert.equal(segment('rendering'), null, 'transferred bytes and decode do not count as synthesis')
+  await decoded(current, 1)
+  assert.equal(segment('ready'), null, 'loadeddata is not a playability proof')
+  await canplay(current)
+  assert.match(status(), /音画就绪 \[69, 99\)/)
+  assert.equal(segment('ready').style.left, '69%')
+  assert.equal(segment('ready').style.width, '30%')
+  await emit(current, 'pause')
+  assert(segment('ready'), 'a paused but playable window is still held')
+  current.readyState = 2
+  await emit(current, 'waiting')
+  assert.match(status(), /未就绪/)
+  assert.equal(segment('ready'), null)
+  await canplay(current)
+  await act(async () => renders.get(39)())
+  assert.equal(video(), current)
+  assert.match(status(), /音画就绪 \[69, 99\)/, 'late bytes cannot replace the current green range')
+  await pin(98)
+  assert.equal(renders.size, 2, 'last included frame reuses the held window')
+  await pin(99)
+  await settle(() => renders.has(99))
+  assert.equal(segment('ready'), null, 'the exclusive end evicts the old interval')
+  assert.match(status(), /已请求合成 \[99, 100\)/)
+  await act(async () => renders.get(99)())
+  await settle(video)
+  const last = video()
+  await decoded(last, 1 / 30)
+  await canplay(last)
+  assert.match(status(), /音画就绪 \[99, 100\)/)
+  assert.equal(segment('ready').style.left, '99%')
+  assert.equal(segment('ready').style.width, '1%')
+  await click('停止并撤销自动预览')
+  assert.match(status(), /未就绪/)
+  assert.equal(segment('ready'), null, 'revoke hides green before the Host acknowledges it')
+  await canplay(last)
+  assert.equal(segment('ready'), null, 'late canplay after revoke does not restore green')
+  await act(async () => acknowledgeRevoke())
+
+  for (const input of [...document.querySelectorAll('[aria-label="单窗口音画监看"] input')].slice(0, 2)) await act(async () => input.click())
+  renders.delete(99)
+  await click('生成当前音画窗口')
+  await settle(() => renders.has(99))
+  await act(async () => renders.get(99)())
+  await settle(video)
+  await decoded(video(), 1 / 30)
+  await canplay(video())
+  assert.equal(segment('ready'), null, 'a playable legacy window without input_epoch cannot paint green')
+  await act(async () => tab.abort())
 })
 
 test('actual React DOM: empty and unsafe displays retain diagnostics/raw; component CSS is self-contained and scoped', async t => {

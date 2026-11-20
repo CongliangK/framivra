@@ -27,6 +27,18 @@ export function validateVtxConfigFile(value) {
 }
 
 export const DEFAULT_VTX_EXECUTABLE = 'vtx'
+export const DEFAULT_PREVIEW_WINDOW_EXECUTABLE = ''
+// Disabled or a canonical-spelled absolute Linux launcher path. The Host also
+// checks the resolved filesystem target; spelling checks cannot rule out links.
+export const PREVIEW_WINDOW_EXECUTABLE_PATTERN = /^(?:|(?:\/(?!\.{1,2}(?:\/|$))[^/\x00-\x1f\x7f]+)+)$(?![\s\S])/
+export function validatePreviewWindowExecutable(value) {
+  if (value === undefined) return DEFAULT_PREVIEW_WINDOW_EXECUTABLE
+  if (typeof value !== 'string' || !PREVIEW_WINDOW_EXECUTABLE_PATTERN.test(value)) {
+    throw new ConfigurationError('previewWindowExecutable must be empty or an absolute Linux launcher path without traversal or control characters')
+  }
+  return value
+}
+
 export const DEFAULT_TRUSTED_PATH = '/usr/local/bin:/usr/bin:/bin'
 /** Sanitized-diagnostics rate cap: inclusive bounds for the Host config field.
  *  The ceiling keeps an operator typo or a hostile profile value from turning
@@ -68,12 +80,12 @@ export function validateTrustedPath(value) {
 }
 
 /* Stable identity of execution configuration; grants bind this exactly.
- * JSON escaping keeps values collision-free; the empty config-file default
- * preserves the legacy pair, while an explicit file extends it to a triple. */
-export function configurationFingerprint({ vtxExecutable, trustedPath, vtxConfigFile = '' }) {
-  // Preserve the historical default fingerprint; an explicit file is a third
-  // collision-free component and invalidates every grant minted without it.
-  return JSON.stringify(vtxConfigFile ? [vtxExecutable, trustedPath, vtxConfigFile] : [vtxExecutable, trustedPath])
+ * Preserve legacy fingerprints when no independent window executor is set. */
+export function configurationFingerprint({ vtxExecutable, trustedPath, vtxConfigFile = '', previewWindowExecutable = '' }) {
+  const fields = [vtxExecutable, trustedPath]
+  if (vtxConfigFile || previewWindowExecutable) fields.push(vtxConfigFile)
+  if (previewWindowExecutable) fields.push(previewWindowExecutable)
+  return JSON.stringify(fields)
 }
 
 /** Read one field: a plain value, or a cordis Volatile/Obs cell via .get().
@@ -88,7 +100,7 @@ function readField(field) {
 
 /** Whether any field of this source is a live Volatile cell rather than a plain string. */
 export function isVolatileConfig(source) {
-  return ['vtxExecutable', 'trustedPath', 'vtxConfigFile'].some(key => {
+  return ['vtxExecutable', 'trustedPath', 'vtxConfigFile', 'previewWindowExecutable'].some(key => {
     const field = source?.[key]
     return field !== undefined && field !== null && ((typeof field === 'object' || typeof field === 'function') && typeof field.get === 'function')
   })
@@ -116,9 +128,9 @@ export function readLogMaxPerMinute(source) {
  * One consistent validated snapshot of the Host-trusted configuration.
  * Reads plain strings and Volatile cells alike, validates string/absolute
  * semantics on EVERY call, and returns a frozen snapshot plus fingerprint.
- * An empty config file is omitted for backward-compatible default snapshots.
- * @param {{ vtxExecutable?: unknown, trustedPath?: unknown, vtxConfigFile?: unknown }} source plugin config
- * @returns {{ vtxExecutable: string, trustedPath: string, vtxConfigFile?: string, fingerprint: string }} frozen snapshot
+ * Optional selections are omitted from backward-compatible default snapshots.
+ * @param {{ vtxExecutable?: unknown, trustedPath?: unknown, vtxConfigFile?: unknown, previewWindowExecutable?: unknown }} source plugin config
+ * @returns {{ vtxExecutable: string, trustedPath: string, vtxConfigFile?: string, previewWindowExecutable?: string, fingerprint: string }} frozen snapshot
  */
 export function readConfiguration(source) {
   const snapshot = {
@@ -126,8 +138,9 @@ export function readConfiguration(source) {
     trustedPath: validateTrustedPath(readField(source?.trustedPath)),
   }
   const vtxConfigFile = validateVtxConfigFile(readField(source?.vtxConfigFile))
-  // Keep default snapshots wire-compatible with pre-management two-field saves.
   if (vtxConfigFile) snapshot.vtxConfigFile = vtxConfigFile
+  const previewWindowExecutable = validatePreviewWindowExecutable(readField(source?.previewWindowExecutable))
+  if (previewWindowExecutable) snapshot.previewWindowExecutable = previewWindowExecutable
   snapshot.fingerprint = configurationFingerprint(snapshot)
   const epoch = source && (typeof source === 'object' || typeof source === 'function') ? configurationEpochs.get(source) ?? 0 : 0
   if (epoch) snapshot.fingerprint += `|config-save:${epoch}`

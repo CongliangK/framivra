@@ -7,7 +7,7 @@ import { stringifyJSON } from '../src/json.mjs'
 // Presentation/registration test, NOT a DOM/visual/React lifecycle test.
 // Resolve React to a tiny element recorder so the source stays dependency-free in tests.
 const source = new URL('../src/client/index.mjs', import.meta.url).href
-const react = `export const createElement=(type,props,...children)=>({type:typeof type==='symbol'?'Fragment':type,props,children});export const useEffect=()=>{};export const useRef=()=>({});export const useState=()=>[];export default {createElement,Fragment:Symbol('Fragment')};`
+const react = `export const createElement=(type,props,...children)=>({type:typeof type==='symbol'?'Fragment':type,props,children});export const useEffect=()=>{};export const useLayoutEffect=()=>{};export const useRef=()=>({});export const useState=()=>[];export default {createElement,Fragment:Symbol('Fragment')};`
 const hook = registerHooks({ resolve(specifier, context, next) {
   if (specifier === 'react' && context.parentURL === source) return { url: `data:text/javascript,${encodeURIComponent(react)}`, shortCircuit: true }
   return next(specifier, context)
