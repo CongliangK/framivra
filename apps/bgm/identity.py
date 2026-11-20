@@ -85,6 +85,10 @@ def _tool_identity(command, env, *, application=None):
         resolved = _native_windows_media_tool(command, env, application)
     else:
         resolved = shutil.which(command, path=env.get("PATH")) if command else None
+    return _selected_tool_identity(command, resolved)
+
+
+def _selected_tool_identity(command, resolved):
     if not resolved:
         return {"command": command, "state": "missing"}
     selected = Path(resolved).absolute()
@@ -122,7 +126,14 @@ def execution_identity(command, env):
     # identity when present; a shared-library soname may remain loader-resolved.
     configured_tools = {}
     for name, value in (runtime.get("tools") or {}).items():
-        if isinstance(value, str):
+        if not isinstance(value, str):
+            continue
+        if os.name == 'nt' and name == 'fluidsynth_lib' and Path(value).is_absolute():
+            # ctypes loads the explicitly named file directly. Executable PATH
+            # discovery can omit it because .DLL is not normally in PATHEXT.
+            library = Path(value)
+            configured_tools[name] = _selected_tool_identity(value, library if library.is_file() else None)
+        else:
             configured_tools[name] = _tool_identity(value, env)
     # Bind the interpreters actually selected by QC and optional local engines,
     # separately from host tools. Preserve each logical venv entry for RECORD.
