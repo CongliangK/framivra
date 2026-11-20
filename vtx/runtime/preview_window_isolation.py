@@ -107,6 +107,29 @@ def binding_read(fd, guard, limit, check):
     return b''.join(_binding_blocks(fd, guard, limit, check))
 
 
+def _binding_media_digest(fd, guard, check):
+    """Keep the legacy media_stat_digest wire value without reopening a path."""
+    from ..cache.cache_state import SAMPLE_BYTES
+
+    check()
+    guard()
+    info = os.fstat(fd)
+    size = info.st_size
+    spans = ((0, size),) if size <= 2 * SAMPLE_BYTES else ((0, SAMPLE_BYTES), (size - SAMPLE_BYTES, SAMPLE_BYTES))
+    h = hashlib.sha1()
+    for offset, remaining in spans:
+        while remaining:
+            check()
+            block = os.pread(fd, remaining, offset)
+            if not block:
+                raise IsolationError('binding input changed during media sampling')
+            h.update(block)
+            offset += len(block)
+            remaining -= len(block)
+    guard()
+    return f'{size}:{info.st_mtime_ns}:{h.hexdigest()[:16]}'
+
+
 def _scan_tree(path, check):
     # Only selected provider trees; never scan the project or the user's home.
     # Borrowed directory mounts must not expose host IPC files or special nodes.
@@ -375,7 +398,7 @@ def execute(stack, path, files, start, version, prepare_fingerprint, bytes_limit
         env['TMPDIR'] = str(scratch)
     for key, val in sorted(env.items()):
         argv.extend(('--setenv', key, val))
-    fds, guards, inputs = [], [], {}
+    fds, guards, inputs = [], [], {}, {}
 
     def bind(src, dest, *, directory=False, project_file=False):
         fd, guard = _pin_binding(stack, src, root if project_file else src.parent,
@@ -383,7 +406,7 @@ def execute(stack, path, files, start, version, prepare_fingerprint, bytes_limit
                                  root_identity=root_identity if project_file else None)
         fds.append(fd)
         guards.append(guard)
-        if not directory and (qualification is not None or dest == caption):
+        if not directory and (project_file or qualification is not None):
             inputs[dest] = (src, fd, guard, files[dest] if project_file else ('provider',))
         argv.extend(('--ro-bind-fd', str(fd), str(dest)))
         return fd
@@ -405,6 +428,15 @@ def execute(stack, path, files, start, version, prepare_fingerprint, bytes_limit
             _, fd, guard, _ = inputs[caption]
             return read_caption(fd, guard)
         return None, None
+
+    def project_digest(path, *, sample=False):
+        # Only declared project bindings are eligible for host-side receipt reads.
+        if path not in project_fds:
+            raise IsolationError('receipt input was not bound')
+        _, fd, guard, _ = inputs[path]
+        if sample:
+            return _binding_media_digest(fd, guard, check)
+        return binding_digest(fd, guard, bytes_limit, check)[1]
 
     def full_inputs(caption_observation):
         observed, total = [], 0
@@ -513,7 +545,7 @@ def execute(stack, path, files, start, version, prepare_fingerprint, bytes_limit
         status, result = run(mode, fingerprint, relative, *program_args)
     else:
         mode = 'program-audio' if program_args else 'input-epoch' if qualification is not None else 'unqualified'
-        fingerprint = prepare_fingerprint(caption_observation[1])
+        fingerprint = prepare_fingerprint(caption_observation[1], project_digest)
         if first_frame is None:
             status, result = run(mode, fingerprint, *program_args)
         else:

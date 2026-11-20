@@ -527,7 +527,7 @@ class PreviewWindowCandidate(unittest.TestCase):
 
                     def run():
                         with contextlib.ExitStack() as stack:
-                            return isolation.execute(stack, timeline, roles, 10, version, lambda _caption: fp, 1024**2, WIRE_LIMIT,
+                            return isolation.execute(stack, timeline, roles, 10, version, lambda _caption, _project_digest: fp, 1024**2, WIRE_LIMIT,
                                                      lambda: None, root_identity=artifact.project_identity(root),
                                                      qualification=proof, recheck=lambda _caption: events.append('inputs'),
                                                      first_frame=(nonce, lambda env: (40, 18, Fraction(30)), reverify, emit))
@@ -957,6 +957,7 @@ class PreviewWindowCandidate(unittest.TestCase):
     @unittest.skipUnless(sys.platform == 'linux' and artifact.fstxn.directory_write_capability(),
                          'requires Linux directory anchoring')
     def test_isolated_projection_uses_only_pinned_files_and_no_host_scratch(self):
+        from vtx.cache import cache_state
         from vtx.pipeline.infra import Ctx
         from vtx.runtime import preview_window_isolation as isolation
         from vtx.timeline_preview_window import SCHEMA, _dispatch, WindowError, WIRE_LIMIT
@@ -966,14 +967,26 @@ class PreviewWindowCandidate(unittest.TestCase):
             root.mkdir()
             timeline = root / 'timeline.json'
             media = root / 'audio.wav'
+            small, dependency = root / 'small.wav', root / 'declared.dat'
             caption = root / 'captions' / 'declared.srt'
             caption.parent.mkdir()
             caption.write_bytes(b'00:00:00,100 --> 00:00:00,900\ncaption')
             (caption.parent / 'undeclared.srt').write_bytes(b'not projected')
-            media.write_bytes(b'media')
-            doc = {'version': 2, 'project': {'fps': 30, 'width': 1920, 'height': 1080, 'duration_frames': 60},
-                   'sources': [{'id': 'unused', 'path': media.name}], 'video_tracks': [], 'audio_tracks': [],
-                   'subtitles': [], 'subtitles_src': 'captions/declared.srt'}
+            media.write_bytes(b'a' * cache_state.SAMPLE_BYTES + b'middle' + b'z' * cache_state.SAMPLE_BYTES)
+            small.write_bytes(b'media')
+            dependency.write_bytes(b'declared content')
+            doc = {'version': 2, 'project': {'fps': 30, 'width': 1920, 'height': 1080, 'duration_frames': 60,
+                                              'cache_dependencies': ['./declared.dat']},
+                   'sources': [{'id': 'unused', 'path': media.name}, {'id': 'small', 'path': small.name}],
+                   'video_tracks': [], 'audio_tracks': [], 'subtitles': [], 'subtitles_src': 'captions/declared.srt'}
+            timeline.write_bytes(json.dumps(doc).encode())
+            expected_fingerprint = Ctx(timeline).input_fingerprint
+            file_digest = cache_state.file_digest
+
+            def trusted_only(path):
+                self.assertNotIn(Path(path), {media, small, dependency})
+                return file_digest(path)
+
             wire = json.dumps({'schema': SCHEMA, 'ok': False, 'diagnostics': []}).encode()
 
             def execute(**changes):
@@ -986,11 +999,11 @@ class PreviewWindowCandidate(unittest.TestCase):
             def worker(argv, descriptors, check, limit):
                 binds = {(int(argv[i + 1]), Path(argv[i + 2])) for i, arg in enumerate(argv)
                          if arg == '--ro-bind-fd'}
-                self.assertEqual({p for _, p in binds}, {timeline, media, caption})
+                self.assertEqual({p for _, p in binds}, {timeline, media, small, dependency, caption})
                 self.assertEqual({fd for fd, _ in binds}, set(descriptors))
                 for fd, dest in binds:
                     self.assertEqual(os.fstat(fd).st_ino, dest.stat().st_ino)
-                self.assertEqual(argv[-2:], [Ctx(timeline).input_fingerprint, 'unqualified'])
+                self.assertEqual(argv[-2:], [expected_fingerprint, 'unqualified'])
                 self.assertNotIn('--bind', argv)
                 self.assertEqual(argv[argv.index('--tmpfs') + 1], str(root / 'cache/preview'))
                 self.assertFalse((root / 'cache').exists())
@@ -1001,6 +1014,8 @@ class PreviewWindowCandidate(unittest.TestCase):
                     patch.object(isolation, '_profile', return_value=profile), \
                     patch.object(isolation, 'managed_font', return_value=None), \
                     patch('vtx.timeline_preview_window._safe_environment'), \
+                    patch.object(cache_state, 'media_stat_digest', side_effect=AssertionError('path-based source read')), \
+                    patch.object(cache_state, 'file_digest', side_effect=trusted_only), \
                     patch.object(isolation, '_read_worker', side_effect=worker) as launch:
                 self.assertFalse(execute()['ok'])
                 self.assertFalse((root / 'cache').exists())
@@ -1128,7 +1143,7 @@ class PreviewWindowCandidate(unittest.TestCase):
                 with patch.object(isolation, 'available', return_value=True), \
                         patch.object(isolation, '_profile', return_value=profile), \
                         patch.object(isolation, '_read_worker', side_effect=run), contextlib.ExitStack() as stack:
-                    return isolation.execute(stack, timeline, roles, start, version, lambda _: old_fingerprint,
+                    return isolation.execute(stack, timeline, roles, start, version, lambda *_: old_fingerprint,
                                              1024**2, 8*1024**2, lambda: None,
                                              root_identity=artifact.project_identity(root), qualification=qualification,
                                              program_paths=program_paths)

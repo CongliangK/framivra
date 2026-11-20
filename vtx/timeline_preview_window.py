@@ -532,7 +532,9 @@ def _dispatch(path, reference, root_identity, start, check_cancelled, qualificat
         data = _caption_reader(fd, guard, check_cancelled, limit=caption_limit)()
         return len(data), hashlib.sha256(data).hexdigest()
 
-    def pin_inputs(caption_digest):
+    def pin_inputs(caption_digest, project_digest):
+        # The callback always reads through the same bindings, also on recheck.
+        pin._project_input_digest = project_digest
         if caption is not None:
             pin._subtitles_input_digest = lambda: caption_digest
         pin.input_fingerprint = receipt_fingerprint(pin)

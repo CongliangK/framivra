@@ -423,6 +423,9 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     sources = _get(c, c.tl, 'sources', '$', [])
     visual_bgm = getattr(c, '_visual_bgm_source_ids', ())
     audio = getattr(c, '_svg_audio_digests', {})
+    # The ordinary isolated preview supervisor reads its own bound descriptors;
+    # normal receipt callers preserve pathname reads and missing-source behavior.
+    project_digest = getattr(c, '_project_input_digest', None)
     for index, s in sorted(_SourceEntries(c, sources), key=source_key):
         origin = f'$.sources[{index}]'
         name = _field(c, s, 'path', origin)
@@ -434,6 +437,8 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
         if visual_bgm and s['id'] in visual_bgm:
             # PNG scope binds the declared score bytes, not its audio runtime.
             digest = 'visual-bgm-json:' + (file_digest(p) if p.is_file() else 'MISSING')
+        elif project_digest is not None:
+            digest = project_digest(p, sample=True)
         else:
             digest = media_stat_digest(p) if p.is_file() else 'MISSING'
         h.update(_encode(c, prefix + digest + '\n', origin + '.path'))
@@ -461,8 +466,10 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     for index, item in enumerate(declared_dependencies(c)):
         origin = f'$.project.cache_dependencies[{index}]'
         prefix = item + ':'
-        digest = (_svg_receipt_digest(c, item) if windows_svg else
-                  file_digest(_path(c, item, origin)))
+        if windows_svg:
+            digest = _svg_receipt_digest(c, item)
+        else:
+            digest = (project_digest or file_digest)(_path(c, item, origin))
         h.update(_encode(c, prefix + digest + '\n', origin))
     for ti, track in _indexed(c, _get(c, c.tl, 'video_tracks', '$', []), '$.video_tracks'):
         track_origin = f'$.video_tracks[{ti}]'
