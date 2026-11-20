@@ -102,7 +102,8 @@ def test_fresh_synth_project_end_to_end(fresh_env, tmp_path):
     if os.name == 'nt':
         # Native FFmpeg writes UTF-8 diagnostics even with Python UTF-8 mode off.
         env['PYTHONUTF8'] = '0'
-    command = [sys.executable, str(APP / "bgm.py"), "render", str(APP / "examples/synth.json"), "-o", str(out), "-q"]
+    python = sys.executable if os.name == 'nt' else 'python3'
+    command = [python, str(APP / "bgm.py"), "render", str(APP / "examples/synth.json"), "-o", str(out), "-q"]
     result = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, encoding='utf-8', timeout=90)
     assert result.returncode == 0, result.stderr
     assert 'UnicodeDecodeError' not in result.stderr
