@@ -430,13 +430,21 @@ s.timeline_transaction(p,dict(operation='adopt',op_id='killed',base_revision=s._
         code = """import os,signal,sys
 from vtx import timeline_store as s
 def stop(name):
- if name==sys.argv[2]: os.kill(os.getpid(),signal.SIGKILL)
+ if name==sys.argv[2]:
+  if sys.platform=='win32': os._exit(93)  # Do not unwind native publication handles.
+  os.kill(os.getpid(),signal.SIGKILL)
 s._checkpoint=stop
 s.timeline_store_status(sys.argv[1])
 """
-        points = ("init_mkdir", "publish_created", "publish_written", "publish_synced",
-                  "publish_replaced", "publish_parent_synced", "init_manifest_synced",
-                  "init_published", "init_parent_synced")
+        windows = sys.platform == 'win32'
+        if windows:
+            # This adapter writes the manifest via native handles and publishes
+            # the complete initial directory in one handle-relative rename.
+            points = ('init_mkdir', 'init_manifest_synced', 'init_published')
+        else:
+            points = ("init_mkdir", "publish_created", "publish_written", "publish_synced",
+                      "publish_replaced", "publish_parent_synced", "init_manifest_synced",
+                      "init_published", "init_parent_synced")
         for point in points:
             with self.subTest(point=point), tempfile.TemporaryDirectory(prefix="framivra-init-") as tmp:
                 target = Path(tmp) / "timeline.json"
@@ -444,12 +452,23 @@ s.timeline_store_status(sys.argv[1])
                 child = subprocess.run([sys.executable, "-c", code, str(target), point], cwd=tmp,
                                        env=dict(os.environ, PYTHONPATH=str(ROOT), PYTHONDONTWRITEBYTECODE="1"),
                                        capture_output=True, timeout=20)
-                self.assertEqual(child.returncode, -signal.SIGKILL, child.stderr)
+                self.assertEqual(child.returncode, 93 if windows else -signal.SIGKILL, child.stderr)
                 home = store._location(target)
-                self.assertEqual(home.exists(), point in ("init_published", "init_parent_synced"))
+                published = point in ("init_published", "init_parent_synced")
+                self.assertEqual(home.exists(), published)
                 # Unpublished artifacts are not adopted, modified or removed.
+                pattern = '.initializing-*' if windows else home.name + '.initializing-*'
                 leftovers = {p: {f.name: f.read_bytes() for f in p.iterdir()}
-                             for p in Path(tmp).glob(home.name + ".initializing-*")}
+                             for p in Path(tmp).glob(pattern)}
+                if windows:
+                    self.assertEqual(len(leftovers), 0 if published else 1)
+                    if published:
+                        entries = {p.name: p.read_bytes() for p in home.iterdir()}
+                    else:
+                        entries, = leftovers.values()
+                    self.assertEqual(set(entries), set() if point == 'init_mkdir' else {'manifest.json'})
+                    if entries:
+                        self.assertEqual(json.loads(entries['manifest.json'])['target'], target.name)
                 for recover in (False, True):
                     self.assertTrue(timeline_store_status(target, recover=recover)["ok"])
                     self.assertEqual(target.read_bytes(), raw)
