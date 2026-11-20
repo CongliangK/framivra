@@ -7,7 +7,7 @@
 #include <cstring>
 
 #include "frame_pipeline.h"
-#include "shm_ring.hpp"
+#include "native_runtime.hpp"
 
 #include "include/cef_command_line.h"
 
@@ -352,6 +352,12 @@ CefSettings MakeWorkerSettings(const std::string& root_cache_path) {
   settings.windowless_rendering_enabled = true;
   settings.log_severity = LOGSEVERITY_WARNING;  // 证据可读：保留警告去噪声
   CefString(&settings.root_cache_path).FromString(root_cache_path);
+#if defined(_WIN32)
+  const auto distribution = ExecutableDirectory();
+  CefString(&settings.resources_dir_path).FromString(PathUtf8(distribution));
+  CefString(&settings.locales_dir_path).FromString(PathUtf8(distribution / "locales"));
+  CefString(&settings.log_file).FromString(PathUtf8(NativePath(root_cache_path) / "cef.log"));
+#endif
   return settings;
 }
 

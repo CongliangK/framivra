@@ -152,11 +152,8 @@ Linux 解析器采用保守的主机/启动周期边界，不承诺跨机或重�
 `unknown`，不能用两条相等的 unknown 记录证明等价。时间线可加载以显示诊断，
 实际渲染与缓存消费明确拒绝；没有静默复用或假定环境不变的降级。
 
-Windows 分支接纳原生 x64、64 位进程中的 Chrome/Edge CDP 或 CLI，不接纳 CEF 或模式覆盖。
-浏览器必须是实际 Application 分发中的 AMD64 PE，且版本目录与对应运行库一致；
-身份绑定分发资源、系统库与驱动、系统/用户字体及注册表配置、机器和启动周期。
-不接受字体或 loader 覆盖环境。这里描述解析器支持范围，不表示已经完成原生 Windows
-全链验收，也不证明跨机器或跨平台像素一致；SVG 等独立后端以自身契约为准。
+Windows 分支接纳原生 x64、64 位进程中的 Chrome/Edge CDP 或 CLI，以及显式 CEF A0。Chrome/Edge 必须是实际 Application 分发中的 AMD64 PE，且版本目录与运行库一致。CEF 单独分键，绑定真实 worker、同目录完整发行树、启动策略与 CEF 配置；构建和支持范围见 [Windows CEF](../experiments/gfx_cef_worker/README.md#windows-x64-构建)。
+两路都绑定系统库与驱动、系统/用户字体及注册表、机器和启动周期；不接受字体或 loader 覆盖。解析器支持不证明跨机器或跨平台像素一致；SVG 等独立后端以自身契约为准。
 
 Darwin 分支接纳原生 arm64 的 Google Chrome app/CDP 与 CEF worker app。
 它绑定完整 app/framework/资源及内部符号链接、原生依赖、实际 dyld cache 与全部

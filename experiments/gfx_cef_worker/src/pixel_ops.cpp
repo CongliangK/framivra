@@ -6,6 +6,7 @@
 // tails/fallback retain the exhaustive 65,536-entry reference LUT. There is no
 // approximate division and no whole-frame alpha pre-scan.
 #include "pixel_ops.h"
+#include "cpu_features.hpp"
 
 #if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
@@ -55,10 +56,6 @@ const UnpremulLut& Lut() {
   }();
   return table;
 }
-
-#if VTX_PIXEL_OPS_X86
-inline bool CpuHasAvx2() { return __builtin_cpu_supports("avx2"); }
-#endif
 
 // ---------------------------------------------------------------- x86 AVX2
 #if VTX_PIXEL_OPS_X86

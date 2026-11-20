@@ -29,11 +29,12 @@
 #include "mac_runtime.h"
 #include <crt_externs.h>
 #endif
-#include <sys/types.h>
-#include <unistd.h>
+#if !defined(_WIN32)
+#include <signal.h>
+#endif
 
 #include <cerrno>
-#include <signal.h>
+#include <charconv>
 
 #include <algorithm>
 #include <atomic>
@@ -50,6 +51,7 @@
 
 #include "app_handler.h"
 #include "frame_pipeline.h"
+#include "native_runtime.hpp"
 #include "png_writer.h"
 #include "serve.h"
 
@@ -82,11 +84,16 @@ struct RunOptions {
   int begin_frames = 6;          // load 后驱动的 external begin frame 数
   int timeout_ms = 45000;        // 阶段等待上限
   int hold_ms = 0;               // 出帧后保持渲染的时长（kill 演练用）
-  int parent_alive_fd = -1;      // 监管器父存活管道读端
   // ---- #110 帧服务模式（--serve）----
   bool serve = false;
+#if defined(_WIN32)
+  uintptr_t ipc_read_handle = 0;
+  uintptr_t ipc_write_handle = 0;
+#else
+  int parent_alive_fd = -1;      // 监管器父存活管道读端
   int ipc_fd = -1;
   std::string ipc_socket;              // Unix socket 路径
+#endif
   std::string url_template;            // 含 {f} 占位
   std::string fault_inject;            // none|size_mismatch|abort_after_frame
   int fault_abort_after_frames = 1;    // abort_after_frame 的 N
@@ -120,8 +127,13 @@ void Usage(const char* argv0) {
       "\n"
       "选项:\n"
       "  --mode=a0|a1            A0=Software OSR（默认）；A1=GPU 合成→CPU Buffer\n"
+#if defined(_WIN32)
+      "  Windows: --mode=a0; --serve requires owned Job, inherited pipe handles, exact sync and a private profile.\n"
+      "  --ipc-read-handle=N --ipc-write-handle=N   inherited control pipe endpoints\n"
+#else
       "  --ipc-fd=N              已连接 Unix stream fd（与 --ipc-socket 互斥）\n"
       "  --ozone-platform=p      A1 平台切换: headless|x11|wayland（默认 headless）\n"
+#endif
       "  --url=<url>             要加载渲染的页面\n"
       "  --out-png=<path>        输出 PNG（默认尺寸 1920x1080）\n"
       "  --out-json=<path>       输出运行结果 JSON（探针证据/计时/版本）\n"
@@ -133,11 +145,13 @@ void Usage(const char* argv0) {
       "  --begin-frames=N        load 后驱动的 external begin frame 数（默认 6）\n"
       "  --hold-ms=N             出帧后保持渲染循环 N ms（监管 kill 演练）\n"
       "  --timeout-ms=N          阶段等待上限（默认 45000）\n"
-      "  --parent-alive-fd=N     监管器父存活管道读端（EOF 即组杀，监管契约）\n"
       "\n"
       "帧服务模式（#110，协议详见 experiments/gfx_cef_worker/IPC_PROTOCOL.md）:\n"
-      "  --serve                 进入帧服务循环（Unix Socket 定长协议 + 4-Slot SHM 环）\n"
+      "  --serve                 进入帧服务循环\n"
+#if !defined(_WIN32)
+      "  --parent-alive-fd=N     监管器父存活管道读端（EOF 即组杀，监管契约）\n"
       "  --ipc-socket=<path>     服务 Unix socket 路径（宿主目录；就绪行 VTXCEF_SERVE_READY）\n"
+#endif
       "  --url-template=<tpl>    帧页模板，须含 {f} 占位（每请求代入帧号导航）\n"
       "  --fault-inject=<mode>   none|size_mismatch|abort_after_frame（DoD 故障注入）\n"
       "  --fault-abort-after-frames=N  abort_after_frame 的 N（默认 1）\n"
@@ -204,12 +218,26 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
       *out = static_cast<int>(n);
       return true;
     };
+#if defined(_WIN32)
+    const auto handle = [&value](const char* key, uintptr_t* out) {
+      const auto v = value(key);
+      if (v.empty()) return false;
+      const auto r = std::from_chars(v.data(), v.data() + v.size(), *out);
+      if (r.ec != std::errc{} || r.ptr != v.data() + v.size() || !*out) {
+        std::fprintf(stderr, "Invalid pipe handle: %s\n", key);
+        std::exit(2);
+      }
+      return true;
+    };
+#endif
     if (arg == "--sanity") {
       *sanity = true;
     } else if (const std::string v = value("--mode="); !v.empty()) {
       opt->cef.mode = v;
+#if !defined(_WIN32)
     } else if (const std::string v = value("--ozone-platform="); !v.empty()) {
       opt->cef.ozone_platform = v;
+#endif
     } else if (const std::string v = value("--url="); !v.empty()) {
       opt->url = v;
     } else if (const std::string v = value("--out-png="); !v.empty()) {
@@ -224,7 +252,9 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
     } else if (num("--begin-frames=", &opt->begin_frames)) {
     } else if (num("--timeout-ms=", &opt->timeout_ms)) {
     } else if (num("--hold-ms=", &opt->hold_ms)) {
+#if !defined(_WIN32)
     } else if (num("--parent-alive-fd=", &opt->parent_alive_fd)) {
+#endif
     } else if (num("--slot-wait-timeout-ms=", &opt->slot_wait_timeout_ms)) {
     } else if (num("--serve-idle-timeout-ms=", &opt->serve_idle_timeout_ms)) {
     } else if (num("--encode-threads=", &opt->encode_threads)) {
@@ -253,9 +283,14 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
                    &opt->fault_abort_after_frames)) {
     } else if (arg == "--serve") {
       opt->serve = true;
+#if defined(_WIN32)
+    } else if (handle("--ipc-read-handle=", &opt->ipc_read_handle)) {
+    } else if (handle("--ipc-write-handle=", &opt->ipc_write_handle)) {
+#else
     } else if (num("--ipc-fd=", &opt->ipc_fd)) {
     } else if (const std::string v = value("--ipc-socket="); !v.empty()) {
       opt->ipc_socket = v;
+#endif
     } else if (const std::string v = value("--url-template="); !v.empty()) {
       opt->url_template = v;
     } else if (const std::string v = value("--fault-inject="); !v.empty()) {
@@ -278,6 +313,16 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
                  opt->cef.mode.c_str());
     return false;
   }
+#if defined(_WIN32)
+  if (opt->cef.mode != "a0") {
+    std::fprintf(stderr, "Windows CEF supports only software mode a0\n");
+    return false;
+  }
+  if (!opt->serve && (opt->ipc_read_handle || opt->ipc_write_handle)) {
+    std::fprintf(stderr, "Pipe handles require --serve\n");
+    return false;
+  }
+#endif
   if (opt->reference_context != "shared" && opt->reference_context != "isolated") {
     std::fprintf(stderr, "--reference-context requires shared|isolated, got %s\n",
                  opt->reference_context.c_str());
@@ -310,12 +355,22 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
     return false;
   }
   if (opt->serve) {
+#if defined(_WIN32)
+    if (!opt->ipc_read_handle || !opt->ipc_write_handle || opt->url_template.empty() ||
+        !opt->sync || opt->sync_canary != "exact" ||
+        !vtx_cef::NativePath(opt->root_cache_path).is_absolute()) {
+      std::fprintf(stderr, "Windows --serve requires inherited pipes, --url-template, "
+                           "--sync --sync-canary=exact and absolute --root-cache-path\n");
+      return false;
+    }
+#else
     if ((opt->ipc_socket.empty() && opt->ipc_fd < 0) ||
         (!opt->ipc_socket.empty() && opt->ipc_fd >= 0) || opt->url_template.empty()) {
       std::fprintf(stderr,
                    "--serve 需要 --ipc-socket=<path> 与 --url-template=<tpl>\n");
       return false;
     }
+#endif
     // #114：sync 参数面校验（非法值 exit 2，不静默回落）。
     if (opt->sync) {
       if (opt->sync_mode != "n" && opt->sync_mode != "p") {
@@ -381,7 +436,7 @@ std::map<std::string, std::string> LaunchEnvSnapshot() {
     if (eq != std::string::npos) out[item.substr(0, eq)] = item.substr(eq + 1);
   }
   return out;
-#else
+#elif defined(__linux__)
   std::FILE* fh = std::fopen("/proc/self/environ", "rb");
   if (fh == nullptr) {
     return out;
@@ -407,6 +462,8 @@ std::map<std::string, std::string> LaunchEnvSnapshot() {
     }
     start = end + 1;
   }
+  return out;
+#else
   return out;
 #endif
 }
@@ -495,17 +552,31 @@ int Sanity() {
   ok = wrapper_ok && ok;
 
   if (ok) {
-    std::printf("SANITY OK: cef=%s chromium=%s worker=%s (libcef.so 与版本锁一致)\n",
+    std::printf("SANITY OK: cef=%s chromium=%s worker=%s (CEF runtime matches the lock)\n",
                 CEF_VERSION, VTX_CHROME_VERSION_STRING, kWorkerImplementation);
     return 0;
   }
-  std::fprintf(stderr, "SANITY FAIL: libcef.so 与编译期版本锁不一致\n");
+  std::fprintf(stderr, "SANITY FAIL: CEF runtime differs from compile-time lock\n");
   return 1;
 }
 
 }  // namespace
 
+// The Windows CRT's narrow argv uses the ANSI code page. Feed the shared
+// worker parser UTF-8, but let CEF consume the original Windows command line.
+#if defined(_WIN32)
+int wmain(int argc, wchar_t* wide_argv[]) {
+  ::SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+  if (!::SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR |
+                                  LOAD_LIBRARY_SEARCH_SYSTEM32) ||
+      vtx_cef::ExecutableDirectory().empty()) {
+    std::fprintf(stderr, "vtx_cef_worker: could not bind the CEF distribution directory\n");
+    return 1;
+  }
+  CefMainArgs main_args(::GetModuleHandleW(nullptr));
+#else
 int main(int argc, char* argv[]) {
+#endif
   // ===== 工单铁律：main() 入口第一行 PDEATHSIG（父死内核即刻击杀本进程）。
   //        本二进制被 CEF 以 --type=zygote/gpu/renderer/utility 再入执行子
   //        进程 —— 它们同样过这行：exec 派生的子进程全挂 PDEATHSIG。
@@ -522,10 +593,12 @@ int main(int argc, char* argv[]) {
   //        已走完（其 argv 是 Chromium 参数面，不进本 worker 参数解析）。
   int subprocess_exit = -1;
   {
-    CefMainArgs subprocess_args(argc, argv);
+#if !defined(_WIN32)
+    CefMainArgs main_args(argc, argv);
+#endif
     CefRefPtr<vtx_cef::WorkerApp> subprocess_app =
         new vtx_cef::WorkerApp(nullptr, nullptr);
-    subprocess_exit = CefExecuteProcess(subprocess_args, subprocess_app, nullptr);
+    subprocess_exit = CefExecuteProcess(main_args, subprocess_app, nullptr);
   }  // Release the application reference before terminating the subprocess.
   if (subprocess_exit >= 0) {
     // Chromium rotates the stack guard in zygote-forked children. Returning
@@ -538,6 +611,15 @@ int main(int argc, char* argv[]) {
     std::exit(subprocess_exit);
   }
 
+#if defined(_WIN32)
+  std::vector<std::string> utf8;
+  utf8.reserve(argc);
+  for (int i = 0; i < argc; ++i) utf8.push_back(CefString(wide_argv[i]).ToString());
+  std::vector<char*> arguments;
+  arguments.reserve(argc);
+  for (auto& item : utf8) arguments.push_back(item.data());
+  char** argv = arguments.data();
+#endif
   bool sanity = false;
   RunOptions opt;
   if (!ParseArgs(argc, argv, &opt, &sanity)) {
@@ -565,6 +647,7 @@ int main(int argc, char* argv[]) {
     return 2;
   }
 
+#if !defined(_WIN32)
   // ===== --parent-alive-fd 守卫线程（监管契约；在 CEF 派生前启动，
   //        覆盖初始化窗口内宿主暴毙的场景）。
   if (opt.parent_alive_fd >= 0) {
@@ -598,13 +681,19 @@ int main(int argc, char* argv[]) {
     }).detach();
   }
 
+#endif
   // ===== #110 帧服务模式：自持 CEF/Socket/SHM 环/编码池生命周期
   //        （守卫已武装，覆盖其 CEF 初始化窗口；见 serve.h）。
   if (opt.serve) {
     vtx_cef::ServeOptions sopt;
     sopt.cef = opt.cef;
+#if defined(_WIN32)
+    sopt.ipc_read_handle = opt.ipc_read_handle;
+    sopt.ipc_write_handle = opt.ipc_write_handle;
+#else
     sopt.ipc_socket = opt.ipc_socket;
     sopt.ipc_fd = opt.ipc_fd;
+#endif
     sopt.url_template = opt.url_template;
     sopt.root_cache_path = opt.root_cache_path;
     sopt.slot_wait_timeout_ms = opt.slot_wait_timeout_ms;
@@ -627,19 +716,26 @@ int main(int argc, char* argv[]) {
   }
 
   // ===== root_cache_path：监管路径由参数指定；缺省建临时目录退出即删。
-  std::filesystem::path root_cache(opt.root_cache_path);
+  auto root_cache = vtx_cef::NativePath(opt.root_cache_path);
   const bool owns_cache = opt.root_cache_path.empty();
   if (owns_cache) {
     std::error_code ec;
-    root_cache = std::filesystem::temp_directory_path(ec) /
-                 ("vtx_cef_worker-" + std::to_string(::getpid()));
+    const auto temp = std::filesystem::temp_directory_path(ec);
+    if (ec) return 1;
+    root_cache = temp / ("vtx_cef_worker-" + std::to_string(vtx_cef::NativePid()));
   }
   {
     std::error_code ec;
-    std::filesystem::create_directories(root_cache, ec);
+    if (owns_cache) {
+      if (!std::filesystem::create_directory(root_cache, ec) && !ec)
+        ec = std::make_error_code(std::errc::file_exists);
+    } else {
+      root_cache = std::filesystem::absolute(root_cache, ec);
+      if (!ec) std::filesystem::create_directories(root_cache, ec);
+    }
     if (ec) {
       std::fprintf(stderr, "vtx_cef_worker: root_cache_path 不可创建: %s (%s)\n",
-                   root_cache.string().c_str(), ec.message().c_str());
+                   vtx_cef::PathUtf8(root_cache).c_str(), ec.message().c_str());
       return 1;
     }
   }
@@ -652,8 +748,10 @@ int main(int argc, char* argv[]) {
   // ===== CEF 初始化（工单口径：windowless + no_sandbox + 单线程消息循环
   //        + external_message_pump 外置泵；#110 起经共享装配，与 serve 模式
   //        同源，防配置漂移）。
+#if !defined(_WIN32)
   CefMainArgs main_args(argc, argv);
-  CefSettings settings = vtx_cef::MakeWorkerSettings(root_cache.string());
+#endif
+  CefSettings settings = vtx_cef::MakeWorkerSettings(vtx_cef::PathUtf8(root_cache));
 
   CefRefPtr<vtx_cef::WorkerApp> app = new vtx_cef::WorkerApp(&opt.cef, &state);
   if (!CefInitialize(main_args, settings, app, nullptr)) {
@@ -810,7 +908,7 @@ int main(int argc, char* argv[]) {
         } else {
           std::error_code sz_ec;
           png_bytes = static_cast<int64_t>(
-              std::filesystem::file_size(opt.out_png, sz_ec));
+              std::filesystem::file_size(vtx_cef::NativePath(opt.out_png), sz_ec));
         }
       }
     }
@@ -891,8 +989,10 @@ int main(int argc, char* argv[]) {
             (opt.cef.mode == "a1" ? opt.cef.ozone_platform : std::string()) +
             "\",\n";
       js += "  \"url\": \"" + JsonEscape(opt.url) + "\",\n";
-      js += "  \"pid\": " + std::to_string(::getpid()) + ",\n";
+      js += "  \"pid\": " + std::to_string(vtx_cef::NativePid()) + ",\n";
+#if !defined(_WIN32)
       js += "  \"pgid\": " + std::to_string(::getpgid(0)) + ",\n";
+#endif
       // worker 启动（exec）时的显示环境（/proc/self/environ 真相；矩阵格②
       // 的 DISPLAY 由 xvfb-run 动态分配，脚本侧不可知）
       {
@@ -918,9 +1018,9 @@ int main(int argc, char* argv[]) {
       js += "  \"page_probe\": " + EmbedProbePayload(page_probe) + ",\n";
       js += "  \"gpu_page_probe\": " + EmbedProbePayload(gpu_probe) + ",\n";
       js += "  \"error\": \"" + JsonEscape(last_err) + "\",\n";
-      js += "  \"exit\": \"" + exit_reason + "\",\n";
+      js += "  \"exit\": \"" + JsonEscape(exit_reason) + "\",\n";
       js += "  \"exit_code\": " + std::to_string(exit_code) + "\n}\n";
-      std::FILE* fh = std::fopen(opt.out_json.c_str(), "wb");
+      std::FILE* fh = vtx_cef::OpenWriteFile(opt.out_json);
       if (fh != nullptr) {
         std::fwrite(js.data(), 1, js.size(), fh);
         std::fclose(fh);
