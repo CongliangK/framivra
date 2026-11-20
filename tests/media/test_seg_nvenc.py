@@ -501,6 +501,7 @@ class TestNvencBudget(unittest.TestCase):
     def test_segment_executor_matches_actual_grant_and_x264_bypasses(self):
         import tempfile
         from vtx.pipeline import composite
+        from vtx.runtime import resource_budget
         for encoder, configured, tier, expected in (('NVENC p7', 8, 1, 1),
                 ('NVENC p7', 2, 8, 2), ('NVENC p7', 8, 2, 2), ('x264', 1, 1, 4)):
             with self.subTest(encoder=encoder, tier=tier), tempfile.TemporaryDirectory() as temp:
@@ -519,6 +520,7 @@ class TestNvencBudget(unittest.TestCase):
                         return future
                     def map(self, fn, items): return map(fn, items)
                 with mock.patch.dict(os.environ, {'VTX_NVENC_BUDGET': str(configured)}), \
+                        mock.patch.object(resource_budget, '_linux_ram_headroom', return_value=8 * 1024**3), \
                         mock.patch.object(composite, 'choose_cutpoints', return_value=[1, 2, 3]), \
                         mock.patch.object(composite, 'pick_vcodec', return_value=([], encoder)), \
                         mock.patch.object(composite, 'nvenc_concurrency', side_effect=lambda c, n: n), \
@@ -717,23 +719,30 @@ class TestNvencBudget(unittest.TestCase):
                     probe.assert_not_called()
                     self.assertFalse((Path(temp) / 'vseg' / 'list.txt').exists())
 
-    def test_x264_worker_expansion_requires_native_arm64_small_canvas_known_cpu_and_live_run(self):
+    def test_x264_workers_follow_platform_policy_and_linux_memory(self):
         import tempfile
         from vtx.pipeline import composite
+        from vtx.runtime import resource_budget
 
         cases = [
-            ('eligible', 'darwin', 'arm64', 1280, 720, 8, False, 4),
-            ('unknown cpu', 'darwin', 'arm64', 1280, 720, None, False, 2),
-            ('other os', 'linux', 'arm64', 1280, 720, 8, False, 2),
-            ('other arch', 'darwin', 'x86_64', 1280, 720, 8, False, 2),
-            ('4k canvas', 'darwin', 'arm64', 3840, 2160, 8, False, 2),
-            ('dry run', 'darwin', 'arm64', 1280, 720, 8, True, 2),
+            ('eligible', 'darwin', 'arm64', 1280, 720, 8, False, None, 4),
+            ('unknown cpu', 'darwin', 'arm64', 1280, 720, None, False, None, 2),
+            ('other os', 'win32', 'arm64', 1280, 720, 8, False, None, 2),
+            ('other arch', 'darwin', 'x86_64', 1280, 720, 8, False, None, 2),
+            ('4k canvas', 'darwin', 'arm64', 3840, 2160, 8, False, None, 2),
+            ('Darwin dry run', 'darwin', 'arm64', 1280, 720, 8, True, None, 2),
+            ('Linux dry run', 'linux', 'arm64', 1280, 720, 8, True, None, 2),
+            ('ample Linux RAM', 'linux', 'x86_64', 1920, 1080, 32, False, 8, 2),
+            ('2 GiB Linux RAM', 'linux', 'x86_64', 1920, 1080, 32, False, 2, 1),
+            ('unknown Linux RAM', 'linux', 'x86_64', 1920, 1080, 32, False, 0, 1),
         ]
-        for name, os_name, arch, width, height, cpus, dry, expected in cases:
+        for name, os_name, arch, width, height, cpus, dry, ram_gib, expected in cases:
             with self.subTest(case=name), tempfile.TemporaryDirectory() as temp:
-                c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=4, fps=30,
+                nseg = 2 if ram_gib is not None else 4
+                dur = 60 * nseg
+                c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=dur, fps=30,
                                     dry=dry, gpu=False, run=mock.Mock())
-                plan = composite.RenderPlan(c, False, 1, width, height, layers=[], nseg=4)
+                plan = composite.RenderPlan(c, False, 1, width, height, layers=[], nseg=nseg)
                 worker_counts = []
 
                 class Executor:
@@ -747,18 +756,24 @@ class TestNvencBudget(unittest.TestCase):
                         return future
                     def map(self, fn, items): return map(fn, items)
 
-                with mock.patch.object(composite, 'choose_cutpoints', return_value=[1, 2, 3]), \
-                        mock.patch.object(composite, 'pick_vcodec', return_value=([], 'x264')), \
+                with mock.patch.object(composite, 'pick_vcodec', return_value=([], 'x264')), \
+                        mock.patch.object(resource_budget, '_linux_ram_headroom',
+                                          return_value=(ram_gib or 0) * 1024**3) as headroom, \
                         mock.patch.object(composite, 'platform') as host_platform, \
                         mock.patch.object(composite.sys, 'platform', os_name), \
                         mock.patch.object(composite.os, 'cpu_count', return_value=cpus), \
                         mock.patch.object(composite, 'ThreadPoolExecutor', Executor), \
-                        mock.patch.object(plan, '_seg_content_key', return_value='key'), \
+                        mock.patch.object(plan, '_seg_content_key', return_value='key') as key, \
                         mock.patch.object(composite, 'media_cache_valid', return_value=True), \
-                        mock.patch.object(composite.subprocess, 'run', return_value=SimpleNamespace(stdout='4')):
+                        mock.patch.object(composite.subprocess, 'run', return_value=SimpleNamespace(stdout=str(dur))):
                     host_platform.machine.return_value = arch
                     plan.render_segmented(Path(temp) / 'out.mp4', with_subs=False)
                 self.assertEqual(worker_counts, [] if dry else [expected])
+                if ram_gib is None:
+                    headroom.assert_not_called()
+                else:
+                    headroom.assert_called_once_with()
+                    self.assertEqual([call.args[:2] for call in key.call_args_list], [(0, 60), (60, 120)])
 
     def test_concurrency_capped_at_budget(self):
         # 预算 2：8 线程各占 1 槽做 20ms 伪工作，峰值并发必须 ≤2 且全部完成

@@ -37,3 +37,4 @@ Framivra 把时间线和素材变成帧精确的音视频，并负责缓存与 Q
 - 主基线仅用[30 秒 / 900 帧 / 1080p30 SVG](templates/demo-timeline-svg/README.md)：`scripts/demo.py prepare/verify`，禁混旧输入或使用退役 12 秒基线。[锁定运行时源](templates/demo-timeline-svg/benchmark/portable-v2.json)按[属性规则](.gitattributes)以 LF 检出、验原始字节。预检、探针或[可编辑 Demo](templates/demo-workbench/README.md)不替代主片、安装或发布验收。
 - 同输入、质量、环境、后端和配置分冷暖测全链，保留身份、哈希和证据。[事件区间](docs/reference/execution-events.md)不相加冒充墙钟。[QC 采样](docs/cache-provenance.md#qc-段像素免检)先统一可表示 RGB 色域，按统一矩阵/范围采样，变更后重验 QC。
 - [Windows SVG](docs/reference/windows-svg.md) 生产身份未证即在 PATH/缓存查找前拒绝，不回退内部验收；[SVG 缓存与调度](docs/cache-provenance.md#产物身份)和 [CEF 帧证明](experiments/gfx_cef_worker/README.md)各有独立验证边界，不以探针授权交付。
+- [Linux 编码并发](vtx/runtime/resource_budget.py)按主机可用内存和当前可见 cgroup 余量保守准入，无法确认时不并发；不保证单任务不会 OOM。

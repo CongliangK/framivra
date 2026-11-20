@@ -25,6 +25,10 @@ SEG_CUT_GUARD = 20      # 切点静默半径：±guard 帧内不得有任何层�
 SEG_CUT_RADIUS = 150    # 切点搜索半径：找不到静默帧则放弃该切点，段并入邻段
 DEFAULT_SEGMENTS = 8    # VTX_VIDEO_SEGMENTS 默认段数
 
+# Admission estimate, not a memory bound: the 1080p30 OOM showed ~1 GiB
+# anonymous RSS per segment FFmpeg. Leave margin above that observation.
+_SEGMENT_WORKER_RAM_BYTES = 1280 * 1024**2
+
 
 def _concat_manifest(segments, fps):
     """Place (path, start_frame, end_frame) segments on the frame clock.
@@ -735,7 +739,7 @@ class RenderPlan:
 
     # ---- 阶段二：段级编码 → concat demuxer -c copy 拼接（2026-09-10）----
     # 单条 61 层全片 graph 的滤镜链是单线程硬瓶颈（voice-ime 实测 CPU 7.8%、511s）。
-    # 分段后每段独立 NVENC + 线程池并行（线程数 = min(段数, cpu//4)），段间以 concat
+    # 分段后每段独立编码，线程池并发受 CPU/平台及内存准入限制，段间以 concat
     # demuxer -c copy 无损拼接（各段统一编码参数，copy 拼接零重编码零画质损失）。
     # 段长由 -frames:v 钳到精确帧数（tpad stop 垫帧多出的尾帧被裁掉），拼接后总帧数
     # 必须 == project.duration_frames，不等即报错退出（正确性自检，不静默）。
@@ -819,6 +823,13 @@ class RenderPlan:
                 workers,
                 min(segment_count, 4, max(1, cpu_count // 2)),
             )
+        if workers > 1 and not c.dry and sys.platform == "linux":
+            from ..runtime.resource_budget import _linux_ram_headroom
+
+            ram = _linux_ram_headroom()
+            # Zero (unknown or exhausted) and low headroom admit no overlap;
+            # still attempt each original segment, not a single whole-film graph.
+            workers = min(workers, max(1, ram // _SEGMENT_WORKER_RAM_BYTES))
         if workers > 1 and not c.dry and enc.startswith("NVENC"):
             workers = nvenc_concurrency(c, workers)
         if c.dry:
