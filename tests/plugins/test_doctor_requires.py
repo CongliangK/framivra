@@ -232,8 +232,8 @@ class DependencyGrading(unittest.TestCase):
 class MissingFfmpegSubprocess(unittest.TestCase):
     """③ 子进程级：构造缺 ffmpeg/ffprobe（核心齐备）环境 → doctor exit 1 含 error 行。
 
-    PATH 只含测试需要的工具：POSIX 用私有链接；Windows 用选定的原生 Git 目录，
-    正例额外用 FFmpeg/ffprobe 目录。组件段 builtin 降 ℹ，exit 1 必须来自依赖面 error。
+    PATH 只含测试需要的工具：POSIX 用私有链接；Windows 验收托管式独立工具目录，
+    不用共享 shim 目录。正例额外提供 FFmpeg/ffprobe；组件降级不能绕过依赖硬门。
     """
 
     @staticmethod
@@ -249,10 +249,15 @@ class MissingFfmpegSubprocess(unittest.TestCase):
             for name in ['git', *media]:
                 real = shutil.which(name)
                 assert real and Path(real).suffix.lower() == '.exe', f'fixture 需要原生 {name}.exe'
-                path_entries.append(str(Path(real).parent))
+                path_entries.append(str(Path(real).resolve().parent))
             path_entries = list(dict.fromkeys(path_entries))
-            for name in ('ffmpeg', 'ffprobe'):
-                assert bool(shutil.which(name, path=os.pathsep.join(path_entries))) == include_ffmpeg, name
+            isolated_path = os.pathsep.join(path_entries)
+            expected = {'ffmpeg': include_ffmpeg, 'ffprobe': include_ffmpeg, 'blender': False}
+            for name, present in expected.items():
+                actual = shutil.which(name, path=isolated_path)
+                assert bool(actual) == present, (
+                    f'无法隔离 {name}（查找结果 {actual!r}，PATH={isolated_path!r}）；'
+                    '请将托管式 Git 与 FFmpeg 原生工具目录放在测试 PATH 前部，避免共享 shim 或 Blender 目录。')
         else:
             for name in ['env', 'bash', 'git', 'node', *media]:
                 real = shutil.which(name)
