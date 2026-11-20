@@ -73,17 +73,26 @@ def main(argv=None):
                     or endpoint.username is not None or endpoint.port is None):
                 raise AssertionError('installer fixture requires an owned loopback listener')
 
-            def loopback_only(call):
-                def checked(url, *args):
-                    parsed = urlsplit(url)
+            run = installer.subprocess.run
+            curl = Path(os.environ['PATH']).resolve() / ('curl.exe' if os.name == 'nt' else 'curl')
+            if not curl.is_file():
+                raise AssertionError('installer fixture is missing its owned curl')
+
+            def pinned_run(argv, *args, **kwargs):
+                if isinstance(argv, (tuple, list)) and argv and Path(argv[0]).stem.casefold() == 'curl':
+                    if (len(argv) not in (3, 5) or argv[1] != '-fsSL'
+                            or (len(argv) == 5 and argv[3] != '-o')):
+                        raise AssertionError('unexpected installer fixture curl command')
+                    parsed = urlsplit(argv[2])
                     if (parsed.scheme, parsed.netloc) != (endpoint.scheme, endpoint.netloc):
                         raise AssertionError('installer fixture refused a URL outside its listener')
-                    return call(url, *args)
-                return checked
+                    # Pin Windows executable lookup, ignore user curl config and
+                    # proxies, and reject redirects away from the owned listener.
+                    argv = [str(curl), '-q', '--noproxy', '*', '--max-redirs', '0', *argv[1:]]
+                return run(argv, *args, **kwargs)
 
-            for name in ('fetch', 'discover_version'):
-                patches.enter_context(mock.patch.object(installer, name, loopback_only(getattr(installer, name))))
-            for name in ('_winget_install', 'undo_path_quiet'):
+            patches.enter_context(mock.patch.object(installer.subprocess, 'run', pinned_run))
+            for name in ('_winget_install', 'undo_path', 'undo_path_quiet'):
                 patches.enter_context(mock.patch.object(installer, name,
                     side_effect=AssertionError('installer fixture refused host integration')))
         return installer.main(argv)

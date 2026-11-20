@@ -36,7 +36,9 @@ class InstallSafety(SandboxCase):
         self.curl_log = self.sandbox / "curl-calls.jsonl"
         fixtures = ExitStack()
         self.addCleanup(fixtures.close)
-        base_url, _ = fixtures.enter_context(serve_fixtures(self.fixtures, self.curl_log))
+        base_url, _ = fixtures.enter_context(serve_fixtures(
+            self.fixtures, self.curl_log,
+            paths={f'/v9.9.9/{self.payload.name}', '/v9.9.9/SHA256SUMS'}))
         _, dependency_env = _install_fixture.dependency_fixtures(self.bin, self.home)
         self.env.update(dependency_env)
         for key in ("USERPROFILE", "APPDATA", "LOCALAPPDATA"):
@@ -109,6 +111,7 @@ with Path("calls.txt").open("a") as stream:
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.tree(self.target), before)
         self.assertEqual(victim.read_bytes(), b"existing data")
+        self.assertIn('非空且不是 video_tools checkout', result.stderr)
         self.assertFalse(self.curl_log.exists())
         self.assert_work_clean()
 
@@ -117,6 +120,8 @@ with Path("calls.txt").open("a") as stream:
         before = self.tree(self.outside)
         result = self.install()
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn('拒绝写穿', result.stderr)
+        self.assertFalse(self.curl_log.exists())
         self.assertEqual(self.tree(self.outside), before)
         self.assert_work_clean()
 
@@ -173,6 +178,8 @@ with Path("calls.txt").open("a") as stream:
         before = self.tree(self.target)
         result = self.install("--uninstall")
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn('无 .vt-install.json 标记', result.stderr)
+        self.assertFalse(self.curl_log.exists())
         self.assertEqual(self.tree(self.target), before)
         self.assert_work_clean()
 
