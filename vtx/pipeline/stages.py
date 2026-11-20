@@ -584,7 +584,12 @@ def audit(c: Ctx):
                      "tmp_orphans": [str(x) for x in tmp_orphans(c)],
                      "note": "详细分项见 `vtx df`；回收见 `vtx gc --dry-run`"}
     if not c.dry:   # dry-run 不落 out/ 产物（audit_report 属交付诊断件，2026-09-11 门控）
-        fstxn.atomic_write(c.out / "audit_report.json", json.dumps(rep, ensure_ascii=False, indent=2), root=c.root)
+        report, data = c.out / "audit_report.json", json.dumps(rep, ensure_ascii=False, indent=2)
+        media = getattr(c, "_windows_svg_media", None)
+        if media is None:
+            fstxn.atomic_write(report, data, root=c.root)
+        else:
+            media.write_aux(report, data)
     warns = sum(1 for x in lines if x["status"] == "warn")
     print(f"审计：{len(lines)} 项指标，{warns} 条建议"
           + ("（dry-run，报告未落盘）" if c.dry else "（详见 out/audit_report.json，建议性不阻断）"))
@@ -617,21 +622,23 @@ def source_audio_extraction(c: Ctx, sid: str):
         raise failure
     wav = c.cache / "audio" / f"{audio_key(c, sid)}.wav"
     from ..cache.recovery import media_cache_valid
-    if media_cache_valid(wav):
+    if media_cache_valid(wav, c=c):
         from ..runtime.events import cache_hit
         cache_hit(c, "media_cache_valid")
         return wav, None
     p = _plugin_hooks.run_prepare_source(c, sid)
     if p is not None:
         return p, None         # 缝 A：源声明了插件键（如 denoise）→ 插件产物
-    fstxn.mkdir(wav.parent, root=c.root)
+    if getattr(c, "_windows_svg_media", None) is None:
+        fstxn.mkdir(wav.parent, root=c.root)
     cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(sid)),
            "-vn", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(wav)]
     return wav, cmd
 
 
 def prepare(c: Ctx, *, publish_receipt=True):
-    fstxn.mkdir(c.cache / "audio", root=c.root)
+    if getattr(c, "_windows_svg_media", None) is None:
+        fstxn.mkdir(c.cache / "audio", root=c.root)
     tasks = []
     for s in c.tl["sources"]:
         # 内容寻址键（2026-09-11 治理升级）：源变了键就变，旧 wav 由 gc 回收；
@@ -965,8 +972,15 @@ def mux(c: Ctx):
                "-movflags", "+faststart", str(c.out / "draft_final.mp4")])
         print("✓ 封装 draft_final.mp4（草稿）"); c.receipt("mux_draft", True); return
     # D31 坑位：原生 aac 对真人素材（波峰因子 23-25dB 密集瞬态）解码真峰过冲实测可达 +8.5dB——正式封装用 libfdk_aac
-    encs = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace").stdout
+    media = getattr(c, '_windows_svg_media', None)
+    if media is not None:
+        result = media.execute(['ffmpeg', '-hide_banner', '-encoders'])
+        if result.returncode:
+            raise RuntimeError('Windows SVG could not identify supported audio encoders')
+        encs = result.stdout
+    else:
+        encs = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace").stdout
     acodec = "libfdk_aac" if "libfdk_aac" in encs else "aac"
     if acodec == "aac":
         print("⚠ libfdk_aac 不可用，回落原生 aac——终检必须复测编码后解码 TP（edit.md 坑表）")
@@ -982,7 +996,11 @@ def mux(c: Ctx):
                "-movflags", "+faststart", str(final)]
 
     def before_commit():
-        rotate_history(c, final, getattr(c, "keep_versions", 2))
+        keep = getattr(c, 'keep_versions', 2)
+        if media is not None:
+            media.rotate_history(final, keep)
+        else:
+            rotate_history(c, final, keep)
         if versions_check(c, final):
             print("⚠⚠ 建议核对 out/history/ 与 VERSIONS.json 确认旧版归属后再继续分发")
 

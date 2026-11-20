@@ -117,7 +117,7 @@ ID/address 旗标可重复，用于多轨/多块。所有选择器的 Python 集
 - `document: {state:"stored", raw, content_version, location, project}`。raw 是**严格 UTF-8 完整落盘文本**，包括首尾空白；不是解析对象的重序列化。content_version 与 inspect 相同，为本次完整原字节 SHA256。`stored` 只表示文件已落盘，不表示已受管、可渲染或已验收。
 - `document.location: {path:<文件名>, relative_to:"timeline parent directory"}`，仅在该时间线父目录的工程相对定位，不是跨工作区唯一身份；workspaceId/宿主根定位由 host 附加，内核不虚构。
 - `document.project: {kind:"managed"|"legacy", project_id:string|null, head:string|null}`。仅显式 `_vtx` 通过共享 store 的 protocol1、project_id/head、完整全局对象 ID 检查后为 managed。坏 metadata 不回退 legacy；此处不读/初始化 store 历史，不证明事务证据完整。legacy 无协议稳定 ID，即使恰有自定义 id 也不提供稳定复制；source_id 只是已存在的源引用。JSON 数值（包括超长整数）不会冒充字符串身份、源引用或其他字符串字段；带引号的纯数字 ID 仍按共享字符串 ID 规则校验，未知扩展数值仅由 raw 保留词法。
-- `selection: {global_frame, fps, interval, tracks, blocks}`。fps 是落盘真实值并经过现有 fps 约束。轨/块各含 `family, stable_id, address, content_version, raw`；块另含全局 `range`。raw 是原 token span，保留完整未知嵌套字段、超53bit整数、高精度十进制词法、空白与 Unicode/其他转义；document.raw 始终是权威。span 不含该值外侧的分隔空白。不返回可能舍入的解析 data，不通过 JSON roundtrip 伪造原文。派生帧超过 `2**53-1` 明确 `reference.precision` 拒绝，未知扩展数字的原文不受该派生字段限制。
+- `selection: {global_frame, fps, interval, tracks, blocks}`。`fps` 是通过现有帧率约束和数值精度检查的解析值（如原文 `3e1` 返回 `30.0`）；原始数字写法以 `document.raw` 为准。轨/块各含 `family, stable_id, address, content_version, raw`；块另含全局 `range`。raw 是原 token span，保留完整未知嵌套字段、超53bit整数、高精度十进制词法、空白与 Unicode/其他转义；document.raw 始终是权威。span 不含该值外侧的分隔空白。不返回可能舍入的解析 data，不通过 JSON roundtrip 伪造原文。派生帧超过 `2**53-1` 明确 `reference.precision` 拒绝，未知扩展数字的原文不受该派生字段限制。
 - 真实受管轨/块 stable_id 来自其原 ID；legacy 及字幕虚拟轨 stable_id 为 null，不把数组位置/pathhash 冒充 ID。字幕虚拟轨 address 为 `/subtitles`；external-only 且无内联数组时其 raw 为 null。
 - 仅非 gfx 视频/音频块引用存在且唯一的 source 时给 `source_id`。本片不探源媒体，不能确证原生 fps/CFR、源时长与归一化，因此**不提供 source_frame**，也不用 video.currentTime 假装精确帧。
 - 成功时 `coverage` 与 read 相同；输入 shape 校验失败时为 null，不回显未验证外引值。外部字幕不读取、不展开，`complete:false` 不声称完整活跃渲染集合。`image:{state:"not-generated",kind:null}` 明确本片未生成图；不渲染、不把旧输出或 UI 截图当 current-composite，未来须区分 current-composite/verified-output/ui-screenshot。
@@ -172,6 +172,10 @@ HTML 执行许可独立于预览写入：只信任自己检查过的保存页面
 
 稀疏帧与生产者输入、完整现有环境证书及输出 SHA 一起绑定到合成身份，发布前后重验；未知环境、变化、坏依赖或取消均不返回成功。缓存档位不授予冷准备许可；新路径不复用跨请求临时图或把 `off` 暗改为读取普通 gfx 缓存。写域仅独立 `cache/preview` 请求目录，不修改 timeline/store/out/正式回执。冷交付为 **inline-only**：同一完整验证后的不可变 PNG bytes 用于 SHA/base64，返回 `image.path:null`，成功响应前清理请求 PNG、媒体和浏览器 profile；不为不可读的临时路径许诺持久寿命。终止未确认时保留必要恢复账本并拒绝成功，不能清掉仍在运行的浏览器证据。再次显式冷准备只恢复带本项目/本 schema 标记的 `request_<32hex>` 内原生 worker 账本，沿用原 reaper 的宿主、进程 lineage/身份复核；仍存活或终止未确认即保留并拒绝。未知标记、无账本的 SIGKILL 残件须核实后显式清理，不自动认作缓存或扩大扫描删除范围。已有默认 metadata-only 路径的合同不变。
 
+### Windows 锁定主片预览
+
+Windows x64 仅接通 [portable-v2 锁定主片](windows-svg.md#锁定-portable-v2-主片的-all)的显式冷准备。设置相同的三个运行时根，再用 `timeline frame --frame N --expected-content-version sha256:VERSION --render --prepare-gfx --include-png`，不传 `--trust-html`。它冻结整个保存版本和输入，真栅格化所选 SVG，再用内核合成器合成整帧，不读取成片、不复用正式缓存。所有中间文件只在配置的私有暂存根（路径不能含 `%`），进程由 Job 监管，确认收尾并清理后才返回内联 PNG。未开放默认暖预览、普通媒体、字幕、HTML、侧栏编辑或其他工程，不等于成片/QC。
+
 ## 显式写事务第一切片（v1；不是完整编辑器）
 
 **以下调用会写工程及持久历史**，没有 dry-run；先在副本核对请求，不自动迁移现有工程。公共 API 为 `timeline_transaction(path, request)`、`timeline_store_status(path, *, recover=False)`、`timeline_store_capabilities()`；CLI/Python 共用 [内核](../../vtx/timeline_store.py)，无需 Ctx、素材、渲染或插件。
@@ -184,7 +188,7 @@ vtx -t /path/to/timeline.json store --request /path/to/request.json
 vtx -t /path/to/timeline.json store recover
 ```
 
-CLI 的 `store [plan] --request-stdin` 可替代 `--request PATH`：直接读取已有 stdin 二进制流至 EOF，仅接受一个完整严格 UTF-8 JSON 对象，最多 **8388608 字节（8MiB）**；超限多读至多一字节即拒绝，不截断、不重开 `/dev/stdin`。发送者必须关闭写端；未到 EOF 不执行计划或提交。解析/UTF-8/重复键/非有限或不可无损写出的数值错误仍用 `input.request`/exit1；参数冲突为 `cli.arguments`/exit2。两种请求旗标互斥；status/recover/capabilities、所有只读/帧图像及渲染命令均拒绝该旗标且不消费 stdin。原 `--request PATH` 语义不变，`--request -` 仍是名为 `-` 的文件，不是 stdin。`store capabilities` 仅在 CLI 结果顶层额外声明 `request_transport:{"stdin":{"flag":"--request-stdin","max_bytes":8388608}}`；Python 能力结果、协议版本、digest 和历史回执不变。stdin 只传请求，不解除下述 exact-import 的显式本地 `payload_file` 限制。
+CLI 的 `store [plan] --request-stdin` 可替代 `--request PATH`：直接读取已有 stdin 二进制流至 EOF，仅接受一个完整严格 UTF-8 JSON 对象，最多 **8388608 字节（8MiB）**；超限多读至多一字节即拒绝，不截断、不重开 `/dev/stdin`。发送者必须关闭写端；未到 EOF 不执行计划或提交。解析/UTF-8/重复键/非有限或不可无损写出的数值错误仍用 `input.request`/exit1；参数冲突为 `cli.arguments`/exit2。两种请求旗标互斥；status/recover/capabilities、所有只读/帧图像及渲染命令均拒绝该旗标且不消费 stdin。原 `--request PATH` 语义不变，`--request -` 仍是名为 `-` 的文件，不是 stdin。`store capabilities` 在 CLI 结果顶层声明 `request_transport:{"stdin":{"flag":"--request-stdin","max_bytes":8388608}}`；Python 能力结果、协议版本、digest 和历史回执不变。stdin 只传请求，不解除下述 exact-import 的显式本地 `payload_file` 限制。
 
 request 为严格 JSON 对象，必需 `operation`、`op_id`、`base_revision`，拒绝未知请求键。`base_revision` 直接使用 inspect 的原字节 `content_version`，不使用 mtime。op_id/project_id/对象 ID 为 1–128 位、首位字母或数字、其余字母数字及 `_.:-` 的字符串；所有受管对象 ID 全局唯一。version 仍为 2，新增可选根 `_vtx: {protocol:1, project_id, head}`；未知未来协议拒写。管理对象为 sources、视频/音频轨、clip/event、内联字幕，不往自由 `_meta` 塞身份。
 
@@ -198,6 +202,14 @@ request 为严格 JSON 对象，必需 `operation`、`op_id`、`base_revision`�
 | undo | head | 只撤当前已提交 head，仍是带新 op_id/base CAS 的新提交；文件必须逐字节等于原 head 结果；不能 undo create/adopt；新结果含反向 edit 变更清单 |
 
 语义编辑使用独立的 `edit`，不是把 `replace` 的身份限制解除，也不改变既有 `apply.changes` 平面协议。可选外部界面见 [DSH 适配器](../../dsh-sidebar/README.md)；尚无 ID 改签或完整 gfx 连续编辑。apply/adopt/edit 保留全部未知 JSON 数据，不投影/展开 `subtitles_src`，不读取/重写字幕外引；replace 的 document 是调用者显式提供的全文。写入允许重排键/格式，不承诺原排版；严格拒重复键、NaN/Infinity、bool 帧以及重序列化会损失十进制值的高精度浮点输入。
+
+### 单事务编辑并返回已保存视图
+
+**会写工程与持久历史。** `vtx -t PATH store edit-view --request-stdin` 仅接受上方严格的 managed v1 `edit` 请求。CLI 能力另广告 `edit_view:{command:"edit-view",read_schema:"framivra.timeline.read/v1",wire_limit_bytes:8388608,preload_stdin:true}`，不猜版本、不改变普通 plan/commit。`preload_stdin` 允许受管进程仅空管道等待：完整请求及 EOF 之前不读写工程或历史，消费者不得提前缓冲请求体。无独立零写计划：同一锁内完成历史核验、语义校验、原字节 CAS、intent/替换/同步/commit marker；发现 pending 即要求显式恢复，不代办恢复。
+
+首次成功在通常回执上增加 `view:{snapshot,result}`，分别等价于对本次提交字节执行 inspect 和全量无过滤 query；两投影的 `content_version` 等于 `revision`。只证明本次保存的版本，不保证应答到达时无后续写入。预先核对含换行的 8 MiB ASCII 视图应答；超限为 `edit.view_limit`，不发布本次 intent、不动目标文件（锁和历史初始化不属零写保证）。相同请求重放只返回历史身份/状态回执，不附 `edit` 或 `view`，不会把旧视图当成当前。视图是传输附加字段，不入 journal、不改变 digest 或历史格式。
+
+DSH 已确认提交但无法采用视图时，不重发写请求：`edit-view` 路径以匹配原请求的提交回执判定已保存，视图不合格时显式刷新或重开；兼容旧内核走 plan → 单次 commit → 分别 inspect/query，首次回读的两个版本都须匹配提交回执的 `revision`，仅彼此相同不够。回读失败不改变已提交的判定。派发后未收到可信回执则不能判定未提交；两条 DSH 路径都不自动重试或换路重发，保留原 `op_id`，按[发布与恢复协议](#发布与恢复协议)核对历史和当前版本。
 
 ### 原始写入 JSON 的公共解析边界
 
@@ -282,19 +294,25 @@ fade 默认 `preserve-content`：保留外侧 fade，内部接缝设 0。切点�
 
 ### 发布与恢复协议
 
-同目录允许多个工程：按实际文件系统顺序解析父路径（包括 symlink 后的 `..`），再加最终文件名确定 canonical 目标与独立 `.vtx-store-<文件名SHA256>/`，新 manifest 绑定该文件名及 canonical 完整位置（已发布的旧版 filename-only manifest 仍可读、不自动改写）；项目叶 symlink/多硬链与非普通文件拒绝。历史不在 cache/out，renderer 只读当前工程，日志不提供另一份 HEAD；不要移动/删改历史、锁文件或只复制工程后期待 undo。status 可创建锁与 manifest，但不恢复/修改工程；inspect/query 始终零写态。
+同目录允许多个工程：POSIX 按实际文件系统顺序解析父路径（包括 symlink 后的 `..`）；Windows 按下述 NTFS 路径规则。再加最终文件名确定 canonical 目标与独立 `.vtx-store-<文件名SHA256>/`，新 manifest 绑定该文件名及 canonical 完整位置（已发布的旧版 filename-only manifest 仍可读、不自动改写）；项目叶 symlink/多硬链与非普通文件拒绝。历史不在 cache/out，renderer 只读当前工程，日志不提供另一份 HEAD；不要移动/删改历史、锁文件或只复制工程后期待 undo。status 可创建锁与 manifest，但不恢复/修改工程；inspect/query 始终零写态。
 
 macOS 在解析父路径后按实际目录项拼写拒绝大小写/Unicode 别名（`path.alias`），不改写旧 history/hash/manifest。状态、恢复与提交在既有目标锁之前取得同父目录 `.vtx-store-parent.lock`，并持有至操作结束，防止两个尚不存在的别名分别创建历史；该名字保留，不能用作工程文件。此锁不存 HEAD、不删除，零写计划不创建它。同父目录不同工程写入因而串行。`store capabilities` 可选 `platform_support.darwin:true` 仅在当前 macOS 具备目录锚定锁且实现这些规则时返回；侧栏在 macOS 必须检查该标记，旧内核保持只读，Linux 原能力握手不变。
 
-初始化先取同目标稳定的外置 `.bootstrap.lock`（仅同步发布，不存工程身份/HEAD，永不删除），在随机 sibling `.initializing-*` 私有目录内 write/flush/fsync manifest → rename manifest → fsync 私有目录 → rename 整个完整目录到 canonical history → fsync 工程父目录，然后才可执行事务。首次 mkdir、半写/fsync、两个 rename 与目录同步任一点进程崩溃，canonical 要么尚未发布，要么已有完整 manifest；下次 status/recover/事务在同一 bootstrap 锁内重试父目录同步。未发布私有目录不可能含运行过的事务，重试另建目录，不扫描选取、不采用也不删除其残件；其存在不阻止安全重新初始化。旧实现或外来 canonical 目录缺 manifest（即使空、仅 lock、完整单个 `.publish-*`、多个或损坏临时）一律 recovery_required 并提示人工检查，绝不猜身份/清证据。已发布新 manifest 的位置不符也拒绝，不能凭同 SHA 接管 decoy。旧版已发布 manifest 不具完整位置绑定，不宣称可鉴别其跨目录复制。初始化失败不返回成功、不改工程，发布后父 fsync 失败下次重试也不会永卡；这不是物理断电保证。
+Windows 原生 `store` 仅接受直接固定盘映射上的本地 NTFS、已存在的普通工程父目录和原样拼写；盘符大小写统一，不跟随 junction/reparse、8.3 或目录项大小写别名，不接受 UNC、设备、`.`/`..`、流名或多硬链。状态、恢复和写事务持同父目录 `.vtx-store-parent.lock` 的原生字节锁；同一锁覆盖初始化、历史、最终 CAS 和提交凭据。目录逐级相对句柄打开，历史在原目录句柄枚举。文件写入独占暂存并 flush；历史目录与工程分别以原句柄 rename 发布，工程替换允许合作只读者持有旧对象。没有 Windows 父目录 fsync 保证；只承诺受控本地工程的合作写者与进程崩溃，工程、暂存与历史须能安全使用父目录权限；暂存及 before/after 副本继承父目录权限，不检查或保留独立文件 ACL。即使非共享项目也不得依赖独立 ACL。文档及单个证据文件上限 32 MiB，CLI stdin/wire 限制不变。`store capabilities` 的 `platform_support.win32` 只表示内核具备该路径，不验证具体目标或授予侧栏写入资格。
 
-顺序固定：同一线程锁+跨进程 flock → 验证/恢复所有已发布 intent → 严格读 → op_id/request_digest 幂等 → 原字节 CAS → 内存操作及共享无素材结构校验 → before/after 完整字节、SHA、完整请求与结果 fsync 并原子发布 intent 目录 → 工程 staging fsync → 最终原字节 CAS → os.replace 工程（线性化点）与父目录 fsync → 持久 commit 结果。没有默认 JSON 回退，不调用 fstxn.locked_update，不嵌套重入锁。
+POSIX 初始化先取同目标稳定的外置 `.bootstrap.lock`（仅同步发布，不存工程身份/HEAD，永不删除），在随机 sibling `.initializing-*` 私有目录内 write/flush/fsync manifest → rename manifest → fsync 私有目录 → rename 整个完整目录到 canonical history → fsync 工程父目录，然后才可执行事务。首次 mkdir、半写/fsync、两个 rename 与目录同步任一点进程崩溃，canonical 要么尚未发布，要么已有完整 manifest；下次 status/recover/事务在同一 bootstrap 锁内重试父目录同步。未发布私有目录不可能含运行过的事务，重试另建目录，不扫描选取、不采用也不删除其残件；其存在不阻止安全重新初始化。旧实现或外来 canonical 目录缺 manifest（即使空、仅 lock、完整单个 `.publish-*`、多个或损坏临时）一律 recovery_required 并提示人工检查，绝不猜身份/清证据。已发布新 manifest 的位置不符也拒绝，不能凭同 SHA 接管 decoy。旧版已发布 manifest 不具完整位置绑定，不宣称可鉴别其跨目录复制。初始化失败不返回成功、不改工程，发布后父 fsync 失败下次重试也不会永卡；这不是物理断电保证。
 
-恢复只补证据：current==after 时补 commit；==before 时记 abort，**不自动 roll-forward**，同 op 重试返回 aborted，欲再试须新 op_id；其他字节、缺失/坏证据或无法判定时 recovery_required，绝不覆盖。create 的 before=null 特例允许仍缺失的目标记 abort。已提交同 op 同 payload 返回原结果与当下 current_revision，不倒退后续编辑；不同 payload 返回 idempotency.conflict。提交替换开始后同步/标记失败为 outcome_unknown（带 op_id），必须相同请求重试或 recover，不得误称未提交。
+POSIX 的发布顺序（Windows 保持同样的 CAS/intent/commit 状态机，锁与 I/O 如上）：同一线程锁+跨进程 flock → 核验已发布 intent（普通提交入口处理 pending；`edit-view` 要求先显式恢复）→ 严格读 → op_id/request_digest 幂等 → 原字节 CAS → 内存操作及共享无素材结构校验 → before/after 完整字节、SHA、完整请求与结果 fsync 并原子发布 intent 目录 → 工程 staging fsync → 最终原字节 CAS → os.replace 工程（线性化点）与父目录 fsync → 持久 commit 结果。没有默认 JSON 回退，不调用 fstxn.locked_update，不嵌套重入锁。
+
+初次原字节 CAS 返回 `conflict` 时，本次未发布 intent、未提交；重新读取当前 `content_version`，重新核对编辑意图，确认后才可用新请求提交，不自动 rebase。intent 发布后的最终 CAS 若发现字节变化，本次不替换目标，但返回 `recovery_required` 并保留待决证据，不按普通 `conflict` 处理。
+
+提交替换开始后报 `outcome_unknown`，或派发后未收到可信回执，都不等于未提交。保留原请求及 `op_id`；用 `store status` 按 `operations` 中的原 `op_id` 核对历史状态，不能只凭 `ok`、当前 `head` 或 `current_revision` 判定原操作。需要恢复时显式 `store recover`，恢复只补证据：当前字节等于冻结 after 时补 commit，等于 before 时记 abort，**不自动 roll-forward**；其他字节、缺失/坏证据或无法判定时 `recovery_required`，绝不覆盖。create 的 before=null 特例允许仍缺失的目标记 abort。采用恢复后的当前视图时，用状态/恢复结果的 `current_revision` 核对 inspect/query。
+
+普通 store 提交入口可手动重传**完全相同**的请求；`edit-view` 遇 pending 则拒绝，即使请求完全相同也须先显式 `recover`。已提交的同 op 同 payload 重放只取历史结果与当下 `current_revision`，不倒退后续编辑；同 ID 不同 payload 返回 `idempotency.conflict`。原操作确认 `aborted` 后，同请求重放仍返回 `aborted`；若确需再做，须重新核对并使用新 `op_id`。
 
 成功 envelope 为 `schema: "framivra.timeline.store/v1"`、operation/ok、op_id/request_digest、base_revision/revision/project_id，首次与重试另带 current_revision/replayed；失败包含 code/message。CLI 成功 exit0，输入/CAS/恢复错误 exit1，不支持的旗标组合 exit2；拒绝 `--dry-run`、渲染旗标与 `--json` 输出文件。
 
-[共享无素材校验](../../vtx/timeline_structure.py) 用于 store 写入及显式带 `_vtx` 的受管工程 validate，检查 schema、ID、源引用、整数帧/区间、EDL、内联/外引字幕冲突和轨重叠；`_vtx` 键存在即适用，坏值、缺字段或未知协议不回退 legacy。未受管工程保持原只读/validate 的 Unicode source ID、高精度扩展数值及精确诊断行为；写入的 strict/ID 限制不扩散到 legacy validate。adopt 不改已有 source.id 或引用：符合上述稳定 ID 规则才可接管，不符合的合法 legacy source ID 明确拒写并保留原字节，不自动重命名/迁移；高精度扩展（含超出 Decimal 指数范围的合法 JSON 数值）在 adopt/status/recover 返回 input.json 失败 envelope，拒写而非舍入，不影响 legacy 只读；此 adopt 是受限显式接管，不是全面兼容迁移。重复 source ID 在 validate 中不再静默覆盖。**提交不等于可渲染**：不探素材、不查实际源帧数、不载入插件，不代替正式 validate/all。保证仅为本地 POSIX 合作线程/进程与进程崩溃；最终 CAS 后仍可能被非合作外写竞态覆盖。Windows/NFS/物理断电未测，不作绝对保证。
+[共享无素材校验](../../vtx/timeline_structure.py) 用于 store 写入及显式带 `_vtx` 的受管工程 validate，检查 schema、ID、源引用、整数帧/区间、EDL、内联/外引字幕冲突和轨重叠；`_vtx` 键存在即适用，坏值、缺字段或未知协议不回退 legacy。未受管工程保持原只读/validate 的 Unicode source ID、高精度扩展数值及精确诊断行为；写入的 strict/ID 限制不扩散到 legacy validate。adopt 不改已有 source.id 或引用：符合上述稳定 ID 规则才可接管，不符合的合法 legacy source ID 明确拒写并保留原字节，不自动重命名/迁移；高精度扩展（含超出 Decimal 指数范围的合法 JSON 数值）在 adopt/status/recover 返回 input.json 失败 envelope，拒写而非舍入，不影响 legacy 只读；此 adopt 是受限显式接管，不是全面兼容迁移。重复 source ID 在 validate 中不再静默覆盖。**提交不等于可渲染**：不探素材、不查实际源帧数、不载入插件，不代替正式 validate/all。保证仅为上述本地 POSIX/NTFS 合作线程与进程、以及进程崩溃；最终 CAS 后仍可能被非合作外写竞态覆盖。网络文件系统和物理断电不在保证范围。
 
 ## 显式 v2 兼容写地基（A1；旧入口尚未迁移）
 
@@ -362,7 +380,7 @@ exact 保留首尾空白、键次序、Unicode escape、数值词法与完整原
 
 ### A2 pinned artifact target：未实现、未验证
 
-当前 path-store 仅支持上文普通本地 POSIX 合作工程；**不能安全代接 snapshot 临时目录**。没有已实现 PinnedArtifactTarget，也没有 snapshot adapter；A1 不代表完整兼容地基完成。
+当前 path-store 仅支持上文普通本地 POSIX/NTFS 合作工程；**不能安全代接 snapshot 临时目录**。没有已实现 PinnedArtifactTarget，也没有 snapshot adapter；A1 不代表完整兼容地基完成。
 
 拟议最小内部边界（设计，不是可调用 API）：`PinnedArtifactTarget(parent_fd, work_fd, final_name, timeline_name, final_path)`。parent_fd/work_fd 必须在已验证、受信任目录打开并用 fstat 固定 dev/inode；所有文件、history、锁与 staging 操作需 dirfd-relative、拒绝 leaf alias，不能在校验后回落字符串 resolve 或 chdir。final_path 仅为最终公开目标与 history manifest 的绑定身份，不能把临时工作路径写成最终契约；拒绝同 SHA decoy history。
 

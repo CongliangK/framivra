@@ -4,6 +4,8 @@ No rendering, certification, marker publication or directory discovery. HTML
 caches require exact completion records with the selected backend/environment
 identity at the canonical production location; unmarked PNGs are not accepted.
 """
+import sys
+
 from . import gfx_cli
 from ..cache.hygiene import gfx_cache_ns
 
@@ -60,6 +62,13 @@ def resolve_frames(c, clip):
     recheck(c)
     if selected() == 'electron':
         require_electron_record(c, clip, directory)
+    elif (sys.platform == 'win32' and environment
+          and environment['axes'].get('platform_resolver') == 'windows-x64/1'
+          and environment['axes'].get('backend') == 'cdp' and dependency_digest is None):
+        try:
+            source.require_ready()
+        except (OSError, ValueError) as error:
+            raise GfxCacheError(str(error)) from error
     else:
         # For non-Electron backends certificate() returns a bound environment
         # or raises; no uncertified PNG-only path is reachable.

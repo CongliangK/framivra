@@ -387,7 +387,7 @@ class AcceptanceContracts(unittest.TestCase):
                 stage='validate',identity={k:tr['invocation'][k] for k in ('head','tree')},receipt=receipt)
 
     def test_exact_round_screenshot_counts_not_only_upper_bound(self):
-        for changed,want in (([0,1],4),([],0),([0],2),([0,1],4)):
+        for changed,want in (([0,1],4),([],0),([0],2)):
             row=dict(screenshot_attempts=want,metrics=[{}]*want)
             check_round_counts(row,changed)
             row['screenshot_attempts']+=1;row['metrics'].append({})

@@ -6,6 +6,7 @@ import os
 import stat
 import json
 import subprocess
+import sys
 import sysconfig
 import tempfile
 import unittest
@@ -24,7 +25,8 @@ from vtx.pipeline.infra import Ctx
 from tests._support import temporary_root
 from tests.gfx._png import png, write_png
 
-REAL_ENGINE_IDENTITY = gfx_svg.engine_identity
+POSIX_RUNTIME = gfx_svg._PosixRuntimeIdentity
+REAL_ENGINE_IDENTITY = POSIX_RUNTIME.engine_identity
 
 ENGINE = {'name': 'inkscape', 'version': 'Inkscape test', 'executable': '/test/inkscape', 'sha256': 'e' * 64}
 SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080"><rect width="100" height="100" fill="red"/></svg>'
@@ -33,11 +35,15 @@ SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBo
 class SvgContract(unittest.TestCase):
     def setUp(self):
         self.root = temporary_root(self)
-        self.engine = mock.patch.object(gfx_svg, 'engine_identity', return_value=ENGINE)
+        if sys.platform not in ('linux', 'darwin'):
+            scope = mock.patch.object(gfx_svg, '_runtime_identity_scope',
+                                      side_effect=lambda: contextlib.nullcontext(POSIX_RUNTIME()))
+            scope.start(); self.addCleanup(scope.stop)
+        self.engine = mock.patch.object(POSIX_RUNTIME, 'engine_identity', return_value=ENGINE)
         self.engine.start(); self.addCleanup(self.engine.stop)
         for method, value in [('fontconfig_identity', {'executable': '/test/fc-scan', 'version': 'fontconfig test', 'sha256': 'f'*64}),
-                              ('_font_faces', [{'family': 'test', 'style': 'Regular', 'index': 0}])]:
-            patch = mock.patch.object(gfx_svg, method, return_value=value)
+                              ('font_faces', [{'family': 'test', 'style': 'Regular', 'index': 0}])]:
+            patch = mock.patch.object(POSIX_RUNTIME, method, return_value=value)
             patch.start(); self.addCleanup(patch.stop)
         self.clip = dict(format='svg-sequence', src='manifest.json', dst_in=9, dur=2)
         self.manifest = dict(format=gfx_svg.FORMAT, fps=30, width=1920, height=1080,
@@ -253,7 +259,7 @@ class SvgContract(unittest.TestCase):
     def test_windows_impact_marks_conflicting_png_source_key_unknown(self):
         from vtx.inspection.impact import capture
 
-        with mock.patch.object(gfx_svg, 'engine_identity', side_effect=[ENGINE, dict(ENGINE, version='later')]):
+        with mock.patch.object(POSIX_RUNTIME, 'engine_identity', side_effect=[ENGINE, dict(ENGINE, version='later')]):
             snapshot = capture(self.timeline, self.root)
         self.assertIsNone(snapshot['nodes']['clip:0:0']['key'])
         self.assertTrue(any('PNG source identity differs' in w.get('detail', '')
@@ -271,7 +277,7 @@ class SvgContract(unittest.TestCase):
         (self.root / 'font.ttf').write_bytes(b'font-version-two')
         self.assertNotEqual(old, gfx_key(c, self.clip))
         old = gfx_key(c, self.clip)
-        with mock.patch.object(gfx_svg, 'engine_identity', return_value={**ENGINE, 'version': 'Inkscape next'}):
+        with mock.patch.object(POSIX_RUNTIME, 'engine_identity', return_value={**ENGINE, 'version': 'Inkscape next'}):
             self.assertNotEqual(old, gfx_key(c, self.clip))
 
     def test_text_needs_explicit_fonts(self):
@@ -410,7 +416,7 @@ class SvgContract(unittest.TestCase):
                 def render_with_identity(*args, **kwargs):
                     render(*args, **kwargs)
                     if mode == 'identity-changed': identity.return_value = dict(ENGINE, version='changed')
-                with mock.patch.object(gfx_svg, 'engine_identity', identity), \
+                with mock.patch.object(POSIX_RUNTIME, 'engine_identity', identity), \
                      mock.patch.object(gfx_svg_stage, 'run_shell', side_effect=render_with_identity), \
                      mock.patch.object(gfx_svg_stage, 'copy_png', side_effect=copying):
                     if mode in ('input-changed', 'identity-changed'):
@@ -537,7 +543,7 @@ class SvgContract(unittest.TestCase):
     def test_runtime_library_digest_changes_identity(self):
         engine = self.root/'engine.bin'; engine.write_bytes(b'ordinary engine fixture')
         libraries = {'libgraphics.so': {'path': 'ordinary library fixture', 'sha256': '1'*64}}
-        with mock.patch.object(gfx_svg,'engine_identity',side_effect=REAL_ENGINE_IDENTITY), \
+        with mock.patch.object(POSIX_RUNTIME,'engine_identity',side_effect=REAL_ENGINE_IDENTITY), \
              mock.patch.object(gfx_svg,'inkscape_executable',return_value=str(engine)), \
              mock.patch.object(gfx_svg,'runtime_libraries',return_value=libraries), \
              mock.patch.object(gfx_svg,'_version',return_value='Inkscape fixture'):
@@ -697,7 +703,7 @@ class SvgContract(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError): source.require_ready(0,1)
             with self.subTest(input_args=name), self.assertRaises(ValueError): source.input_args(0,1)
             path.write_bytes(original)
-        with mock.patch.object(gfx_svg,'engine_identity',return_value={**ENGINE,'version':'Inkscape next'}):
+        with mock.patch.object(POSIX_RUNTIME,'engine_identity',return_value={**ENGINE,'version':'Inkscape next'}):
             with self.assertRaises(ValueError): source.require_ready(0,1)
         source.require_ready(0,1)
 
@@ -786,6 +792,140 @@ class SvgContract(unittest.TestCase):
             self.assertNotIn('黑场',output.getvalue())
             self.assertFalse(hasattr(c,'_svg_consumer_sources'))
 
+@unittest.skipUnless(sys.platform == 'win32', 'native Windows production admission')
+class WindowsSvgProductionAdmission(unittest.TestCase):
+    def test_ctx_rejects_before_tool_or_cache_lookup(self):
+        root = temporary_root(self).resolve()
+        timeline = root / 'timeline.json'
+        timeline.write_text(json.dumps(dict(version=2, sources=[], subtitles=[], audio_tracks=[],
+            project=dict(fps=30, width=1920, height=1080, duration_frames=1),
+            video_tracks=[dict(name='graphics', kind='gfx', clips=[
+                dict(format='svg-sequence', src='manifest.json', dst_in=0, dur=1)])])), encoding='utf-8')
+        manifest = root / 'manifest.json'
+        record = dict(format=gfx_svg.FORMAT, fps=30, width=1920, height=1080,
+                      frame_count=1, frames=['frame.svg'])
+        (root / 'frame.svg').write_text(SVG, encoding='utf-8')
+        diagnostics = []
+
+        def monitor_path(operation):
+            def checked(path, *args, **kwargs):
+                if any(path.is_relative_to(root / name) for name in ('cache', 'out')):
+                    self.fail('cache or output path accessed before admission')
+                return operation(path, *args, **kwargs)
+            return checked
+
+        with mock.patch.object(gfx_svg.shutil, 'which', side_effect=AssertionError('tool discovery')), \
+             mock.patch.object(subprocess, 'Popen', side_effect=AssertionError('tool launch')), \
+             mock.patch.object(Path, 'open', monitor_path(Path.open)), \
+             mock.patch.object(Path, 'stat', monitor_path(Path.stat)), \
+             mock.patch('vtx.pipeline.infra.receipt_fingerprint', side_effect=AssertionError('receipt pin')):
+            manifest.write_text(json.dumps(dict(record, frame_count=2)), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, r'manifest\.frame_count'):
+                Ctx(timeline, diagnostics=diagnostics)
+            self.assertEqual(diagnostics[-1]['rule_id'], 'load.svg_sequence')
+            self.assertEqual(diagnostics[-1]['json_path'], '$.video_tracks[0].clips[0].src')
+            manifest.write_text(json.dumps(record), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'Windows production runtime identity'):
+                Ctx(timeline)
+            with self.assertRaisesRegex(ValueError, 'Windows production runtime identity'):
+                gfx_svg.engine_identity()
+        self.assertEqual({item.name for item in root.iterdir()}, {'timeline.json', 'manifest.json', 'frame.svg'})
+
+
+    def test_explicit_profile_anchors_timeline_before_runtime_creation(self):
+        root = temporary_root(self).resolve()
+        doc = {'version': 2, 'project': {'fps': 30, 'width': 1920, 'height': 1080, 'duration_frames': 1},
+               'video_tracks': [{'kind': 'gfx', 'clips': [dict(format='svg-sequence',
+                                                              src='manifest.json', dst_in=0, dur=1)]}],
+               'sources': [{'path': 'must-not-probe.mp4'}]}
+        timeline = root / 'timeline.json'
+        timeline.write_text(json.dumps(doc), encoding='utf-8')
+        runtime = mock.Mock(side_effect=AssertionError('runtime must not open'))
+        os.link(timeline, root / 'alias.json')
+        with self.assertRaisesRegex(ValueError, 'one hard link'):
+            Ctx(timeline, _svg_runtime_factory=runtime)
+        (root / 'alias.json').unlink()
+        with self.assertRaisesRegex(ValueError, 'without external media'):
+            Ctx(timeline, _svg_runtime_factory=runtime)
+        with self.assertRaisesRegex(ValueError, 'exact portable-v2 timeline'):
+            Ctx(timeline, _svg_runtime_factory=runtime, _svg_all=True)
+        runtime.assert_not_called()
+        self.assertEqual({path.name for path in root.iterdir()}, {'timeline.json'})
+
+
+    def test_producer_refuses_an_unpinned_record_before_opening_cache(self):
+        from vtx.render.gfx_svg_win_runtime import _WindowsRasterRuntime
+
+        root = temporary_root(self).resolve()
+        runtime = _WindowsRasterRuntime(root, None, {'name': 'fixture'}, None, None)
+        record = {'fonts': [], 'engine': runtime.engine_identity()}
+        ctx = SimpleNamespace(root=root, _svg_receipt_record='prior-record')
+        with self.assertRaisesRegex(ValueError, 'pinned receipt input'):
+            runtime.render_page(ctx, {}, record)
+        self.assertEqual(list(root.iterdir()), [])
+
+    def test_composition_reads_only_locked_certified_frames(self):
+        from vtx.render.gfx_svg_win_runtime import _WindowsRasterRuntime
+
+        root = temporary_root(self).resolve()
+        cwd = root / 'private'
+        cwd.mkdir()
+        runtime = _WindowsRasterRuntime(root, (None, None, cwd), ENGINE, None, None)
+        record = {'engine': ENGINE, 'fonts': [], 'width': 2, 'height': 2, 'frame_count': 1}
+        ctx = SimpleNamespace(root=root, _svg_runtime=runtime,
+                              _svg_receipt_record=gfx_svg.digest(gfx_svg.canonical(record)),
+                              verify_inputs=mock.Mock())
+        clip = dict(format='svg-sequence', src='manifest.json', dst_in=0, dur=1)
+        key = gfx_svg.record_key(record)
+        page = root / 'cache' / 'gfx_exp' / gfx_svg.NAMESPACE / key
+        page.mkdir(parents=True)
+        frame = page / 'f0000.png'
+        frame.write_bytes(png(2, 2))
+        (page / 'f0001.png').write_bytes(b'not part of the sequence')
+        marker = {'format': 'framivra-svg-completion/v1', 'key': key, 'input': record,
+                  'sha256': [gfx_svg.digest(frame.read_bytes())]}
+        (page / gfx_svg.COMPLETE_FILE).write_bytes(gfx_svg.canonical(marker))
+        ctx.cache, ctx.fps, ctx.w, ctx.h = root / 'cache', 30, 2, 2
+        from vtx.render.frame_source import png_consumer_scope
+        with mock.patch.object(gfx_svg, 'resolve', return_value=record), mock.patch.object(runtime, 'verify'):
+            source = png_source(ctx, clip)
+            with png_consumer_scope([{'gfx': True, 'cl': clip, 'source': source}], c=ctx) as layers:
+                consumer = layers[0]['source']
+                self.assertEqual(consumer.identity, source.identity)
+                self.assertNotEqual(consumer.directory, page)
+                self.assertEqual([p.name for p in consumer.directory.iterdir()], ['f0000.png'])
+                frame.write_bytes(b'replaced public frame')
+                self.assertEqual(consumer.input_args()[-1], str(consumer.directory / 'f%04d.png'))
+                with self.assertRaises(PermissionError):
+                    consumer.frame_path(0).write_bytes(b'cannot change pinned input')
+            runtime.context = (None, None, cwd / 'new-operation')
+            runtime.context[2].mkdir()
+            with self.assertRaisesRegex(ValueError, 'invalid output PNG'):
+                with png_consumer_scope([{'gfx': True, 'cl': clip, 'source': source}], c=ctx):
+                    self.fail('corrupt frame reached compositor')
+
+    def test_native_marker_and_receipt_publication_rejects_hardlink_targets(self):
+        from vtx.render.gfx_svg_win_publish import anchored
+
+        root = temporary_root(self).resolve()
+        victim = root / 'ordinary.txt'
+        victim.write_bytes(b'original')
+        with anchored(root) as parent, parent.child('out', create=True) as out:
+            os.link(victim, root / 'out' / 'receipt.json')
+            with out.lock('receipt.json'):
+                with self.assertRaisesRegex(ValueError, 'one hard link'):
+                    out.publish('receipt.json', b'wrong')
+                with self.assertRaisesRegex(ValueError, 'one hard link'):
+                    out.remove('receipt.json')
+            self.assertEqual(victim.read_bytes(), b'original')
+            (root / 'out' / 'receipt.json').unlink()
+            with out.lock('receipt.json'):
+                out.publish('receipt.json', b'first')
+                out.publish('receipt.json', b'final')
+                self.assertEqual(out.read('receipt.json', 5), b'final')
+        self.assertEqual({path.name for path in (root / 'out').iterdir()}, {'receipt.json', 'receipt.json.lock'})
+
+
 class LinuxSvgRuntimeDigest(unittest.TestCase):
     """Fresh ldd closure every call, shared byte facts only for runtime files."""
     def setUp(self):
@@ -812,8 +952,8 @@ class LinuxSvgRuntimeDigest(unittest.TestCase):
     def test_shared_libraries_skip_only_unchanged_bytes_not_ldd(self):
         with mock.patch.object(gfx_svg.subprocess, 'run', return_value=self.result) as ldd, \
                 mock.patch.object(self.checked, 'file_digest', wraps=self.checked.file_digest) as read:
-            first = gfx_svg.engine_identity(), gfx_svg.fontconfig_identity()
-            second = gfx_svg.engine_identity(), gfx_svg.fontconfig_identity()
+            first = gfx_svg.engine_identity(), POSIX_RUNTIME.fontconfig_identity()
+            second = gfx_svg.engine_identity(), POSIX_RUNTIME.fontconfig_identity()
         self.assertEqual(first, second)
         self.assertEqual(ldd.call_count, 4)
         self.assertEqual(read.call_count, 12 if os.name == 'nt' else 4)

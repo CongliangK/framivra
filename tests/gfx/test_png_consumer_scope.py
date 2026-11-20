@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import sys
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -326,11 +327,16 @@ class SvgPngConsumerGateContract(unittest.TestCase):
         self.root = temporary_root(self)
         self.engine = dict(name='inkscape', version='ordinary mock version',
                            executable='/test/inkscape', sha256='e' * 64)
+        if sys.platform not in ('linux', 'darwin'):
+            scope = mock.patch.object(gfx_svg, '_runtime_identity_scope',
+                                      side_effect=lambda: contextlib.nullcontext(gfx_svg._PosixRuntimeIdentity()))
+            scope.start()
+            self.addCleanup(scope.stop)
         for name, value in (
             ('engine_identity', self.engine),
             ('fontconfig_identity', dict(executable='/test/fc-scan', version='mock', sha256='f' * 64)),
         ):
-            patch = mock.patch.object(gfx_svg, name, return_value=value)
+            patch = mock.patch.object(gfx_svg._PosixRuntimeIdentity, name, return_value=value)
             patch.start()
             self.addCleanup(patch.stop)
         self.svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" '

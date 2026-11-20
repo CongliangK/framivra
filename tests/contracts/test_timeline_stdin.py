@@ -114,7 +114,9 @@ class TimelineStdinTest(unittest.TestCase):
         doc["subtitles"][0]["text"] = "pipe → socket 😀"
         req = v2_request(doc, sha(self.path.read_bytes()), op_id="replace")
         before = tree(self.root)
-        plan = self.cli(wire(req), "plan", transport="socket")
+        # Windows Popen cannot route a Winsock handle through the CRT stdin fd.
+        transport = "pipe" if sys.platform == "win32" else "socket"
+        plan = self.cli(wire(req), "plan", transport=transport)
         self.assertEqual(plan, timeline_write_plan(self.path, req))
         self.assertEqual(before, tree(self.root))
         commit = self.cli(wire(req))
@@ -123,9 +125,9 @@ class TimelineStdinTest(unittest.TestCase):
         second_doc = copy.deepcopy(doc)
         second_doc["subtitles"][0]["text"] = "later"
         second_req = v2_request(second_doc, commit["revision"], op_id="later")
-        later = self.cli(wire(second_req), transport="socket")
+        later = self.cli(wire(second_req), transport=transport)
         before = tree(self.root)
-        replay = self.cli(wire(req), transport="socket")
+        replay = self.cli(wire(req), transport=transport)
         self.assertTrue(replay["replayed"])
         self.assertEqual(replay["revision"], commit["revision"])
         self.assertEqual(replay["current_revision"], later["revision"])
@@ -336,6 +338,117 @@ class TimelineStdinTest(unittest.TestCase):
                 # Reaped child and its closed stdin cannot retain a writer/lock.
                 self.assertIsNotNone(proc.poll())
 
+    def test_edit_view_matches_public_reads_and_never_returns_a_replay_view(self):
+        from vtx.api import inspect_timeline, query_timeline
+
+        self.assertTrue(self.cli(wire(self.adopt()))["ok"])
+        subtitle = json.loads(self.path.read_bytes())["subtitles"][0]
+        request = dict(operation="edit", op_id="saved-view", base_revision=sha(self.path.read_bytes()),
+                       operations=[{"op": "parameters.update", "id": subtitle["id"],
+                                    "path": ["text"], "value": "新字幕😀"}])
+        saved = self.cli(wire(request), "edit-view", transport="socket")
+        self.assertEqual(saved["view"], {"snapshot": inspect_timeline(self.path),
+                                         "result": query_timeline(self.path)})
+        self.assertEqual(saved["revision"], sha(self.path.read_bytes()))
+        newer = dict(request, op_id="later", base_revision=saved["revision"])
+        self.assertTrue(self.cli(wire(newer), "edit-view")["ok"])
+        before = tree(self.root)
+        replay = self.cli(wire(request), "edit-view")
+        self.assertTrue(replay["replayed"])
+        self.assertNotEqual(replay["revision"], replay["current_revision"])
+        self.assertNotIn("view", replay)
+        self.assertEqual(before, tree(self.root))
+
+    def test_edit_view_does_not_mutate_during_empty_or_unterminated_stdin(self):
+        self.assertTrue(self.cli(wire(self.adopt()))["ok"])
+        subtitle = json.loads(self.path.read_bytes())["subtitles"][0]
+        request = dict(operation="edit", op_id="after-eof", base_revision=sha(self.path.read_bytes()),
+                       operations=[{"op": "parameters.update", "id": subtitle["id"],
+                                    "path": ["text"], "value": "只在 EOF 后保存"}])
+        before = tree(self.root)
+        args = self.args("store", "edit-view", "--request-stdin")
+        with subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, cwd=self.root) as process:
+            try:
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    process.wait(timeout=0.15)
+                self.assertEqual(before, tree(self.root))
+                process.stdin.write(wire(request))
+                process.stdin.flush()
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    process.wait(timeout=0.15)
+                self.assertEqual(before, tree(self.root))
+                out, err = process.communicate(timeout=20)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
+        result = self.result(subprocess.CompletedProcess(args, process.returncode, out, err))
+        self.assertEqual(result["revision"], sha(self.path.read_bytes()))
+
+    def test_edit_view_rejects_untransportable_reply_before_intent(self):
+        self.assertTrue(self.cli(wire(self.adopt()))["ok"])
+        subtitle = json.loads(self.path.read_bytes())["subtitles"][0]
+        request = dict(operation="edit", op_id="too-large", base_revision=sha(self.path.read_bytes()),
+                       operations=[{"op": "parameters.update", "id": subtitle["id"],
+                                    "path": ["text"], "value": "😀" * 256}])
+        before = tree(self.root)
+        # Staged raw bytes fit; the two ASCII-escaped read views and receipt do not.
+        with patch.object(store, "EDIT_VIEW_WIRE_LIMIT", 4096):
+            result = store.timeline_edit_view(self.path, request)
+        self.assertEqual(result.get("code"), "edit.view_limit", result)
+        self.assertEqual(before, tree(self.root))
+
+    def test_history_validation_reuse_requires_exact_types_schema_and_cross_field_rules(self):
+        from vtx import timeline_structure as structure
+
+        self.assertTrue(self.cli(wire(self.adopt()))["ok"])
+        payload = self.path.read_bytes()
+        doc = json.loads(payload)
+        memo = structure._HistorySchemaMemo()
+        self.assertEqual(memo.decode_checked(payload, managed=True)[1], [])
+        for key, value in (("duration_frames", 20), ("duration_frames", 90.0), ("duration_frames", True)):
+            changed = copy.deepcopy(doc)
+            changed["project"][key] = value
+            expected = structure.structure_errors(changed, require_managed=True)
+            self.assertTrue(expected, value)
+            self.assertEqual(memo.decode_checked(wire(changed), managed=True)[1], expected)
+        schema_path = self.root / "test-schema.json"
+        original = structure._SCHEMA_PATH.read_text(encoding="utf-8")
+        stricter = json.loads(original)
+        stricter["properties"]["project"]["properties"]["duration_frames"]["minimum"] = 91
+        with patch.object(structure, "_SCHEMA_PATH", schema_path):
+            schema_path.write_text(json.dumps(stricter), encoding="utf-8")
+            self.assertIn("/project/duration_frames: outside minimum",
+                          memo.decode_checked(payload, managed=True)[1])
+            schema_path.write_text(original, encoding="utf-8")
+            self.assertEqual(memo.decode_checked(payload, managed=True)[1], [])
+
+    def test_edit_view_keeps_pending_after_interrupted_publish_until_explicit_recovery(self):
+        self.assertTrue(self.cli(wire(self.adopt()))["ok"])
+        subtitle = json.loads(self.path.read_bytes())["subtitles"][0]
+        request = dict(operation="edit", op_id="interrupted", base_revision=sha(self.path.read_bytes()),
+                       operations=[{"op": "parameters.update", "id": subtitle["id"],
+                                    "path": ["text"], "value": "已替换"}])
+
+        def interrupt(stage):
+            if stage == "replaced":
+                raise OSError("injected failure after replacement")
+
+        with patch.object(store, "_checkpoint", side_effect=interrupt):
+            result = store.timeline_edit_view(self.path, request)
+        self.assertEqual(result.get("code"), "outcome_unknown", result)
+        self.assertNotIn("view", result)
+        self.assertEqual(json.loads(self.path.read_bytes())["subtitles"][0]["text"], "已替换")
+        before = tree(self.root)
+        refused = self.cli(wire(request), "edit-view", expected=1)
+        self.assertEqual(refused["code"], "recovery_required")
+        self.assertEqual(before, tree(self.root))
+        self.assertTrue(timeline_store_status(self.path, recover=True)["ok"])
+        replay = self.cli(wire(request), "edit-view")
+        self.assertTrue(replay["replayed"])
+        self.assertNotIn("view", replay)
+
     def test_capability_transport_is_cli_only_additive_and_zero_write(self):
         before = tree(self.root)
         api = timeline_store_capabilities()
@@ -345,6 +458,9 @@ class TimelineStdinTest(unittest.TestCase):
         cli = self.result(proc)
         self.assertEqual(cli.pop("request_transport"), {
             "stdin": {"flag": "--request-stdin", "max_bytes": MAX_BYTES}})
+        self.assertEqual(cli.pop("edit_view"), {
+            "command": "edit-view", "read_schema": "framivra.timeline.read/v1",
+            "wire_limit_bytes": MAX_BYTES, "preload_stdin": True})
         self.assertEqual(cli, api)
         self.assertEqual(timeline_store_capabilities(), api)
         self.assertEqual(before, tree(self.root))

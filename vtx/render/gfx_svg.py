@@ -110,7 +110,9 @@ def read_input(c, name, *, limit=None, expected_path=None):
     """Bound the read itself, rather than allocating first and checking later."""
     limit = MAX_INPUT_BYTES if limit is None else limit
     if os.name == 'nt':
-        from .gfx_svg_win_input import read
+        from .gfx_svg_win_input import read, relative_parts
+        if getattr(c, '_svg_runtime_factory', None) is not None and relative_parts(name)[0].lower() in ('cache', 'out'):
+            raise ValueError('Windows SVG gfx inputs cannot reference product directories')
         if type(limit) is not int or not 0 <= limit <= MAX_INPUT_BYTES:
             raise ValueError('SVG input exceeds byte budget')
         return read(c.root, name, limit=limit, expected_path=expected_path)
@@ -530,7 +532,7 @@ def _version(executable, sha256, runtime_digest):
     return result.stdout.strip()
 
 
-def engine_identity():
+def _posix_engine_identity():
     from .gfx_environment import _file
     executable = inkscape_executable()
     binary_hash = _file(executable)[1]
@@ -562,7 +564,7 @@ def _fontconfig_version(executable, sha256, runtime_digest):
     return (result.stdout + result.stderr).strip()
 
 
-def fontconfig_identity():
+def _posix_fontconfig_identity():
     from .gfx_environment import _file
     executable = shutil.which('fc-scan')
     if executable is None:
@@ -572,6 +574,83 @@ def fontconfig_identity():
     libraries = runtime_libraries(executable)
     return {'executable': executable, 'sha256': sha256, 'libraries': libraries,
             'version': _fontconfig_version(executable, sha256, digest(canonical(libraries)))}
+
+
+class _PosixRuntimeIdentity:
+    engine_identity = staticmethod(_posix_engine_identity)
+    fontconfig_identity = staticmethod(_posix_fontconfig_identity)
+
+    @staticmethod
+    def font_faces(c, name, sha256, fontconfig):
+        return _font_faces(fontconfig['executable'], str(input_path(c, name)), sha256,
+                           digest(canonical(fontconfig)))
+
+    @staticmethod
+    def rasterize(record, staging, *, root, indices, outputs):
+        from .gfx_svg_stage import run_shell_batches
+        return run_shell_batches(record['engine']['executable'], staging, record['frame_count'],
+                                 record['width'], record['height'], root=root,
+                                 indices=indices, outputs=outputs)
+
+
+@contextlib.contextmanager
+def _runtime_identity_scope():
+    """Select a runtime independently of timeline, cache, and tool discovery.
+
+    The resolver consumes only serializable facts. A platform provider may
+    keep operation-local authority in this scope, never in a cache record.
+    """
+    if sys.platform == 'win32':
+        raise ValueError('SVG-sequence Windows production runtime identity is not supported')
+    if sys.platform not in ('linux', 'darwin'):
+        raise ValueError('SVG-sequence runtime identity supports Linux ELF and macOS arm64 only')
+    yield _PosixRuntimeIdentity()
+
+
+def read_timeline_input(c):
+    if sys.platform == 'win32' and getattr(c, '_svg_runtime_factory', None) is not None:
+        from .gfx_svg_win_input import read
+        return read(c.root, c.tl_path.name, limit=MAX_MANIFEST_BYTES, expected_path=c.tl_path)
+    return c.tl_path.read_bytes()
+
+
+def validate_windows_gfx_profile(c):
+    """Reject unsupported Timeline I/O before resolving any asset pathname."""
+    if sys.platform != 'win32' or getattr(c, '_svg_runtime_factory', None) is None:
+        return
+    tl = c.tl
+    tracks = tl.get('video_tracks', [])
+    if getattr(c, '_svg_all', False):
+        from .gfx_svg_win_media import require_standard_timeline
+        require_standard_timeline(c.timeline_sha256)
+    elif (set(tl) - {'version', 'project', 'video_tracks', 'sources', 'audio_tracks', 'subtitles'}
+            or set(tl['project']) - {'fps', 'width', 'height', 'duration_frames', 'cache_dependencies'}
+            or any(tl.get(key) for key in ('sources', 'audio_tracks', 'subtitles'))
+            or route(c) != 'svg-sequence' or len(tracks) != 1 or len(tracks[0].get('clips', [])) != 1
+            or set(tracks[0]) - {'name', 'kind', 'clips'}
+            or set(tracks[0]['clips'][0]) - {'format', 'src', 'dst_in', 'dur', 'cache_dependencies'}):
+        raise ValueError('Windows SVG gfx profile requires one SVG clip without external media, subtitles or plugins')
+    from ..pluginlib.hooks import active_plugins
+    if active_plugins(c):
+        raise ValueError('Windows SVG gfx does not support active plugins')
+
+
+def _context_runtime(c, fonts=None):
+    factory = getattr(c, '_svg_runtime_factory', None)
+    if sys.platform == 'win32' and factory is not None:
+        if c._svg_runtime is None:
+            if fonts is None:
+                raise ValueError('Windows SVG production runtime requires a validated clip manifest')
+            c._svg_runtime = factory(c, tuple(fonts))
+        if fonts is not None:
+            c._svg_runtime.require_fonts(fonts)
+        return contextlib.nullcontext(c._svg_runtime)
+    return _runtime_identity_scope()
+
+
+def engine_identity(c=None):
+    with _context_runtime(c) as runtime:
+        return runtime.engine_identity()
 
 
 def _dependency_members(c, clip):
@@ -602,11 +681,22 @@ def _dependency_members(c, clip):
 
 def resolve(c, clip):
     """Re-read every declared input; returned record carries full file hashes."""
+    with _resolved_runtime(c, clip) as (_, record):
+        return record
+
+
+@contextlib.contextmanager
+def _resolved_runtime(c, clip):
+    """Keep live renderer authority separate from the serializable cache key."""
     if route(c) != 'svg-sequence' or not is_svg(clip):
         raise ValueError('SVG sequence resolver requires an explicit SVG-only gfx timeline')
     raw = read_input(c, clip['src'], limit=MAX_MANIFEST_BYTES)
     if len(raw) > MAX_MANIFEST_BYTES:
         raise ValueError('SVG manifest exceeds 8 MiB input limit')
+    if getattr(c, '_svg_all', False):
+        from .gfx_svg_win_shell import _RASTER_MANIFEST_SHA256
+        if digest(raw) != _RASTER_MANIFEST_SHA256:
+            raise ValueError('Windows SVG all requires the locked portable-v2 manifest')
     manifest = json.loads(raw.decode('utf-8'))
     if not isinstance(manifest, dict) or manifest.get('format') != FORMAT:
         raise ValueError(f'SVG manifest.format must be {FORMAT}')
@@ -625,6 +715,12 @@ def resolve(c, clip):
     fonts = manifest.get('fonts', [])
     if not isinstance(fonts, list):
         raise ValueError('SVG manifest.fonts must be a list of project-relative files')
+    with _context_runtime(c, fonts) as runtime:
+        yield runtime, _resolve_inputs(c, clip, raw, manifest, rate, runtime)
+
+
+def _resolve_inputs(c, clip, raw, manifest, rate, runtime):
+    frames, fonts = manifest['frames'], manifest.get('fonts', [])
     files = {clip['src']: digest(raw)}
     total_bytes = len(raw)
     def add(name, *, limit=None, expected_path=None):
@@ -644,19 +740,27 @@ def resolve(c, clip):
             raise ValueError('SVG input changed while resolving identity')
         files[name] = value
         return data
-    fontconfig = fontconfig_identity()
+    fontconfig = runtime.fontconfig_identity()
     font_faces = {}
     for font in fonts:
         if not isinstance(font, str) or Path(font).suffix.lower() not in ('.ttf', '.otf', '.ttc', '.otc'):
             raise ValueError('SVG fonts must be explicit TTF/OTF/TTC/OTC files')
         add(font)
-        font_faces[font] = _font_faces(fontconfig['executable'], str(input_path(c, font)), files[font], digest(canonical(fontconfig)))
+        font_faces[font] = runtime.font_faces(c, font, files[font], fontconfig)
     if 'generator' in manifest:
         add(manifest['generator'])
     for name, expected_path in _dependency_members(c, clip):
         add(name, expected_path=expected_path)
     families = {family.strip() for faces in font_faces.values() for face in faces
                 for family in face['family'].split(',')}
+    standard = getattr(c, '_svg_all', False)
+    if standard:
+        from .gfx_svg_win_shell import (_RASTER_SOURCE_DEPS, _RASTER_SVG_SHA256, _fold_frame,
+                                        _locked_runtime_digests, _raster_fold)
+        locked = _locked_runtime_digests()
+        if any(files[name] != locked[name] for name in _RASTER_SOURCE_DEPS):
+            raise ValueError('Windows SVG all portable-v2 dependency bytes changed')
+        fold = _raster_fold(b'svg')
     seen = set()
     reusable = []
     for index, frame in enumerate(frames):
@@ -664,11 +768,16 @@ def resolve(c, clip):
             raise ValueError('SVG manifest.frames must contain file paths')
         if frame not in seen:
             try:
-                if inspect_svg(add(frame, limit=MAX_SVG_BYTES), c.w, c.h, fonts=fonts, families=families):
+                data = add(frame, limit=MAX_SVG_BYTES)
+                if standard:
+                    _fold_frame(fold, index, data)
+                if inspect_svg(data, c.w, c.h, fonts=fonts, families=families):
                     reusable.append(frame)
             except (ValueError, OSError) as error:
                 raise ValueError(f'SVG frame {index} ({frame}): {error}') from error
             seen.add(frame)
+    if standard and fold.hexdigest() != _RASTER_SVG_SHA256:
+        raise ValueError('Windows SVG all portable-v2 ordered frame bytes changed')
     code_names = ['gfx_svg.py', 'gfx_svg_stage.py', 'gfx_environment.py']
     code = {name: digest(Path(__file__).with_name(name).read_bytes()) for name in code_names}
     return {'producer': PRODUCER, 'manifest': clip['src'], 'files': files,
@@ -677,7 +786,7 @@ def resolve(c, clip):
             'fontconfig': fontconfig,
             'fps': int(rate) if rate.denominator == 1 else str(rate),
             'width': c.w,
-            'height': c.h, 'frame_count': clip['dur'], 'engine': engine_identity(),
+            'height': c.h, 'frame_count': clip['dur'], 'engine': runtime.engine_identity(),
             'implementation': code,
             'parameters': {'export': 'png', 'area': 'page', 'background_opacity': 0,
                            'fonts': 'isolated-fontconfig', 'frame_index': 'clip-local'}}

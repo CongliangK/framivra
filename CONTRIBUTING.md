@@ -53,5 +53,5 @@ bash scripts/doc_gates.sh
 1. 从默认分支创建特性分支；外部贡献者先 Fork。
 2. 遵守 [AGENTS 写态红线](AGENTS.md#写态红线)：CI 修改需事先明确批准，不手改生成区、不绕开历史写入边界；版本号仅随发布三源同步。manifest 的 catalog 重注见[文档宪章](docs/DOC-CHARTER.md#单一事实来源)。
 3. `docs/skill/`、`templates/**` 是 live 消费面，修改前先公告并评审，详见[消费面规则](docs/DOC-CHARTER.md#消费面)。示范命令标明写操作，优先 `--dry` / 离线形态。
-4. 提交 PR，说明动机、范围、实际命令及 PASS/FAIL/SKIP/UNRUN；渲染改动附最小 timeline 与前后对比。不得把未执行的检查报绿。
+4. 按[写入与评审](docs/DOC-CHARTER.md#写入与评审)判断是否需要同步文档。提交 PR，说明动机、范围、实际命令及 PASS/FAIL/SKIP/UNRUN；渲染改动附最小 timeline 与前后对比。不得把未执行的检查报绿。
 5. 维护者 review 后，在同一分支追加修订并重验受影响面。

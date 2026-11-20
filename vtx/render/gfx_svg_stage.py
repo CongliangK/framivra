@@ -220,97 +220,99 @@ def render_stage(c):
             continue
         for clip in track['clips']:
             total += 1
-            record = gfx_svg.resolve(c, clip)
-            key = gfx_svg.record_key(record)
-            directory = cache / 'gfx_exp' / gfx_svg.NAMESPACE / key
-            if c.dry:
-                print(f'  [dry-run] SVG gfx {clip["src"]}[{key}]: {clip["dur"]} frames')
-                continue
-            from .frame_source import PngSequence
-            source = PngSequence(directory, str(directory.relative_to(cache)),
-                                 clip['dur'], c.fps, c.w, c.h,
-                                 environment_check=lambda: gfx_svg.completion(
-                                     c, clip, directory, expected_record=record))
-            try:
-                source.require_ready()
-                warm += 1
-                continue
-            except (OSError, ValueError):
-                pass
-            # Serialize this key's publication. Failure never leaves a valid marker.
-            with fstxn.locked_write(directory / gfx_svg.COMPLETE_FILE, root=c.root) as marker:
-                fstxn.unlink(directory / gfx_svg.COMPLETE_FILE, root=c.root)
-                with tmp_run(c, 'svg-inkscape', unique=True) as staging:
-                    staging = staging.resolve()
-                    group = reuse_group(record)
-                    members = set(group)
-                    representative = None
-                    for i, name in enumerate(record['frames']):
-                        data = gfx_svg.read_input(c, name, limit=gfx_svg.MAX_SVG_BYTES)
-                        if gfx_svg.digest(data) != record['files'][name]:
-                            raise ValueError('SVG input changed before rendering')
-                        if i in members:
-                            if representative is None:
-                                representative = data
-                            elif data != representative:
-                                group = []  # Hash equality alone is not byte equality.
-                        fstxn.atomic_write(staging / f'f{i:04d}.svg', data, root=c.root)
-                    representative = None
-                    for i, name in enumerate(record['fonts']):
-                        data = gfx_svg.read_input(c, name)
-                        if gfx_svg.digest(data) != record['files'][name]:
-                            raise ValueError('SVG font changed before rendering')
-                        fstxn.atomic_write(staging / 'fonts' / f'font{i}{Path(name).suffix.lower()}', data, root=c.root)
-                    started = time.monotonic()
-                    reused = set(group)  # Rebuild after any byte-inequality fallback.
-                    skipped = set(group[1:])
-                    indices = [i for i in range(clip['dur']) if i not in skipped]
-                    outputs = [staging / f'f{i:04d}.png' for i in range(clip['dur'])]
-                    batch_count = run_shell_batches(record['engine']['executable'], staging,
-                                                    clip['dur'], c.w, c.h,
-                                                    root=c.root, indices=indices, outputs=outputs)
-                    copied_fingerprint = None
-                    if skipped:
-                        source = outputs[group[0]]
-                        observed, sizes = [], []
-                        reason = png_invalid_reason(source, width=c.w, height=c.h,
-                                                    _fingerprint=observed, _verified_size=sizes)
-                        if reason:
-                            raise ValueError(f'Inkscape representative invalid: {reason}')
-                        copied_fingerprint = observed[0]
-                        for i in group[1:]:
-                            copy_png(source, outputs[i], copied_fingerprint, sizes[0], root=c.root)
-                    raster_seconds = time.monotonic() - started
-                    def check_batch(indices):
-                        checked = []
-                        for i in indices:
-                            observed = []
-                            reason = png_invalid_reason(outputs[i],
-                                                        width=c.w, height=c.h, _fingerprint=observed)
+            with gfx_svg._resolved_runtime(c, clip) as (runtime, record):
+                if getattr(c, '_svg_runtime', None) is runtime:
+                    warm += int(runtime.render_page(c, clip, record))
+                    continue
+                key = gfx_svg.record_key(record)
+                directory = cache / 'gfx_exp' / gfx_svg.NAMESPACE / key
+                if c.dry:
+                    print(f'  [dry-run] SVG gfx {clip["src"]}[{key}]: {clip["dur"]} frames')
+                    continue
+                from .frame_source import PngSequence
+                source = PngSequence(directory, str(directory.relative_to(cache)),
+                                     clip['dur'], c.fps, c.w, c.h,
+                                     environment_check=lambda: gfx_svg.completion(
+                                         c, clip, directory, expected_record=record))
+                try:
+                    source.require_ready()
+                    warm += 1
+                    continue
+                except (OSError, ValueError):
+                    pass
+                # Serialize this key's publication. Failure never leaves a valid marker.
+                with fstxn.locked_write(directory / gfx_svg.COMPLETE_FILE, root=c.root) as marker:
+                    fstxn.unlink(directory / gfx_svg.COMPLETE_FILE, root=c.root)
+                    with tmp_run(c, 'svg-inkscape', unique=True) as staging:
+                        staging = staging.resolve()
+                        group = reuse_group(record)
+                        members = set(group)
+                        representative = None
+                        for i, name in enumerate(record['frames']):
+                            data = gfx_svg.read_input(c, name, limit=gfx_svg.MAX_SVG_BYTES)
+                            if gfx_svg.digest(data) != record['files'][name]:
+                                raise ValueError('SVG input changed before rendering')
+                            if i in members:
+                                if representative is None:
+                                    representative = data
+                                elif data != representative:
+                                    group = []  # Hash equality alone is not byte equality.
+                            fstxn.atomic_write(staging / f'f{i:04d}.svg', data, root=c.root)
+                        representative = None
+                        for i, name in enumerate(record['fonts']):
+                            data = gfx_svg.read_input(c, name)
+                            if gfx_svg.digest(data) != record['files'][name]:
+                                raise ValueError('SVG font changed before rendering')
+                            fstxn.atomic_write(staging / 'fonts' / f'font{i}{Path(name).suffix.lower()}', data, root=c.root)
+                        started = time.monotonic()
+                        reused = set(group)  # Rebuild after any byte-inequality fallback.
+                        skipped = set(group[1:])
+                        indices = [i for i in range(clip['dur']) if i not in skipped]
+                        outputs = [staging / f'f{i:04d}.png' for i in range(clip['dur'])]
+                        batch_count = runtime.rasterize(record, staging, root=c.root,
+                                                        indices=indices, outputs=outputs)
+                        copied_fingerprint = None
+                        if skipped:
+                            source = outputs[group[0]]
+                            observed, sizes = [], []
+                            reason = png_invalid_reason(source, width=c.w, height=c.h,
+                                                        _fingerprint=observed, _verified_size=sizes)
                             if reason:
-                                raise ValueError(f'Inkscape output frame {i} invalid: {reason}')
-                            if i in reused and observed[0] != copied_fingerprint:
-                                raise ValueError('SVG reused PNG changed after materialization')
-                            checked.append((i, observed[0]))
-                        return checked
-                    # Decode/CRC/SHA every PNG as before. Independent streams
-                    # share only immutable inputs; at most one batch per shell
-                    # runs, and all validation finishes before any publication.
-                    hashes = [None] * clip['dur']
-                    with ThreadPoolExecutor(max_workers=batch_count) as executor:
-                        batches = [range(n, clip['dur'], batch_count) for n in range(batch_count)]
-                        for checked in executor.map(check_batch, batches):
-                            for i, fingerprint in checked:
-                                hashes[i] = fingerprint
-                    c.verify_inputs('gfx')
-                    if gfx_svg.resolve(c, clip) != record:
-                        raise ValueError('SVG identity changed during rendering')
-                    for i in range(clip['dur']):
-                        fstxn.replace(outputs[i], directory / f'f{i:04d}.png', root=c.root)
-                    marker.write_text(json.dumps({'format': 'framivra-svg-completion/v1',
-                        'key': key, 'input': record, 'sha256': hashes,
-                        'experimental': True, 'batch_count': batch_count, 'raster_seconds': raster_seconds,
-                        'export_count': len(indices), 'materialized_count': len(skipped)}, sort_keys=True), encoding='utf-8')
-            manifest_record(c, directory, 'gfx', key)
+                                raise ValueError(f'Inkscape representative invalid: {reason}')
+                            copied_fingerprint = observed[0]
+                            for i in group[1:]:
+                                copy_png(source, outputs[i], copied_fingerprint, sizes[0], root=c.root)
+                        raster_seconds = time.monotonic() - started
+                        def check_batch(indices):
+                            checked = []
+                            for i in indices:
+                                observed = []
+                                reason = png_invalid_reason(outputs[i],
+                                                            width=c.w, height=c.h, _fingerprint=observed)
+                                if reason:
+                                    raise ValueError(f'Inkscape output frame {i} invalid: {reason}')
+                                if i in reused and observed[0] != copied_fingerprint:
+                                    raise ValueError('SVG reused PNG changed after materialization')
+                                checked.append((i, observed[0]))
+                            return checked
+                        # Decode/CRC/SHA every PNG as before. Independent streams
+                        # share only immutable inputs; at most one batch per shell
+                        # runs, and all validation finishes before any publication.
+                        hashes = [None] * clip['dur']
+                        with ThreadPoolExecutor(max_workers=batch_count) as executor:
+                            batches = [range(n, clip['dur'], batch_count) for n in range(batch_count)]
+                            for checked in executor.map(check_batch, batches):
+                                for i, fingerprint in checked:
+                                    hashes[i] = fingerprint
+                        c.verify_inputs('gfx')
+                        if gfx_svg.resolve(c, clip) != record:
+                            raise ValueError('SVG identity changed during rendering')
+                        for i in range(clip['dur']):
+                            fstxn.replace(outputs[i], directory / f'f{i:04d}.png', root=c.root)
+                        marker.write_text(json.dumps({'format': 'framivra-svg-completion/v1',
+                            'key': key, 'input': record, 'sha256': hashes,
+                            'experimental': True, 'batch_count': batch_count, 'raster_seconds': raster_seconds,
+                            'export_count': len(indices), 'materialized_count': len(skipped)}, sort_keys=True), encoding='utf-8')
+                manifest_record(c, directory, 'gfx', key)
     c.receipt('gfx', True, f'{total} SVG gfx clips; {warm} cache hits; Inkscape static sequence',
               extra={'svg_producer': gfx_svg.PRODUCER})

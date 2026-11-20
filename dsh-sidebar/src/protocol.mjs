@@ -25,7 +25,7 @@ export const fail = (code, message, status) => { throw new PreviewError(code, me
 export const HOST_PROTOCOL_OPS = [
   'hello', 'open', 'browse', 'close',
   'authorize-write', 'revoke-write', 'invalidate-plan', 'cancel-write',
-  'plan', 'commit', 'status', 'recover', 'adopt', 'undo',
+  'plan', 'commit', 'status', 'recover', 'adopt', 'undo', 'edit-view',
   'inspect', 'query', 'reference',
   'storage-inspect', 'storage-plan', 'storage-clean', 'storage-cancel',
 ]
@@ -138,6 +138,11 @@ export function decodeEnvelope(text, operation) {
     if (error instanceof LosslessJSONError) fail('LOSSLESS_JSON_UNSUPPORTED', error.message, 502)
     fail('INVALID_JSON', 'vtx did not return complete JSON', 502)
   }
+  return validateEnvelope(value, operation)
+}
+
+/** Validate already parsed nested reads without reserializing lossless numbers. */
+export function validateEnvelope(value, operation) {
   if (operation === 'reference') return decodeReference(value)
   if (operation === 'capabilities') {
     if (!object(value) || value.schema !== 'framivra.timeline.read/v1' || value.operation !== operation || value.ok !== true ||
@@ -180,6 +185,7 @@ export class TimelineReader {
     this.spawnOwners = new WeakMap() // Spawned child -> owner token (grant/session) so cancel reaping stays scoped.
     this.cleanupFailed = new WeakSet() // Children whose managed range was not confirmed reaped; retained until a retry succeeds.
     this.lifecycle = new AbortController()
+    this.idleEditView = undefined // At most one globally owned EOF-waiting child (including pending/failed cleanup).
   }
   /**
    * One consistent validated snapshot of the live configuration (defaults,
@@ -206,6 +212,49 @@ export class TimelineReader {
       if (kind === 'store' || kind === 'frame' || kind === 'storage-clean') return true
     }
     return false
+  }
+  /** Only a live, untouched EOF waiter is harmless to frame admission. */
+  get frameBusy() {
+    for (const handle of this.active.keys()) {
+      const slot = this.idleEditView
+      if (slot?.handle === handle && slot.state === 'idle' && !slot.signal.aborted && !this.active.get(handle) && !this.cleanupFailed.has(handle)) continue
+      return true
+    }
+    return false
+  }
+  /** Best-effort, one-shot preload: NEVER send bytes until an actual store call takes it. */
+  async primeEditView(executable, timeline, signal, snapshot, owner, writeGrant, beforeSpawn) {
+    if (this.idleEditView || this.semanticBusy) return
+    const controller = new AbortController()
+    signal = AbortSignal.any([signal, this.lifecycle.signal, controller.signal])
+    if (signal.aborted) return
+    const slot = { executable, timeline, owner, writeGrant, fingerprint: snapshot.fingerprint, signal, controller, state: 'priming' }
+    this.idleEditView = slot // Reserve synchronously, including async config validation.
+    slot.abort = () => { void this.reapIdle(owner).catch(() => {}) }
+    signal.addEventListener('abort', slot.abort, { once: true })
+    slot.timer = setTimeout(() => controller.abort(), 4000)
+    slot.timer.unref?.()
+    try {
+      await this.command(executable, timeline, ['store', 'edit-view', '--request-stdin'], signal, undefined, undefined, true, false, snapshot, owner, { prime: slot, beforeSpawn })
+    } finally {
+      if (!slot.handle) {
+        this.detachIdle(slot)
+        if (this.idleEditView === slot) this.idleEditView = undefined
+      }
+    }
+  }
+  detachIdle(slot) {
+    clearTimeout(slot.timer)
+    slot.signal.removeEventListener('abort', slot.abort)
+  }
+  async reapIdle(owner) {
+    const slot = this.idleEditView
+    if (!slot || (owner !== undefined && slot.owner !== owner)) return
+    slot.state = 'retiring'
+    this.detachIdle(slot)
+    slot.controller.abort()
+    if (slot.handle) await this.cleanup(slot.handle)
+    else if (this.idleEditView === slot) this.idleEditView = undefined
   }
   async executable(signal, snapshot = this.snapshotConfig()) {
     let path
@@ -243,7 +292,7 @@ export class TimelineReader {
    * @param {object} [owner] Owner token passed at spawn time; omit to reap all (dispose).
    */
   async reap(owner) {
-    await Promise.all([...this.active.keys()].filter(handle => owner === undefined || this.spawnOwners.get(handle) === owner).map(handle => this.cleanup(handle)))
+    await Promise.all([this.reapIdle(owner), ...[...this.active.keys()].filter(handle => owner === undefined || this.spawnOwners.get(handle) === owner).map(handle => this.cleanup(handle))])
   }
   /**
    * True while any child spawned for this owner token is still tracked —
@@ -279,20 +328,20 @@ export class TimelineReader {
       return value
     }, input, true, false, snapshot, owner)
   }
-  async store(executable, timeline, operation, request, signal, snapshot, owner) {
-    if (!['capabilities', 'plan', 'commit', 'status', 'recover'].includes(operation)) fail('BAD_OPERATION', 'Unknown store command')
+  async store(executable, timeline, operation, request, signal, snapshot, owner, writeGrant, beforeSpawn) {
+    if (!['capabilities', 'plan', 'commit', 'status', 'recover', 'edit-view'].includes(operation)) fail('BAD_OPERATION', 'Unknown store command')
     // The official flag reads fd0 itself: public providers may expose a socket,
     // for which reopening /dev/stdin fails with ENXIO. No temp files/bridge.
-    const args = request === undefined ? ['store', operation] : ['store', ...(operation === 'plan' ? ['plan'] : []), '--request-stdin']
+    const args = request === undefined ? ['store', operation] : ['store', ...(['plan', 'edit-view'].includes(operation) ? [operation] : []), '--request-stdin']
     const input = request === undefined ? undefined : stringifyJSON(request)
     if (input !== undefined && Buffer.byteLength(input, 'utf8') > 8388608) fail('REQUEST_TOO_LARGE', 'Semantic request exceeds the official 8 MiB UTF-8 byte limit', 413)
     return this.command(executable, timeline, args, signal, text => {
       const result = parseJSON(text)
       if (result?.schema !== 'framivra.timeline.store/v1' || typeof result.ok !== 'boolean') fail('PROTOCOL_MISMATCH', 'Installed vtx store/v1 required', 502)
       return result
-    }, input, true, undefined, snapshot, owner)
+    }, input, true, undefined, snapshot, owner, operation === 'edit-view' ? { writeGrant, beforeSpawn } : undefined)
   }
-  async command(executable, timeline, args, signal, decode, input, business = false, streaming = false, snapshot, owner) {
+  async command(executable, timeline, args, signal, decode, input, business = false, streaming = false, snapshot, owner, warm) {
     signal = AbortSignal.any([signal, this.lifecycle.signal])
     signal.throwIfAborted()
     // One snapshot per command: a caller-supplied snapshot is compared against
@@ -320,21 +369,58 @@ export class TimelineReader {
       // Never spawn against a newer selection than the async path check used.
       if (this.snapshotConfig().fingerprint !== config.fingerprint) fail('CONFIG_CHANGED', 'Host configuration changed during VTX_CONFIG validation', 409)
     }
+    if (warm?.beforeSpawn) {
+      await warm.beforeSpawn(signal)
+      if (this.snapshotConfig().fingerprint !== config.fingerprint) fail('CONFIG_CHANGED', 'Host configuration changed during identity validation', 409)
+    }
     signal.throwIfAborted()
-    const handle = this.subprocess.spawn({
+    const prime = warm?.prime
+    if (prime && this.idleEditView !== prime) return
+    const slot = this.idleEditView
+    const take = !prime && warm?.writeGrant && slot?.state === 'idle' && !slot.signal.aborted &&
+      slot.executable === executable && slot.timeline === timeline && slot.owner === owner &&
+      slot.writeGrant === warm.writeGrant && slot.fingerprint === config.fingerprint
+    // No await between matching, consuming and dispatch. Once taken, even a
+    // throwing end() is ambiguous: use the SAME done/cleanup path, never spawn a fallback.
+    if (take) { this.idleEditView = undefined; slot.state = 'taken'; this.detachIdle(slot) }
+    const handle = take ? slot.handle : this.subprocess.spawn({
       argv: [executable, '-t', timeline, ...args],
       cwd: dirname(executable), // Never execute Python/imports from an untrusted project cwd.
-      stdio: { stdin: input === undefined ? 'ignore' : { data: input }, stdout: streaming ? 'pipe' : { maxBytes: 8 * 1024 * 1024 }, stderr: { maxBytes: 16 * 1024 } },
+      stdio: { stdin: prime ? 'pipe' : input === undefined ? 'ignore' : { data: input }, stdout: streaming ? 'pipe' : { maxBytes: 8 * 1024 * 1024 }, stderr: { maxBytes: 16 * 1024 } },
       graceMs: 1000, signal,
       env: { PATH: config.trustedPath, VTX_CONFIG: config.vtxConfigFile || undefined, PYTHONDONTWRITEBYTECODE: '1', PYTHONSAFEPATH: '1', PYTHONPATH: undefined, PYTHONHOME: undefined },
     })
     this.active.set(handle, undefined)
-    this.spawnKinds.set(handle, spawnKind(args))
+    this.spawnKinds.set(handle, prime ? 'store-idle' : spawnKind(args))
     this.spawnOwners.set(handle, owner)
+    if (prime) {
+      prime.handle = handle
+      try {
+        if (this.idleEditView !== prime || prime.signal.aborted) { await this.cleanup(handle); return }
+        if (!handle.stdin || typeof handle.stdin.end !== 'function') fail('STDIN_PIPE_UNSUPPORTED', 'Public provider did not expose the requested owner stdin pipe', 502)
+        prime.state = 'idle'
+        prime.stdinFailure = new Promise((_, reject) => {
+          handle.stdin.once('error', error => {
+            reject(error)
+            if (this.idleEditView === prime && prime.state === 'idle') void this.reapIdle(owner).catch(() => {})
+          })
+        })
+        void prime.stdinFailure.catch(() => {})
+        // A pre-EOF exit is not a reusable worker; retain ownership until reap.
+        void Promise.resolve(handle.done).then(() => {
+          if (this.idleEditView === prime) return this.reapIdle(owner)
+        }, () => {
+          if (this.idleEditView === prime) return this.reapIdle(owner)
+        }).catch(() => {})
+        if (prime.signal.aborted) await this.cleanup(handle)
+        return
+      } catch (error) { await this.cleanup(handle); throw error }
+    }
     try {
+      if (take) handle.stdin.end(input)
       if (streaming && !handle.stdout) fail('FRAME_STREAM_UNSUPPORTED', 'Public provider did not expose the requested owner stdout pipe', 502)
       const [outcome, streamed] = await untilAborted(Promise.all([
-        handle.done,
+        take ? Promise.race([handle.done, slot.stdinFailure]) : handle.done,
         streaming ? boundedText({ headers: new Headers(), body: Readable.toWeb(handle.stdout) }, FRAME_WIRE_LIMIT, signal) : undefined,
       ]), signal)
       signal.throwIfAborted()
@@ -363,6 +449,8 @@ export class TimelineReader {
     if (!this.active.has(handle)) return Promise.resolve()
     const pending = this.active.get(handle)
     if (pending) return pending
+    const slot = this.idleEditView?.handle === handle ? this.idleEditView : undefined
+    if (slot) { slot.state = 'retiring'; this.detachIdle(slot); slot.controller.abort() }
     const task = (async () => {
       // A successful read owns no background work. Reclaim helpers even if they
       // closed stdio and the direct command already exited. Never use the aborted
@@ -377,6 +465,7 @@ export class TimelineReader {
         if (empty !== true) throw new Error('Managed range did not exit')
         this.active.delete(handle)
         this.cleanupFailed.delete(handle)
+        if (slot && this.idleEditView === slot) this.idleEditView = undefined
       } catch {
         this.cleanupFailed.add(handle)
         fail('PROCESS_CLEANUP_FAILED', 'vtx managed process range could not be confirmed stopped within 5 seconds; ownership retained for unload retry', 502)

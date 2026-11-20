@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import errno
 import math
 import os
+import shutil
 import subprocess
 import time
 
@@ -28,6 +29,24 @@ class JobSettlementError(OSError):
 def job_cleanup_unconfirmed(error):
     """An unproved Job shutdown must not be routed to another browser."""
     return isinstance(error, JobSettlementError) or isinstance(error.__cause__, JobSettlementError)
+
+
+def remove_settled_profile(profile):
+    """Remove this invocation's private profile, only after proved Job settlement."""
+    path = os.path.abspath(profile)
+    if not path.startswith('\\\\?\\'):
+        # Browser component directories can contain paths beyond MAX_PATH.
+        path = ('\\\\?\\UNC\\' + path[2:] if path.startswith('\\\\') else '\\\\?\\' + path)
+    for attempt in range(30):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt == 29:
+                raise
+            time.sleep(.1)
 
 
 class _StartupInfo(C.Structure):
@@ -240,7 +259,7 @@ class _OwnedJob:
         self._capture_limit = _CAPTURE_LIMIT if capture_limit is None else capture_limit
         self.proc = _Process(api, self._info, argv)
 
-    def _launch(self, args, stdout, stderr, *, stdin=None, cwd=None, environment=None):
+    def _launch(self, args, stdout, stderr, *, stdin=None, cwd=None, environment=None, debug_images=False):
         api = self._api
         self._job.value = _check(api.CreateJobObjectW(None, None), 'CreateJobObjectW')
         limits = _ExtendedLimits()
@@ -273,6 +292,8 @@ class _OwnedJob:
             with _startup(api, self._job.value, stdio) as startup, _remember_interrupt(interrupted):
                 cmd = C.create_unicode_buffer(subprocess.list2cmdline(args))
                 flags = _EXTENDED_STARTUPINFO
+                if debug_images:
+                    flags |= 1  # DEBUG_PROCESS: the creating thread owns the event queue.
                 if environment is not None:
                     flags |= 0x400 | 0x08000000  # CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW
                 _check(api.CreateProcessW(args[0], cmd, None, None, True, flags, environment,

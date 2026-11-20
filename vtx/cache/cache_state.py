@@ -258,6 +258,10 @@ def validate_cache_dependencies(c):
     """Declared local dependencies must exist and be regular files."""
     origins = {}
     for item in all_declared_dependencies(c, _origins=origins):
+        if os.name == 'nt' and getattr(c, '_svg_runtime_factory', None) is not None:
+            from ..render.gfx_svg_win_input import relative_parts
+            relative_parts(item)  # The SVG resolver below opens it from the project handle.
+            continue
         origin = origins.get(item, '$') if type(item) is str else '$'
         path = _path(c, item, origin)
         if not path.is_file():
@@ -335,13 +339,16 @@ def verify_input_identity(c):
         raise error
 
 
-def _append_gfx_dependency_identity(c, h, gfx_inputs):
+def _append_gfx_dependency_identity(c, h, gfx_inputs, *, pin_svg=False):
     """Versioned #47 suffix; historical serialization stays an explicit adapter."""
     from ..render.gfx_dependencies import resolve, identity, policy
     for clip, path, origin, exists in gfx_inputs:
         from ..render import gfx_svg
         if gfx_svg.is_svg(clip):
-            h.update(b'svg-sequence|' + gfx_svg.canonical(gfx_svg.resolve(c, clip)))
+            facts = gfx_svg.canonical(gfx_svg.resolve(c, clip))
+            h.update(b'svg-sequence|' + facts)
+            if pin_svg:
+                c._svg_receipt_record = hashlib.sha256(facts).hexdigest()
             continue
         if not exists and policy(c) == 'legacy':
             continue
@@ -399,8 +406,9 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     混音图、测量和增益实现。缺源码直接失败；无 Git/cwd/安装绝对路径成分，
     不覆盖无源码 pyc/zipimport 或完整工具链，也不改 raw/GFX/seg 内容键。
     """
+    from ..render.gfx_svg import read_timeline_input
     h = hashlib.sha256()
-    h.update(c.tl_path.read_bytes() if timeline_bytes is None else timeline_bytes)
+    h.update(read_timeline_input(c) if timeline_bytes is None else timeline_bytes)
     def source_key(entry):
         index, source = entry
         origin = f'$.sources[{index}]'
@@ -410,10 +418,15 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     # Keys are str(), so native key comparisons cannot fail on mixed JSON types.
     sources = _get(c, c.tl, 'sources', '$', [])
     visual_bgm = getattr(c, '_visual_bgm_source_ids', ())
+    audio = getattr(c, '_svg_audio_digests', {})
     for index, s in sorted(_SourceEntries(c, sources), key=source_key):
         origin = f'$.sources[{index}]'
-        p = _path(c, _field(c, s, 'path', origin), origin + '.path')
+        name = _field(c, s, 'path', origin)
         prefix = _text(c, _get(c, s, 'path', origin, ''), origin + '.path') + ':'
+        if audio:
+            h.update(_encode(c, prefix + 'locked-wav:' + audio[name] + '\n', origin + '.path'))
+            continue
+        p = _path(c, name, origin + '.path')
         if visual_bgm and s['id'] in visual_bgm:
             # PNG scope binds the declared score bytes, not its audio runtime.
             digest = 'visual-bgm-json:' + (file_digest(p) if p.is_file() else 'MISSING')
@@ -468,16 +481,23 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
         h.update(_encode(c, 'subtitles_src:' + digest + '\n', '$.subtitles_src'))
     # 生效插件清单摘要段（迟导入避免环）；空清单只省略此段。插件装/卸/
     # 升级/改参使段出现或内容变化，不能借空段恢复历史整体指纹。
-    from ..pluginlib.hooks import active_plugins_digest
-    _pdigest = active_plugins_digest(c)
+    from ..pluginlib.hooks import active_plugins, active_plugins_digest
+    owned_svg = getattr(c, '_svg_runtime', None) is not None
+    if owned_svg and active_plugins(c):
+        raise ValueError('Windows SVG gfx does not support active plugins')
+    _pdigest = '' if owned_svg else active_plugins_digest(c)
     if _pdigest:
         h.update(_encode(c, _pdigest, '$', status='unknown', source={
             'domain': 'provider', 'provider': 'active_plugins_digest',
             'field': 'return_value'}))
     # Append only after all historical producer operations succeed. The shared
     # #47 record adds path/closure identity without reordering native failures.
-    _append_gfx_dependency_identity(c, h, gfx_inputs)
+    _append_gfx_dependency_identity(c, h, gfx_inputs, pin_svg=owned_svg and timeline_bytes is not None)
     from ..render import gfx_svg
+    if getattr(c, '_svg_all', False):
+        if not audio or c._windows_svg_media is None:
+            raise ValueError('Windows SVG all requires bound audio and media tools before fingerprinting')
+        h.update(b'windows-svg-media|' + gfx_svg.canonical(c._windows_svg_media.identity))
     if gfx_svg.route(c) != 'svg-sequence':
         # Selected renderer and namespace revoke downstream success as well.
         from ..render.gfx_backend import identity
@@ -515,6 +535,10 @@ def load_receipt(path, fingerprint):
     # OSError（P6 修复 B-P3-5d）：权限类读失败与缺失/损坏同语义（空表），不裸栈
     except (OSError, ValueError):
         record = {}
+    return normalize_receipt(record, fingerprint)
+
+
+def normalize_receipt(record, fingerprint):
     if (not isinstance(record, dict)
             or record.get('input_fingerprint') != fingerprint
             or not isinstance(record.get('stages'), dict)):

@@ -1,10 +1,11 @@
-"""Reviewable first slice of cooperative POSIX timeline transactions.
+"""Cooperative local timeline transactions with a single history protocol.
 
 The project file alone is current truth. Sidecar evidence has no renderer HEAD.
-Only local POSIX cooperating writers/process crashes are in the tested model;
-non-cooperating writes after final CAS, NFS, Windows and power loss are not.
+Local POSIX and fixed NTFS cooperating writers/process crashes are supported;
+non-cooperating writes after final CAS, network filesystems and power loss are not.
 """
 import contextlib
+from contextvars import ContextVar
 import copy
 import hashlib
 import json
@@ -20,11 +21,13 @@ from . import timeline_write as _v2
 from .timeline_write import read_timeline_for_write, TimelineSnapshot
 from .timeline_edit import EDIT_OPERATION_FIELDS, EDIT_OPERATIONS, edit_summary, transform_timeline
 from .timeline_structure import (identity_errors, json_equal, managed_objects, strict_loads,
-                                 structure_errors, valid_id)
+                                 structure_errors, valid_id, _HistorySchemaMemo)
 
 _SCHEMA = "framivra.timeline.store/v1"
+EDIT_VIEW_WIRE_LIMIT = 8 * 1024 * 1024
 _OPERATIONS = ("create", "adopt", "replace", "apply", "edit", "undo")
 _PARENT_LOCK = ".vtx-store-parent.lock"
+_windows_directory = ContextVar("timeline_store_windows_directory", default=None)
 # Deliberately no identity, track-name, references, extension paths or nested writes.
 _FIELDS = {"source": {"path"}, "video_track": set(), "audio_track": set(),
            "clip": {"dst_in", "dur", "src_in", "src_out", "fade_in_frames", "fade_out_frames",
@@ -72,8 +75,9 @@ def timeline_store_capabilities():
             "unsupported": ["gfx continuous trim/split/crossing ripple", "outward trim without authoritative source bounds", "external subtitle editing", "empty tracks", "identity rename", "arbitrary JSON Pointer", "UI"],
             "base_revision": "exact file bytes sha256:<hex>; create only uses null",
             "validation_scope": "stored schema/IDs/bounds/EDL/references, not renderability/assets/plugins",
-            "guarantee": "local POSIX cooperative threads/processes and process crashes only",
-            "platform_support": {"darwin": sys.platform == "darwin" and directory_write_capability()},
+            "guarantee": "local POSIX or direct fixed NTFS; cooperative threads/processes and process crashes only",
+            "platform_support": {"darwin": sys.platform == "darwin" and directory_write_capability(),
+                                  "win32": sys.platform == "win32"},
             "unmigrated_writers": "Blender, scaffold, snapshot and other legacy consumers; ASR/duck migrated (scripts not in wheel)",
             "v2": {"schema": _v2.SCHEMA, "request_protocol": 2,
                    "identity_mode": ["managed", "preserve-unmanaged"],
@@ -121,6 +125,35 @@ def _canonical(path):
     return value
 
 
+@contextlib.contextmanager
+def _path_scope(path):
+    if sys.platform != "win32":
+        yield _canonical(path)
+        return
+    from .runtime.windows_timeline_store import WindowsPathAlias, scope
+    try:
+        with scope(path) as (target, directory):
+            if target.name.casefold() == _PARENT_LOCK.casefold():
+                _fail("path.alias", "project name is reserved for parent coordination")
+            token = _windows_directory.set(directory)
+            try:
+                yield target
+            finally:
+                _windows_directory.reset(token)
+    except WindowsPathAlias as error:
+        raise StoreError("path.alias", str(error)) from error
+
+
+def _read_path(path, *, missing=False):
+    with _path_scope(path) as target:
+        return _read(target, missing=missing)
+
+
+def _entries(path):
+    windows = _windows_directory.get()
+    return windows.entries(path) if windows is not None else path.iterdir()
+
+
 def _exact_leaf(path, *, missing=False):
     """Refuse lookup aliases, never normalize/remap an existing store identity.
 
@@ -142,7 +175,10 @@ def _exact_leaf(path, *, missing=False):
 
 
 def _regular(path, *, missing=False, directory=False):
+    windows = _windows_directory.get()
     try:
+        if windows is not None:
+            return windows.require(path, directory=directory)
         info = path.lstat()
     except FileNotFoundError:
         if missing:
@@ -157,6 +193,14 @@ def _regular(path, *, missing=False, directory=False):
 
 
 def _read(path, *, missing=False):
+    windows = _windows_directory.get()
+    if windows is not None:
+        try:
+            return windows.read(path)
+        except FileNotFoundError:
+            if missing:
+                return None
+            raise
     _regular(path, missing=missing)
     try:
         # No following leaf links even if swapped since lstat; cooperating model otherwise.
@@ -173,6 +217,10 @@ def _read(path, *, missing=False):
 
 
 def _sync_dir(path):
+    if _windows_directory.get() is not None:
+        # Only same-volume NTFS atomic rename + per-file flush is promised on
+        # Windows. Do not claim a directory fsync or power-loss durability.
+        return
     fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         os.fsync(fd)
@@ -189,6 +237,10 @@ def _write_new(path, payload):
 
 
 def _publish_file(path, payload):
+    windows = _windows_directory.get()
+    if windows is not None:
+        windows.publish(path, payload, replace=False)
+        return
     # A random private staging file and replace; no partially published result marker.
     fd, name = tempfile.mkstemp(prefix=".publish-", dir=path.parent)
     tmp = Path(name)
@@ -267,6 +319,21 @@ def _parent_locked(target):
 
 @contextlib.contextmanager
 def _locked(target):
+    windows = _windows_directory.get()
+    if windows is not None:
+        # This permanent, case-alias-independent parent lock also owns first
+        # publication. Windows has no previously admitted writer to migrate.
+        with windows.lock(target.parent, ".vtx-store-parent"):
+            _regular(target, missing=True)
+            home = _location(target)
+            if _regular(home, missing=True, directory=True) is None:
+                manifest = {"protocol": 1, "target": target.name, "location": str(target)}
+                windows.publish_tree(home, [("manifest.json", _encode(manifest))],
+                                     prefix=".initializing-", checkpoint=_checkpoint)
+                _checkpoint("init_published")
+            _check_manifest(home, target)
+            yield home
+        return
     with _parent_locked(target):
         home = _location(target)
         _initialize(target, home)
@@ -307,11 +374,22 @@ def _check(doc, *, managed=False):
         _fail("input.structure", "; ".join(errors[:20]))
 
 
-def _record(home, directory, target):
+def _evidence_document(payload, *, managed, checks):
+    if checks is None:
+        doc = strict_loads(payload)
+        _check(doc, managed=managed)
+    else:
+        doc, errors = checks.decode_checked(payload, managed=managed)
+        if errors:
+            _fail("input.structure", "; ".join(errors[:20]))
+    return doc
+
+
+def _record(home, directory, target, *, schema_memo=None):
     """Read *all* published evidence strictly; corruption is never a cache miss."""
     try:
         _regular(directory, directory=True)
-        entries = {p.name for p in directory.iterdir()}
+        entries = {p.name for p in _entries(directory)}
         if entries - {"intent.json", "before.bin", "after.bin", "commit.json", "abort.json"}:
             # interrupted marker publication is private and harmless
             if any(not n.startswith(".publish-") for n in entries - {
@@ -343,13 +421,11 @@ def _record(home, directory, target):
         after = _read(directory / "after.bin")
         if _sha(before) != intent["before_revision"] or _sha(after) != intent["after_revision"]:
             raise ValueError("evidence SHA mismatch")
-        after_doc = strict_loads(after)
-        _check(after_doc, managed=True)
+        after_doc = _evidence_document(after, managed=True, checks=schema_memo)
         if after_doc["_vtx"] != {"protocol": 1, "project_id": intent["project_id"], "head": intent["op_id"]}:
             raise ValueError("intent/head mismatch")
-        before_doc = strict_loads(before) if before is not None else None
+        before_doc = _evidence_document(before, managed=False, checks=schema_memo) if before is not None else None
         if before_doc is not None:
-            _check(before_doc)
             if "_vtx" in before_doc and before_doc["_vtx"]["project_id"] != intent["project_id"]:
                 raise ValueError("project identity changed")
         if (before is None) != (intent["operation"] == "create"):
@@ -394,14 +470,14 @@ def _record(home, directory, target):
         _fail("recovery_required", "invalid history: " + str(error))
 
 
-def _history(home, target):
+def _history(home, target, *, schema_memo=None):
     records = {}
-    for directory in sorted(home.iterdir()):
+    for directory in sorted(_entries(home)):
         if directory.name in ("manifest.json", "store.lock") or directory.name.startswith(".staging-"):
             continue
         if not directory.name.startswith("op-"):
             _fail("recovery_required", "unknown history entry: " + directory.name)
-        record = _record(home, directory, target)
+        record = _record(home, directory, target, schema_memo=schema_memo)
         op_id = record["intent"]["op_id"]
         if op_id in records:
             _fail("recovery_required", "duplicate operation")
@@ -433,6 +509,14 @@ def _recover(home, target, records):
 
 
 def _publish_intent(home, target, intent, before, after):
+    windows = _windows_directory.get()
+    if windows is not None:
+        directory = home / ("op-" + hashlib.sha256(intent["op_id"].encode()).hexdigest())
+        members = [("after.bin", after), ("intent.json", _encode(intent))]
+        if before is not None:
+            members.append(("before.bin", before))
+        windows.publish_tree(directory, members, prefix=".staging-")
+        return directory
     staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=home))
     if before is not None:
         _write_new(staging / "before.bin", before)
@@ -511,11 +595,22 @@ def timeline_transaction(path, request):
     Returned error codes distinguish conflict, aborted, recovery_required and
     outcome_unknown. Retrying the same op never applies an operation twice.
     """
+    return _transaction(path, request, edit_view=False)
+
+
+def timeline_edit_view(path, request):
+    """Managed v1 edit with a bounded read view of its own committed bytes."""
+    return _transaction(path, request, edit_view=True)
+
+
+def _transaction(path, request, *, edit_view):
     operation = request.get("operation") if isinstance(request, dict) else None
     op_id = request.get("op_id") if isinstance(request, dict) else None
     replacing = False
     v2 = isinstance(request, dict) and "protocol" in request
     try:
+        if edit_view and (v2 or operation != "edit"):
+            _fail("input.request", "edit-view requires a managed v1 semantic edit request")
         if v2:
             request, digest = _v2.freeze_request(request)
         elif not isinstance(request, dict) or operation not in _OPERATIONS or not valid_id(op_id):
@@ -528,10 +623,12 @@ def timeline_transaction(path, request):
             request_bytes = _encode(request)
             request = strict_loads(request_bytes)  # freeze caller-owned mutable input before taking the lock
             digest = _sha(request_bytes)
-        target = _canonical(path)
-        with _locked(target) as home:
+        with _path_scope(path) as target, _locked(target) as home:
             _checkpoint("locked")
-            records = _history(home, target)
+            records = (_history(home, target, schema_memo=_HistorySchemaMemo()) if edit_view
+                       else _history(home, target))
+            if edit_view and any(record["state"] == "pending" for record in records.values()):
+                _fail("recovery_required", "unresolved intent; explicit recover required before editing")
             _recover(home, target, records)
             _checkpoint("recovered")
             before = _read(target, missing=True)
@@ -543,6 +640,10 @@ def timeline_transaction(path, request):
             _checkpoint("read")
             replay = _idempotency_decision(records, op_id, digest, _sha(before))
             if replay is not None:
+                if edit_view:
+                    # The persisted receipt may predate the bounded transport.
+                    # Identity/result state are sufficient; never borrow a view.
+                    replay.pop("edit", None)
                 return replay
             revision = _sha(before)
             if request["base_revision"] != revision:
@@ -606,8 +707,37 @@ def timeline_transaction(path, request):
                 intent = dict(protocol=1, target=target.name, op_id=op_id, request_digest=digest,
                               operation=operation, before_revision=revision, after_revision=_sha(after),
                               project_id=after_doc["_vtx"]["project_id"], request=request, result=result)
+            if edit_view:
+                response = dict(result, current_revision=result["revision"], replayed=False)
+                # Prepare the full wire reply from exactly the staging bytes, not
+                # from a reopened path or an independently reconstructed document.
+                # Refuse an untransportable view before publishing this intent.
+                from .timeline import _inspect_query_bytes
+                if len(after) >= EDIT_VIEW_WIRE_LIMIT:
+                    _fail("edit.view_limit", "saved view exceeds the edit-view wire limit")
+                view = _inspect_query_bytes(after)
+                if not all(item["ok"] and item["content_version"] == result["revision"]
+                           for item in view.values()):
+                    _fail("edit.view_invalid", "saved bytes do not have a valid same-version read view")
+                response["view"] = view
+                if len(json.dumps(response, ensure_ascii=True, allow_nan=False)) + 1 > EDIT_VIEW_WIRE_LIMIT:
+                    _fail("edit.view_limit", "saved view exceeds the edit-view wire limit")
             directory = _publish_intent(home, target, intent, before, after)
             _checkpoint("intent_published")
+            windows = _windows_directory.get()
+            if windows is not None:
+                def final_cas():
+                    nonlocal replacing
+                    _checkpoint("staged")
+                    if _read(target, missing=True) != before:
+                        _fail("recovery_required", "final CAS conflict; unresolved intent retained")
+                    _checkpoint("final_cas")
+                    replacing = True
+                windows.publish(target, after, replace=before is not None, before_replace=final_cas)
+                _checkpoint("replaced")
+                _publish_file(directory / "commit.json", _encode(result))
+                _checkpoint("committed")
+                return response if edit_view else dict(result, current_revision=_sha(after), replayed=False)
             fd, name = tempfile.mkstemp(prefix=".vtx-timeline-", suffix=".tmp", dir=target.parent)
             staging = Path(name)
             try:
@@ -629,7 +759,7 @@ def timeline_transaction(path, request):
                 _checkpoint("parent_synced")
                 _publish_file(directory / "commit.json", _encode(result))
                 _checkpoint("committed")
-                return dict(result, current_revision=_sha(after), replayed=False)
+                return response if edit_view else dict(result, current_revision=_sha(after), replayed=False)
             finally:
                 staging.unlink(missing_ok=True)
     except (OSError, ValueError, TypeError, KeyError, RecursionError) as error:
@@ -664,35 +794,35 @@ def timeline_edit_plan(path, request):
         request_bytes = _encode(request)
         request = strict_loads(request_bytes)
         digest = _sha(request_bytes)
-        target = _canonical(path)
-        home = _location(target)
-        records = _plan_history(home, target)
-        if any(r["state"] == "pending" for r in records.values()):
-            _fail("recovery_required", "unresolved intent; explicit recover required before planning")
-        before = _read(target, missing=True)
-        if before is not None:
-            doc = _parse(before)
-            _check(doc)
-        else:
-            doc = None
-        if records != _plan_history(home, target) or before != _read(target, missing=True):
-            _fail("plan.not_ready", "observed timeline/history change during unlocked reads; retry plan")
-        revision = _sha(before)
-        prediction = "unlocked best-effort snapshot, no reservation or strong consistency; execution revalidates history, CAS and final structure"
-        replay = _idempotency_decision(records, request["op_id"], digest, revision)
-        if replay is not None:
-            return _result("plan", op_id=request["op_id"], base_revision=request["base_revision"],
-                           request_digest=digest, current_revision=revision, replayed=True,
-                           result=replay, prediction=prediction)
-        if request["base_revision"] != revision:
-            _fail("conflict", "base_revision does not match current file bytes")
-        if doc is None:
-            _fail("input.missing", "target missing")
-        after_doc, summary = transform_timeline(doc, request["operations"])
-        _encode(after_doc)
-        return _result("plan", op_id=request["op_id"], base_revision=revision,
-                       request_digest=digest, document=after_doc, edit=summary,
-                       replayed=False, prediction=prediction)
+        with _path_scope(path) as target:
+            home = _location(target)
+            records = _plan_history(home, target)
+            if any(r["state"] == "pending" for r in records.values()):
+                _fail("recovery_required", "unresolved intent; explicit recover required before planning")
+            before = _read(target, missing=True)
+            if before is not None:
+                doc = _parse(before)
+                _check(doc)
+            else:
+                doc = None
+            if records != _plan_history(home, target) or before != _read(target, missing=True):
+                _fail("plan.not_ready", "observed timeline/history change during unlocked reads; retry plan")
+            revision = _sha(before)
+            prediction = "unlocked best-effort snapshot, no reservation or strong consistency; execution revalidates history, CAS and final structure"
+            replay = _idempotency_decision(records, request["op_id"], digest, revision)
+            if replay is not None:
+                return _result("plan", op_id=request["op_id"], base_revision=request["base_revision"],
+                               request_digest=digest, current_revision=revision, replayed=True,
+                               result=replay, prediction=prediction)
+            if request["base_revision"] != revision:
+                _fail("conflict", "base_revision does not match current file bytes")
+            if doc is None:
+                _fail("input.missing", "target missing")
+            after_doc, summary = transform_timeline(doc, request["operations"])
+            _encode(after_doc)
+            return _result("plan", op_id=request["op_id"], base_revision=revision,
+                           request_digest=digest, document=after_doc, edit=summary,
+                           replayed=False, prediction=prediction)
     except (OSError, ValueError, TypeError, KeyError, RecursionError) as error:
         return dict(schema=_SCHEMA, operation="plan", ok=False,
                     code=getattr(error, "code", "input.error"), message=str(error))
@@ -708,29 +838,29 @@ def timeline_write_plan(path, request):
         return timeline_edit_plan(path, request)
     try:
         request, digest = _v2.freeze_request(request)
-        target = _canonical(path)
-        home = _location(target)
-        records = _plan_history(home, target)
-        if any(r["state"] == "pending" for r in records.values()):
-            _fail("recovery_required", "unresolved intent; explicit recover required before planning")
-        before = _read(target, missing=True)
-        doc = _parse(before) if before is not None else None
-        if before is not None:
-            _v2.check_document(doc)
-        if records != _plan_history(home, target) or before != _read(target, missing=True):
-            _fail("plan.not_ready", "observed timeline/history change during unlocked reads; retry plan")
-        prediction = "unlocked best-effort snapshot; no reservation, recovery, asset probing or strong consistency"
-        envelope = dict(schema=_v2.SCHEMA, operation="plan", ok=True, op_id=request["op_id"],
-                        request_digest=digest, base_revision=request["base_revision"],
-                        identity_mode=request["identity_mode"], payload_mode=request["payload_mode"],
-                        purpose=request["purpose"], prediction=prediction)
-        replay = _idempotency_decision(records, request["op_id"], digest, _sha(before))
-        if replay is not None:
-            return dict(envelope, replayed=True, current_revision=_sha(before), result=replay)
-        if request["base_revision"] != _sha(before):
-            _fail("conflict", "base_revision does not match current file bytes")
-        after, after_doc, extras = _v2.prepare(request, before, doc, records)
-        return dict(envelope, replayed=False, document=after_doc, revision=_sha(after), **extras)
+        with _path_scope(path) as target:
+            home = _location(target)
+            records = _plan_history(home, target)
+            if any(r["state"] == "pending" for r in records.values()):
+                _fail("recovery_required", "unresolved intent; explicit recover required before planning")
+            before = _read(target, missing=True)
+            doc = _parse(before) if before is not None else None
+            if before is not None:
+                _v2.check_document(doc)
+            if records != _plan_history(home, target) or before != _read(target, missing=True):
+                _fail("plan.not_ready", "observed timeline/history change during unlocked reads; retry plan")
+            prediction = "unlocked best-effort snapshot; no reservation, recovery, asset probing or strong consistency"
+            envelope = dict(schema=_v2.SCHEMA, operation="plan", ok=True, op_id=request["op_id"],
+                            request_digest=digest, base_revision=request["base_revision"],
+                            identity_mode=request["identity_mode"], payload_mode=request["payload_mode"],
+                            purpose=request["purpose"], prediction=prediction)
+            replay = _idempotency_decision(records, request["op_id"], digest, _sha(before))
+            if replay is not None:
+                return dict(envelope, replayed=True, current_revision=_sha(before), result=replay)
+            if request["base_revision"] != _sha(before):
+                _fail("conflict", "base_revision does not match current file bytes")
+            after, after_doc, extras = _v2.prepare(request, before, doc, records)
+            return dict(envelope, replayed=False, document=after_doc, revision=_sha(after), **extras)
     except (OSError, ValueError, TypeError, KeyError, RecursionError) as error:
         return dict(schema=_v2.SCHEMA, operation="plan", ok=False,
                     code=getattr(error, "code", "input.error"), message=str(error))
@@ -744,8 +874,7 @@ def timeline_store_status(path, *, recover=False):
     """
     operation = "recover" if recover else "status"
     try:
-        target = _canonical(path)
-        with _locked(target) as home:
+        with _path_scope(path) as target, _locked(target) as home:
             records = _history(home, target)
             if recover:
                 _recover(home, target, records)

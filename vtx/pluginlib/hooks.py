@@ -125,6 +125,8 @@ def active_plugins(c=None, repo_root=None) -> list:
             return []
         if out or expected:
             raise _CoreOnlyPreviewError("core-only preview refuses changed or unsupported plugins")
+    if out and getattr(c, '_svg_all', False) is True:
+        raise ValueError('Windows SVG all does not support active plugins')
     return out
 
 

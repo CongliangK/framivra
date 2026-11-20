@@ -28,9 +28,12 @@ def completion_marker(path):
     return Path(str(path) + '.complete.json')
 
 
-def _inspect(path, kind=None):
+def _inspect(path, kind=None, *, execute=None):
     """Return certified metadata, or None for missing/truncated/undecodable media."""
     path = Path(path)
+    if execute is None:
+        def execute(argv):
+            return subprocess.run(argv, capture_output=True, text=True)
     try:
         if not path.is_file() or not path.stat().st_size:
             return None
@@ -50,16 +53,13 @@ def _inspect(path, kind=None):
                     return None
             frames = None
         else:
-            probe = subprocess.run(
-                ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_frames',
-                 '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', str(path)],
-                capture_output=True, text=True)
+            probe = execute(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_frames',
+                             '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', str(path)])
             count = probe.stdout.strip()
             if probe.returncode or probe.stderr.strip() or not count.isdigit() or int(count) <= 0:
                 return None
-            decoded = subprocess.run(
-                ['ffmpeg', '-v', 'error', '-xerror', '-i', str(path),
-                 '-map', '0', '-f', 'null', '-'], capture_output=True, text=True)
+            decoded = execute(['ffmpeg', '-v', 'error', '-xerror', '-i', str(path),
+                               '-map', '0', '-f', 'null', '-'])
             if decoded.returncode or decoded.stderr.strip():
                 return None
             frames = int(count)
@@ -68,18 +68,24 @@ def _inspect(path, kind=None):
         return None
 
 
-def media_cache_valid(path, frames=None, allow_short_verified=False):
+def matches_frame_count(actual, expected, allow_short):
+    return (expected is None or actual == expected
+            or (allow_short and isinstance(actual, int) and 0 < actual <= expected))
+
+
+def media_cache_valid(path, frames=None, allow_short_verified=False, *, c=None):
     """Read-only: require a completed producer's certificate and matching bytes.
 
     Decodable media alone cannot prove that its producer finished. Uncertified
     caches are rebuilt once; this function never adopts or removes old media.
     """
+    media = getattr(c, '_windows_svg_media', None)
+    if media is not None:
+        return media.valid(c, path, frames, allow_short=allow_short_verified)
     path = Path(path)
     try:
         rec = json.loads(completion_marker(path).read_text())
-        actual = rec.get('frames')
-        count_ok = (frames is None or actual == frames or
-                    (allow_short_verified and isinstance(actual, int) and 0 < actual <= frames))
+        count_ok = matches_frame_count(rec.get('frames'), frames, allow_short_verified)
         return rec.get('schema') == 1 and count_ok and rec.get('sha256') == _digest(path)
     except (OSError, ValueError, TypeError, AttributeError):
         return False
@@ -93,6 +99,8 @@ def media_output(c, cmd):
     path = Path(str(cmd[-1]))
     if path.suffix.lower() not in FORMATS:
         return None
+    if getattr(c, '_windows_svg_media', None) is not None:
+        return path  # The native transaction checks original names relative to pinned directories.
     return ensure_inside_project(path, c.root, what='media output')
 
 
@@ -111,11 +119,17 @@ def atomic_media(c, target, producer, *, max_frames=None,
     Dry runs invoke no producer or callbacks and create no files, returning None.
     """
     from ..pipeline.infra import ensure_inside_project
-    target = ensure_inside_project(Path(target), c.root, what='media output')
+    target = Path(target)
     if target.suffix.lower() not in FORMATS:
         raise ValueError('Unsupported media output: ' + str(target))
+    media = getattr(c, '_windows_svg_media', None)
+    if media is None:
+        target = ensure_inside_project(target, c.root, what='media output')
     if c.dry:
         return None
+    if media is not None:
+        return media.publish(c, target, producer, max_frames=max_frames,
+                             before_commit=before_commit, after_commit=after_commit)
 
     def publish_marker():
         fstxn.atomic_write(completion_marker(target), json.dumps(rec, sort_keys=True), root=c.root)

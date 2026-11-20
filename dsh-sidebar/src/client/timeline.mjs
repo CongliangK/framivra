@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { displayExtent, windowFor, zoomWindow, panWindow, framePercent, clipGeometry, pointerFrame, frameTicks, displayLanes, safeFrame } from './viewport.mjs'
 import { Icon } from './icons.mjs'
 import { ToolButton, iconControlCSS } from './icon-controls.mjs'
-import { formatTimecode, projectClock } from './timecode.mjs'
+import { formatClockTimecode, projectClock } from './timecode.mjs'
 import { familyName } from './editor-controls.mjs'
 import { closeGapIntent, internalGaps, snapDelta } from './direct-edit.mjs'
 
@@ -115,8 +115,9 @@ const trackLabel = track => label(track.data, `${familyName(kindOfTrack(track))}
 
 export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onOpenHistory, editActionLabel = '启用编辑', onUndo, compact = false, selectionTools, focusTool }) {
   const extent = React.useMemo(() => displayExtent(snapshot, result), [snapshot, result])
-  const fps = snapshot.document?.project?.fps, clock = projectClock(fps)
-  const time = value => formatTimecode(value, fps) ?? '时间码不可显示'
+  const fps = snapshot.document?.project?.fps
+  const clock = React.useMemo(() => projectClock(fps), [fps])
+  const time = React.useCallback(value => formatClockTimecode(value, clock) ?? '时间码不可显示', [clock])
   const [window, setWindow] = useState()
   const [hover, setHover] = useState()
   const [snap, setSnap] = useState(true)
@@ -433,7 +434,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
         return h(React.Fragment,{key:block.address},button,...handles)
       }))]
     }))
-  }, [extent, displayTracks, groups, view, fps, editable, saving, selected, hits])
+  }, [extent, displayTracks, groups, view, time, editable, saving, selected, hits])
   const overviewClips = React.useMemo(() => {
     if (extent.diagnostic) return null
     return result.blocks.map(block => {

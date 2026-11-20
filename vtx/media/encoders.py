@@ -333,7 +333,7 @@ def seg_encoder_kind(c) -> str:
     （DEV.md 坑位教训：探测失败禁止静默回落——128px 假失败曾致草稿静默降级无人
     察觉）。dry 下 nvenc_ok 恒 True 不真探测（与 pick_vcodec 同语义）。
     """
-    if os.environ.get("VTX_SEG_NVENC", "1") == "0":
+    if getattr(c, '_windows_svg_media', None) is not None or os.environ.get("VTX_SEG_NVENC", "1") == "0":
         return "x264"
     # use_memo=True（P2-1）：进程级 memo 探测——prepare_layers/gc/subs/diff 各自调用
     # 本函数，memo 保证同进程内键集判定同值（详见 nvenc_ok 注释）。

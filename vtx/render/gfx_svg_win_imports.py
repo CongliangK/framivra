@@ -2,9 +2,9 @@
 
 Only staged on-disk PE32+ metadata is inspected. Private opt-ins add lookup
 symbols and, separately, matches to export records of direct-bin candidates.
-Neither a basename nor an export record proves binding. No forwarders,
-API-set hosts, activation contexts, dynamic resources, or system images are
-resolved. The result has no execution or publication authority.
+Neither a basename nor an export record proves binding. A separate chain
+check can follow exports in already selected and held images. This module
+does not select loader bindings or grant execution or publication authority.
 """
 from bisect import bisect_right
 import ctypes as C
@@ -34,6 +34,7 @@ _EXPORT_MEMBER_ROWS, _EXPORT_PACKAGE_ROWS = 48 * 1024, 384 * 1024  # per table, 
 _EXPORT_TEXT = re.compile(rb'[ -~]+')
 _FORWARDER_MODULE = re.compile(rb'[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]+)*')
 _FORWARDER_TARGET = re.compile(rb'(?:#[0-9]{1,5}|[^# ][!-~]*)')
+_MAX_EXPORT_CHAIN, _MAX_CHAIN_STEPS = 16, 2 * _PACKAGE_THUNKS
 
 
 class _SymbolBudget:
@@ -475,6 +476,67 @@ def _pinned_reader():
         return read_at
 
     return for_image
+
+
+def _follow_bound_exports(held, requests, select):
+    """Check ordered (member, symbol) requests within one loader context.
+
+    The trusted caller independently selects each first image for its import,
+    keeps exclusive use of the original read-only pins until return, and
+    selects each (forwarding member, module name) in that same context. All
+    selections are keys in the initial held set. No search-path fallback;
+    the result cannot establish selection or authority for any context.
+    """
+    images = dict(held)
+    budget = _ExportBudget()
+    reader, tables = _pinned_reader(), {}
+    chains, chosen, steps = [], {}, 0
+    for member, symbol in requests:
+        # Seeds come from the import declarations, not the bound IAT or a
+        # caller-provided name/ordinal fallback.
+        if type(symbol) is not dict or (symbol.keys() != {'name'} and symbol.keys() != {'ordinal'}):
+            raise ValueError('SVG PE export request requires exactly one name or ordinal')
+        name, ordinal = symbol.get('name'), symbol.get('ordinal')
+        if ('name' in symbol and (type(name) is not str or not 0 < len(name) < _MAX_SYMBOL_NAME
+                                  or not name.isascii() or not _EXPORT_TEXT.fullmatch(name.encode('ascii')))
+                or 'ordinal' in symbol and (type(ordinal) is not int or not 0 <= ordinal <= 65535)):
+            raise ValueError('SVG PE export request has an invalid name or ordinal')
+        chain, seen = [], set()
+        for depth in range(_MAX_EXPORT_CHAIN):
+            steps += 1
+            if steps > _MAX_CHAIN_STEPS:
+                raise ValueError('SVG PE export chains exceed their total step budget')
+            if type(member) is not str or member not in images:
+                raise ValueError('SVG PE export target is outside the selected held images')
+            image = images[member]
+            if type(image) is not snapshot._PinnedImage:
+                raise ValueError('SVG PE export target has no pinned image identity')
+            if member not in tables:
+                tables[member] = _export_records(reader(image), image.size, budget)
+            budget.check_time()
+            match = _match_export(tables[member], symbol, budget)
+            slot = member, match['ordinal']
+            if slot in seen:
+                raise ValueError('SVG PE export forwarder cycle')
+            seen.add(slot)
+            chain.append({'member': member, 'sha256': image.sha256, **match})
+            if match['kind'] == 'direct':
+                chains.append(chain)
+                break
+            if depth + 1 == _MAX_EXPORT_CHAIN:
+                raise ValueError('SVG PE export forwarder chain exceeds its depth budget')
+            module, _, target = match['forwarder'].partition('.')
+            # Accept only the unambiguous extensionless module + symbol form.
+            # Never guess whether another dot belongs to a module or symbol.
+            if '.' in target:
+                raise ValueError('SVG PE cannot bind a dotted export forwarder')
+            edge = member, _module_name(module + '.dll')
+            if edge not in chosen:
+                chosen[edge] = select(*edge)
+            member = chosen[edge]
+            symbol = {'ordinal': int(target[1:])} if target.startswith('#') else {'name': target}
+    budget.check_time()
+    return chains
 
 
 def _package_declarations(held, *, include_symbols=False):

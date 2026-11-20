@@ -20,34 +20,40 @@
 ## 依赖
 
 - **app 级（manifest requires，doctor 可探测）**：ffmpeg / ffprobe（atempo 应用器、时长实测、峰值归一、volumedetect）；CLI 面（tts_cli/spec）系统 python3 stdlib 零第三方依赖。
-- **indextts 路径**：`gen` 和 `probe` 先查 `tts.python` 指定的解释器（未配置或为 `null` 时查默认 Conda 环境），找不到时再查仓库 `.venv`。Windows 分别查找环境根下的 `python.exe` 和 `.venv/Scripts/python.exe`；如旧配置仍写着 POSIX `bin/python`，可将该键设为 `null` 或指定实际解释器。Windows 请用原生 Python 运行 `tts_cli.py probe`。找到解释器只意味着可启动许可拒绝入口，不代表推理可用。
-- **edge 兜底引擎**：`edge-tts` 二进制（默认 `~/miniconda3/bin/edge-tts`，`tts.edge_bin` 可改；pip 安装）。
+- **indextts 路径**：`gen` 和 `probe` 先查 `tts.python` 指定的解释器（未配置或为 `null` 时查默认 Conda 环境），找不到时再查 `tts.repo` 下的 `.venv`。Windows 分别查找环境根下的 `python.exe` 和 `.venv/Scripts/python.exe`；如旧配置仍写着 POSIX `bin/python`，可将该键设为 `null` 或指定实际解释器。Windows 请从仓根用原生 Python 运行 `python apps/tts/tts_cli.py probe`。找到文件不证明解释器能启动，更不代表推理可用。
+- **edge 兜底引擎**：用 CLI 的系统 Python，无需 IndexTTS 解释器、权重、音色参考或 GPU。`probe` 和 `gen` 先查 `tts.edge_bin`（默认 `~/miniconda3/bin/edge-tts`），路径不存在才回退到 PATH 上的 `edge-tts`。客户端需另行安装。
 
 ## 健康检查
 
-`env python3 apps/tts/tts_cli.py --help` 退出码 0（app.json health.command；CLI 面系统 python3 即可跑，不涉模型/解释器）。资产态另探：`tts_cli.py probe` / `bash apps/tts/init.sh`。
+从完整源码仓根运行；内核 wheel 不含此 app（见[分发边界](../../docs/third-party-licenses.md#分发物核对)），[首稳定支持范围](../../docs/releases.md#稳定支持范围)不含可选模型应用。
+
+```bash
+env python3 apps/tts/tts_cli.py --help
+env python3 apps/tts/tts_cli.py probe
+```
+
+`--help` 是 manifest 命令健康检查。`probe` 只查本地 checkpoint 路径、解释器文件、音色参考和 edge 客户端路径，并在可用时调用 `nvidia-smi`。缺项仍可正常退出；即使全部标 ✓，也未验证解释器或 edge 客户端能启动、权重能加载、在线服务可用或用途获准。`bash apps/tts/init.sh` 默认只做本地探测（含解释器版本检查），其提示也不能解除 IndexTTS 阻断；旧 `--download` 被拒绝。
 
 ## 操作与写入边界
 
 先读[第三方许可与运行边界](../../docs/third-party-licenses.md)。`gen` 缺省取 `spec.engine`，再缺省为当前阻断的 `indextts`；需要独立 edge 路径时显式传 `--engine edge`。edge 客户端许可与在线服务/输出权利须分开审查，不因客户端可安装而获得授权。
 
-只读命令（`gen --dry-run` 只列窗口，不验证引擎可用性）：
+已有 spec 时可先预览窗口（将示例路径替换为实际路径）。`gen --dry-run` 不启动引擎、不写项目产物，也不验证引擎可用性：
 
 ```bash
-env python3 apps/tts/tts_cli.py --help
-env python3 apps/tts/tts_cli.py gen /tmp/spec.json --project <项目> --engine edge --dry-run
+env python3 apps/tts/tts_cli.py gen /tmp/spec.json --project "/path/to/项目" --engine edge --dry-run
 ```
 
-下列命令**会写文件**；edge 生成还会调用在线服务与本地 FFmpeg，运行前确认服务条件、依赖和目标项目：
+下列命令**会写文件**。edge 生成会创建项目产物目录，并把非空窗口文本交给在线服务，再用本地 ffmpeg / ffprobe 加工与测量；运行前确认服务条件、依赖和目标项目：
 
 ```bash
-env python3 apps/tts/tts_cli.py spec -t <项目>/timeline.json -o /tmp/spec.json
+env python3 apps/tts/tts_cli.py spec -t "/path/to/项目/timeline.json" -o /tmp/spec.json
 # 人工校对回填 spec.json 各窗 text（timeline voice 轨不含文本）
-env python3 apps/tts/tts_cli.py gen /tmp/spec.json --project <项目> --engine edge
-env python3 apps/tts/tts_cli.py normalize --project <项目>   # 原位修改 final/ 音频
+env python3 apps/tts/tts_cli.py gen /tmp/spec.json --project "/path/to/项目" --engine edge
+env python3 apps/tts/tts_cli.py normalize --project "/path/to/项目"   # 原位修改 final/ 音频
 ```
 
-`tts_cli.py probe` / `bash apps/tts/init.sh` 只作资产探测，也可能调用本地 `nvidia-smi`；不是推理验收。`tts.enabled` 不是 worker 阻断的解除开关。
+`tts.enabled` 不是 worker 阻断的解除开关。
 
 ## spec.json 格式（windows[].id 即 `vt_<ID>` 去前缀）
 
@@ -78,7 +84,7 @@ env python3 apps/tts/tts_cli.py normalize --project <项目>   # 原位修改 fi
 manifest 行字段（对齐 voice-ime manifest.json + peak_db）：
 `{id, chars, budget_s, raw_s, duration_factor, final_s, peak_db}`（edge 引擎 duration_factor 恒 null）。
 
-`gen` 完成后打印 repack_voice.py 同款完整 `all` 交付入口，会更新项目 `cache/`、`out/`；
+`gen` 写入上表产物后，只打印 repack_voice.py 同款完整 `all` 交付命令，不自动执行；另行运行 `all` 会更新项目 `cache/`、`out/`。
 内容寻址自动选择可复用缓存，完整链负责当前阶段回执及启用插件的 finish。局部音频诊断须先对当前输入
 `prepare`，再 `audio --report`，最终仍运行完整 `all` 并检查退出码与 QC/插件结果，见 [runbook](../../docs/skill/references/edit.md)。
 limiter 已并入 vtx audio，无需手动 post_loudness；实录终版用 `apps/sync/repack_voice.py` 替换。
@@ -98,10 +104,13 @@ limiter 已并入 vtx audio，无需手动 post_loudness；实录终版用 `apps
 
 ## 测试
 
+只测 TTS（从仓根执行；用 ffmpeg / ffprobe 检查临时合成 WAV，不用模型、GPU 或网络）：
+
 ```bash
-cd apps/tts && env python3 -m unittest discover -s tests -t . -v   # 零模型零 GPU 零网络（ffmpeg 合成 KB 级 wav）
-# 或仓根统一入口：bash scripts/run_all_tests.sh（自动发现 apps/*/tests）
+env python3 -m unittest discover -s apps/tts/tests -t apps/tts -v
 ```
+
+全仓回归按[贡献指南](../../CONTRIBUTING.md#测试入口)选入口；本机 Linux / DSH 全量须走[限额入口](../../CONTRIBUTING.md#本机-linux先隔离再运行)。
 
 覆盖：atempo golden 四例（方向/域外双级/相等无滤镜）、spec 预算（vt_A1 单片窗 228 帧→7.62、
 两片窗链和、非 vt_ 跳过）、levelnorm（-20dBFS→-6±0.5、幂等）、manifest 字段 + final 格式

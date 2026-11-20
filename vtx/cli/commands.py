@@ -88,13 +88,13 @@ clip 的 scale/x/y/opacity/fade 全部可选（缺省＝全屏不透明），fad
 """
 import argparse, difflib, json, os, shutil, sys, threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from enum import Enum
 from pathlib import Path
 
 # v2 §1.4 包化：模块内全部相对导入（外部一律 from vtx import / import vtx.xxx；
 # sys.path 锚定由 vtx/vtx.py 薄启动器或 python3 -m vtx / pip 安装保证）。
 from .. import main, _stage_receipt_name
-from ..pipeline.composite import build_video, prepare_layers
 from ..media.encoders import find_chrome
 from ..render import gfx_cli
 from ..cache import hygiene
@@ -106,6 +106,17 @@ from ..pipeline.infra import (Ctx, ProjectPathError, ensure_inside_project,
 from ..inspection.qc import qc
 from ..pipeline.stages import audit, build_audio, mux, prepare, validate
 from ..media.subs import run_subs
+
+
+# Keep read/store invocations out of the video compositor's import tree.
+def build_video(c, layers=None):
+    from ..pipeline.composite import build_video as run
+    return run(c, layers=layers)
+
+
+def prepare_layers(c, *, run_tasks=None):
+    from ..pipeline.composite import prepare_layers as run
+    return run(c, run_tasks=run_tasks)
 
 
 # ---------------------------------------------------------------- gfx
@@ -192,7 +203,8 @@ def gfx(c: Ctx):
 
 
 def _gfx(c: Ctx):
-    budget_gate(c, "gfx")
+    if getattr(c, '_svg_runtime', None) is None:
+        budget_gate(c, "gfx")
     from ..render import gfx_svg
     from ..runtime.windows_browser import job_cleanup_unconfirmed
     if gfx_svg.route(c) == "svg-sequence":
@@ -223,6 +235,10 @@ def _gfx(c: Ctx):
     from ..render.gfx_environment import certificate
     environment = certificate(c) if any(t.get('kind') == 'gfx' and t.get('clips')
                                          for t in c.tl['video_tracks']) else None
+    if (sys.platform == 'win32' and not strict and backend == 'cdp'
+            and environment and environment['axes'].get('platform_resolver') == 'windows-x64/1'):
+        from ..render.gfx_windows import render_stage
+        return render_stage(c, backend_ns, environment, directory_for=gfx_dir, cdp_via=_cdp_via)
     mixed_pages = set()
     use_cdp = backend == "cdp"
     cdp_mod = None
@@ -510,7 +526,12 @@ def _observed_stage(c, name, fn, *, capture_exit=False):
             if session is not None and not code:
                 session.completed.add(name)
             return code
-        result = fn(c)
+        media = getattr(c, '_windows_svg_media', None)
+        if name == 'qc' and media is not None:
+            with media.qc_scope(c):
+                result = fn(c)
+        else:
+            result = fn(c)
         if session is not None:
             session.completed.add(name)
         return result
@@ -552,9 +573,17 @@ def _run_all_pipeline(c: Ctx, until=None):
     def _pre_layers():                               # —— 波内预编码路：无门无回执 ——
         c._pre_layers = events.task(c, "video", kind="preencode").call(prepare_layers, c)
 
-    run_wave(c, [("gfx", _stage_job("gfx", by_name["gfx"])),
-                 ("audio", _stage_job("audio", by_name["audio"])),
-                 ("video 预编码", _pre_layers)])
+    jobs = [("gfx", _stage_job("gfx", by_name["gfx"])),
+            ("audio", _stage_job("audio", by_name["audio"])),
+            ("video 预编码", _pre_layers)]
+    if sys.platform == 'win32':
+        c._windows_cdp_cancel = threading.Event()
+        try:
+            run_wave(c, jobs, cancel=c._windows_cdp_cancel)
+        finally:
+            del c._windows_cdp_cancel
+    else:
+        run_wave(c, jobs)
     if until == "gfx":
         return 0   # 波结束即止：audio 回执/seg 缓存已就绪，video 尾不跑
     qc_exit = 0
@@ -803,6 +832,11 @@ def _preview_command(c, a):
 
 
 def _main(execution=None):
+    with ExitStack() as ownership:
+        return _main_owned(execution, ownership)
+
+
+def _main_owned(execution, ownership):
     execution = execution if execution is not None else events.ExecutionContext()
     ap = argparse.ArgumentParser(description="vtx 视频剪辑中间层", allow_abbrev=False)
     ap.add_argument("-t", "--timeline", default="timeline.json", help="timeline.json 路径（默认 ./timeline.json）")
@@ -869,7 +903,7 @@ def _main(execution=None):
     ap.add_argument("--trust-html", action="store_true", help="timeline frame only: trust visible saved HTML and its scripts; requires --prepare-gfx; not a sandbox")
     ap.add_argument("--request", metavar="PATH", help="store only: strict JSON request file (store writes; store plan is zero-write)")
     ap.add_argument("--request-stdin", action="store_true",
-                    help="store [plan] (max 8388608 bytes) or storage clean (max 4096 bytes): strict UTF-8 JSON request through EOF; exclusive with --request")
+                    help="store [plan|edit-view] (max 8388608 bytes) or storage clean (max 4096 bytes): strict UTF-8 JSON request through EOF; exclusive with --request")
     ap.add_argument("--family", help="query only: video | audio | subtitles")
     ap.add_argument("--track-index", help="query only: zero-based transient track position")
     ap.add_argument("--block-index", help="query only: zero-based transient block position")
@@ -1057,13 +1091,28 @@ def _main(execution=None):
             print(f'✗ 定向回收失败，已保守停止：{error}'); sys.exit(1)
         return
     try:
-        c = Ctx(tp, execution=execution)   # PR#1：构造期校验 cache_dependencies（缺失/非文件 → 友好报错）
+        scope = {}
+        if sys.platform == 'win32' and a.command in ('gfx', 'all') and not policy.dry:
+            portable = os.environ.get('VTX_WINDOWS_SVG_PORTABLE')
+            scratch = os.environ.get('VTX_WINDOWS_SVG_SCRATCH')
+            media_bin = os.environ.get('VTX_WINDOWS_SVG_MEDIA_BIN') if a.command == 'all' else None
+            if (a.command == 'gfx' and (portable or scratch)) or media_bin:
+                if not portable or not scratch:
+                    raise ValueError('Windows SVG requires explicit portable and private scratch roots')
+                if media_bin and (a.draft or a.frames is not None or a.gpu or a.until is not None):
+                    raise ValueError('Windows SVG all requires full-size CPU rendering without stage truncation')
+                from ..render.gfx_svg_win_runtime import owned_runtime
+                scope['_svg_all'] = bool(media_bin)
+                scope['_svg_runtime_factory'] = lambda c, fonts: ownership.enter_context(
+                    owned_runtime(c, portable, scratch, fonts, media_bin=media_bin))
+        c = Ctx(tp, execution=execution, **scope)
     except (ValueError, KeyError, TypeError, ZeroDivisionError, OSError) as e:
         # 2026-09-11 扩捕获：timeline 结构缺键（KeyError）/类型错（TypeError）/fps=0
         # （ZeroDivisionError）/文件缺失（FileNotFoundError）均友好打印而非裸栈
         print(f"✗ timeline 无效：{e}"); sys.exit(1)
     c.dry = policy.dry   # 所有阶段读取同一显式策略；PLAN 下不得 mkdir
-    c.draft = a.draft; c.frames = a.frames; c.gpu = a.gpu; c.strict = a.strict
+    c.draft = a.draft; c.frames = a.frames; c.gpu = a.gpu
+    c.strict = a.strict or getattr(c, '_svg_all', False)
     c.keep_versions = a.keep_versions if a.keep_versions is not None else 2
     # 区间渲染（方案五阶段1）：解析窗口帧区间；独立命名空间路径，绕过 receipt 依赖门
     if range_flags:
@@ -1142,6 +1191,14 @@ def _main(execution=None):
         except ProjectPathError as e:
             print(f"✗ {e}"); sys.exit(1)
         return
+    if getattr(c, '_svg_runtime', None) is not None:
+        from ..cache.policy import policy_for
+        if policy_for(c).mode != 'core':
+            print('✗ Windows SVG gfx requires core cache mode'); sys.exit(1)
+        if (os.environ.get('VTX_CACHE_BUDGET_GB') or os.environ.get('VTX_GC_AUTO') == '1'
+                or os.environ.get('VTX_CACHE_BUDGET_ACTION', 'warn') != 'warn'):
+            print('✗ Windows SVG gfx does not support cache budget or automatic collection overrides'); sys.exit(1)
+        return _execute_render(c, a)
     if (a.command in ('all', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc')
             or a.command == 'subs' and a.subs_extra[:1] == ['preview']):
         from ..cache.session import CacheSession
@@ -1190,7 +1247,7 @@ def _execute_render(c, a):
         todo = [next(s for s in STAGES if s[0] == a.command)]
     names = [s[0] for s in todo] if a.command == "all" else [a.command]
     qc_exit = 0
-    if a.command == "all" and _pipeline_enabled():
+    if a.command == "all" and _pipeline_enabled() and not getattr(c, '_svg_all', False):
         # 方案二阶段2：all 默认走依赖图（串行头 → 并行波 → 串行尾）；
         # VTX_PIPELINE=0 回退下方线性序列（独立 A/B 开关）；
         # 方案三阶段3：--until 截断在依赖图内按阶段族映射（见 _run_all_pipeline）
@@ -1200,7 +1257,7 @@ def _execute_render(c, a):
             print(f"== {name} ==")
             # PR#1：阶段开始前做依赖门 + 撤销下游旧成功（失败重跑不得保留旧 QC PASS）。
             # draft 模式的 video/mux 记为 video_draft/mux_draft。
-            if name == "qc" and a.command == "all":
+            if name == "qc" and a.command == "all" and not getattr(c, '_svg_all', False):
                 # 2026-09-14 裁定（同流水线路径）：all 内 qc 失败不阻断 finish——
                 # 捕获退出码交 main 汇总；单阶段 `vtx qc` 仍走下方 fn(c) 冒泡退出
                 qc_exit = _observed_stage(c, name, fn, capture_exit=True)
@@ -1220,7 +1277,7 @@ def _execute_render(c, a):
     # 收尾失败以退出码 1 结束但产物已就绪（final.mp4 不受影响——失败可见即可）。
     finish_failed = False
     if (a.command == "all" and a.until in (None, "qc")
-            and not c.draft and not c.dry):
+            and not c.draft and not c.dry and not getattr(c, '_svg_all', False)):
         from ..pluginlib import hooks as _plugin_hooks
         with events.task(c, "finish", kind="stage").scope() as observation:
             _finish_errs = _plugin_hooks.run_finish(c)

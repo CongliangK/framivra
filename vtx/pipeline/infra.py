@@ -4,7 +4,7 @@
 `python3 vtx/vtx.py ...` 经薄启动器自锚定 repo 根后照常可跑。
 """
 import hashlib, json, os, subprocess, sys, time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from contextvars import ContextVar
 from fractions import Fraction
 from pathlib import Path
@@ -117,14 +117,20 @@ def _archive_stale_receipt(f: Path, fingerprint: str, *, root):
 
 
 class Ctx:
-    def __init__(self, timeline_path: Path, *, execution=None, diagnostics=None):
+    def __init__(self, timeline_path: Path, *, execution=None, diagnostics=None, _svg_runtime_factory=None,
+                 _svg_all=False):
+        self._svg_runtime_factory = _svg_runtime_factory
+        self._svg_runtime = None
+        self._svg_all = _svg_all
+        self._windows_svg_media = None
         self.execution = execution if execution is not None else events.ExecutionContext()
         if diagnostics is not None:
             self.diagnostics = diagnostics
         self.tl_path = timeline_path
         self.root = timeline_path.parent
         try:
-            self.timeline_bytes = timeline_path.read_bytes()
+            from ..render.gfx_svg import read_timeline_input
+            self.timeline_bytes = read_timeline_input(self)
         except OSError as error:
             emit(self, str(error), rule_id='load.timeline_file', measured={'path': str(timeline_path)},
                  threshold={'readable_file': True})
@@ -171,13 +177,15 @@ class Ctx:
         # 指纹；解析前锁定、解析后复核，避免内存字幕和身份来自不同版本。
         # Pin before resolving external subtitles so changes during loading are
         # caught too. Hash exactly the bytes parsed above, not a second read.
+        from ..render import gfx_svg
+        gfx_svg.validate_windows_gfx_profile(self)
         validate_cache_dependencies(self)
         from ..render.gfx_backend import selected, identity
         from ..cache.hygiene import gfx_cache_ns
-        from ..render import gfx_svg
         if gfx_svg.route(self) == 'svg-sequence':
             self.gfx_backend = {'requested_backend': 'svg-sequence',
-                                'identity': gfx_svg.engine_identity(),
+                                'identity': (gfx_svg.engine_identity(self) if self._svg_runtime is not None
+                                              else gfx_svg.engine_identity()),
                                 'namespace': gfx_svg.NAMESPACE, 'experimental': True}
         else:
             self.gfx_backend = {"requested_backend": selected(), "identity": identity(),
@@ -213,6 +221,13 @@ class Ctx:
         self._pre_layers = None
 
     # ---- 基础设施 ----
+    def execute_media_tool(self, argv, *, text=True):
+        media = getattr(self, '_windows_svg_media', None)
+        if media is not None:
+            return media.execute(argv, text=text)
+        options = dict(encoding='utf-8', errors='replace') if text else {}
+        return subprocess.run(argv, capture_output=True, text=text, **options)
+
     def run(self, cmd, need=True, *, before_commit=None, after_commit=None):
         """Execute a command; commit callbacks are for owned, need=True media only.
 
@@ -228,8 +243,7 @@ class Ctx:
         from ..cache.recovery import atomic_ffmpeg
         observation = events.task(self, kind="process")
         def execute(argv):
-            return observation.attempt(subprocess.run, argv, capture_output=True, text=True,
-                                       encoding="utf-8", errors="replace")
+            return observation.attempt(self.execute_media_tool, argv)
         try:
             with observation.scope():
                 r = (atomic_ffmpeg(self, cmd, execute, before_commit=before_commit,
@@ -390,7 +404,8 @@ class Ctx:
         observation = None
 
         def _mutate(rec):
-            _archive_stale_receipt(f, self.input_fingerprint, root=self.root)   # ⑮ 指纹翻转旁证轮转
+            if self._svg_runtime is None:
+                _archive_stale_receipt(f, self.input_fingerprint, root=self.root)   # ⑮ 指纹翻转旁证轮转
             if ok:
                 verify_input_identity(self)
             rec["timeline"] = self.timeline_sha256
@@ -415,6 +430,8 @@ class Ctx:
         def write(ref):
             nonlocal observation
             observation = ref
+            if self._svg_runtime is not None:
+                return self._svg_runtime.update_receipt(self.input_fingerprint, _mutate, require_runtime=ok)
             return fstxn.locked_update(f, _mutate,
                                       load=lambda p: load_receipt(p, self.input_fingerprint), root=self.root)
 
@@ -436,7 +453,8 @@ class Ctx:
 
         def _mutate(rec):
             verify_input_identity(self)
-            _archive_stale_receipt(f, self.input_fingerprint, root=self.root)
+            if self._svg_runtime is None:
+                _archive_stale_receipt(f, self.input_fingerprint, root=self.root)
             dependencies = {'audio': ['prepare'], 'mux': ['video', 'audio'],
                             'mux_draft': ['video_draft', 'audio'], 'qc': ['mux']}
             if any(operation(self, lambda: t.get('kind') == 'gfx',
@@ -464,8 +482,11 @@ class Ctx:
         # 与 receipt() 同一 fstxn 事务（原同持 _receipt_lock——锁下沉见 __init__ 注）：
         # 依赖门判定与下游撤销的读-改-写跨进程同样串行化；门失败（RuntimeError）
         # 时 tmp 清残件、receipt.json 保持旧值。dry 早退在锁外。
-        fstxn.locked_update(f, _mutate,
-                            load=lambda p: load_receipt(p, self.input_fingerprint), root=self.root)
+        if self._svg_runtime is not None:
+            self._svg_runtime.update_receipt(self.input_fingerprint, _mutate)
+        else:
+            fstxn.locked_update(f, _mutate,
+                                load=lambda p: load_receipt(p, self.input_fingerprint), root=self.root)
 
     def src_path(self, sid):
         return self.root / next(s for s in self.tl["sources"] if s["id"] == sid)["path"]
@@ -527,6 +548,15 @@ def _run_ffmpeg_task(c: Ctx, label: str, cmd, nvenc: bool = False):
     if c.dry and is_ffmpeg_cmd(cmd):
         print("[dry-run]", " ".join(map(str, cmd))[:300] + (" …" if len(cmd) > 20 else ""))
         return
+    media = getattr(c, '_windows_svg_media', None)
+    if media is not None:
+        if nvenc:
+            raise ValueError('Windows SVG media currently requires CPU encoding')
+        observe = events.current(c)
+        r = observe.attempt(media.execute, cmd) if observe else media.execute(cmd)
+        if r.returncode:
+            raise RuntimeError(f'{label}: ' + r.stderr[-1500:])
+        return r
     if nvenc:
         # R-07h S5 重试武装（机制本体=encoders.nvenc_retry_run）：失败入重试队列，
         # 至多 N=2 次指数退避后原 argv 原样重发（cmd 列表对象原样重用——编码命令
@@ -593,7 +623,7 @@ def run_parallel(c: Ctx, tasks, what: str):
     print(f"  ✓ {what}完成（{time.time() - t0:.0f}s）")
 
 
-def run_wave(c: Ctx, jobs):
+def run_wave(c: Ctx, jobs, *, cancel=None):
     """jobs = [(label, fn)] 的 Python 可调用并行波执行器（方案二阶段2，2026-09-12，
     `vtx all` 依赖图流水线）：gfx / audio / video 预编码三路零数据依赖任务重叠执行。
     与 run_parallel 的分工：后者面向「ffmpeg 子进程任务」（label+cmd，io_workers 限流），
@@ -639,7 +669,21 @@ def run_wave(c: Ctx, jobs):
               f"（{time.strftime('%H:%M:%S')}）")
 
     with ThreadPoolExecutor(len(jobs)) as ex:
-        list(ex.map(lambda j: _worker(j[0], j[1][0], j[1][1]), enumerate(jobs)))
+        try:
+            if cancel is None:
+                list(ex.map(lambda j: _worker(j[0], j[1][0], j[1][1]), enumerate(jobs)))
+            else:
+                pending = {ex.submit(_worker, i, label, fn) for i, (label, fn) in enumerate(jobs)}
+                while pending:
+                    # Pre-3.14 Windows Python cannot interrupt an indefinite
+                    # thread lock wait with Ctrl-C; return to Python regularly.
+                    done, pending = wait(pending, timeout=.1, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        future.result()
+        except KeyboardInterrupt:
+            if cancel is not None:
+                cancel.set()  # signal participating workers before executor shutdown waits
+            raise
     if failed:
         _, label, e = min(failed, key=lambda x: x[0])
         if not isinstance(e, SystemExit):
