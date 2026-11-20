@@ -19,7 +19,7 @@ v1 时代本文件经 spec_from_file_location 加载 scripts/post_loudness.py（
 env python3 前缀：AppImage 劫持 argv[0]，裸 python3 的 sys.executable 指向错误
 解释器，见全局 AGENTS.md）
 """
-import hashlib, json, math, os, shutil, struct, sys, tempfile, unittest, wave
+import hashlib, json, math, os, shutil, struct, subprocess, sys, tempfile, unittest, wave
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -558,6 +558,29 @@ class TestPostLoudnessCompat(unittest.TestCase):
         self.assertFalse(list(self.out.glob(".post-*")), "临时件已清理")
         (self.root / "measurements.json").write_text(
             json.dumps({"first": first, "second": second}, indent=2), encoding="utf-8")
+
+    def test_cli_redirected_normalization_preserves_receipt_and_pcm_clock(self):
+        out = self.out / 'audio.wav'
+        original = out.read_bytes()
+        receipt = self.receipt.read_bytes()
+        env = dict(os.environ, PYTHONUTF8='0' if os.name == 'nt' else '1',
+                   PYTHONIOENCODING='cp936:strict' if os.name == 'nt' else 'utf-8:strict')
+        script = REPO / 'scripts/audio/normalize_project_audio.py'
+        result = subprocess.run([sys.executable, '-B', script, self.root,
+                                 '--ffmpeg', FFMPEG, '--target', '-14'],
+                                env=env, capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout.decode('utf-8').splitlines()[-1])
+        self.assertNotIn('FATAL:', result.stderr.decode('utf-8'))
+        self.assertGreater(abs(report['gain_db']), .1)  # Exercise the warning/real apply path.
+        self.assertAlmostEqual(report['output_i'], -14, delta=1.5)
+        final = out.read_bytes()
+        self.assertNotEqual(final, original)
+        self.assertEqual(report['sha256'], hashlib.sha256(final).hexdigest())
+        self.assertEqual(self.receipt.read_bytes(), receipt)
+        with wave.open(str(out), 'rb') as wav:
+            self.assertEqual((wav.getnchannels(), wav.getsampwidth(), wav.getframerate(), wav.getnframes()),
+                             (2, 2, 48000, 96000))
 
     def test_encoder_failure_preserves_original(self):
         before = (self.out / "audio.wav").read_bytes(), self.receipt.read_bytes()
