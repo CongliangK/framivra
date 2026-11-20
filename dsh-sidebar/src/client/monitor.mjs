@@ -964,6 +964,9 @@ export function ProgramMonitor({ owner, opened, timeline, selectionDisplay, sess
   function startProgram() {
     if (!program || monitor.stopProgram || programBusy || otherLease || unavailable || (blocked && !blank) || windowState.job || windowState.active || tabSignal.aborted) return
     change('window'); programDisclosure.current.open = false
+    // Return focus from the now-hidden consent button to the editing surface:
+    // the very next Space should pause, not scroll the page or reopen settings.
+    programDisclosure.current.closest('.fv-monitor')?.focus({ preventScroll: true })
     // Retain the cleanup fence even if invalidation unmounts the player before pointer-up.
     const stop = async () => {
       const ok = await program.cancel().catch(() => false)
