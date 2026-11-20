@@ -159,7 +159,7 @@ test('DSH mounting uses only exact authenticated Connection Fetch routes and rev
   assert.deepEqual(routes.map(route => [route.path, route.methods, route.requestBody]), [
     ['/api/framivra/kernel-management', ['POST'], 'buffered'],
     ['/api/framivra/control', ['POST'], 'buffered'], ['/api/framivra/diagnostics', ['POST'], 'buffered'],
-    ['/api/framivra/frame', ['POST'], 'streaming'],
+    ['/api/framivra/frame', ['POST'], 'streaming'], ['/api/framivra/window', ['POST'], 'streaming'],
     ['/api/framivra/media', ['GET', 'HEAD'], 'buffered'],
   ])
   assert.deepEqual([...tools], ['framivra_timeline_read'])

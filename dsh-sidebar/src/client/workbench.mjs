@@ -130,6 +130,8 @@ export const workbenchCSS = `
 .fv-rendered{display:flex;flex-direction:column;gap:6px;min-height:0}
 .fv-program-stage{position:relative;width:100%;aspect-ratio:16/9;max-height:320px;min-height:100px;background:#000;border-radius:6px;overflow:hidden}
 .fv-program-stage video{display:block;width:100%;height:100%;object-fit:contain;background:#000}
+.fv-window-first-frame{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;background:#000;pointer-events:none;user-select:none}
+.fv-window-first-frame[hidden]{display:none}
 .fv-preview-modes button[aria-pressed=true]{background:color-mix(in srgb,var(--fv-accent) 12%,var(--fv-surface));border-color:var(--fv-accent);color:var(--fv-text)}
 .fv-program-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:16px;text-align:center;font-size:12px;color:#b1b8c4}
 .fv-guide{display:flex;width:100%;align-items:center;gap:12px;padding:12px 16px;min-height:48px;border:1px solid var(--fv-line);background:var(--fv-surface);border-radius:12px;text-align:left;transition:background-color .15s}

@@ -72,11 +72,26 @@ export class FrameEpoch {
   assertReady() {
     if (this.ghost || this.edit.dirty || this.edit.busy || this.edit.unknown) throw new Error('FRAME_STALE: selection/pin/edit/session changed or write unresolved')
   }
-  invalidate() { this.epoch++; this.controller?.abort(); this.controller = undefined; this.generated = undefined }
-  begin(tabSignal) {
+  pin(frame, origin) {
+    if (origin && !this.previewWindow?.owns(origin)) return false
+    const canPreview = !(this.ghost || this.edit.dirty || this.edit.busy || this.edit.unknown)
+    this.invalidate(origin, canPreview ? { frame } : undefined)
+    return true
+  }
+  invalidate(origin, pin) {
+    this.epoch++; this.controller?.abort(); this.controller = undefined; this.controllerOrigin = undefined
+    this.generated = undefined; this.generatedOrigin = undefined
+    this.previewWindow?.invalidate(origin, pin)
+  }
+  begin(tabSignal, origin) {
     this.controller?.abort()
     this.controller = new AbortController()
+    this.controllerOrigin = origin
     return { epoch: this.epoch, signal: AbortSignal.any([this.controller.signal, tabSignal]) }
+  }
+  retireFrameTools(origin) {
+    if (this.controllerOrigin === origin) { this.controller?.abort(); this.controller = undefined; this.controllerOrigin = undefined }
+    if (this.generatedOrigin === origin) { this.generated = undefined; this.generatedOrigin = undefined }
   }
   check(operation) {
     operation.signal.throwIfAborted()
@@ -98,6 +113,13 @@ export async function frameRequest(sessionId, payload, signal, fetcher = fetch) 
   const value = parseJSON(await boundedText(response, FRAME_WIRE_LIMIT, signal))
   if (!response.ok || value?.ok === false) throw new Error(`${value?.error ?? 'FRAME_REFUSED'}: ${value?.message ?? stringifyJSON(value?.diagnostics ?? [])}`)
   return value
+}
+
+export function matchesPngIhdr(bytes, width, height) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  return bytes.byteLength >= 33 && [137,80,78,71,13,10,26,10].every((byte, at) => bytes[at] === byte) &&
+    view.getUint32(8) === 13 && String.fromCharCode(...bytes.subarray(12,16)) === 'IHDR' &&
+    view.getUint32(16) === width && view.getUint32(20) === height
 }
 
 export async function decodePNG(blob, width, height, signal, browser = globalThis) {
@@ -136,8 +158,8 @@ export async function verifyFrame(envelope, { frame, contentVersion, signal, lim
   }
   const binary = atob(inline.data)
   if (binary.length !== image.bytes || btoa(binary) !== inline.data) bad('Noncanonical base64 or byte-count mismatch')
-  const bytes = Uint8Array.from(binary, char => char.charCodeAt(0)), view = new DataView(bytes.buffer)
-  if ([137,80,78,71,13,10,26,10].some((byte, at) => bytes[at] !== byte) || view.getUint32(8) !== 13 || String.fromCharCode(...bytes.subarray(12,16)) !== 'IHDR' || view.getUint32(16) !== image.width || view.getUint32(20) !== image.height) bad('PNG signature/IHDR mismatch')
+  const bytes = Uint8Array.from(binary, char => char.charCodeAt(0))
+  if (!matchesPngIhdr(bytes, image.width, image.height)) bad('PNG signature/IHDR mismatch')
   if (!crypto?.subtle) throw new Error('FRAME_UNSUPPORTED: WebCrypto SHA-256 unavailable')
   const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('')
   const documentDigest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(reference.document.raw))), byte => byte.toString(16).padStart(2, '0')).join('')
@@ -176,16 +198,19 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, selecti
   const [state, setState] = useState({}), [consent, setConsent] = useState(false), [positionOnly, setPositionOnly] = useState(false)
   const [prepareGfx, setPrepareGfx] = useState(false), [htmlTrust, setHTMLTrust] = useState(false)
   const [follow, setFollow] = useState(false)
-  const serial = useRef(), generation = useRef(0), cleanupFailed = useRef(false)
+  const serial = useRef(), generation = useRef(0), cleanupFailed = useRef(false), frameTools = useRef({ mounted: true }).current
   const modeLabel = '当前合成帧'
   const changePrepare = event => { owner.invalidate(); setPrepareGfx(event.target.checked); setHTMLTrust(false); setState({ busy: !!state.busy, message: '准备授权已变化；旧画面已失效，请重新生成。' }) }
   const changeTrust = event => { owner.invalidate(); setHTMLTrust(event.target.checked); setState({ busy: !!state.busy, message: 'HTML 信任已变化；旧画面已失效，请重新生成。' }) }
   const version = opened.snapshot.content_version, viewEpoch = owner.epoch
   const assertCurrent = () => {
     owner.assertReady()
-    if (owner.epoch !== viewEpoch) throw new Error('FRAME_STALE: 显示或授权已变化；请使用当前控件重新点击')
+    if (!frameTools.mounted || owner.epoch !== viewEpoch) throw new Error('FRAME_STALE: 显示或授权已变化；请使用当前控件重新点击')
   }
-  useEffect(() => () => owner.invalidate(), [owner])
+  useEffect(() => {
+    frameTools.mounted = true
+    return () => { frameTools.mounted = false; owner.retireFrameTools(frameTools) }
+  }, [owner, frameTools])
   const generated = owner.generated
   function imageLimits(required = false) {
     const services = getDraftServices?.(), binding = services?.sessions?.binding?.(sessionId)
@@ -199,7 +224,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, selecti
     try {
       assertCurrent()
       if (cleanupFailed.current) throw new Error('FRAME_CLEANUP: 请先显式取消并确认回收')
-      operation = owner.begin(tabSignal)
+      operation = owner.begin(tabSignal, frameTools)
       owner.check(operation)
       if (!consent || !whole(frame)) throw new Error('FRAME_CONSENT: 请固定整数帧并明确允许仅 cache/preview 写入')
       owner.generated = undefined
@@ -213,6 +238,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, selecti
       // not prevent verified preview or image copy.
       if (!automatic) frameSelection(verified, selection, positionOnly)
       owner.generated = verified
+      owner.generatedOrigin = frameTools
       setState({ previewEpoch: owner.epoch, message: '已验证 PNG，未发送。复制与入稿请展开图片工具。' })
     } catch (error) {
       if (sequence === generation.current) {
@@ -235,7 +261,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, selecti
     try {
       assertCurrent()
       captured = captureCurrentDraft(getDraftServices, sessionId)
-      operation = owner.begin(tabSignal)
+      operation = owner.begin(tabSignal, frameTools)
       owner.check(operation)
       const current = owner.generated
       if (!current || current.certificate.frame !== frame || current.certificate.content_version !== version || current.certificate.kind !== 'current-composite') throw new Error('FRAME_STALE: 请重新生成当前固定帧')
@@ -256,7 +282,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, selecti
     let operation
     try {
       assertCurrent()
-      operation = owner.begin(tabSignal)
+      operation = owner.begin(tabSignal, frameTools)
       owner.check(operation)
       const current = owner.generated
       if (!current || !navigator.clipboard?.write || typeof ClipboardItem !== 'function' || (ClipboardItem.supports && !ClipboardItem.supports('image/png'))) throw new Error('CLIPBOARD_UNSUPPORTED: 当前浏览器不能写 PNG；未自动降级为文本')
@@ -344,7 +370,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, selecti
       h('label', { title: '单独允许本次点击向此工程 cache/preview 写入；不授予 timeline/history 写权限。' }, h('input', { type: 'checkbox', checked: consent, onChange: event => { owner.invalidate(); setConsent(event.target.checked); setState({}) } }), '允许写入预览缓存（不改时间线）'),
       h('label', null, h('input', { type: 'checkbox', checked: prepareGfx, onChange: changePrepare }), '允许按需准备当前帧图形（仅预览域）'),
       prepareGfx ? h('label', null, h('input', { type: 'checkbox', checked: htmlTrust, onChange: changeTrust }), '仅信任的工程：允许执行已保存的可见 HTML / 脚本，可访问浏览器允许的文件和网络；不是沙箱，不授予更广泛的未知权限。') : null,
-      h('label', { title: '明确启用后，播放头变化将按需写入预览缓存并验证完整合成帧；停止拖动后更新，不承诺视频帧率播放。' }, h('input', { type: 'checkbox', checked: follow, disabled: !consent, onChange: event => { owner.invalidate(); setFollow(event.target.checked); setState({}) } }), '随播放头实时生成（写预览缓存）'),
+      h('label', { title: '明确启用后，播放头变化将按需写入预览缓存并验证完整合成帧；停止拖动后更新，不承诺视频帧率播放。' }, h('input', { type: 'checkbox', checked: follow, disabled: !consent, onChange: event => { owner.invalidate(); setFollow(event.target.checked); setState({}) } }), '随播放头更新固定帧（写预览缓存）'),
       )),
       imageTools,
       cancelButton(),

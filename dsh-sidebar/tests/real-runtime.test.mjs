@@ -1,13 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, writeFile, readFile, realpath, stat } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { registerHooks } from 'node:module'
 import { TimelineReader } from '../src/protocol.mjs'
 import { createPreviewHost } from '../src/host.mjs'
 import { stringifyJSON } from '../src/json.mjs'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { performReferenceAction } from '../src/client/reference.mjs'
 import { importDsh } from './dsh-public-sdk.mjs'
 
@@ -30,7 +30,7 @@ async function provider(t) {
 
 async function clientView() {
   const source = new URL('../src/client/index.mjs', import.meta.url).href
-  const react = `export const createElement=(type,props,...children)=>({type:typeof type==='symbol'?'Fragment':type,props,children});export const useEffect=()=>{};export const useRef=()=>({});export const useState=()=>[];export default {createElement,Fragment:Symbol('Fragment')};`
+  const react = `export const createElement=(type,props,...children)=>({type:typeof type==='symbol'?'Fragment':type,props,children});export const useEffect=()=>{};export const useLayoutEffect=()=>{};export const useRef=()=>({});export const useState=()=>[];export default {createElement,Fragment:Symbol('Fragment')};`
   const hook = registerHooks({ resolve(specifier, context, next) {
     if (specifier === 'react' && context.parentURL === source) return { url: `data:text/javascript,${encodeURIComponent(react)}`, shortCircuit: true }
     return next(specifier, context)
@@ -278,6 +278,105 @@ test('real Host 30-second read deadline returns only after provider range cleanu
   const result = { status: response.status, elapsedMs, pid, afterResponseStopped: true }
   await writeFile(join(dir, 'result.json'), JSON.stringify(result))
   console.log(JSON.stringify(result))
+})
+
+// Independently staged and pinned by the isolated Host administrator. The
+// operator supplies a qualified 1920×1080 timeline in a separate workspace.
+const windowLauncher = process.env.SIDEBAR_PREVIEW_WINDOW_EXECUTABLE
+const windowTimeline = process.env.SIDEBAR_PREVIEW_WINDOW_TIMELINE
+const skipWindow = skip || (process.platform !== 'linux' || !windowLauncher || !windowTimeline
+  ? 'Requires Linux, an approved SIDEBAR_PREVIEW_WINDOW_EXECUTABLE and a separate SIDEBAR_PREVIEW_WINDOW_TIMELINE' : false)
+test('real fixed-wheel launcher renders a manual owner window without replacing the read core', { skip: skipWindow, timeout: 45_000 }, async () => {
+  const { Context } = await importDsh(dsh, 'cordis')
+  const { LocalSubprocessRuntime } = await importDsh(dsh, 'subprocessLocal')
+  const { LocalFileSystem } = await importDsh(dsh, 'fsLocal')
+  const ctx = new Context()
+  const proc = ctx.plugin(LocalSubprocessRuntime)
+  const filesystem = ctx.plugin(LocalFileSystem)
+  await Promise.all([proc.await(), filesystem.await()])
+  const timeline = await realpath(windowTimeline), session = { id: 'manual-window' }
+  const host = createPreviewHost({ subprocess: ctx.get('subprocess'), fs: ctx.get('fs'), sessions: { get: id => id === session.id ? session : undefined, list: () => [session] },
+    workingDirectory: { get: () => dirname(timeline) } }, { vtxExecutable: vtx, previewWindowExecutable: windowLauncher })
+  const request = (route, payload) => new Request(`http://test/api/framivra/${route}`, { method: 'POST', body: JSON.stringify({ sessionId: session.id, ...payload }) })
+  const digest = bytes => createHash('sha256').update(bytes).digest('hex')
+  try {
+    const before = digest(await readFile(timeline))
+    const open = await host.control(request('control', { op: 'open', timeline: basename(timeline) }))
+    assert.equal(open.status, 200, await open.clone().text())
+    const { grant, snapshot, capabilities } = await open.json()
+    assert.equal(snapshot.content_version, `sha256:${before}`)
+    const capability = capabilities.capabilities.preview_window
+    assert.equal(capability?.launcher, 'framivra.preview-window.fixed-wheel/v1')
+    const operationId = randomUUID()
+    const result = await host.window(request('window', { op: 'render', grant, operationId, frame: 0,
+      contentVersion: snapshot.content_version, renderConsent: 'cache/preview-only', prepareInputs: true }))
+    if (!result.ok) assert.fail(await result.text())
+    assert.equal(result.headers.get('content-type'), 'video/mp4')
+    assert.equal(result.headers.get('x-framivra-version'), snapshot.content_version)
+    const bytes = Buffer.from(await result.arrayBuffer())
+    assert.equal(digest(bytes), result.headers.get('x-framivra-sha256'))
+    assert.equal(bytes.subarray(4, 8).toString('ascii'), 'ftyp')
+    assert.deepEqual(await (await host.window(request('window', { op: 'cancel', grant, operationId }))).json(), { ok: true, reaped: true })
+    assert.equal(digest(await readFile(timeline)), before)
+  } finally {
+    try { await host.dispose() } finally { await Promise.all([filesystem.dispose(), proc.dispose()]) }
+  }
+})
+
+// Separate read-only acceptance input from the manual cold-render fixture.
+// The operator supplies the independently approved point and its known digest,
+// not an archive path; the fixed wheel is the sole archive selector.
+const formalTimeline = process.env.SIDEBAR_FORMAL_ARCHIVE_TIMELINE
+const formalFrame = process.env.SIDEBAR_FORMAL_ARCHIVE_FRAME
+const formalDigest = process.env.SIDEBAR_FORMAL_ARCHIVE_SHA256
+const skipFormal = skip || (process.platform !== 'linux' || !windowLauncher || !formalTimeline || !formalFrame || !formalDigest
+  ? 'Requires an approved fixed wheel, archive timeline, exact frame and independent media digest' : false)
+test('real fixed wheel reads an independently approved archive through the owner Host path', { skip: skipFormal, timeout: 45_000 }, async () => {
+  assert.match(formalFrame, /^(0|[1-9][0-9]*)$/); assert(Number.isSafeInteger(Number(formalFrame)))
+  assert.match(formalDigest, /^[a-f0-9]{64}$/)
+  const { Context } = await importDsh(dsh, 'cordis')
+  const { LocalSubprocessRuntime } = await importDsh(dsh, 'subprocessLocal')
+  const { LocalFileSystem } = await importDsh(dsh, 'fsLocal')
+  const ctx = new Context(), proc = ctx.plugin(LocalSubprocessRuntime), filesystem = ctx.plugin(LocalFileSystem)
+  await Promise.all([proc.await(), filesystem.await()])
+  const timeline = await realpath(formalTimeline), session = { id: 'approved-archive' }, commands = []
+  const runtime = ctx.get('subprocess')
+  const subprocess = { resolveExecutable: (...args) => runtime.resolveExecutable(...args), spawn(spec) { commands.push(spec.argv); return runtime.spawn(spec) } }
+  const host = createPreviewHost({ subprocess, fs: ctx.get('fs'), sessions: { get: id => id === session.id ? session : undefined, list: () => [session] },
+    workingDirectory: { get: () => dirname(timeline) } }, { vtxExecutable: vtx, previewWindowExecutable: windowLauncher })
+  const request = (route, payload) => new Request(`http://test/api/framivra/${route}`, { method: 'POST', body: JSON.stringify({ sessionId: session.id, ...payload }) })
+  try {
+    const before = await readFile(timeline)
+    const opened = await host.control(request('control', { op: 'open', timeline: basename(timeline) }))
+    assert.equal(opened.status, 200, await opened.clone().text())
+    const { grant, snapshot, previewSession } = await opened.json()
+    assert.deepEqual(previewSession?.formalArchive, { version: 1 })
+    const tuple = { grant, ownerId: previewSession.ownerId, operationId: randomUUID() }
+    const result = await host.window(request('window', { op: 'formal-archive-read', ...tuple, frame: Number(formalFrame), contentVersion: snapshot.content_version }))
+    if (!result.ok) assert.fail(await result.text())
+    assert.equal(result.headers.get('x-framivra-media-kind'), 'approved-formal-archive/v1')
+    assert.equal(result.headers.get('x-framivra-start'), formalFrame)
+    assert.equal(result.headers.get('x-framivra-input-epoch'), null)
+    assert.equal(createHash('sha256').update(Buffer.from(await result.arrayBuffer())).digest('hex'), formalDigest)
+    assert.deepEqual(await (await host.window(request('window', { op: 'formal-archive-cancel', ...tuple }))).json(),
+      { ok: true, reaped: true, operationId: tuple.operationId, ownerId: tuple.ownerId, openGrant: grant })
+    // Use a different in-project start against the same approval and real launcher.
+    // Like a new saved version, this must reach the launcher's exact selector check.
+    const rejectedTuple = { ...tuple, operationId: randomUUID() }
+    const refused = await host.window(request('window', { op: 'formal-archive-read', ...rejectedTuple,
+      frame: formalFrame === '0' ? 1 : 0, contentVersion: snapshot.content_version }))
+    assert.equal(refused.status, 409, await refused.clone().text())
+    assert.equal(refused.headers.get('x-framivra-media-kind'), null)
+    const refusal = await refused.json()
+    assert.equal(refusal.error, 'ARCHIVE_SELECTOR_MISMATCH')
+    assert.deepEqual(Object.keys(refusal).sort(), ['error', 'message', 'ok'])
+    assert.deepEqual(await (await host.window(request('window', { op: 'formal-archive-cancel', ...rejectedTuple }))).json(),
+      { ok: true, reaped: true, operationId: rejectedTuple.operationId, ownerId: tuple.ownerId, openGrant: grant })
+    assert(!commands.some(argv => argv.includes('--render') || argv.includes('--prepare-inputs')))
+    assert.deepEqual(await readFile(timeline), before)
+  } finally {
+    try { await host.dispose() } finally { await Promise.all([filesystem.dispose(), proc.dispose()]) }
+  }
 })
 
 for (const mode of ['normal', 'cancel', 'deadline', 'unload']) {

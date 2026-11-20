@@ -26,7 +26,13 @@ const css = `
 .fv-timeline .fv-status{display:flex;flex-wrap:wrap;gap:2px 12px;margin:3px 0;font-size:11.5px;font-variant-numeric:tabular-nums;color:color-mix(in srgb,currentColor 80%,transparent)}
 .fv-timeline .fv-scroll{max-height:460px;overflow:auto;border:1px solid color-mix(in srgb,currentColor 35%,transparent);border-radius:6px;padding:4px 0;min-width:0}
 /* Ruler row and every track row share one grid: fixed header column + aligned frame area. */
-.fv-timeline .fv-ruler-row,.fv-timeline .fv-track{display:grid;grid-template-columns:var(--fv-tl-head-w,112px) minmax(0,1fr);column-gap:8px;align-items:stretch}
+.fv-timeline :is(.fv-ruler-row,.fv-track,.fv-preview-coverage){display:grid;grid-template-columns:var(--fv-tl-head-w,112px) minmax(0,1fr);column-gap:8px;align-items:stretch}
+.fv-timeline .fv-preview-coverage{padding:2px 6px;border-bottom:1px solid color-mix(in srgb,currentColor 25%,transparent);align-items:center}
+.fv-timeline .fv-preview-band{height:6px;position:relative;overflow:hidden;border-radius:3px;background:var(--dsw-alias-state-warning-primary,#e1ae50)}
+.fv-timeline .fv-preview-band span{position:absolute;inset-block:0}
+.fv-timeline .fv-preview-band [data-status=rendering]{background:var(--dsw-alias-state-error-primary,#ee7272)}
+.fv-timeline .fv-preview-band [data-status=ready]{background:var(--dsw-alias-state-success-primary,#4fae87)}
+.fv-timeline .fv-preview-status{grid-column:1/-1;font-size:12px;font-variant-numeric:tabular-nums}
 .fv-timeline .fv-ruler-row{padding:0 6px;border-bottom:1px solid color-mix(in srgb,currentColor 45%,transparent);position:sticky;top:0;z-index:3;background:var(--fv-tl-surface,var(--fv-surface,#202125));color:var(--fv-tl-ruler-ink,#dfe3e8)}
 .fv-timeline .fv-overview-row{display:grid;grid-template-columns:var(--fv-tl-head-w,112px) minmax(0,1fr);column-gap:8px;align-items:center;padding:2px 6px;border-bottom:1px solid color-mix(in srgb,currentColor 25%,transparent)}
 .fv-timeline .fv-corner{display:flex;align-items:center;font-size:10px;color:color-mix(in srgb,currentColor 55%,transparent)}
@@ -85,7 +91,7 @@ const css = `
 .fv-timeline.fv-compact .fv-overview-row :is(.fv-ov,.fv-ov-window){transform:translateY(-2px)}
 .fv-timeline.fv-compact .fv-ruler{height:24px}
 .fv-timeline.fv-compact .fv-row{margin:0}
-@container timeline (max-width:520px){.fv-timeline .fv-ruler-row,.fv-timeline .fv-track,.fv-timeline .fv-overview-row{grid-template-columns:var(--fv-tl-head-w-narrow,84px) minmax(0,1fr)}.fv-timeline .fv-clip{font-size:11px}.fv-timeline .fv-clip-len{display:none}.fv-timeline .fv-track-title{font-size:11px;padding:2px 4px}}
+@container timeline (max-width:520px){.fv-timeline :is(.fv-ruler-row,.fv-track,.fv-overview-row,.fv-preview-coverage){grid-template-columns:var(--fv-tl-head-w-narrow,84px) minmax(0,1fr)}.fv-timeline .fv-clip{font-size:11px}.fv-timeline .fv-clip-len{display:none}.fv-timeline .fv-track-title{font-size:11px;padding:2px 4px}}
 `
 const laneCSS = `
 .fv-timeline .fv-live-status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
@@ -113,7 +119,21 @@ const trackKey = item => `${item.family}:${item.track_index}`
 const trackId = track => track.family === 'subtitles' ? 'subtitles' : track.data?.id
 const trackLabel = track => label(track.data, `${familyName(kindOfTrack(track))} ${track.track_index + 1}`)
 
-export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onOpenHistory, editActionLabel = '启用编辑', onUndo, compact = false, selectionTools, focusTool }) {
+function PreviewCoverage({ ranges, view, duration }) {
+  const text = ranges.map(({ status, range: [start, end] }) => `${status === 'ready' ? '音画就绪' : '已请求合成'} [${start}, ${end})`)
+  const covered = ranges.reduce((sum, { range: [start, end] }) => sum + (end - start), 0)
+  if (covered < duration) text.push(ranges.length ? '其余未就绪' : '未就绪')
+  return h('div', { className: 'fv-preview-coverage', role: 'group', 'aria-label': '预览状态带' },
+    h('span', { className: 'fv-corner', 'aria-hidden': true }, '预览状态'),
+    h('div', { className: 'fv-preview-band', 'aria-hidden': true }, ranges.map(({ status, range }) => {
+      const geometry = clipGeometry(range, view)
+      return geometry && h('span', { key: range[0], 'data-status': status, style: { left: `${geometry.left}%`, width: `${geometry.width}%` } })
+    })),
+    h('div', { className: 'fv-preview-status', role: 'status', 'aria-atomic': true }, `${text.join(' · ')}${ranges.length ? ' · 帧范围不含右端' : ''} · 仅本次窗口`),
+    h('div', { className: 'fv-preview-status' }, '固定帧、仅视频及来源未验证的成片不计入音画就绪。'))
+}
+
+export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onOpenHistory, editActionLabel = '启用编辑', onUndo, compact = false, selectionTools, focusTool, previewCoverage }) {
   const extent = React.useMemo(() => displayExtent(snapshot, result), [snapshot, result])
   const fps = snapshot.document?.project?.fps
   const clock = React.useMemo(() => projectClock(fps), [fps])
@@ -134,7 +154,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     const node = scrollport.current
     const measure = () => {
       const style = node.ownerDocument.defaultView.getComputedStyle(node)
-      const fixed = [...node.children].filter(child => child.matches('.fv-overview-row,.fv-ruler-row')).reduce((n, child) => n + child.getBoundingClientRect().height, 0)
+      const fixed = [...node.children].filter(child => child.matches('.fv-overview-row,.fv-ruler-row,.fv-preview-coverage')).reduce((n, child) => n + child.getBoundingClientRect().height, 0)
       let rows = 0, overhead = 0
       for (const track of node.querySelectorAll('.fv-track')) {
         const ts = node.ownerDocument.defaultView.getComputedStyle(track)
@@ -153,6 +173,8 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     const Observer = node.ownerDocument.defaultView.ResizeObserver ?? globalThis.ResizeObserver
     const observer = Observer ? new Observer(measure) : undefined
     observer?.observe(node)
+    const coverage = node.querySelector('.fv-preview-coverage')
+    if (coverage) observer?.observe(coverage)
     return () => observer?.disconnect()
   }, [fitLanes, result, compact, minLaneHeight])
   // Standalone presentation consumers can remain uncontrolled. PreviewBody always
@@ -546,6 +568,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
           onLostPointerCapture: event => { if (drag.current === event.pointerId) drag.current = undefined },
           onPointerLeave: () => { if (drag.current === undefined) setHover(undefined) },
         }, frameTicks(view).map((tick, index, all) => h('span', { key: tick, className: 'fv-tick', style: { left: `${framePercent(tick, view)}%`, transform: index === all.length - 1 ? 'translateX(-100%)' : undefined }, 'aria-hidden': true }, time(tick))), lines())),
+      previewCoverage ? h(PreviewCoverage, { ranges: previewCoverage, view, duration: extent.end }) : null,
       displayTracks.map(track => {
         const key = `${track.family}:${track.track_index}`
         const blocks = groups.get(key) ?? []

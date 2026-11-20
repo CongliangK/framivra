@@ -1,11 +1,13 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { parseJSON, stringifyJSON } from '../json.mjs'
 import { captureCurrentDraft, performReferenceAction } from './reference.mjs'
 import { VisualTimeline } from './timeline.mjs'
 import { ManualEditor } from './manual.mjs'
 import { emptySelection, transitionSelection, preserveSelection } from './selection.mjs'
 import { FrameEpoch } from './frame.mjs'
-import { ProgramMonitor } from './monitor.mjs'
+import { ProgramMonitor, WindowRecovery, useWindowMonitor } from './monitor.mjs'
+import { usePreviewSessionAccess } from './preview-session-access.mjs'
+import { supportsWindow } from './preview-session.mjs'
 import { registerBundleConfig } from './settings.mjs'
 import { createOfficialDraftServices, draftResultMessage } from './draft-services.mjs'
 import { WorkbenchStyles, FileBrowser, buildMismatchMessage } from './workbench.mjs'
@@ -57,10 +59,10 @@ async function control(sessionId, payload, signal) {
 }
 
 /** Pure presentation: all addresses, ranges, selection and raw fields come from vtx. */
-export function TimelineView({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onOpenHistory, editActionLabel, onUndo, selectionTools, focusTool, compact = false }) {
+export function TimelineView({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onOpenHistory, editActionLabel, onUndo, selectionTools, focusTool, previewCoverage, compact = false }) {
   if (snapshot.content_version !== result.content_version) return h('p', { role: 'alert' }, 'Timeline changed between reads. Reopen preview; mixed-version selection is not displayed.')
   return h(React.Fragment, null,
-    h(VisualTimeline, { snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onOpenHistory, editActionLabel, onUndo, selectionTools, focusTool, compact }),
+    h(VisualTimeline, { snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onOpenHistory, editActionLabel, onUndo, selectionTools, focusTool, previewCoverage, compact }),
     compact ? null : timelineData({ snapshot, result, hits, onSelect }))
 }
 function timelineData({ snapshot, result, hits, onSelect }) {
@@ -159,7 +161,7 @@ function ProjectCard({ snapshot, result, hits, fps }) {
     diagnostics.length ? h('ul', { className: 'fv-inspector-diagnostics' }, diagnostics.map((entry, i) => h('li', { key: i }, entry.message ?? entry.code))) : null)
 }
 
-export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostServices, inputActions, useAccess = () => false }) {
+export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostServices, inputActions, useAccess = () => false, previewSession }) {
   const { tab } = useTabInfo()
   const promptAllowed = useAccess('session/prompt') === true
   const liveDraft = useRef()
@@ -221,8 +223,13 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
     if (typeof dialog?.showModal === 'function') { dialog.showModal(); setExpanded(true) }
   }
   const frameOwner = useRef(new FrameEpoch()).current
+  const [windowMonitor, windowState] = useWindowMonitor(frameOwner)
   const ownerBinding = useRef()
-  if (ownerBinding.current !== sessionId) { frameOwner.invalidate(); frameOwner.ghost = undefined; frameOwner.edit = { dirty: false, busy: false, unknown: false }; ownerBinding.current = sessionId }
+  useLayoutEffect(() => {
+    if (ownerBinding.current !== sessionId) {
+      frameOwner.invalidate(); frameOwner.ghost = undefined; frameOwner.edit = { dirty: false, busy: false, unknown: false }; ownerBinding.current = sessionId
+    }
+  }, [sessionId, frameOwner])
   const gestureState = React.useCallback((token, active) => {
     if (active) { const video = workbench.current?.querySelector('video'); if (video && !video.paused) video.pause() }
     if (frameOwner.gestureChanged(token, active)) setState(previous => ({ ...previous }))
@@ -230,7 +237,11 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   const { primary: selection, items: selected } = selectionIntent
   const pick = React.useCallback((item, event) => { frameOwner.invalidate(); setSelectionIntent(previous => transitionSelection(previous, item, event, state.result)) }, [frameOwner, state.result])
   const clearSelection = React.useCallback(() => { frameOwner.invalidate(); setSelectionIntent(emptySelection()) }, [frameOwner])
-  const pin = React.useCallback(value => { frameOwner.invalidate(); setFrame(value) }, [frameOwner])
+  const pin = React.useCallback((value, origin) => {
+    let target
+    try { target = frameQuery(value).frame } catch { /* invalid input invalidates the window */ }
+    if (frameOwner.pin(target, origin)) setFrame(value)
+  }, [frameOwner])
   const editState = next => { if (state.opened?.grant && grant.current === state.opened.grant && frameOwner.editChanged(next)) setState(previous => ({ ...previous })) }
   const [gesture, setGesture] = useState({})
   const [undoEdit, setUndoEdit] = useState()
@@ -246,14 +257,26 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   const [grantDead, setGrantDead] = useState()
   const [storageBusy, setStorageBusy] = useState(false)
   const grantDeadlines = useRef(new Map())
-  const grantDied = (code, grantId) => { if (grantId === grant.current) setGrantDead(previous => previous ?? code) }
+  const { stop: stopPreviewSession, adapter: authorizedPreviewSession, controls: sessionControls } = usePreviewSessionAccess({
+    opened: state.phase === 'ready' && state.sessionId === sessionId && !grantDead ? state.opened : undefined,
+    sessionId, project: state.timeline, tabSignal: tab.signal, call: control,
+  })
+  const grantDied = React.useCallback((code, grantId) => {
+    if (grantId !== grant.current) return
+    stopPreviewSession()
+    frameOwner.invalidate()
+    setGrantDead(previous => previous ?? code)
+  }, [frameOwner, stopPreviewSession])
   let frameValue, frameError
   try { frameValue = frameQuery(frame).frame } catch (error) { frameError = error.message }
   const close = () => {
     readSequence.current++
+    stopPreviewSession()
     frameOwner.invalidate()
     const current = grant.current
     grant.current = undefined
+    // Revoke the captured grant independently. A window cancel is bound to
+    // its original nonce and can ask the Host for cleanup even after close.
     if (current) void control(sessionId, { op: 'close', grant: current }).catch(() => {})
   }
   useEffect(() => { clearSelection(); setGesture(undefined); setState({ phase: 'idle' }); setGrantDead(undefined); return () => { task.current?.abort(); close() } }, [sessionId])
@@ -292,10 +315,10 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
     let deadline = grantDeadlines.current.get(grantId)
     if (deadline === undefined) { deadline = Date.now() + opened.expires_in_ms; grantDeadlines.current.set(grantId, deadline) }
     const remaining = deadline - Date.now()
-    if (remaining <= 0) { if (grant.current === grantId) setGrantDead(previous => previous ?? 'EXPIRED'); return }
-    const timer = setTimeout(() => { if (grant.current === grantId) setGrantDead(previous => previous ?? 'EXPIRED') }, remaining)
+    if (remaining <= 0) { grantDied('EXPIRED', grantId); return }
+    const timer = setTimeout(() => grantDied('EXPIRED', grantId), remaining)
     return () => clearTimeout(timer)
-  }, [state.phase, state.opened?.grant, sessionId])
+  }, [state.phase, state.opened?.grant, sessionId, grantDied])
   async function load(queryOnly = false, chosenTimeline = timeline) {
     if (frameOwner.edit.busy || (frameOwner.edit.unknown && !grantDead)) {
       setState(previous => ({ ...previous, message: '编辑正在执行或写结果未知。请等待，或在顶栏读取状态 / 恢复。' }))
@@ -441,6 +464,15 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   const filename = activePath.split('/').at(-1) || '时间线'
   const duration = state.opened?.snapshot.document?.project?.duration_frames
   const fps = state.opened?.snapshot.document?.project?.fps
+  const currentPreviewSession = authorizedPreviewSession ?? previewSession
+  // Filter in the same render that observes an invalid binding. Cleanup can
+  // settle later and must never leave a previous window painted as ready.
+  const coverageAllowed = valid && !grantDead && grant.current === state.opened.grant &&
+    Date.now() < (grantDeadlines.current.get(state.opened.grant) ?? Infinity) && !state.loading && !storageBusy &&
+    !(frameOwner.ghost || frameOwner.edit.dirty || frameOwner.edit.busy || frameOwner.edit.unknown) &&
+    Number.isSafeInteger(frameValue) && frameValue >= 0 && frameValue < duration
+  const previewCoverage = !supportsWindow(state.opened) ? undefined : coverageAllowed ? windowMonitor.coverage({ project: activePath, sessionId, grant: state.opened.grant,
+    contentVersion: state.opened.snapshot.content_version, fps, duration, tabSignal: tab.signal, previewSession: currentPreviewSession }, windowState) : []
   function showProperties() {
     setTimelineFocus(false)
     setInspectorVisible(true)
@@ -477,7 +509,9 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       h('header', { className: 'fv-topbar' },
         h('span', { className: 'fv-brand' }, h(Icon, { name: 'film', size: 22 })),
         h('div', { className: 'fv-title' }, h('h2', { title: ready ? activePath : 'Framivra' }, ready ? filename : 'Framivra'), h('span', { className: 'fv-subtitle', title: ready ? '已保存视图 · 精确帧定位' : '时间线工作台' }, ready ? '已保存视图' : '时间线工作台')),
-        ready && !grantDead && !editUnsupported ? h(ManualEditor, { key: state.opened.grant, sessionId, opened: state.opened, result: state.result, selection, selected, frame: frameValue, tabSignal: tab.signal, call: control, onCommitted: refreshCommitted, onEditState: editState, onGrantDead: grantDied, onGestureReady: gestureReady, onUndoReady: undoReady, onQuickReady: quickReady, onEnableReady: enableReady, suspended: storageBusy || Boolean(state.loading), stale: !valid, historyRef: history }) : null,
+        ready && !grantDead && !editUnsupported ? h(ManualEditor, { key: state.opened.grant, sessionId, opened: state.opened, result: state.result, selection, selected, frame: frameValue, tabSignal: tab.signal, call: control, onCommitted: refreshCommitted, onEditState: editState, onGrantDead: grantDied,
+          beforeWrite: () => frameOwner.previewWindow?.reapBeforeEdit()?.then(reaped => reaped && grant.current === state.opened.grant),
+          afterWrite: () => frameOwner.previewWindow?.automatic.resumeAfterEdit(), onGestureReady: gestureReady, onUndoReady: undoReady, onQuickReady: quickReady, onEnableReady: enableReady, suspended: storageBusy || Boolean(state.loading), stale: !valid, historyRef: history }) : null,
         h(ToolButton, { icon: 'folder', label: '浏览工作区打开时间线', tooltip: '浏览工作区，打开时间线', 'aria-pressed': filesVisible, elementRef: filesButton, onClick: () => filesVisible && !timelineFocus ? closeFiles() : browseWorkspace() }),
         ready ? h(ToolButton, { icon: 'refresh', label: '刷新保存版本', onClick: () => void load(), disabled: state.loading || frameOwner.edit.busy }) : null,
         ready ? h(ToolButton, { icon: 'settings', label: '属性与编辑', 'aria-pressed': inspectorVisible, onClick: () => { setTimelineFocus(false); setInspectorVisible(value => !value) } }) : null,
@@ -490,12 +524,14 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       state.phase === 'loading' || state.loading ? h('p', { className: 'fv-notice', role: 'status' }, '正在通过 vtx 读取时间线…') : null,
       state.message ? h('p', { className: 'fv-notice', role: 'alert' }, state.message.split('\n')[0]) : null,
       grantDead ? h('p', { className: 'fv-notice', role: 'alert', style: { border: '1px solid currentColor', padding: 8 } }, `${GRANT_DEAD_MESSAGE}（${grantDead}）`) : null,
+      !valid || grantDead ? h(WindowRecovery, { owner: frameOwner }) : null,
       valid && (!state.result.coverage.complete || !state.opened.snapshot.coverage.complete) ? h('p', { className: 'fv-notice', role: 'alert' }, '存在未展开的外部素材；请在属性面板查看完整诊断。') : null,
       h('div', { className: 'fv-body' },
         h('div', { className: 'fv-upper' },
           filesVisible ? h(FileBrowser, { key: `${sessionId}:${browserEpoch}`, sessionId, tabSignal: tab.signal, call: control, selectedPath: ready ? activePath : undefined, onChoose: path => void load(false, path), onClose: closeFiles, recalibrate: browserRecalibrate, hostOps: state.opened?.host?.ops }) : null,
           h('main', { className: 'fv-monitor', 'aria-label': ready ? '画面预览' : '时间线启动区' },
-            ready ? (valid && !grantDead ? h('fieldset', { disabled: storageBusy, style: { display: 'contents' } }, h(ProgramMonitor, { key: state.opened.grant, suspended: storageBusy, owner: frameOwner, opened: state.opened, timeline: activePath, selectionDisplay, sessionId, frame: frameValue, blank: frame === '', fps, duration, onFrame: pin, selection, tabSignal: tab.signal, getDraftServices, call: control, transport, disclosureGroup })) : h('div', { className: 'fv-monitor-toolbar' }, transport)) :
+            ready ? (valid && !grantDead ? h('fieldset', { disabled: storageBusy, style: { display: 'contents' } }, h(ProgramMonitor, { key: state.opened.grant, suspended: storageBusy || Boolean(state.loading), owner: frameOwner, opened: state.opened, timeline: activePath, selectionDisplay, sessionId, frame: frameValue, blank: frame === '', fps, duration, onFrame: pin, selection, tabSignal: tab.signal, getDraftServices, call: control, transport, disclosureGroup, onGrantDead: grantDied, previewSession: currentPreviewSession, sessionControls })) : h('div', { className: 'fv-monitor-toolbar' }, transport,
+              sessionControls?.needsRevoke ? h('button', { type: 'button', disabled: sessionControls.pending, onClick: sessionControls.revoke }, sessionControls.failed ? '重试撤销自动预览授权' : '停止并撤销自动预览') : null)) :
               h('div', { className: 'fv-empty' }, h(Icon, { name: 'film', size: 32 }), h('h3', null, '从一条时间线开始'), h('p', null, '选择当前工作区中的时间线 JSON 文件，开始预览与剪辑。'),
                 h('div', { className: 'fv-start-actions' },
                   h('button', { className: 'fv-primary', type: 'button', onClick: browseWorkspace }, h(Icon, { name: 'folder', size: 17 }), '浏览工作区'),
@@ -512,7 +548,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
         ready ? h('section', { className: 'fv-timeline-pane', 'aria-label': '工程时间线' },
           state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请刷新保存版本。') : h(TimelineView, { key: state.opened.grant, compact: true, snapshot: state.opened.snapshot, result: state.result, hits: state.hits, frame: frameValue, onFrame: value => pin(String(value)), onSelect: pick, activeSelection: selection, selectionIntent, onGesture: canEditHere ? gesture?.callback : undefined, onGestureState: gestureState,
              gestureUnavailable: grantDead ? '请刷新时间线后再编辑。' : storageBusy ? '请等待空间操作结束。' : editUnsupported ? '当前环境仅支持只读时间线。' : gesture?.reason, onOpenEdits: canEditHere && (enableEdit || ['请先接管旧工程', '请打开历史与恢复'].includes(gesture?.reason)) ? (enableEdit ? () => { void enableEdit().catch(reportEditFailure) } : showHistory) : undefined, onOpenHistory: canEditHere ? showHistory : undefined, editActionLabel: enableEdit ? '启用编辑' : '历史与恢复',
-             onUndo: canEditHere ? undoEdit : undefined,
+             onUndo: canEditHere ? undoEdit : undefined, previewCoverage,
              focusTool: h(ToolButton, { icon: timelineFocus ? 'collapse' : 'expand', label: '轨道专注视图', tooltip: timelineFocus ? '恢复画面和时间线' : '暂时隐藏画面和侧栏，为轨道腾出整个工作区', 'aria-pressed': timelineFocus, onClick: () => setTimelineFocus(value => !value) }),
              selectionTools: valid ? h(SelectionSummary, { selection, selected, result: state.result, frame: frameValue, fps, onFrame: pin, onClear: clearSelection, onProperties: () => showProperties(), quick: canEditHere && quickEdit ? runQuick : undefined }) : null })) : null)))
 }

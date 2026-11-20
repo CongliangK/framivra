@@ -1,6 +1,8 @@
 /** Adapter only: timeline interpretation and selection belong exclusively to vtx. */
+import { createHash, randomBytes } from 'node:crypto'
 import { dirname, isAbsolute } from 'node:path'
-import { Readable } from 'node:stream'
+import { addAbortSignal, Readable } from 'node:stream'
+import { crc32, inflateSync } from 'node:zlib'
 import { boundedText, FRAME_WIRE_LIMIT } from './bounded.mjs'
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
 import { readConfiguration, isVolatileConfig, ConfigurationError } from './configuration.mjs'
@@ -16,7 +18,7 @@ export const fail = (code, message, status) => { throw new PreviewError(code, me
 
 /**
  * Host protocol/build identity used for verifiable client↔host negotiation.
- * `ops` lists every control op this build dispatches. A NEWER client on an
+ * `ops` lists supported control ops and the independent preview-window route. A NEWER client on an
  * OLDER running host gets BAD_GRANT for ops the old host never knew (its
  * grant gate runs before BAD_OPERATION); with this identity the client can
  * distinguish "host too old, refresh/restart" from a real authorization
@@ -27,9 +29,9 @@ export const HOST_PROTOCOL_OPS = [
   'authorize-write', 'revoke-write', 'invalidate-plan', 'cancel-write',
   'plan', 'commit', 'status', 'recover', 'adopt', 'undo', 'edit-view',
   'inspect', 'query', 'reference',
-  'storage-inspect', 'storage-plan', 'storage-clean', 'storage-cancel',
+  'storage-inspect', 'storage-plan', 'storage-clean', 'storage-cancel', 'preview-window',
 ]
-export const HOST_IDENTITY = { plugin: '0.2.6', protocol: 1, ops: HOST_PROTOCOL_OPS }
+export const HOST_IDENTITY = { plugin: '0.3.0', protocol: 1, ops: HOST_PROTOCOL_OPS }
 
 /**
  * Deterministic build fingerprint inputs — the single home for WHICH source
@@ -50,7 +52,7 @@ export const HOST_LIB_MODULES = ['configuration', 'kernel-config', 'kernel-manag
 export const CLIENT_MODULES = [
   'icons', 'icon-controls', 'editor-controls', 'viewport', 'timeline', 'manual',
   'selection', 'reference', 'draft-summary', 'frame', 'edit-review', 'settings', 'kernel-settings', 'draft-services',
-  'grant-lifecycle', 'official-draft', 'timecode', 'monitor', 'workbench', 'storage', 'index',
+  'grant-lifecycle', 'official-draft', 'timecode', 'monitor', 'preview-session', 'preview-session-access', 'workbench', 'storage', 'index',
 ]
 /** Stamp recipe: prefix + first 16 hex of sha256 over the per-file sha256
  *  digests of the modules above (joined with '\n'), in the listed order.
@@ -70,6 +72,283 @@ export function prepareGfxArgs(options) {
   if (!object(options) || Object.keys(options).some(key => !['prepareGfx', 'htmlTrust'].includes(key)) || (Object.hasOwn(options, 'prepareGfx') && typeof options.prepareGfx !== 'boolean')) fail('BAD_FRAME', 'prepareGfx must be an optional boolean; unknown frame options are forbidden')
   if (Object.hasOwn(options, 'htmlTrust') && (options.htmlTrust !== 'trusted-local-html' || options.prepareGfx !== true)) fail('HTML_TRUST_REQUIRED', 'Exact trusted-local-html consent requires prepareGfx=true', 403)
   return options.prepareGfx === true ? ['--prepare-gfx', ...(options.htmlTrust === 'trusted-local-html' ? ['--trust-html'] : [])] : []
+}
+
+const WINDOW_SCHEMA = 'framivra.timeline.preview-window/v1'
+const WINDOW_MEDIA_LIMIT = 5 * 1024 * 1024
+const WINDOW_DIAGNOSTICS = new Map([
+  ['plugins.unsupported', 'Audio/video window preview does not support active or declared plugins.'],
+  ['gfx.unsupported', 'Audio/video window preview cannot include or verify graphics.'],
+  ['subtitles.unsupported', 'Audio/video window preview requires inline subtitles.'],
+  ['snapshot.changed', 'The saved timeline changed; refresh and try again.'],
+  ['inputs.changed', 'Preview inputs or tools changed during rendering.'],
+  ['platform.unsupported', 'The installed core cannot render a window on this platform.'],
+  ['environment.unsupported', 'The installed render environment is not supported for window preview.'],
+  ['render.unsettled', 'The core could not confirm cleanup of its preview workspace.'],
+  ['render.process', 'An audio/video render or verification tool failed.'],
+  ['output.limit', 'The generated window exceeds the inline response limit.'],
+])
+const WINDOW_LAUNCHER = 'framivra.preview-window.fixed-wheel/v1'
+const windowDigest = value => typeof value === 'string' && value.length === 64 && /^[a-f0-9]{64}$/.test(value)
+
+function decodePreviewWindowCapabilities(text) {
+  const capability = decodeEnvelope(text, 'capabilities').capabilities.preview_window
+  if (capability?.schema !== WINDOW_SCHEMA || capability.inline_media !== true || capability.prepare_inputs !== true ||
+      capability.launcher !== WINDOW_LAUNCHER || !windowDigest(capability.wheel_sha256) || !windowDigest(capability.runtime_projection_sha256)) {
+    fail('WINDOW_UNSUPPORTED', 'The independent window launcher must advertise the fixed-wheel profile', 422)
+  }
+  // Bind only the known capability and pin fields, never arbitrary launcher output.
+  return Object.freeze({ schema: WINDOW_SCHEMA, inline_media: true, prepare_inputs: true, launcher: WINDOW_LAUNCHER,
+    wheel_sha256: capability.wheel_sha256, runtime_projection_sha256: capability.runtime_projection_sha256,
+    ...(capability.input_epoch === true ? { input_epoch: true } : {}),
+    ...(capability.warm_svg_media === true ? { warm_svg_media: true } : {}),
+    ...(capability.program_audio === true ? { program_audio: true } : {}) })
+}
+
+function decodePreviewWindow(text, start, version, capability, readWarmSvg, useProgramAudio) {
+  let value
+  try { value = parseJSON(text) } catch (error) {
+    if (error instanceof LosslessJSONError) throw error
+    fail('INVALID_JSON', 'vtx did not return complete preview-window JSON', 502)
+  }
+  return decodePreviewWindowValue(value, start, version, capability, readWarmSvg, useProgramAudio)
+}
+
+function decodePreviewWindowValue(value, start, version, capability, readWarmSvg, useProgramAudio = false) {
+  const mismatch = () => fail('PROTOCOL_MISMATCH', 'Invalid vtx preview-window/v1 receipt', 502)
+  if (!object(value) || value.schema !== WINDOW_SCHEMA || typeof value.ok !== 'boolean') mismatch()
+  if (!value.ok) {
+    if (!Array.isArray(value.diagnostics)) mismatch()
+    return { ok: false, diagnostics: value.diagnostics.slice(0, 8).map(item => {
+      const message = WINDOW_DIAGNOSTICS.get(item?.code)
+      return message ? { code: item.code, message } : { code: 'window.rejected', message: 'The core refused this audio/video window.' }
+    }) }
+  }
+  if (value.launcher !== capability.launcher || value.wheel_sha256 !== capability.wheel_sha256 || value.runtime_projection_sha256 !== capability.runtime_projection_sha256) {
+    fail('WINDOW_PROFILE_CHANGED', 'Window receipt did not match the approved fixed-wheel profile; reopen preview', 409)
+  }
+  if (readWarmSvg ? value.warm !== true : value.warm !== undefined && value.warm !== false) mismatch()
+  if (useProgramAudio ? value.program_audio !== true : Object.hasOwn(value, 'program_audio')) mismatch()
+  const requiresEpoch = capability.input_epoch === true || readWarmSvg || useProgramAudio
+  if (requiresEpoch && !(typeof value.input_epoch === 'string' && value.input_epoch.length === 71 && /^sha256:[0-9a-f]{64}$/.test(value.input_epoch))) mismatch()
+  if (value.content_version !== version || value.start !== start || !integer(value.end) || value.end <= start ||
+      !object(value.fps) || !integer(value.fps.num) || !value.fps.num || !integer(value.fps.den) || !value.fps.den ||
+      value.width !== 1920 || value.height !== 1080 || value.mime !== 'video/mp4' ||
+      value.audio_sample_rate !== 48000 || value.audio_channels !== 2 || !integer(value.byte_length) || value.byte_length === 0 ||
+      typeof value.sha256 !== 'string' || value.sha256.length !== 64 || !/^[a-f0-9]{64}$/.test(value.sha256)) mismatch()
+  if (value.byte_length > WINDOW_MEDIA_LIMIT) fail('WINDOW_MEDIA_LIMIT', 'Window media exceeds 5 MiB', 502)
+  if (typeof value.base64 !== 'string' || value.base64.length !== Math.ceil(value.byte_length / 3) * 4) mismatch()
+  const bytes = Buffer.from(value.base64, 'base64')
+  if (bytes.length !== value.byte_length || bytes.toString('base64') !== value.base64 || createHash('sha256').update(bytes).digest('hex') !== value.sha256) mismatch()
+  // The exact inline bytes are the only payload authority; do not retain or resolve any path.
+  return { ok: true, start, end: value.end, ...(requiresEpoch && { inputEpoch: value.input_epoch }),
+    ...(useProgramAudio && { programAudio: true }), fps: { num: value.fps.num, den: value.fps.den }, sha256: value.sha256, bytes }
+}
+
+const FIRST_FRAME_SCHEMA = 'framivra.preview-window.first-frame/v1'
+const PNG_SIGNATURE = Buffer.from('89504e470d0a1a0a', 'hex')
+const PNG_FORMAT = Buffer.from([8, 2, 0, 0, 0]) // RGB8, noninterlaced
+const PNG_SCANLINE = 1 + 1920 * 3, PNG_RAW_SIZE = 1080 * PNG_SCANLINE
+const firstFrameMismatch = () => fail('FIRST_FRAME_PROTOCOL', 'Invalid fixed-wheel provisional first-frame stream', 502)
+const sameFields = (value, fields) => object(value) && Object.keys(value).length === fields.length && fields.every(key => Object.hasOwn(value, key))
+const sameWindowProfile = (value, cap) => value.launcher === cap.launcher && value.wheel_sha256 === cap.wheel_sha256 && value.runtime_projection_sha256 === cap.runtime_projection_sha256
+
+const ARCHIVE_CAP_SCHEMA = 'framivra.preview-formal-archive.capabilities/v1'
+const ARCHIVE_SCHEMA = 'framivra.preview-formal-archive/v1'
+const ARCHIVE_PROFILE_FIELDS = ['launcher', 'wheel_sha256', 'runtime_projection_sha256']
+const ARCHIVE_REJECTIONS = new Map([
+  ['archive.selector_mismatch', ['ARCHIVE_SELECTOR_MISMATCH', 'The project, start frame, or saved version does not match the archive approval.']],
+  ['archive.inputs_mismatch', ['ARCHIVE_INPUTS_MISMATCH', 'The declared project inputs could not be verified against the archive approval.']],
+  ['archive.unavailable', ['ARCHIVE_UNAVAILABLE', 'The archive approval, media, or fixed-wheel deployment could not be verified.']],
+])
+
+function decodeFormalArchiveRejection(text, nonce) {
+  const invalid = () => fail('ARCHIVE_PROTOCOL', 'Invalid approved formal archive rejection', 502)
+  let value
+  try { value = JSON.parse(text) } catch { invalid() }
+  if (!sameFields(value, ['schema', 'ok', 'nonce', 'code']) || value.schema !== ARCHIVE_SCHEMA || value.ok !== false || value.nonce !== nonce) invalid()
+  const rejection = ARCHIVE_REJECTIONS.get(value.code)
+  // The fixed wheel emits compact ASCII JSON and one LF. Round-trip to reject
+  // duplicate fields and extra records, including anything carrying media.
+  if (!rejection || `${JSON.stringify(value)}\n` !== text) invalid()
+  return { rejection }
+}
+
+function decodeFormalArchiveCapability(text, cap) {
+  const value = parseJSON(text)
+  if (!sameFields(value, ['schema', 'available', ...ARCHIVE_PROFILE_FIELDS]) || value.schema !== ARCHIVE_CAP_SCHEMA ||
+      value.available !== true || !sameWindowProfile(value, cap)) {
+    fail('WINDOW_UNSUPPORTED', 'The fixed wheel did not separately qualify formal archive reads', 422)
+  }
+  return Object.freeze({ ...cap, formal_archive: Object.freeze({ version: 1 }) })
+}
+
+function decodeFormalArchive(text, frame, version, nonce, capability) {
+  const mismatch = () => fail('ARCHIVE_PROTOCOL', 'Invalid approved formal archive receipt', 502)
+  let value
+  try { value = parseJSON(text) } catch { mismatch() }
+  if (!sameFields(value, ['schema', 'ok', 'nonce', 'content_version', 'start', 'end', 'fps', 'width', 'height',
+    'audio_sample_rate', 'audio_channels', 'mime', 'sha256', 'byte_length', 'base64', 'manifest_sha256', ...ARCHIVE_PROFILE_FIELDS]) ||
+    value.schema !== ARCHIVE_SCHEMA || value.ok !== true || value.nonce !== nonce || value.content_version !== version ||
+    value.start !== frame || !integer(value.end) || value.end <= frame || !sameFields(value.fps, ['num', 'den']) ||
+    !integer(value.fps.num) || !value.fps.num || !integer(value.fps.den) || !value.fps.den ||
+    value.width !== 1920 || value.height !== 1080 || value.audio_sample_rate !== 48000 || value.audio_channels !== 2 || value.mime !== 'video/mp4' ||
+    !windowDigest(value.sha256) || !windowDigest(value.manifest_sha256) || !integer(value.byte_length) || !value.byte_length ||
+    !sameWindowProfile(value, capability)) mismatch()
+  if (value.byte_length > WINDOW_MEDIA_LIMIT) fail('ARCHIVE_MEDIA_LIMIT', 'Archive media exceeds 5 MiB', 502)
+  if (typeof value.base64 !== 'string' || value.base64.length !== Math.ceil(value.byte_length / 3) * 4) mismatch()
+  const bytes = Buffer.from(value.base64, 'base64')
+  if (bytes.length !== value.byte_length || bytes.toString('base64') !== value.base64 || createHash('sha256').update(bytes).digest('hex') !== value.sha256) mismatch()
+  return { start: frame, end: value.end, fps: value.fps, sha256: value.sha256, bytes }
+}
+
+function decodeFirstFrameCapability(text, cap) {
+  const value = parseJSON(text)
+  if (!object(value) || value.schema !== FIRST_FRAME_SCHEMA || value.available !== true || !sameWindowProfile(value, cap) ||
+      value.record_payload_limit_exclusive !== FRAME_WIRE_LIMIT) fail('WINDOW_UNSUPPORTED', 'The fixed wheel did not separately qualify the first-frame wire', 422)
+  return Object.freeze({ ...cap, first_frame: Object.freeze({ version: 1 }) })
+}
+
+function verifyFirstFramePng(bytes) {
+  if (!bytes.subarray(0, 8).equals(PNG_SIGNATURE)) firstFrameMismatch()
+  // The fixed wheel emits only IHDR, consecutive IDAT and IEND. Bound the
+  // inflater's output independently of the compressed bytes and check every CRC.
+  const compressed = Buffer.allocUnsafe(bytes.length)
+  let compressedLength = 0
+  for (let offset = 8; offset + 12 <= bytes.length;) {
+    const length = bytes.readUInt32BE(offset), data = offset + 8, end = data + length
+    if (end + 4 > bytes.length || crc32(bytes.subarray(offset + 4, end)) !== bytes.readUInt32BE(end)) firstFrameMismatch()
+    const kind = bytes.toString('latin1', offset + 4, data)
+    if (offset === 8) {
+      if (kind !== 'IHDR' || length !== 13 || bytes.readUInt32BE(data) !== 1920 || bytes.readUInt32BE(data + 4) !== 1080 ||
+          !bytes.subarray(data + 8, end).equals(PNG_FORMAT)) firstFrameMismatch()
+    } else if (kind === 'IDAT') {
+      bytes.copy(compressed, compressedLength, data, end)
+      compressedLength += length
+    } else if (kind === 'IEND' && length === 0 && end + 4 === bytes.length && compressedLength) {
+      const { buffer, engine } = inflateSync(compressed.subarray(0, compressedLength), { maxOutputLength: PNG_RAW_SIZE, info: true })
+      if (buffer.length !== PNG_RAW_SIZE || engine.bytesWritten !== compressedLength) firstFrameMismatch()
+      for (let row = 0; row < PNG_RAW_SIZE; row += PNG_SCANLINE) if (buffer[row] > 4) firstFrameMismatch()
+      return
+    } else firstFrameMismatch()
+    offset = end + 4
+  }
+  firstFrameMismatch()
+}
+
+function decodeFirstFrame(value, start, version, capability) {
+  if (!sameFields(value, ['schema', 'provisional', 'mime', 'frame', 'window', 'segment', 'fps', 'width', 'height', 'content_version',
+    'byte_length', 'sha256', 'base64', 'launcher', 'wheel_sha256', 'runtime_projection_sha256']) ||
+    value.schema !== FIRST_FRAME_SCHEMA || value.provisional !== true || value.mime !== 'image/png' || !sameWindowProfile(value, capability) ||
+    value.frame !== start || value.content_version !== version || value.width !== 1920 || value.height !== 1080) firstFrameMismatch()
+  const { window, segment, fps } = value
+  // Exact cut placement is signed by the fixed wheel under its effective
+  // segment configuration; the Host checks the interval relationship here.
+  if (!Array.isArray(window) || window.length !== 2 || window[0] !== start || !integer(window[1]) || window[1] <= start ||
+      !Array.isArray(segment) || segment.length !== 2 || segment[0] !== start || !integer(segment[1]) || segment[1] <= start || segment[1] > window[1] ||
+      !sameFields(fps, ['num', 'den']) || !integer(fps.num) || !fps.num || !integer(fps.den) || !fps.den ||
+      !integer(value.byte_length) || !value.byte_length || !windowDigest(value.sha256) ||
+      typeof value.base64 !== 'string' || value.base64.length !== Math.ceil(value.byte_length / 3) * 4) firstFrameMismatch()
+  const bytes = Buffer.from(value.base64, 'base64')
+  if (bytes.length !== value.byte_length || bytes.toString('base64') !== value.base64 || createHash('sha256').update(bytes).digest('hex') !== value.sha256) firstFrameMismatch()
+  verifyFirstFramePng(bytes)
+  return { start, end: window[1], fps, bytes, sha256: value.sha256 }
+}
+
+async function readFirstFrameStream(stdout, signal, { nonce, capability, frame, version, accept, clear }) {
+  let used = 0, buffer = Buffer.alloc(5), kind, first, result
+  try {
+    for await (const chunk of addAbortSignal(signal, stdout)) {
+      if (!Buffer.isBuffer(chunk)) firstFrameMismatch()
+      for (let offset = 0; offset < chunk.length;) {
+        if (result) firstFrameMismatch()
+        const length = Math.min(buffer.length - used, chunk.length - offset)
+        chunk.copy(buffer, used, offset, offset + length)
+        used += length; offset += length
+        if (used !== buffer.length) continue
+        used = 0
+        if (!kind) {
+          kind = buffer[0]
+          const size = buffer.readUInt32BE(1)
+          if ((kind !== 70 && kind !== 87) || !size || size >= FRAME_WIRE_LIMIT || (kind === 70 && first)) firstFrameMismatch()
+          buffer = Buffer.allocUnsafe(size)
+          continue
+        }
+        const text = buffer.toString('ascii'), wire = parseJSON(text)
+        // The launcher uses compact ASCII JSON (ensure_ascii=True). A native
+        // round-trip also rejects duplicate keys and high-bit byte aliasing.
+        const canonical = stringifyJSON(wire).replace(/[\u007f-\uffff]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`)
+        if (!buffer.equals(Buffer.from(canonical, 'ascii')) || !sameFields(wire, ['nonce', 'result']) || wire.nonce !== nonce || !object(wire.result)) firstFrameMismatch()
+        if (kind === 70) {
+          const image = decodeFirstFrame(wire.result, frame, version, capability)
+          first = { end: image.end, fps: image.fps }
+          accept(image)
+        } else {
+          result = decodePreviewWindowValue(wire.result, frame, version, capability, false)
+          if (!result.ok) clear()
+          else if (!first || result.end !== first.end || result.fps.num !== first.fps.num || result.fps.den !== first.fps.den) firstFrameMismatch()
+        }
+        buffer = Buffer.alloc(5); kind = undefined
+      }
+    }
+    if (stdout.readableEnded !== true || kind || used || !result) firstFrameMismatch()
+    return result
+  } catch (error) {
+    clear()
+    signal.throwIfAborted()
+    if (error instanceof PreviewError || error instanceof LosslessJSONError) throw error
+    firstFrameMismatch() // Do not expose bytes, parser errors, zlib diagnostics, or process errors.
+  }
+}
+
+/** A routing predicate over the pinned inspect/v1 document, not a render
+ *  validator or a cache selector. Only the fixed wheel can select a pack. */
+export function hitsWarmSvgWindow(document, start) {
+  const { project, video_tracks: tracks } = document
+  if (!Array.isArray(tracks) || !integer(project?.duration_frames) || start >= project.duration_frames) return false
+  const fps = JSON.isRawJSON(project.fps) ? Number(project.fps.rawJSON) : project.fps
+  // All inspect-validated decimal FPS aliases and their exact NTSC rates
+  // have the same ceiling; fractional string labels need the denominator.
+  const [num, den = 1] = typeof fps === 'string' ? fps.split('/').map(Number) : [fps]
+  const frames = Math.ceil(num / den)
+  if (!Number.isSafeInteger(frames) || frames <= 0) return false
+  const end = start + Math.min(project.duration_frames - start, frames)
+  let hits = 0
+  for (const track of tracks) {
+    if (typeof track?.kind !== 'string' || !Array.isArray(track.clips)) return false
+    if (track.kind !== 'gfx') continue
+    for (const clip of track.clips) {
+      if (clip?.format !== 'svg-sequence' || !integer(clip.dst_in) || !integer(clip.dur) || clip.dur === 0 ||
+          clip.dst_in > project.duration_frames - clip.dur) return false
+      if (clip.dst_in < end && start < clip.dst_in + clip.dur && ++hits > 1) return false
+    }
+  }
+  return hits === 1
+}
+
+function matchesSavedRate(fps, num, den) {
+  const stored = JSON.isRawJSON(fps) ? Number(fps.rawJSON) : fps
+  // inspect/v1 already validates allowed FPS labels. Map only their wire aliases (NTSC is exact N/1001).
+  return typeof stored === 'string' ? stored === `${num}/${den}`
+    : Number.isInteger(stored) ? den === 1 && stored === num : den === 1001 && stored === Math.round(num / den * 1000) / 1000
+}
+
+export function validatePreviewWindowRange(receipt, project) {
+  const { start, end, fps: { num, den } } = receipt
+  const { duration_frames: duration, fps } = project ?? {}
+  if (!matchesSavedRate(fps, num, den) || !integer(duration) || start >= duration || end !== start + Math.min(duration - start, Math.ceil(num / den))) {
+    fail('PROTOCOL_MISMATCH', 'vtx receipt does not cover the exact saved preview window', 502)
+  }
+}
+
+export function validateFormalArchiveRange({ start, end, fps: { num, den } }, project) {
+  const { duration_frames: duration, fps } = project ?? {}
+  // Canonical NTSC (rather than another fraction that rounds to the same label).
+  const canonicalRate = den === 1 || (den === 1001 && [24000, 30000, 48000, 60000, 120000].includes(num))
+  if (!canonicalRate || !matchesSavedRate(fps, num, den) || !integer(duration) || end > duration ||
+      BigInt(end - start) * BigInt(den) > 4n * BigInt(num)) {
+    fail('ARCHIVE_PROTOCOL', 'Archive interval or rate does not match the current saved project', 502)
+  }
 }
 
 export function queryArgs(query = {}) {
@@ -235,7 +514,7 @@ export class TimelineReader {
     slot.timer = setTimeout(() => controller.abort(), 4000)
     slot.timer.unref?.()
     try {
-      await this.command(executable, timeline, ['store', 'edit-view', '--request-stdin'], signal, undefined, undefined, true, false, snapshot, owner, { prime: slot, beforeSpawn })
+      await this.command(executable, timeline, ['store', 'edit-view', '--request-stdin'], signal, undefined, undefined, true, false, snapshot, owner, { warm: { prime: slot, beforeSpawn } })
     } finally {
       if (!slot.handle) {
         this.detachIdle(slot)
@@ -270,6 +549,18 @@ export class TimelineReader {
     if (!isAbsolute(path)) fail('BAD_EXECUTABLE', 'Resolver returned a nonabsolute executable', 502)
     return path
   }
+  async windowExecutable(signal, snapshot) {
+    const selected = snapshot.previewWindowExecutable
+    if (!selected) fail('WINDOW_UNSUPPORTED', 'No independent window launcher is configured', 422)
+    try {
+      const executable = await this.subprocess.resolveExecutable(selected, { PATH: snapshot.trustedPath }, signal)
+      if (executable !== selected || !isAbsolute(executable)) fail('WINDOW_UNSUPPORTED', 'The window launcher must resolve to the configured absolute path', 422)
+      return executable
+    } catch (error) {
+      if (error?.name === 'SubprocessExecutableNotFoundError') fail('WINDOW_UNSUPPORTED', 'The configured window launcher is not executable', 422)
+      throw error
+    }
+  }
   async read(executable, timeline, operation, query, signal, snapshot, owner) {
     if (!['inspect', 'query', 'reference', 'capabilities'].includes(operation)) fail('BAD_OPERATION', 'Only read operations are supported')
     const args = operation === 'query' ? queryArgs(query) : operation === 'reference' ? referenceArgs(query) : []
@@ -283,6 +574,59 @@ export class TimelineReader {
       if (!object(value) || value.schema !== 'framivra.timeline.frame/v1' || value.operation !== 'frame' || typeof value.ok !== 'boolean' || !Array.isArray(value.diagnostics)) fail('PROTOCOL_MISMATCH', 'Official frame/v1 envelope required', 502)
       return value
     }, undefined, true, true, snapshot, owner)
+  }
+  async windowCapabilities(executable, timeline, signal, snapshot, owner) {
+    return this.command(executable, timeline, ['capabilities'], signal, decodePreviewWindowCapabilities, undefined, false, false, snapshot, owner, { isolatedWindow: true })
+  }
+  async firstFrameCapabilities(executable, capability, signal, snapshot, owner) {
+    // The ordinary capabilities receipt cannot claim this transport. Probe
+    // exactly the standalone launcher command without a project argument.
+    return this.command(executable, undefined, ['--first-frame-capabilities'], signal,
+      text => decodeFirstFrameCapability(text, capability), undefined, false, true, snapshot, owner, { isolatedWindow: true })
+  }
+  async formalArchiveCapabilities(executable, capability, signal, snapshot, owner) {
+    return this.command(executable, undefined, ['--formal-archive-capabilities'], signal,
+      text => decodeFormalArchiveCapability(text, capability), undefined, false, true, snapshot, owner, { isolatedWindow: true })
+  }
+  async previewFormalArchive({ executable, capability }, timeline, frame, version, signal, snapshot, owner) {
+    if (!integer(frame) || !/^sha256:[a-f0-9]{64}$/.test(version) || capability.formal_archive?.version !== 1) {
+      fail('ARCHIVE_DENIED', 'A qualified fixed wheel and exact saved version are required', 403)
+    }
+    const nonce = randomBytes(16).toString('hex')
+    try {
+      const result = await this.command(executable, timeline, ['timeline', 'preview-formal-archive', '--frame', String(frame),
+        `--expected-content-version=${version}`, '--read-approved-archive', `--nonce=${nonce}`], signal,
+        (text, exitCode) => exitCode === 1 ? decodeFormalArchiveRejection(text, nonce) : decodeFormalArchive(text, frame, version, nonce, capability),
+        undefined, false, true, snapshot, owner, { isolatedWindow: true })
+      // command only returns after the managed range is confirmed reaped.
+      if (result.rejection) fail(...result.rejection, 409)
+      return result
+    } catch (error) {
+      if (error?.message?.startsWith('BODY_LIMIT:')) fail('ARCHIVE_WIRE_LIMIT', 'Archive response exceeds 8 MiB including envelope/newline', 502)
+      throw error
+    }
+  }
+  async previewWindowFirstFrame({ executable, capability }, timeline, frame, version, signal, snapshot, owner, { accept, clear }) {
+    if (!integer(frame) || !/^sha256:[a-f0-9]{64}$/.test(version) || capability.first_frame?.version !== 1 || capability.input_epoch !== true) {
+      fail('FIRST_FRAME_DENIED', 'A qualified fixed wheel and exact saved version are required', 403)
+    }
+    const nonce = randomBytes(16).toString('hex')
+    return this.command(executable, timeline, ['timeline', 'preview-window-first-frame', '--frame', String(frame), `--expected-content-version=${version}`,
+      '--render', '--include-media', '--prepare-inputs', `--nonce=${nonce}`], signal, undefined, undefined, true,
+      { nonce, capability, frame, version, accept, clear }, snapshot, owner, { isolatedWindow: true })
+  }
+  async previewWindow({ executable, capability }, timeline, frame, version, signal, snapshot, owner, readWarmSvg = false, useProgramAudio = false) {
+    if (!integer(frame) || !/^sha256:[a-f0-9]{64}$/.test(version)) fail('BAD_WINDOW', 'Exact saved version and integer pin required')
+    if (readWarmSvg && capability.warm_svg_media !== true) fail('WARM_SVG_DENIED', 'The qualified fixed wheel did not advertise warm SVG media', 403)
+    if (useProgramAudio && capability.program_audio !== true) fail('PROGRAM_AUDIO_DENIED', 'The qualified fixed wheel did not advertise program audio', 403)
+    try {
+      return await this.command(executable, timeline, ['timeline', 'preview-window', '--frame', String(frame), `--expected-content-version=${version}`,
+        '--render', '--include-media', '--prepare-inputs', ...(readWarmSvg ? ['--read-warm-svg'] : []), ...(useProgramAudio ? ['--use-program-audio'] : [])], signal,
+        text => decodePreviewWindow(text, frame, version, capability, readWarmSvg, useProgramAudio), undefined, true, true, snapshot, owner, { isolatedWindow: true })
+    } catch (error) {
+      if (error?.message?.startsWith('BODY_LIMIT:')) fail('WINDOW_WIRE_LIMIT', 'Window response exceeds 8 MiB including envelope/newline', 502)
+      throw error
+    }
   }
   /**
    * Reap children, optionally scoped to one owner. Cancellation passes the
@@ -339,9 +683,9 @@ export class TimelineReader {
       const result = parseJSON(text)
       if (result?.schema !== 'framivra.timeline.store/v1' || typeof result.ok !== 'boolean') fail('PROTOCOL_MISMATCH', 'Installed vtx store/v1 required', 502)
       return result
-    }, input, true, undefined, snapshot, owner, operation === 'edit-view' ? { writeGrant, beforeSpawn } : undefined)
+    }, input, true, undefined, snapshot, owner, operation === 'edit-view' ? { warm: { writeGrant, beforeSpawn } } : undefined)
   }
-  async command(executable, timeline, args, signal, decode, input, business = false, streaming = false, snapshot, owner, warm) {
+  async command(executable, timeline, args, signal, decode, input, business = false, streaming = false, snapshot, owner, { warm, isolatedWindow = false } = {}) {
     signal = AbortSignal.any([signal, this.lifecycle.signal])
     signal.throwIfAborted()
     // One snapshot per command: a caller-supplied snapshot is compared against
@@ -358,7 +702,8 @@ export class TimelineReader {
       if (config.fingerprint !== snapshot.fingerprint) fail('CONFIG_CHANGED', 'Host plugin configuration changed; reopen this preview and re-authorize', 409)
       config = snapshot
     } else config = this.snapshotConfig()
-    if (config.vtxConfigFile) {
+    if (isolatedWindow && executable !== config.previewWindowExecutable) fail('CONFIG_CHANGED', 'The configured independent window launcher changed; reopen preview', 409)
+    if (!isolatedWindow && config.vtxConfigFile) {
       if (typeof this.validateConfigSelection !== 'function') fail('CONFIG_TRUST_REQUIRED', 'Explicit VTX_CONFIG requires Host path trust validation', 403)
       try { await this.validateConfigSelection(config, signal) }
       catch (error) {
@@ -374,6 +719,8 @@ export class TimelineReader {
       if (this.snapshotConfig().fingerprint !== config.fingerprint) fail('CONFIG_CHANGED', 'Host configuration changed during identity validation', 409)
     }
     signal.throwIfAborted()
+    const framed = typeof streaming === 'object' ? streaming : undefined
+    const archiveRead = args[0] === 'timeline' && args[1] === 'preview-formal-archive'
     const prime = warm?.prime
     if (prime && this.idleEditView !== prime) return
     const slot = this.idleEditView
@@ -384,11 +731,11 @@ export class TimelineReader {
     // throwing end() is ambiguous: use the SAME done/cleanup path, never spawn a fallback.
     if (take) { this.idleEditView = undefined; slot.state = 'taken'; this.detachIdle(slot) }
     const handle = take ? slot.handle : this.subprocess.spawn({
-      argv: [executable, '-t', timeline, ...args],
+      argv: [executable, ...(timeline === undefined ? [] : ['-t', timeline]), ...args],
       cwd: dirname(executable), // Never execute Python/imports from an untrusted project cwd.
       stdio: { stdin: prime ? 'pipe' : input === undefined ? 'ignore' : { data: input }, stdout: streaming ? 'pipe' : { maxBytes: 8 * 1024 * 1024 }, stderr: { maxBytes: 16 * 1024 } },
       graceMs: 1000, signal,
-      env: { PATH: config.trustedPath, VTX_CONFIG: config.vtxConfigFile || undefined, PYTHONDONTWRITEBYTECODE: '1', PYTHONSAFEPATH: '1', PYTHONPATH: undefined, PYTHONHOME: undefined },
+      env: { PATH: config.trustedPath, VTX_CONFIG: isolatedWindow ? undefined : config.vtxConfigFile || undefined, PYTHONDONTWRITEBYTECODE: '1', PYTHONSAFEPATH: '1', PYTHONPATH: undefined, PYTHONHOME: undefined },
     })
     this.active.set(handle, undefined)
     this.spawnKinds.set(handle, prime ? 'store-idle' : spawnKind(args))
@@ -420,28 +767,44 @@ export class TimelineReader {
       if (take) handle.stdin.end(input)
       if (streaming && !handle.stdout) fail('FRAME_STREAM_UNSUPPORTED', 'Public provider did not expose the requested owner stdout pipe', 502)
       const [outcome, streamed] = await untilAborted(Promise.all([
-        take ? Promise.race([handle.done, slot.stdinFailure]) : handle.done,
-        streaming ? boundedText({ headers: new Headers(), body: Readable.toWeb(handle.stdout) }, FRAME_WIRE_LIMIT, signal) : undefined,
+        framed ? handle.done.then(outcome => {
+          if (outcome.exitCode !== 0 || outcome.signal !== null) framed.clear()
+          if (outcome.signal !== null || ![0, 1].includes(outcome.exitCode)) fail('CLI_FAILED', 'The fixed wheel did not exit normally', 502)
+          return outcome
+        }) : take ? Promise.race([handle.done, slot.stdinFailure]) : handle.done,
+        framed ? readFirstFrameStream(handle.stdout, signal, framed)
+          : streaming ? boundedText({ headers: new Headers(), body: Readable.toWeb(handle.stdout) }, FRAME_WIRE_LIMIT, signal, { preserveBOM: archiveRead }) : undefined,
       ]), signal)
       signal.throwIfAborted()
-      if (outcome.exitCode !== 0 && !(business && outcome.exitCode === 1)) {
+      if (framed) {
+        if ((outcome.exitCode === 0) !== streamed.ok) firstFrameMismatch()
+        return streamed
+      }
+      const archive = args[0] === '--formal-archive-capabilities' || archiveRead
+      if ((archive && outcome.signal !== null) || (outcome.exitCode !== 0 && !((business || archiveRead) && outcome.exitCode === 1))) {
         const error = new PreviewError(outcome.exitCode === 2 ? 'CLI_UNSUPPORTED' : 'CLI_FAILED',
           outcome.exitCode === 2 ? 'Installed vtx does not support this read command' : 'vtx rejected this timeline or failed', 502)
-        const diagnostic = handle.collected.stderr?.readFrom(0)
-        error.details = { exitCode: outcome.exitCode, stderr: diagnostic?.text ?? '', stderr_lossy: diagnostic?.lossy ?? false }
-        const output = handle.collected.stdout?.readFrom(0)
-        if (output && !output.lossy) {
-          try { error.details.diagnostics = parseJSON(output.text).diagnostics } catch { /* Retain stderr when error JSON is absent. */ }
+        if (!isolatedWindow) {
+          const diagnostic = handle.collected.stderr?.readFrom(0)
+          error.details = { exitCode: outcome.exitCode, stderr: diagnostic?.text ?? '', stderr_lossy: diagnostic?.lossy ?? false }
+          const output = handle.collected.stdout?.readFrom(0)
+          if (output && !output.lossy) {
+            try { error.details.diagnostics = parseJSON(output.text).diagnostics } catch { /* Retain stderr when error JSON is absent. */ }
+          }
         }
         throw error
       }
       const output = streaming ? { text: streamed, lossy: false } : handle.collected.stdout?.readFrom(0)
       if (!output || output.lossy) fail('TRUNCATED_JSON', 'vtx JSON exceeded the 8 MiB read limit; refusing truncated preview', 502)
-      const result = decode(output.text)
+      const result = archiveRead ? decode(output.text, outcome.exitCode) : decode(output.text)
       if (business && (outcome.exitCode === 0) !== result.ok) fail('PROTOCOL_MISMATCH', 'Store exit/envelope mismatch', 502)
       return result
+    } catch (error) {
+      framed?.clear()
+      throw error
     } finally {
-      await this.cleanup(handle)
+      try { await this.cleanup(handle) }
+      catch (error) { framed?.clear(); throw error }
       signal.throwIfAborted()
     }
   }
@@ -493,7 +856,7 @@ export class TimelineReader {
 function spawnKind(args) {
   if (args[0] === 'storage') return args[1] === 'clean' ? 'storage-clean' : 'storage-read'
   if (args[0] === 'store') return args[1] === 'capabilities' ? 'store-capabilities' : 'store'
-  if (args[0] === 'timeline' && args[1] === 'frame') return 'frame'
+  if (args[0] === 'timeline' && ['frame', 'preview-window', 'preview-window-first-frame', 'preview-formal-archive'].includes(args[1])) return 'frame'
   return 'read'
 }
 
