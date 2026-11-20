@@ -295,29 +295,35 @@ test('whole-timeline Host lease is separate, canonical, and freshness-fenced on 
 test('another open preview taking ownership during authorization prevents whole-timeline mint', { ...linuxWindow, timeout: 2500 }, async t => {
   const beforeFinal = Promise.withResolvers(), finishAuthorization = Promise.withResolvers()
   const started = Promise.withResolvers(), finishWindow = Promise.withResolvers()
+  let expectInspect = false, inspected = false
   const b = await bench({ windowCapability: { ...windowCapability, input_epoch: true },
     windowResult: value => ({ ...value, input_epoch: nextVersion }),
+    inspectHandle() { if (expectInspect) inspected = true },
     windowHandle(spec, text) {
       started.resolve()
       return { stdout: Readable.from([Buffer.from(text)]), done: finishWindow.promise, terminate() {}, waitForExit: async () => true }
     } })
   t.after(async () => { finishAuthorization.resolve(); finishWindow.resolve({ exitCode: 0 }); await b.host.dispose() })
   const other = await (await b.control({ op: 'open', timeline: 'timeline.json' })).json()
-  const stat = b.fs.stat.bind(b.fs), startAt = b.calls.length
-  let blocked = false
-  b.fs.stat = async (...args) => {
-    if (!blocked && b.calls.slice(startAt).some(call => call.argv[4] === 'inspect')) {
-      blocked = true
+  const stat = b.fs.stat.bind(b.fs)
+  b.fs.stat = async (target, signal) => {
+    // Fire after the authoritative inspect has returned and its child has
+    // been reaped; an ordinary read still holding ownership would mask the race.
+    if (expectInspect && inspected && target.targetKey === '/workspace/timeline.json') {
+      expectInspect = false
       beforeFinal.resolve()
       await finishAuthorization.promise
     }
-    return stat(...args)
+    return stat(target, signal)
   }
+  expectInspect = true
   const authorizing = b.control({ op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 28, contentVersion: version,
     authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' })
-  await beforeFinal.promise
+  const earlyAuthorization = await Promise.race([beforeFinal.promise, authorizing])
+  if (earlyAuthorization) assert.fail(`Authorization skipped the final checkpoint: ${await earlyAuthorization.text()}`)
   const competing = b.window({ grant: other.grant })
-  await started.promise
+  const earlyCompeting = await Promise.race([started.promise, competing])
+  if (earlyCompeting) assert.fail(`Competing worker did not start: ${await earlyCompeting.text()}`)
   finishAuthorization.resolve()
   const refused = await authorizing
   assert.equal(refused.status, 409)

@@ -811,9 +811,9 @@ export function createPreviewHost(ctx, config = {}) {
       if (['authorize-write', 'revoke-write', 'invalidate-plan', 'cancel-write', 'plan', 'commit', 'status', 'recover', 'adopt', 'undo', 'edit-view'].includes(data.op)) {
         const bookkeeping = ['revoke-write', 'invalidate-plan'].includes(data.op)
         const recovery = ['status', 'recover', 'cancel-write'].includes(data.op)
-        if (!bookkeeping && (frameOwners.size || (!recovery &&
-            (automatic.activeFor(grant.session, true) || automatic.activeProgramForProject(grant.project))))) {
-          fail('FRAME_BUSY', 'Cancel preview and confirm actual process reaping before semantic operations', 409)
+        if (!bookkeeping && frameOwners.size) fail('FRAME_BUSY', 'Cancel the frame and confirm actual process reaping before semantic operations', 409)
+        if (!bookkeeping && !recovery && (automatic.activeFor(grant.session, true) || automatic.activeProgramForProject(grant.project))) {
+          fail('FRAME_BUSY', 'Stop whole-timeline preview before semantic operations', 409)
         }
         semanticAdmission++
         try { return await editControl(data, grant, hold.signal, cleanup) }
