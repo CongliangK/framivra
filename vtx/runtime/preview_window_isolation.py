@@ -398,7 +398,7 @@ def execute(stack, path, files, start, version, prepare_fingerprint, bytes_limit
         env['TMPDIR'] = str(scratch)
     for key, val in sorted(env.items()):
         argv.extend(('--setenv', key, val))
-    fds, guards, inputs = [], [], {}, {}
+    fds, guards, inputs = [], [], {}
 
     def bind(src, dest, *, directory=False, project_file=False):
         fd, guard = _pin_binding(stack, src, root if project_file else src.parent,
