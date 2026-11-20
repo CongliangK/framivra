@@ -887,6 +887,7 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
 
     def test_owned_producer_rebuilds_corrupt_frame_but_not_aliased_cache(self):
         from vtx.render.gfx_svg_win_input import WindowsPathAlias
+        from vtx.render.gfx_svg_win_publish import anchored
         from vtx.render.gfx_svg_win_runtime import _WindowsRasterRuntime
         from vtx.render import gfx_svg_win_shell as shell
 
@@ -931,6 +932,13 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
             self.assertEqual(marker.read_bytes(), gfx_svg.canonical(certified))
             render.assert_not_called()
             alias.unlink()
+            with anchored(page) as directory, directory.open_read(other.name):
+                with self.assertRaises(OSError) as conflict:
+                    runtime.render_page(ctx, clip, record)
+                self.assertEqual(conflict.exception.winerror, 32)
+            self.assertEqual(marker.read_bytes(), gfx_svg.canonical(certified))
+            render.assert_not_called()
+            marker.write_bytes(b'[' * 10000 + b']' * 10000)
             self.assertFalse(runtime.render_page(ctx, clip, record))
             self.assertEqual(frame.read_bytes(), image)
             self.assertTrue(runtime.render_page(ctx, clip, record))

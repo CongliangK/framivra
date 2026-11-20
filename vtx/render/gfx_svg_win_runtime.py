@@ -128,7 +128,7 @@ class _WindowsRasterRuntime:
     def _certified_frames(page, marker, record, key):
         try:
             hashes = svg.verify_completion(json.loads(marker), record, record['frame_count'], key)
-        except ValueError as error:
+        except (ValueError, RecursionError) as error:
             raise _CorruptCache('Windows SVG cache completion record is invalid') from error
         for index, expected in enumerate(hashes):
             name = f'f{index:04d}.png'
@@ -192,22 +192,18 @@ class _WindowsRasterRuntime:
                     for _ in self._certified_frames(page, marker, record, key):
                         pass
                 except _CorruptCache:
-                    # Accept only bad or missing content as a miss. Precheck all
-                    # destinations before invalidating the current marker; alias
-                    # and sharing errors must not authorize a repair.
-                    for index in range(count):
-                        try:
-                            with page.open_read(f'f{index:04d}.png') as (_, size):
-                                if size > _PNG_LIMIT:
-                                    raise ValueError('Windows SVG cache destination exceeds byte budget')
-                        except FileNotFoundError:
-                            pass
-                    page.remove(svg.COMPLETE_FILE)
+                    pass
                 else:
                     self.verify()
                     c.verify_inputs('gfx')
                     return True
 
+            # Refuse aliases and known sharing conflicts even when a previous
+            # attempt left no marker. No replacement precedes this precheck.
+            for index in range(count):
+                page.require_replaceable(f'f{index:04d}.png', _PNG_LIMIT)
+            if marker is not None:
+                page.remove(svg.COMPLETE_FILE)
             self._check_font_directory()
             if self.staged:
                 try:
