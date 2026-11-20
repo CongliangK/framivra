@@ -23,7 +23,7 @@ import hashlib, json, math, os, shutil, struct, sys, tempfile, unittest, wave
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
-from contextlib import contextmanager, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 import io
 
 REPO = Path(__file__).resolve().parents[2]
@@ -124,6 +124,74 @@ class TestMixAudioChain(unittest.TestCase):
         mix_audio_wav(c, c.out / "audio.wav")
         self.assertEqual(len(c.calls), 1, "dry 跳过测量遍，只打印输出命令")
         self.assertIn(f",volume={0.0:+.2f}dB,aformat=sample_fmts=s16,{ALIMITER}[aout]", " ".join(c.calls[0]))
+
+
+class TestWindowsAudioGraphTransport(unittest.TestCase):
+    def test_utf16_argv_includes_quoting_and_terminator(self):
+        self.assertEqual(stages._windows_audio_argument_units(['ffmpeg', '😀 x']), 14)
+
+    def test_long_graph_uses_exact_bytes_during_both_passes_and_removes_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            c = _FakeCtx(root, stderr_script=('I: -20.5 LUFS',))
+            files = []
+            chain = 'x' * 33000
+            tail = ',volume=+6.50dB,aformat=sample_fmts=s16,' + ALIMITER + '[aout]'
+            expected = [chain + ',ebur128=framelog=quiet[amet]', chain + tail]
+
+            run = c.run
+
+            def consume(cmd):
+                i = cmd.index('-/filter_complex')
+                self.assertEqual(cmd[:i], ['ffmpeg', '-v', 'info' if not files else 'error'])
+                path = Path(cmd[i + 1])
+                self.assertEqual(path.read_bytes(), expected[len(files)].encode('utf-8'))
+                files.append(path)
+                return run(cmd)
+
+            with mock.patch.object(stages, '_audio_graph', return_value=(
+                    ['ffmpeg', '-v', 'error'], [chain], 1, False)), \
+                 mock.patch.object(c, 'run', side_effect=consume), \
+                 mock.patch.object(stages.sys, 'platform', 'win32'):
+                self.assertEqual(mix_audio_wav(c, c.out / 'audio.wav'), (6.5, -20.5, 1, False))
+            self.assertEqual(len(files), 2)
+            self.assertTrue(all(not p.parent.exists() for p in files))
+
+    def test_budget_accounts_for_atomic_destination_expansion(self):
+        graph = 'x' * 32600
+        c = SimpleNamespace(dry=False)
+        target = Path('expanded') / ('x' * 180) / 'audio.wav'
+        seen = []
+
+        def run(cmd):
+            index = cmd.index('-/filter_complex')
+            path = Path(cmd[index + 1])
+            self.assertEqual(path.read_bytes(), graph.encode('utf-8'))
+            self.assertEqual(cmd[-1], 'out/audio.wav')
+            seen.append(path)
+
+        c.run = run
+        with mock.patch.object(stages.sys, 'platform', 'win32'), \
+             mock.patch.object(stages.recovery, 'media_output', return_value=target):
+            stages._run_audio_graph(c, ['ffmpeg'], graph, ['out/audio.wav'])
+        self.assertEqual(len(seen), 1)
+        self.assertFalse(seen[0].exists())
+
+    def test_oversized_input_argv_fails_before_run_and_dry_run_writes_nothing(self):
+        c = SimpleNamespace(dry=False, run=mock.Mock())
+        inputs = ['ffmpeg', '-i', 'x' * 33000]
+        with mock.patch.object(stages.sys, 'platform', 'win32'), redirect_stderr(io.StringIO()) as error:
+            with self.assertRaises(SystemExit) as raised:
+                stages._run_audio_graph(c, inputs, 'anull', ['-'])
+            self.assertEqual(raised.exception.code, 1)
+            self.assertIn('命令行长度上限', error.getvalue())
+            c.run.assert_not_called()
+        c.dry = True
+        with mock.patch.object(stages.sys, 'platform', 'win32'), \
+             mock.patch.object(stages.tempfile, 'TemporaryDirectory') as temp:
+            stages._run_audio_graph(c, inputs, 'anull', ['-'])
+        temp.assert_not_called()
+        c.run.assert_called_once_with([*inputs, '-filter_complex', 'anull', '-'])
 
 
 class TestAudioDigestStreaming(unittest.TestCase):
