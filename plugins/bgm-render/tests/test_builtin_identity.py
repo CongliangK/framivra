@@ -484,7 +484,9 @@ assert "numpy" not in sys.modules
         self.assertEqual(library_identity(), {'command': str(library), 'state': 'missing'})
         # The identity collector never loads or executes this synthetic file.
         library.write_bytes(b'first DLL placeholder')
-        self.assertIsNone(shutil.which(str(library)))
+        # Since Python 3.12, PATHEXT also applies to explicit paths in which().
+        if sys.version_info >= (3, 12):
+            self.assertIsNone(shutil.which(str(library)))
         self.assertEqual(Path(library_identity()['selected']), library.absolute())
         c = self._ctx(True)
         before = self.state(c)
