@@ -111,12 +111,16 @@ class WindowsSvgMedia:
             self.tools[name] = str(tool_dir / leaf)
         self.identity = {'profile': 'windows-svg-media/v1', 'sha256': dict(expected)}
         system = shell._system_windows_path()
-        env = {'SystemRoot': str(system), 'WINDIR': str(system), 'SYSTEMDRIVE': system.drive,
-               'PATH': str(system / 'System32'), 'HOME': str(scratch),
-               'TEMP': str(scratch), 'TMP': str(scratch), 'LANG': 'C', 'TZ': 'UTC'}
-        self.environment = ctypes.create_unicode_buffer('\0'.join(
-            f'{name}={env[name]}' for name in sorted(env, key=str.casefold)) + '\0')
+        self._env = {'SystemRoot': str(system), 'WINDIR': str(system), 'SYSTEMDRIVE': system.drive,
+                     'PATH': str(system / 'System32'), 'HOME': str(scratch),
+                     'TEMP': str(scratch), 'TMP': str(scratch), 'LANG': 'C', 'TZ': 'UTC'}
+        self.environment = self.process_environment()
         self.directory = pins.enter_context(anchored(scratch))
+
+    def process_environment(self, **extra):
+        env = {**self._env, **extra}
+        return ctypes.create_unicode_buffer('\0'.join(
+            f'{name}={env[name]}' for name in sorted(env, key=str.casefold)) + '\0')
 
     @staticmethod
     def _digest(chunks):
@@ -172,7 +176,8 @@ class WindowsSvgMedia:
         state = SimpleNamespace(keep=False)
         try:
             with self.command_inputs(cmd) as argv:
-                job, _ = shell._run_owned(state, argv, self.scratch, self.environment, None,
+                from .gfx_svg_win_subtitles import job_environment
+                job, _ = shell._run_owned(state, argv, self.scratch, job_environment(self, cmd), None,
                                           deadline=time.monotonic() + 600, capture_limit=capture_limit,
                                           phase='media tool')
         finally:

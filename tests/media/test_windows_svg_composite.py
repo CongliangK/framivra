@@ -14,13 +14,10 @@ from vtx.render.frame_source import PngSequence
 
 
 class WindowsSvgComposite(unittest.TestCase):
-    def test_subtitle_declarations_fail_before_video_work(self):
-        for declared in ({'subtitles': [{'in': 0, 'out': 2, 'text': 'Example'}]},
-                         {'subtitles_src': 'captions.srt'}):
-            with self.subTest(declared=declared):
-                c = SimpleNamespace(_windows_svg_media=object(), tl=declared)
-                with self.assertRaisesRegex(ValueError, 'does not support subtitle'):
-                    composite.build_video(c)
+    def test_unqualified_subtitles_cannot_silently_render_without_captions(self):
+        c = SimpleNamespace(_windows_svg_media=object(), tl={'subtitles': [{'in': 0, 'out': 2, 'text': 'Example'}]})
+        with self.assertRaisesRegex(ValueError, 'qualified caption profile'):
+            composite.build_video(c)
 
     def test_native_concat_names_are_the_names_the_owner_will_hold(self):
         path = PureWindowsPath("D:/Project #1/L’artiste's clip.mp4")

@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -16,7 +17,7 @@ from vtx.render import gfx_svg
     'VTX_WINDOWS_SVG_PORTABLE', 'VTX_WINDOWS_SVG_SCRATCH', 'VTX_WINDOWS_SVG_MEDIA_BIN',
     'VTX_TEST_WINDOWS_SVG_FONT')), 'requires the pinned Windows runtimes and an explicit JetBrains Mono Regular TTF')
 class WindowsSvgDelivery(unittest.TestCase):
-    def test_mixed_delivery_with_local_font_and_warm_raster(self):
+    def test_mixed_delivery_with_local_font_duck_static_and_warm_raster(self):
         with tempfile.TemporaryDirectory(prefix='vtx-svg-delivery-') as workspace:
             root = Path(workspace).resolve()
             self._deliver(root)
@@ -33,6 +34,7 @@ class WindowsSvgDelivery(unittest.TestCase):
             result = subprocess.run(argv, env=env, capture_output=True, encoding='utf-8',
                                     errors='replace', timeout=360)
             self.assertEqual(result.returncode, 0, result.stdout + '\n' + result.stderr)
+            return result
 
         run(ffmpeg, '-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=320x180:r=30',
             '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '4', '-c:v',
@@ -59,13 +61,18 @@ class WindowsSvgDelivery(unittest.TestCase):
                 dict(name='video', kind='aroll', clips=[dict(src='base', src_in=0, src_out=120, dst_in=0, dur=120)]),
                 dict(name='graphics', kind='gfx', clips=[clip('red', 4, 46), clip('green', 70, 44)]),
                 dict(name='text', kind='gfx', clips=[clip('title', 22, 60)]),
-            ], subtitles=[], audio_tracks=[dict(name='music', duck=False, events=[
-                {'src': 'base', 'src_in': 0, 'in': 0, 'out': 120, 'volume': 1.0}])]))
+            ], subtitles=[], audio_tracks=[dict(name='voice', events=[]),
+                dict(name='music', duck=False, duck_strategy={'mode': 'static', 'global_db': -6}, events=[
+                    {'src': 'base', 'src_in': 0, 'in': 0, 'out': 120, 'volume': 1.0}])]))
+        baseline = run(ffmpeg, '-hide_banner', '-nostats', '-i', str(root / 'base.mp4'),
+                       '-af', 'aformat=channel_layouts=stereo,ebur128=framelog=quiet', '-vn', '-f', 'null', '-')
+        raw_i = float(re.findall(r'I:\s+(-?[\d.]+) LUFS', baseline.stderr)[-1])
         cli = (sys.executable, '-X', 'utf8', '-m', 'vtx', '-t', str(root / 'timeline.json'))
         receipt = root / 'out' / 'receipt.json'
         run(*cli, 'all')
         first = json.loads(receipt.read_bytes())
-        self.assertTrue(all(first['stages'][stage]['ok'] for stage in ('validate', 'gfx', 'video', 'mux', 'qc')))
+        self.assertTrue(all(first['stages'][stage]['ok'] for stage in ('validate', 'gfx', 'video', 'audio', 'mux', 'qc')))
+        self.assertAlmostEqual(first['stages']['audio']['raw_i'], raw_i - 6, delta=0.2)
         self.assertIn('0 cache hits', first['stages']['gfx']['detail'])
         run(*cli, 'all')
         warm = json.loads(receipt.read_bytes())

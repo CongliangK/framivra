@@ -34,6 +34,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
@@ -51,6 +52,67 @@ from vtx.pluginlib import hooks as pl_hooks
 from vtx.pluginlib import manifest as pl_manifest
 from vtx.pluginlib import registry as pl_registry
 from vtx.pipeline.stages import _scan_plugin_keys
+
+
+class WindowsSvgPluginQualification(unittest.TestCase):
+    @staticmethod
+    def context(**overrides):
+        context = dict(_svg_all=True, _svg_standard=False, _svg_runtime_factory=object(),
+                       tl={'audio_tracks': [{'name': 'voice', 'events': []}, {
+                           'name': 'bed', 'duck_strategy': {'mode': 'static', 'global_db': -6},
+                           'events': [{'src': 'bed', 'src_in': 0, 'in': 0, 'out': 30, 'volume': 1.0}]}]})
+        return SimpleNamespace(**{**context, **overrides})
+
+    def test_official_duck_static_uses_normal_plugin_identity_and_hooks(self):
+        c = self.context()
+        self.assertEqual(pl_hooks.run_validate(c), [])
+        digest = pl_hooks.active_plugins_digest(c)
+        self.assertTrue(digest)
+        out = pl_hooks.run_audio_events(c, c.tl['audio_tracks'])
+        self.assertAlmostEqual(out[1]['events'][0]['volume'], 10 ** (-6 / 20), places=3)
+        self.assertEqual(c.tl['audio_tracks'][1]['events'][0]['volume'], 1.0)
+        c.tl['audio_tracks'][1]['duck_strategy']['global_db'] = -8
+        self.assertNotEqual(pl_hooks.active_plugins_digest(c), digest)
+        c.tl['audio_tracks'][1]['duck_strategy']['voice_track'] = 'missing'
+        self.assertTrue(pl_hooks.run_validate(c))
+
+    def test_disabled_duck_cannot_silently_fall_back_to_unprocessed_mix(self):
+        c = self.context()
+        state = pl_registry.plugin_state
+
+        def disabled(name, *args, **kwargs):
+            return 'disabled' if name == 'duck-static' else state(name, *args, **kwargs)
+
+        with mock.patch.object(pl_registry, 'plugin_state', side_effect=disabled):
+            with self.assertRaisesRegex(ValueError, 'installed and enabled builtin duck-static'):
+                pl_hooks.run_audio_events(c, c.tl['audio_tracks'])
+
+    def test_rejects_source_finish_or_wrong_profile_before_plugin_import(self):
+        for c, error in (
+            (self.context(tl={'sources': [{'denoise': True}]}), 'denoise'),
+            (self.context(tl={'sources': [{'bgm': {}}]}), 'bgm-render'),
+            (self.context(tl={'blender_bridge': True}), 'blender-bridge'),
+            (self.context(_svg_standard=True), 'locked demo'),
+            (self.context(_svg_all=False), 'raster-only'),
+            (self.context(_core_only_preview=True), 'core-only preview'),
+        ):
+            with self.subTest(error=error), mock.patch.object(pl_hooks, '_load_plugin_module') as load:
+                with self.assertRaisesRegex((ValueError, RuntimeError), error):
+                    pl_hooks.active_plugins_digest(c)
+                load.assert_not_called()
+
+    def test_late_external_audio_only_provider_is_not_imported(self):
+        c = self.context()
+        with tempfile.TemporaryDirectory() as directory:
+            external, _ = _make_plugin_dir(Path(directory), name='external-voice', extends={
+                'schema_keys': [], 'hooks': ['validate', 'audio_events']})
+            self.assertEqual([p['name'] for p in pl_hooks.active_plugins(c)], ['duck-static'])
+            with mock.patch.object(pl_config, 'load_config', return_value={
+                'external_plugins': [{'path': str(external), 'enabled': True}]
+            }), mock.patch.object(pl_hooks, '_load_plugin_module') as load:
+                with self.assertRaisesRegex(ValueError, 'unsupported: external-voice'):
+                    pl_hooks.run_audio_events(c, c.tl['audio_tracks'])
+                load.assert_not_called()
 
 
 # ---------------------------------------------------------------- manifest

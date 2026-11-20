@@ -627,10 +627,10 @@ def validate_windows_gfx_profile(c):
         c._svg_standard = c._svg_all and c.timeline_sha256 == _STANDARD_TIMELINE
     if c._svg_standard:
         require_standard_timeline(c.timeline_sha256)
-    if active_plugins(c):
-        raise ValueError('Windows SVG does not support active plugins')
-    if c._svg_all and (c.tl.get('subtitles') or c.tl.get('subtitles_src')):
-        raise ValueError('Windows SVG delivery does not support subtitles')
+    active_plugins(c)  # Qualify declarations before resolving inputs or loading any provider.
+    if not c._svg_standard:
+        from .gfx_svg_win_subtitles import prepare
+        prepare(c)
 
 
 def _context_runtime(c, fonts=None):

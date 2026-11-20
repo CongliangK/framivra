@@ -199,8 +199,9 @@ class Ctx:
             self.gfx_backend['environment_identity'] = environment_identity(self)
             self.gfx_backend['environment_evidence'] = (
                 self._gfx_environment[1]['status'] + '; pixel equivalence unproven')
-        from ..media.subtitles_src import resolve_subtitles_src
-        resolve_subtitles_src(self)
+        if not getattr(self, '_windows_subtitles_prepared', False):
+            from ..media.subtitles_src import resolve_subtitles_src
+            resolve_subtitles_src(self)
         verify_input_identity(self)
         # PR#1 合入：声明依赖快速失败 + 回执输入身份（注意：不是缓存目录键——
         # 缓存布局维持 main 的 per-产物内容寻址，见 cache_state.py 合并裁定）。
