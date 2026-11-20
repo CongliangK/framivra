@@ -935,7 +935,7 @@ def _media_geometry(c, cl):
     return windowed, 0, 0, None, None, [c.crop169(cl['src']), f'scale={c.w}:{c.h}:flags=lanczos']
 
 
-def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None):
+def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None, staged_gfx=None):
     """全部视频轨 clip 的图层预处理 + seg 预编码（缓存命中即跳过），返回 layers 列表
     （每项 {cl, seg|source, x, y, w2, h2, gfx, ti}，顺序=图层序）。
 
@@ -945,6 +945,7 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None):
     """
     if getattr(c, "_windows_svg_media", None) is None:
         fstxn.mkdir(c.cache / "seg", root=c.root)
+    relay = getattr(c, '_program_seg_relay', None)
     tracks = c.tl["video_tracks"]
     # 统一预处理：全屏 clip（无 scale/x/y）经 transform 归一到项目分辨率；窗口 clip 按 scale 缩放。
     # Native alpha、opacity<1 或 fade → ProRes 4444；不透明源 → libx264/NVENC。所有轨道等价。
@@ -961,14 +962,20 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None):
         for ci, cl in enumerate(tr["clips"]):
             kind = tr.get("kind")
             if kind == "gfx":
-                # gfx 帧缓存目录 = 内容寻址键（与 gfx 阶段同键，见 hygiene.gfx_key；
-                # PR#1 的路径哈希 gfx_dir 被此方案取代——内容键同样隔离同名页/换时长）
-                layers.append({"cl": cl, "source": png_source(c, cl),
-                               "x": cl.get("x", 0), "y": cl.get("y", 0), "w2": None, "h2": None,
-                               "gfx": True, "ti": ti})
+                layer = {"cl": cl, "x": cl.get("x", 0), "y": cl.get("y", 0),
+                         "w2": None, "h2": None, "gfx": True, "ti": ti}
+                if staged_gfx is None:
+                    layer["source"] = png_source(c, cl)
+                else:
+                    a, b = native_window
+                    if cl['dst_in'] >= b or cl['dst_in'] + cl['dur'] <= a:
+                        continue
+                    layer["source"], layer["source_stop"], layer["cl"] = staged_gfx[ti, ci]
+                layers.append(layer)
                 continue
             windowed, x, y, w2, h2, geometry = _media_geometry(c, cl)
-            need_alpha = seg_needs_alpha(cl, c.probe(c.src_path(cl['src'])))
+            source_info = c.probe(c.src_path(cl['src']))
+            need_alpha = seg_needs_alpha(cl, source_info)
             vf = [f"trim=start_frame={cl['src_in']}:end_frame={cl['src_out']}", "setpts=PTS-STARTPTS",
                   f"fps={fps_expression(c.fps)}"]
             vf += geometry
@@ -1008,6 +1015,13 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None):
                 # Check even warm targets: a key collision must not select an
                 # arbitrary producer or certify incompatible consumers.
                 raise ValueError(f"conflicting seg producer for {seg}: {producer['label']} / {label}")
+            if relay is not None:
+                eligible = not need_alpha and seg_kind == 'x264' and source_info.get('codec_name') == 'h264'
+                if producer.setdefault('eligible', eligible) != eligible:
+                    raise ValueError('conflicting segment relay eligibility for the same producer')
+                producer['frames'] = cl['dur']
+                if relay.wants_next(cl):
+                    producer['relay_next'] = True
             # Only materialization is windowed. Qualify every source and reject
             # conflicting producer specifications even outside the requested span.
             if native_window is not None and (cl['dst_in'] >= native_window[1]
@@ -1015,7 +1029,7 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None):
                 continue
             # Verify a successful decode's digest/frame record, or fully decode
             # legacy media. Container header counts alone cannot certify a hit.
-            if media_cache_valid(seg, cl['dur'], allow_short_verified=True):
+            if relay is None and media_cache_valid(seg, cl['dur'], allow_short_verified=True):
                 events.cache_hit(c, "media_cache_valid", frames=[0, cl['dur']])
                 layers.append({"cl": cl, "seg": seg, "x": x, "y": y, "w2": w2, "h2": h2,
                                "gfx": False, "ti": ti})
@@ -1027,6 +1041,8 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None):
             if not producer["queued"]:
                 enc_tasks.append((label, cmd, nvenc))
                 producer["queued"] = True
+    if relay is not None:
+        enc_tasks = relay.prepare(c, enc_tasks, producers)
     (run_tasks or run_parallel)(c, enc_tasks, "seg 预编码")
     # This task also runs independently in the all pipeline wave.
     stage = "video_draft" if getattr(c, "draft", False) else "video"

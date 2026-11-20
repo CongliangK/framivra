@@ -129,8 +129,7 @@ class Ctx:
         self.tl_path = timeline_path
         self.root = timeline_path.parent
         try:
-            from ..render.gfx_svg import read_timeline_input
-            self.timeline_bytes = read_timeline_input(self)
+            self.timeline_bytes = self._read_timeline_bytes()
         except OSError as error:
             emit(self, str(error), rule_id='load.timeline_file', measured={'path': str(timeline_path)},
                  threshold={'readable_file': True})
@@ -221,6 +220,10 @@ class Ctx:
         self._pre_layers = None
 
     # ---- 基础设施 ----
+    def _read_timeline_bytes(self):
+        from ..render.gfx_svg import read_timeline_input
+        return read_timeline_input(self)
+
     def execute_media_tool(self, argv, *, text=True):
         media = getattr(self, '_windows_svg_media', None)
         if media is not None:

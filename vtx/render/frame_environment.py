@@ -141,14 +141,15 @@ def _darwin(binary):
             'system': env._files(['/System/Library/CoreServices/SystemVersion.plist', '/usr/lib/dyld'])}
 
 
-def collect(binary):
+def collect(binary, *, command=None):
     """Keep the existing Linux dependency/font collector behavior intact."""
     from ..pipeline.infra import filter_threads
     if sys.platform == 'darwin':
         result = _darwin(binary)
     else:
-        result = {'ffmpeg': env._file(binary), 'libraries': env._libraries(binary),
-                  'fonts': env._fonts(), 'platform': sys.platform}
+        options = {} if command is None else {'command': command}
+        result = {'ffmpeg': env._file(binary), 'libraries': env._libraries(binary, **options),
+                  'fonts': env._fonts(**options), 'platform': sys.platform}
     keys = set(env.PIXEL_ENV)
     if sys.platform == 'darwin':
         keys.update(k for k in os.environ if k.startswith(('LC_', '__CF_')))

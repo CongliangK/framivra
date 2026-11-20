@@ -30,11 +30,16 @@ _MAGIC = b'VTXGFXP1'
 _END = b'VTXGFXE1'
 _FOOTER = struct.Struct('>Q32s8s')
 _BLOCK_BYTES = 4 << 20
+PACK_INDEX_LIMIT = 8 << 20
 _HEX = re.compile('[0-9a-f]{64}')
 
 
 class GfxPackError(ValueError):
     """Missing proof, corrupt/oversized data, or unsafe filesystem operation."""
+
+
+class GfxPackIndexLimitError(GfxPackError):
+    """A new pack cannot fit the reader's index budget."""
 
 
 def _canonical(value):
@@ -162,10 +167,10 @@ def _open_regular(path, *, root=None):
             check()
 
 
-def _read(path, limit, root):
+def _read(path, limit, root, *, oversize_error=GfxPackError):
     with _open_regular(path, root=root) as (stream, size, check):
         if size > limit:
-            raise GfxPackError('input byte limit exceeded')
+            raise oversize_error('input byte limit exceeded')
         data = stream.read(limit + 1)
         if len(data) != size or len(data) > limit:
             raise GfxPackError('short/oversized input')
@@ -179,22 +184,43 @@ def _png(data, width, height):
         raise GfxPackError(f'invalid PNG: {reason}')
 
 
+def _working_pngs(directory, hashes, width, height, limit, root):
+    for i, expected in enumerate(hashes):
+        data = _read(directory / f'f{i:04d}.png', limit, root)
+        _png(data, width, height)
+        if _digest(data) != expected:
+            raise GfxPackError(f'frame {i} differs from completion')
+        yield data
+
+
 def _bound(size):
     # zlib compressBound, for the default window/memory settings used here.
     return size + (size >> 12) + (size >> 14) + (size >> 25) + 13
 
 
+def _working_marker(record, svg_marker):
+    if not svg_marker:
+        return 'complete.json'
+    if record.get('format') != 'framivra-svg-completion/v1':
+        raise GfxPackError('native SVG marker requires an SVG completion')
+    from .gfx_svg import COMPLETE_FILE
+    return COMPLETE_FILE
+
+
 def pack_page(directory, target, *, expected_record, max_frame_bytes=None,
-              verify_inputs=None, root=None):
+              verify_inputs=None, root=None, svg_marker=False):
     """Pack an already authenticated page; preserve every selected byte exactly.
 
     Parents must exist. Existing regular targets are atomically replaced only
     after all frames/sidecars and optional caller input recheck pass. Source pages
-    are never mutated or removed. Returns storage statistics (logical bytes).
+    are never mutated or removed. With svg_marker, read the native SVG marker
+    but retain its exact bytes under the existing complete.json archive name.
+    Returns storage statistics (logical bytes).
     """
     _capability()
     record, canonical, names, limit, complete_limit, meta_limit, header_limit = _contract(expected_record, max_frame_bytes)
     directory, target = _path(directory, root), _path(target, root)
+    marker = directory / _working_marker(record, svg_marker)
     if directory == target or directory in target.parents:
         raise GfxPackError('pack target must be outside the source page')
     page_identity = fstxn.cleanup_identity(directory)
@@ -205,7 +231,8 @@ def pack_page(directory, target, *, expected_record, max_frame_bytes=None,
     dimensions = record.get('input', {}) if record.get('format') == 'framivra-svg-completion/v1' else record
     blobs, blocks, indices, metadata, seen = [], [], [], [], {}
     pending = bytearray()
-    complete = _read(directory / names[0], complete_limit, root)
+    complete = _read(marker, complete_limit, root,
+                     oversize_error=GfxPackIndexLimitError if svg_marker else GfxPackError)
     if _canonical(_json(complete)) != canonical:
         raise GfxPackError('source completion differs from trusted expected record')
     source_bytes = 0
@@ -234,11 +261,7 @@ def pack_page(directory, target, *, expected_record, max_frame_bytes=None,
                               'block': len(blocks), 'offset': len(pending)})
                 pending.extend(data)
                 return index
-            for i, expected in enumerate(record['sha256']):
-                data = _read(directory / f'f{i:04d}.png', limit, root)
-                _png(data, dimensions['width'], dimensions['height'])
-                if _digest(data) != expected:
-                    raise GfxPackError(f'frame {i} differs from completion')
+            for data in _working_pngs(directory, record['sha256'], dimensions['width'], dimensions['height'], limit, root):
                 source_bytes += len(data)
                 indices.append(add(data))
             meta_bytes = 0
@@ -252,12 +275,14 @@ def pack_page(directory, target, *, expected_record, max_frame_bytes=None,
             header = _canonical({'format': 'vtx.gfx-pack/1', 'record': record,
                                  'record_sha256': _digest(canonical), 'frames': indices,
                                  'blobs': blobs, 'blocks': blocks, 'metadata': metadata})
+            if svg_marker and len(header) > min(header_limit, PACK_INDEX_LIMIT):
+                raise GfxPackIndexLimitError('SVG pack index exceeds reader byte limit')
             if len(header) > header_limit:
                 raise GfxPackError('pack index byte limit exceeded')
             output.write(header)
             output.write(_FOOTER.pack(len(header), hashlib.sha256(header).digest(), _END))
             packed_bytes = output.tell()
-        if (_read(directory / 'complete.json', complete_limit, root) != complete
+        if (_read(marker, complete_limit, root) != complete
                 or fstxn.cleanup_identity(directory) != page_identity
                 or fstxn.cleanup_identity(target.parent) != parent_identity):
             raise GfxPackError('page/target identity changed before publication')
@@ -270,7 +295,7 @@ def pack_page(directory, target, *, expected_record, max_frame_bytes=None,
             'packed_bytes': packed_bytes}
 
 
-def inspect_pack(pack, *, max_header_bytes=8 << 20, root=None):
+def inspect_pack(pack, *, max_header_bytes=PACK_INDEX_LIMIT, root=None):
     """Read a bounded header, including ``record``, WITHOUT authenticating it.
 
     The record is untrusted data for the caller's existing environment/input
@@ -493,14 +518,50 @@ class PagePack:
             raise GfxPackError('metadata name not in fixed whitelist')
         return self._blob(self._metadata[name])
 
-    def verify(self):
+    def verify_svg_working_copy(self, directory, *, exact_marker):
+        """Check the complete loose SVG page against this authenticated archive."""
+        from .gfx_svg import verify_completion
+
+        if self._context is None:
+            raise GfxPackError('use an open PagePack context')
+        directory = _path(directory, self.root)
+        identity = fstxn.cleanup_identity(directory)
+        marker = directory / _working_marker(self.record, True)
+        with _open_regular(marker, root=self.root) as (stream, size, check):
+            if size > min(self._complete_limit, PACK_INDEX_LIMIT):
+                raise GfxPackError('SVG working completion exceeds the byte limit')
+            raw = stream.read(size + 1)
+            if len(raw) != size:
+                raise GfxPackError('SVG working completion changed during verification')
+            check()
+            if exact_marker and raw != self.read_metadata('complete.json'):
+                raise GfxPackError('SVG working completion differs from pack')
+            record = _json(raw)
+            inputs = self.record['input']
+            hashes = verify_completion(record, inputs, self.frame_count, directory.name)
+            if hashes != self.record['sha256']:
+                raise GfxPackError('SVG working frame hashes differ from pack')
+            for _ in _working_pngs(directory, hashes, inputs['width'], inputs['height'], self._limit, self.root):
+                pass
+            stream.seek(0)
+            if stream.read(size + 1) != raw or fstxn.cleanup_identity(directory) != identity:
+                raise GfxPackError('SVG working page changed during verification')
+        self._check()
+
+    def verify(self, *, check_cancel=None, max_png_bytes=None):
         """Verify ALL unique PNGs and sidecars, unlike a scoped frame read."""
+        if max_png_bytes is not None and sum(self._blobs[i]['bytes'] for i in set(self._frames)) > max_png_bytes:
+            raise GfxPackError('full pack exceeds the warm PNG verification byte limit')
         seen = set()
         for i, index in enumerate(self._frames):
             if index not in seen:
+                if check_cancel is not None:
+                    check_cancel()
                 self.read_frame(i)
                 seen.add(index)
         for name in self._names:
+            if check_cancel is not None:
+                check_cancel()
             self.read_metadata(name)
         self._check()
         return {'frames': self.frame_count, 'unique_pngs': len(seen),
@@ -530,13 +591,14 @@ def _rename_new(parent, source, target, *, destination=None):
 
 
 def restore_page(pack, directory, *, expected_record, max_frame_bytes=None,
-                 verify_inputs=None, root=None):
+                 verify_inputs=None, root=None, svg_marker=False):
     """Verify then publish a new page, or populate an existing lock-only page.
 
     Never overwrite payloads or remove protected locks. A new directory is one
     atomic rename; a lock-only directory receives no-replace files and the exact
-    original complete.json LAST as commit marker. Failure during that latter
-    publication can leave incomplete PNGs, never a newly certified partial page.
+    original completion LAST (svg-complete.json if svg_marker is selected).
+    Failure during that publication can leave incomplete PNGs, never a newly
+    certified partial page.
     Each PNG is a fresh inode. Caller controls dry-run and reruns its normal
     consumer completion/environment gate after restoration.
     """
@@ -544,6 +606,7 @@ def restore_page(pack, directory, *, expected_record, max_frame_bytes=None,
     directory = _path(directory, root)
     parent_identity = fstxn.cleanup_identity(directory.parent)
     with PagePack(pack, expected_record=expected_record, max_frame_bytes=max_frame_bytes, root=root) as page:
+        marker = _working_marker(page.record, svg_marker)
         with contextlib.ExitStack() as stack, fstxn.file_lock(directory, root=root), fstxn.pinned_parent(directory, create=False, root=root) as (parent, name, _):
             existing = fstxn.cleanup_identity(directory)
             destination = None
@@ -604,7 +667,7 @@ def restore_page(pack, directory, *, expected_record, max_frame_bytes=None,
                 for i in range(page.frame_count):
                     write(f'f{i:04d}.png', page.read_frame(i))
                 for meta in page._names:
-                    write(meta, page.read_metadata(meta))
+                    write(marker if meta == 'complete.json' else meta, page.read_metadata(meta))
                 page._check()
                 if verify_inputs is not None:
                     verify_inputs()
@@ -645,7 +708,7 @@ def restore_page(pack, directory, *, expected_record, max_frame_bytes=None,
                     if fstxn.cleanup_identity(directory) != existing:
                         raise GfxPackError('restore target changed before marker publication')
                     # Marker bytes are historical producer data, never a new signature.
-                    publish('complete.json')
+                    publish(marker)
             finally:
                 os.close(stage)
                 try:

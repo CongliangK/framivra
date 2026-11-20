@@ -832,6 +832,11 @@ def _preview_command(c, a):
 
 
 def _main(execution=None):
+    argv = sys.argv[1:]
+    if 'preview-window' in argv:
+        from .timeline_preview_window import matches, run_preview_window_command
+        if matches(argv):
+            return run_preview_window_command(argv)
     with ExitStack() as ownership:
         return _main_owned(execution, ownership)
 
@@ -1204,7 +1209,8 @@ def _main_owned(execution, ownership):
         from ..cache.session import CacheSession
         retire = a.command == 'all' and a.until in (None, 'qc') and not c.draft
         try:
-            session = CacheSession(c, retire_stage_outputs=retire)
+            session = CacheSession(c, retire_stage_outputs=retire,
+                                   allow_svg_rebuild=a.command in ('gfx', 'all'))
         except ValueError as error:
             print(f'✗ 全局缓存配置无效：{error}'); sys.exit(2)
         with session:

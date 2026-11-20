@@ -105,7 +105,7 @@ def media_output(c, cmd):
 
 
 def atomic_media(c, target, producer, *, max_frames=None,
-                 before_commit=None, after_commit=None):
+                 before_commit=None, after_commit=None, inspect_execute=None):
     """Publish one project-owned media file only after its producer succeeds.
 
     producer(staging_path) must raise on failure and specify its output format
@@ -150,7 +150,8 @@ def atomic_media(c, target, producer, *, max_frames=None,
             if orphan != current and token and '.' not in token:
                 fstxn.unlink(orphan, root=c.root)
         result = producer(temporary)
-        rec = _inspect(temporary, target.suffix.lower())
+        rec = (_inspect(temporary, target.suffix.lower()) if inspect_execute is None
+               else _inspect(temporary, target.suffix.lower(), execute=inspect_execute))
         if rec is None:
             raise RuntimeError('Media producer produced incomplete media: ' + str(target))
         if max_frames is not None and rec['frames'] is not None and rec['frames'] > max_frames:
@@ -165,7 +166,7 @@ def atomic_media(c, target, producer, *, max_frames=None,
     return result
 
 
-def atomic_ffmpeg(c, cmd, execute, *, before_commit=None, after_commit=None):
+def atomic_ffmpeg(c, cmd, execute, *, before_commit=None, after_commit=None, inspect_execute=None):
     """FFmpeg argv/error-policy adapter for the single media transaction."""
     target = media_output(c, cmd)
     if target is None or c.dry:
@@ -185,4 +186,4 @@ def atomic_ffmpeg(c, cmd, execute, *, before_commit=None, after_commit=None):
     caps = [int(cmd[cmd.index(option) + 1]) for option in ('-frames:v', '-vframes')
             if option in cmd]
     return atomic_media(c, target, produce, max_frames=min(caps) if caps else None,
-                        before_commit=before_commit, after_commit=after_commit)
+                        before_commit=before_commit, after_commit=after_commit, inspect_execute=inspect_execute)

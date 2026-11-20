@@ -183,7 +183,16 @@ def reference_timeline(path, *, track_ids=None, block_ids=None, track_addresses=
     Explicit block/window conflicts fail, rather than silently dropping a target.
     IDs are available only for protocol-1 managed documents. No files are written.
     """
-    loaded = _load(path, "reference", raw=True, max_bytes=_LIMIT)
+    return _reference_loaded(
+        path, _load(path, "reference", raw=True, max_bytes=_LIMIT),
+        track_ids=track_ids, block_ids=block_ids, track_addresses=track_addresses,
+        block_addresses=block_addresses, global_frame=global_frame, interval=interval,
+        expected_content_version=expected_content_version)
+
+
+def _reference_loaded(path, loaded, *, track_ids=None, block_ids=None, track_addresses=None,
+                      block_addresses=None, global_frame=None, interval=None,
+                      expected_content_version=None):
     doc = loaded.pop("document")
     raw = loaded.pop("raw_document", None)
     result = dict(loaded, schema=_SCHEMA, document=None, selection=None,

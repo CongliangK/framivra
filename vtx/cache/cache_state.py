@@ -408,7 +408,11 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     """
     from ..render.gfx_svg import read_timeline_input
     h = hashlib.sha256()
-    h.update(read_timeline_input(c) if timeline_bytes is None else timeline_bytes)
+    if timeline_bytes is None:
+        reader = getattr(c, "_read_timeline_bytes", None)
+        timeline_bytes = reader() if reader is not None else read_timeline_input(c)
+    h.update(timeline_bytes)
+    del timeline_bytes
     def source_key(entry):
         index, source = entry
         origin = f'$.sources[{index}]'
@@ -477,7 +481,9 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     src = _get(c, c.tl, 'subtitles_src', '$')
     if isinstance(src, str) and src:
         p = _path(c, src, '$.subtitles_src')
-        digest = file_digest(p) if p.is_file() else 'MISSING'
+        anchored_digest = getattr(c, '_subtitles_input_digest', None)
+        digest = (anchored_digest() if anchored_digest is not None else
+                  file_digest(p) if p.is_file() else 'MISSING')
         h.update(_encode(c, 'subtitles_src:' + digest + '\n', '$.subtitles_src'))
     # 生效插件清单摘要段（迟导入避免环）；空清单只省略此段。插件装/卸/
     # 升级/改参使段出现或内容变化，不能借空段恢复历史整体指纹。
