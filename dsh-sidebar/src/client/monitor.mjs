@@ -540,23 +540,23 @@ export class WindowMonitor {
         if (!node.paused || node.seeking || node.currentTime !== 0 || (active.program && !node.muted)) {
           this.rejectMedia(spare, '下一窗不在静止音画起点。'); return
         }
-        if (!active.program || this.parkedSpare(active, spare)) {
-          spare.resume = true
-          this.update({ active: spare })
-          disposeWindowMedia(active)
+        if (!active.program) { this.promoteSuccessor(active, spare); return }
+        if (this.parkedSpare(active, spare)) {
+          if (!active.waiting) { active.waiting = true; this.refresh() }
+          active.program.atBoundary(active, spare)
           return
         }
       }
     }
     if (active.program) {
       if (active.successorFailed) {
-        if (active.atEnd) {
-          active.playIntent = active.waiting = false
-          this.update({ ...this.state, message: '下一窗不可播放；音画已停止。' })
-        }
+        if (active.atEnd) this.failProgramHandoff(active, '下一窗不可播放；音画已停止。')
         return
       }
-      if (active.atEnd && !active.waiting) { active.waiting = true; this.refresh() }
+      if (active.atEnd) {
+        if (!active.waiting) { active.waiting = true; this.refresh() }
+        active.program.atBoundary(active)
+      }
       if (!spare) active.program.prefetch(active)
       return
     }
@@ -567,6 +567,26 @@ export class WindowMonitor {
     }
     if (!job && !spare && canPrepare) void this.start({ ...active.automatic.binding, frame: active.end, automatic: active.automatic }, active)
   }
+  promoteSuccessor(previous, spare) {
+    spare.resume = true
+    this.update({ active: spare })
+    disposeWindowMedia(previous)
+  }
+
+  promoteProgramSuccessor(previous, previousNode, spare, node) {
+    if (!this.ownsNode(previous, previousNode) || !previous.playIntent || !previous.atEnd || !previousNode.ended ||
+        spare.node !== node || !node?.muted || !this.parkedSpare(previous, spare)) return false
+    this.promoteSuccessor(previous, spare)
+    return true
+  }
+
+  failProgramHandoff(previous, message) {
+    if (!this.owns(previous) || !previous.playIntent) return
+    previous.successorFailed = true
+    this.stopContinuation(previous)
+    this.update({ ...this.state, message })
+  }
+
   async start(binding, previous, play = false) {
     if (this.state.job || this.state.spare || this.state.active !== previous || !this.live(binding)) return
     const archive = !!binding.formalArchiveOwner
@@ -753,11 +773,11 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
     image.job.fps === fps && image.job.duration === duration && image.job.tabSignal === tabSignal && image.job.automatic.adapter === sessionControls?.adapter
   const ready = current && media.ready, waiting = ready && media.waiting
   const scopeText = archive ? '已核归档 A/V；不代表当前渲染或缓存覆盖。' :
-    programBusy ? '播放本次后台任务捕获的输入；更换外部素材后须停止并重新开始。' :
+    programBusy ? '播放本次后台任务捕获的输入。最多预缓冲一个相邻窗口，切换前复核；未就绪时音画一起等待，不保证无缝。更换外部素材后须停止并重新开始。' :
     media?.automatic?.continuation ? '仅准备一个相邻后继；未就绪时音画一起等待。' : WINDOW_SCOPE
   const status = showFirstFrame ? image.job.received ? '正在核验音画窗口，当前仅显示已验首帧' : FIRST_FRAME_STATUS :
     message ?? (waiting ? '音画正在一起等待下一窗。' : ready ? archive ? `已核归档 A/V [${media.frame}, ${media.end})` :
-      `当前窗口 [${media.frame}, ${media.end})${media.automatic?.continuation || media.program ? '' : ' · 不自动续窗'}` : scopeText)
+      `当前窗口 [${media.frame}, ${media.end})${media.program ? ' · 预缓冲一个相邻窗口，不保证无缝' : media.automatic?.continuation ? '' : ' · 不自动续窗'}` : scopeText)
   useLayoutEffect(() => {
     const stop = () => monitor.interrupt()
     tabSignal.addEventListener('abort', stop, { once: true })

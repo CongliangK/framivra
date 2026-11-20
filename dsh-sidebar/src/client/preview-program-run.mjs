@@ -218,17 +218,43 @@ export class PreviewProgramRun {
       const response = await run.cache.get(start)
       if (!response) throw fault('PROGRAM_MEDIA_INVALID')
       const blob = await verifiedBlob(response, entry.size, entry.sha256, signal)
-      const grant = run.grant
-      const answer = await binding.call(binding.sessionId, { op: 'program-check', ...original(grant), frame: start, sha256: entry.sha256 }, signal)
-      signal.throwIfAborted()
-      if (answer?.ok !== true) throw fault(codeOf(answer?.error))
-      if (answer.grantId !== grant.id || answer.frame !== start || answer.sha256 !== entry.sha256) throw fault('PROGRAM_GRANT_INVALID')
+      await this.checkEntry(run, entry, signal)
       return { ...entry, blob }
     } catch (error) {
       if (!signal.aborted && error.code !== 'PROGRAM_WINDOW_UNAVAILABLE') void this.retire(run, 'error', codeOf(error.code))
       throw error
     } finally {
       if (run.reader === reader) { run.reader = undefined; run.wanted = undefined }
+    }
+  }
+
+  async checkEntry(run, entry, signal) {
+    const { binding, grant } = run
+    const assertCurrent = () => {
+      signal.throwIfAborted()
+      if (this.run !== run || run.grant !== grant || !grant || this.now() >= grant.expiresAt ||
+          grant.programRun.contentVersion !== entry.contentVersion || run.entries.get(entry.start) !== entry) throw fault('PROGRAM_GRANT_INVALID')
+    }
+    assertCurrent()
+    const answer = await binding.call(binding.sessionId, { op: 'program-check', ...original(grant), frame: entry.start, sha256: entry.sha256 }, signal)
+    assertCurrent()
+    if (answer?.ok !== true) throw fault(codeOf(answer?.error))
+    if (answer.grantId !== grant.id || answer.frame !== entry.start || answer.sha256 !== entry.sha256) throw fault('PROGRAM_GRANT_INVALID')
+  }
+
+  async recheck(binding, media, observer) {
+    const run = this.run
+    if (!run || run.binding !== binding || run.controller.signal.aborted) throw fault('PROGRAM_WINDOW_UNAVAILABLE')
+    const signal = AbortSignal.any([run.controller.signal, observer])
+    try {
+      signal.throwIfAborted()
+      const entry = run.entries.get(media.frame)
+      if (!entry || entry.end !== media.end || entry.contentVersion !== media.contentVersion ||
+          entry.inputEpoch !== media.inputEpoch || entry.sha256 !== media.sha256) throw fault('PROGRAM_MEDIA_INVALID')
+      await this.checkEntry(run, entry, signal)
+    } catch (error) {
+      if (!signal.aborted) void this.retire(run, 'error', codeOf(error.code))
+      throw error
     }
   }
 
@@ -291,7 +317,8 @@ export function usePreviewProgramRun({ opened, sessionId, project, tabSignal, ca
   if (!eligible) return undefined
   const current = controller.run, run = current?.binding === binding ? current : undefined
   return { start: frame => controller.start(binding, frame), cancel: () => controller.cancel(),
-    read: (frame, signal) => controller.read(binding, frame, signal), signal: run?.controller.signal,
+    read: (frame, signal) => controller.read(binding, frame, signal),
+    recheck: (media, signal) => controller.recheck(binding, media, signal), signal: run?.controller.signal,
     status: run?.status ?? 'idle', completedFrames: run?.completedFrames ?? 0, totalFrames: duration, code: run?.code,
     frame: run?.frame, cleanupPending: !!current?.cleanup, cleanupFailed: !!current && !current.cleaned && current.code === 'PROGRAM_CLEANUP_UNCONFIRMED' }
 }
