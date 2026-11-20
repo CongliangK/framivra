@@ -13,6 +13,14 @@ import sys
 
 
 def main(argv=None):
+    if sys.platform == 'win32':
+        # Both standalone launchers must emit UTF-8 JSON and diagnostics even
+        # when redirected to a pipe whose Python default is a legacy code page.
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.reconfigure(encoding='utf-8', errors='replace')
+            except (AttributeError, OSError, ValueError):
+                pass
     p = argparse.ArgumentParser(prog="bgm", description="bgm_gen 音乐生成终端工具（宿主=CLI，工程=JSON）")
     sub = p.add_subparsers(dest="cmd", required=True)
 

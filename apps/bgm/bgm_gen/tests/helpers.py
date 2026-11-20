@@ -161,8 +161,9 @@ def run(cmd, cwd=None, timeout=600, check=False, env_extra=None):
                                      if env.get("PYTHONPATH") else "")
     if env_extra:
         env.update(env_extra)
+    encoding = 'utf-8' if os.name == 'nt' and tuple(cmd[1:3]) == ('-m', 'bgm_gen') else None
     return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True,
-                          text=True, timeout=timeout, check=check)
+                          text=True, encoding=encoding, timeout=timeout, check=check)
 
 
 def in_proc_env():
