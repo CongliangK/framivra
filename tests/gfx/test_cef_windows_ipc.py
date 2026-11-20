@@ -100,12 +100,15 @@ class NativeWindowsPipeTests(unittest.TestCase):
         local.start()
         self.addCleanup(local.stop)
         self.log = root / 'worker.log'
+        # A Windows venv launcher can start a second process. The synthetic
+        # native peer must itself own the Job's initial process identity.
+        self.python_peer = Path(getattr(sys, '_base_executable', None) or sys.executable)
         ambient = mock.patch.dict(os.environ, VTX_TEST_CEF_UNTRUSTED='not inherited')
         ambient.start()
         self.addCleanup(ambient.stop)
 
     def _group(self, log, mode):
-        return gfx_cef._windows_group(self.ctx, lambda *_: [sys.executable, '-c', _PEER, mode], log)
+        return gfx_cef._windows_group(self.ctx, lambda *_: [str(self.python_peer), '-c', _PEER, mode], log)
 
     @staticmethod
     def _connect(group, timeout=5):
@@ -168,7 +171,7 @@ class NativeWindowsPipeTests(unittest.TestCase):
         deep = self.ctx.root / ('深' * 38) / ('空' * 42)
         deep.mkdir(parents=True)
         self.ctx.root, self.ctx.cache = deep, deep / 'cache'
-        worker = Path(sys.executable)
+        worker = self.python_peer
         self.ctx._gfx_environment = (None, {'backend': 'cef', 'status': 'input-bound'}, worker, 'a0')
         self.ctx.verify_inputs = mock.Mock()
         html = self.ctx.root / '素材 #42 with spaces.html'
@@ -227,7 +230,7 @@ class NativeWindowsPipeTests(unittest.TestCase):
         def active(index):
             started_jobs.append(index)
             with self.log.open('wb') as log, gfx_cef._windows_group(
-                    self.ctx, lambda *_: [sys.executable, '-c', _PEER, 'stall-receipt'], log,
+                    self.ctx, lambda *_: [str(self.python_peer), '-c', _PEER, 'stall-receipt'], log,
                     cancel=cancel) as group:
                 runs.append(group.run_dir)
                 with self._connect(group) as client:
@@ -251,7 +254,7 @@ class NativeWindowsPipeTests(unittest.TestCase):
 
     def test_unconfirmed_job_cleanup_retains_scratch_and_primary_error(self):
         close, original_group = windows_browser._OwnedJob.close, gfx_cef._windows_group
-        worker = Path(sys.executable)
+        worker = self.python_peer
         self.ctx._gfx_environment = (None, {'backend': 'cef', 'status': 'input-bound'}, worker, 'a0')
         self.ctx.verify_inputs = mock.Mock()
 
