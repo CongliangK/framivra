@@ -468,25 +468,38 @@ def _preflight_system_identity(context, package_images, signer_pins, deadline):
     images = tuple(image.handle for image in package_images.values())
     records = []
     with win_catalog._installed_catalogs(pins, host, system32, signer_pins, deadline) as verify:
-        # The OS can create its console host for a child. Select that exact
-        # system executable independently; CREATE events never extend scope.
-        console = system32 / 'conhost.exe'
-        with ExitStack() as candidate:
-            handle = win_system._open_pin(candidate, host.kernel, console, directory=False)
-            facts = win_system._facts(host.kernel, handle, console, host.device, directory=False)
-            records.append(host.pin_catalogued_image(pins, (facts[1], *facts[0]), verify, deadline, console_host=True))
-        console_pin = host.leaves[-1][1]
-        helpers = (console_pin, package_images['bin/gdbus.exe'].handle)
+        def pin_system32(name, *, console=False, optional=False):
+            path = system32 / name
+            with ExitStack() as candidate:
+                try:
+                    handle = win_system._open_pin(candidate, host.kernel, path, directory=False)
+                except FileNotFoundError:
+                    if optional:
+                        return
+                    raise
+                facts = win_system._facts(host.kernel, handle, path, host.device, directory=False)
+                records.append(host.pin_catalogued_image(pins, (facts[1], *facts[0]), verify, deadline,
+                                                         console_host=console))
+
+        # CREATE events never extend the child executable scope.
+        pin_system32('conhost.exe', console=True)
+        helpers = (host.leaves[-1][1], package_images['bin/gdbus.exe'].handle)
+        # Windows resource loading can map this library only on some launches.
+        # If installed, include its certified bytes even on launches without
+        # the event, so that an incidental load does not revoke stage receipts.
+        pin_system32('mrmdeploy.dll', optional=True)
+        pinned = images + tuple(row[1] for row in host.leaves)
+        prebound_count = len(records)
 
         def certify(key, event_deadline):
             records.append(host.pin_catalogued_image(pins, key, verify, min(deadline, event_deadline)))
 
         with _fixed_stdin(cwd, b'quit\n') as stdin:
             _run(operation, executable, cwd, environment, stdin, deadline=deadline,
-                 capture_limit=_FACTS_CAPTURE_LIMIT, held_images=(entry, images + (console_pin,), certify, helpers))
+                 capture_limit=_FACTS_CAPTURE_LIMIT, held_images=(entry, pinned, certify, helpers))
     host.verify(deadline)
-    if len(records) < 2:
-        raise ValueError('Windows SVG preflight did not certify any system libraries')
+    if len(records) == prebound_count:
+        raise ValueError('Windows SVG preflight did not certify any loaded system libraries')
     return tuple(sorted(records)), (entry, images + tuple(row[1] for row in host.leaves), None, helpers), host.verify
 
 

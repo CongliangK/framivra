@@ -138,6 +138,54 @@ class WindowsSvgProjectRuntime(unittest.TestCase):
             self.assertEqual(command.kwargs, {'export_id': export_id})
         self.assertNotEqual(result[0][1], result[1][1])
 
+    def test_preflight_pins_optional_system_dll_even_without_a_loader_event(self):
+        shell = win.shell
+        root = Path('Windows')
+        systems = root / 'System32'
+        package = {f'bin/{name}': SimpleNamespace(handle=name) for name in ('inkscape.com', 'gdbus.exe')}
+        signed = mock.Mock()
+
+        def execute(load_optional):
+            host = SimpleNamespace(kernel=None, device=None, leaves=[], verify=mock.Mock())
+
+            def bind(_, key, verify, __, *, console_host=False):
+                name, volume, file_id = key
+                self.assertEqual((volume, file_id), (1, name))
+                verify(name)
+                self.assertEqual(console_host, name == 'conhost.exe')
+                host.leaves.append((systems / name, name))
+                return name, name + '-sha', 'signer'
+
+            host.pin_catalogued_image = bind
+
+            def run(*args, held_images, **kwargs):
+                entry, existing, certify, helpers = held_images
+                self.assertIn('mrmdeploy.dll', existing)
+                self.assertNotIn('mrmdeploy.dll', helpers)
+                for name in ('kernel32.dll', 'mrmdeploy.dll') if load_optional else ('kernel32.dll',):
+                    if name not in existing:
+                        certify((name, 1, name), 100)
+
+            with ExitStack() as pins:
+                def patch(obj, name, **kwargs):
+                    pins.enter_context(mock.patch.object(obj, name, **kwargs))
+
+                patch(shell, '_system_windows_path', return_value=root)
+                patch(shell.win_system, '_hold_scope', return_value=(host, systems, None))
+                patch(shell.win_system, '_open_pin', side_effect=lambda _, __, path, **kw: path.name)
+                patch(shell.win_system, '_facts', side_effect=lambda _, name, *args, **kw: ((1, name), name))
+                patch(shell.win_catalog, '_installed_catalogs', return_value=nullcontext(signed))
+                patch(shell, '_fixed_stdin', return_value=nullcontext(None))
+                patch(shell, '_run', side_effect=run)
+                records, (_, handles, _, _), _ = shell._preflight_system_identity(
+                    (None, None, root, None, pins), package, ('signer',), 100)
+                self.assertIn('mrmdeploy.dll', handles)
+                host.verify.assert_called_once_with(100)
+                return records
+
+        self.assertEqual(execute(False), execute(True))
+        self.assertEqual(signed.call_args_list.count(mock.call('mrmdeploy.dll')), 2)
+
     def test_catalog_request_cannot_select_external_roots_or_leaves(self):
         root = Path('bundle')
         request = win.shell.fontconfig._project_catalog_request

@@ -8,7 +8,7 @@ Windows x64 原生支持多轨、多剪辑的静态 SVG-sequence；允许配合�
 - 时间线交付、严格 QC 和单帧预览另需 `VTX_WINDOWS_SVG_MEDIA_BIN`，指向字节锁定的 Gyan FFmpeg 9.0.2 full 静态版 `bin`。工程、工具、暂存根必须位于可信的固定 NTFS 且互不重叠。普通源须为工程内精确相对名的单文件 WAV、MP4、MOV 等[支持格式](<../../vtx/render/gfx_svg_win_media.py>)；不接收外部路径、播放列表或网络源。
 - 字体可为空，或声明工程内可信的 TTF/OTF/TTC/OTC 文件。每组字体独立暂存和查询，使用已绑定的字体字节和私有 Fontconfig，不回退系统字体。相同输入可以复用认证帧；使用不同字体或更换字节会改变缓存身份。
 
-`python -m vtx -t <timeline.json> gfx` 写 `cache/` 和 `out/receipt.json`；若计划随后单独运行 `video`，请从 `gfx` 起保持同一媒体工具配置。`all` 写缓存、回执和成片，执行原有严格 QC；只栅格化可用 `gfx`，没有可测音频的工程不会因此自动满足成片 QC。`qc --strict` 重新验证当前已认证成片及需要的参考画面，不重新合成。单帧可使用 `timeline frame --render --include-png --prepare-gfx`：只在私有暂存中准备当前帧并内联返回 PNG，不写工程缓存或正式回执；它不表示连续预览或压缩成片逐像素一致。
+`python -m vtx -t <timeline.json> gfx` 写 `cache/` 和 `out/receipt.json`；若计划随后单独运行 `video`，请从 `gfx` 起保持同一媒体工具配置。`all` 写缓存、回执和成片，执行原有严格 QC；只栅格化可用 `gfx`，没有可测音频的工程不会因此自动满足成片 QC。`qc --strict` 重新验证当前已认证成片及需要的参考画面，不重新合成。[单帧预览](timeline-api.md#windows-svg-单帧预览)只在私有暂存中准备当前帧并内联返回 PNG，不写工程缓存或正式回执；它不表示连续预览或压缩成片逐像素一致。
 
 原生[运行时](<../../vtx/render/gfx_svg_win_runtime.py>)锁定官方包、私有字体配置和通过离线目录签名验证的系统文件。[发布](<../../vtx/render/gfx_svg_win_publish.py>)在缓存页锁下验证或发布 PNG，最后写完成标记。完成标记不是跨信任边界的签名；Job 监管进程所有权，不证明映射内存字节，也不是权限沙箱。
 
