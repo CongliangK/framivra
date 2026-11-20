@@ -852,8 +852,9 @@ class PreviewWindowCandidate(unittest.TestCase):
                      'runtime_projection_sha256': 'b' * 64}
             profile = (Path('/opt/trusted-source'), Path('/usr/bin/python3'), [], [], {})
             for stub in (patch.dict(os.environ, {'VTX_CONFIG': str(root / 'absent-config.json')}, clear=True),
-                         patch.object(gfx_svg, 'engine_identity', return_value={'fixture': 'engine'}),
-                         patch.object(gfx_svg, 'fontconfig_identity', return_value={'fixture': 'fontconfig'}),
+                         patch.object(gfx_svg._PosixRuntimeIdentity, 'engine_identity', return_value={'fixture': 'engine'}),
+                         patch.object(gfx_svg._PosixRuntimeIdentity, 'fontconfig_identity',
+                                      return_value={'fixture': 'fontconfig'}),
                          patch.object(svg, 'check_tools'), patch.object(isolation, 'check_mount'),
                          patch.object(isolation, 'available', return_value=True),
                          patch.object(isolation, '_profile', return_value=profile),
