@@ -4,8 +4,26 @@
 *.py text eol=lf
 *.mjs text eol=lf
 
-# The release ZIP includes a byte-pinned upstream license in this notice.
+# The release packages verify these original notice bytes.
+/LICENSE text eol=lf
 /dsh-sidebar/THIRD-PARTY-NOTICES.md text eol=lf
+
+# The frozen GFX suite hashes raw checkout bytes, including pages outside its own directory.
+/tests/gfx_bench_suite/pages/*.html text eol=lf
+/docs/skill/assets/lower-third.html text eol=lf
+/docs/skill/assets/title-card.html text eol=lf
+/templates/skill-demo/gfxA.html text eol=lf
+/templates/tech-talk/assets/gfx-examples/gfxA.html text eol=lf
+/templates/tech-talk/assets/gfx-examples/gfxB.html text eol=lf
+/templates/tech-talk/assets/gfx-examples/gfxC.html text eol=lf
+/templates/tech-talk/assets/gfx-examples/motion.html text eol=lf
+/templates/tech-talk/assets/gfx-templates/chart_curve.html text eol=lf
+/templates/tech-talk/assets/gfx-templates/data_table_grouped.html text eol=lf
+/templates/tech-talk/assets/gfx-templates/endboard.html text eol=lf
+/templates/tech-talk/assets/gfx-templates/nav_card.html text eol=lf
+/templates/tech-talk/assets/gfx-templates/overlay_card_bottom.html text eol=lf
+/templates/tech-talk/assets/gfx-templates/overlay_card_top.html text eol=lf
+/templates/tech-talk/assets/presets/placeholders/placeholder_gfx.html text eol=lf
 
 # portable-v2 锁按原始字节核验 Demo 运行时；Python 已由上方规则覆盖。
 /templates/demo-timeline-svg/.gitignore text eol=lf
