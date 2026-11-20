@@ -81,6 +81,28 @@ class WindowsPageCommit(unittest.TestCase):
             self.assertEqual(self.produce(renderer), 'fixture')
             self.assertTrue(inspect())
 
+    def test_atomic_frame_write_under_nested_windows_scratch(self):
+        from vtx.render.gfx_windows import _produce
+
+        # An install root + verification project + core-session cache can put
+        # the scratch parent at this depth. Leave room even for the longer
+        # temporary basename used when a static-span frame is copied.
+        name = 'scratch 中文 # ' + 'x' * (206 - len(str(self.root)) - len('scratch 中文 # '))
+        scratch_root = self.root / name
+
+        def renderer(_html, scratch, count):
+            # Keep this a regression even where the machine allows long paths.
+            self.assertLess(len(str(scratch / '.f0000.png.12345678.tmp')), 260)
+            for i in range(count):
+                gfx_render._atomic_write_bytes(scratch / f'f{i:04d}.png', png(value=i))
+            return 'fixture'
+
+        with self.page.child(name, create=True) as parent:
+            self.assertEqual(_produce(self.context, self.page, parent, scratch_root, self.root / 'page.html',
+                                      2, 'test-key', '', self.environment, renderer, threading.Event()), 'fixture')
+        self.assertTrue((self.root / gfx_cli.COMPLETE_FILE).is_file())
+        self.assertEqual(list(scratch_root.iterdir()), [])
+
     def test_job_not_settled_never_publishes(self):
         from vtx.runtime.windows_browser import JobSettlementError
 

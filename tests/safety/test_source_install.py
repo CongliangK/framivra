@@ -346,7 +346,7 @@ class SourceInstall(unittest.TestCase):
         with mock.patch.object(install, 'prepare_tools', return_value={}), \
                 mock.patch.object(install, 'verify_native_tools'), \
                 mock.patch.object(install, 'prepare_python', return_value=(Path(sys.executable), {'VTX_CHROME': 'chrome'})), \
-                mock.patch.object(install.windows, 'ensure_python_runtime'), \
+                mock.patch.object(install.windows, 'ensure_python_runtime', return_value={'status': 'available'}), \
                 mock.patch.object(install, 'verify_macos_tool_paths'), \
                 mock.patch.object(install, 'env_tool', return_value='ffmpeg'), \
                 mock.patch.object(install, 'command', side_effect=command), \

@@ -188,6 +188,39 @@ if ([IO.File]::ReadAllText($part) -ne 'first') { throw 'Changed representation w
 '''.replace('__ENDPOINT__', endpoint))
         self.assertEqual(received, [('bytes=5-', '"old"')])
 
+    def test_full_response_invalidates_old_prefix_before_saving_new_validator(self):
+        self.run_ps('''
+$cache = Join-Path $env:FRAMIVRA_TEST_TEMP 'replace-range-cache'
+[IO.Directory]::CreateDirectory($cache) | Out-Null
+$name = '5da012101ba2e17113a9a1cd901e9ce1441086f2b7ecb5de06ec94163899a190-python-3.13.17-amd64.exe'
+$part = Join-Path $cache ($name + '.part')
+[IO.File]::WriteAllText($part, 'old bytes')
+$metadata = $part + '.json'
+Write-ResumeState $metadata @{ url = 'https://www.python.org/ftp/python/3.13.17/python-3.13.17-amd64.exe'; validator = 'old' }
+function New-Request {
+    $request = [pscustomobject]@{ Headers = @{} }
+    $request | Add-Member ScriptMethod AddRange { param($Offset) if ($Offset -ne 9) { throw 'Wrong saved offset' } }
+    $request | Add-Member ScriptMethod GetResponse {
+        $response = [pscustomobject]@{ StatusCode = 200; ContentType = 'application/octet-stream'; Headers = @{ ETag = 'new' } }
+        $response | Add-Member ScriptMethod Dispose { }
+        return $response
+    }
+    return $request
+}
+$publish = (Get-Command Write-ResumeState).ScriptBlock
+function Write-ResumeState([string]$Path, $State) {
+    & $publish $Path $State
+    throw 'Integrity failure: simulated interruption at validator publication'
+}
+$failed = $false
+try { Get-LockedPython $cache 'official' } catch {
+    if ($_.Exception.Message -notmatch 'simulated interruption') { throw }
+    $failed = $true
+}
+if (-not $failed -or (Get-Item -LiteralPath $part).Length -ne 0) { throw 'Replacement validator backed by stale partial bytes' }
+if ((Get-Content -LiteralPath $metadata -Raw | ConvertFrom-Json).validator -ne 'new') { throw 'Did not reach validator publication' }
+''')
+
     def test_corrupt_cache_is_a_hard_stop_without_http(self):
         self.run_ps('''
 $cache = Join-Path $env:FRAMIVRA_TEST_TEMP 'cache'

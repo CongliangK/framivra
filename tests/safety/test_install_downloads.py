@@ -128,6 +128,25 @@ class Downloads(unittest.TestCase):
         self.assertEqual(self.get().read_bytes(), self.body)
         self.assertIn('range-reset', (self.cache / 'downloads.jsonl').read_text())
 
+    def test_interrupt_publishing_full_response_validator_cannot_relabel_old_bytes(self):
+        part = self.seed(500_000)
+        part.write_bytes(b'old representation')
+        self.state.update(ignore=True, etag='"replacement"')
+        publish = downloads.atomic_json
+
+        def interrupt_after_publish(path, value):
+            publish(path, value)
+            raise KeyboardInterrupt
+
+        with mock.patch.object(downloads, 'atomic_json', side_effect=interrupt_after_publish):
+            with self.assertRaises(KeyboardInterrupt):
+                self.get()
+        self.assertEqual(part.read_bytes(), b'')
+        self.state['ignore'] = False
+        self.assertEqual(self.get().read_bytes(), self.body)
+        self.assertEqual(self.state['requests'], [('/payload', 'bytes=18-', '"stable"'),
+                                                  ('/payload', None, None)])
+
     def test_missing_mirror_falls_back_same_hash(self):
         self.assertEqual(self.get(('/missing', '/payload')).read_bytes(), self.body)
         self.assertEqual([x[0] for x in self.state['requests']], ['/missing', '/payload'])

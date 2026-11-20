@@ -268,9 +268,12 @@ def acquire(cache, urls, sha256, *, size=None, filename=None):
                             raise IntegrityError('Invalid response validator')
                         if status == 206 and headers.get('If-Range') and validator != headers['If-Range']:
                             raise IntegrityError('Partial response validator changed; refusing to concatenate versions')
-                        atomic_json(state, dict(url=identity(url), validator=validator, sha256=sha256, total=total))
                         received, progress_at = 0, time.monotonic()
+                        # For a full response, truncate the old prefix before publishing
+                        # its replacement validator. A killed process must not leave old
+                        # bytes paired with the new representation's resume state.
                         with part.open(mode) as output:
+                            atomic_json(state, dict(url=identity(url), validator=validator, sha256=sha256, total=total))
                             while True:
                                 block = response.read(1024 * 1024)
                                 if not block:

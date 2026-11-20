@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -145,6 +146,25 @@ class LockedWriteBasics(unittest.TestCase):
             self.assertEqual(p.read_bytes(), b'{"k": 2}')
             self.assertEqual([x.name for x in p.parent.iterdir()
                               if x.name.endswith(".tmp")], [])
+
+    @unittest.skipUnless(os.name == 'nt', 'native Windows path budget')
+    def test_atomic_write_long_completion_marker_leaves_no_residue(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            parent = root / ('vseg_pass-' + 'x' * (223 - len(str(root)) - len('vseg_pass-')))
+            target = parent / 'p0_05c97f023290.mkv.complete.json'
+            create = tempfile.mkstemp
+
+            def bounded_temp(*args, prefix, suffix, dir):
+                # Enforce the budget even on machines with long-path policy enabled.
+                self.assertLess(len(str(dir / (prefix + '12345678' + suffix)).encode('utf-16-le')) // 2, 260)
+                return create(*args, prefix=prefix, suffix=suffix, dir=dir)
+
+            with mock.patch.object(fstxn.tempfile, 'mkstemp', side_effect=bounded_temp):
+                fstxn.atomic_write(target, b'first', root=root)
+                fstxn.atomic_write(target, b'next', root=root)
+            self.assertEqual(target.read_bytes(), b'next')
+            self.assertEqual(list(parent.iterdir()), [target])
 
 
 class LockedUpdateSemantics(unittest.TestCase):
