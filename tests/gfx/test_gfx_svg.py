@@ -885,6 +885,57 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
             runtime.render_page(ctx, {}, record)
         self.assertEqual(list(root.iterdir()), [])
 
+    def test_owned_producer_rebuilds_corrupt_frame_but_not_aliased_cache(self):
+        from vtx.render.gfx_svg_win_input import WindowsPathAlias
+        from vtx.render.gfx_svg_win_runtime import _WindowsRasterRuntime
+        from vtx.render import gfx_svg_win_shell as shell
+
+        root = temporary_root(self).resolve()
+        private = root / 'private'
+        private.mkdir()
+        (private / 'fonts').mkdir()
+        frames = private / 'frames'
+        frames.mkdir()
+        runtime = _WindowsRasterRuntime(root, (None, None, private, None, None), ENGINE, None, None)
+        clip = dict(format='svg-sequence', src='manifest.json', dst_in=0, dur=2)
+        record = {'engine': ENGINE, 'fonts': [], 'width': 2, 'height': 2, 'frame_count': 2}
+        key = gfx_svg.record_key(record)
+        ctx = SimpleNamespace(root=root, w=2, h=2, verify_inputs=mock.Mock(),
+                              _svg_receipt_record=gfx_svg.digest(gfx_svg.canonical(record)))
+        page = root / 'cache' / 'gfx_exp' / gfx_svg.NAMESPACE / key
+        page.mkdir(parents=True)
+        names = ['f0000.png', 'f0001.png']
+        frame, other = [page / name for name in names]
+        image = png(2, 2)
+        frame.write_bytes(b'damaged')
+        other.write_bytes(image)
+        marker = page / gfx_svg.COMPLETE_FILE
+        certified = {'format': 'framivra-svg-completion/v1', 'key': key, 'input': record,
+                     'sha256': [gfx_svg.digest(image)] * 2}
+        marker.write_bytes(gfx_svg.canonical(certified))
+        alias = root / 'hardlink.png'
+        os.link(other, alias)
+
+        def export(*args, **kwargs):
+            self.assertFalse(marker.exists(), 'old proof must not survive the rebuild')
+            for name in names:
+                (frames / name).write_bytes(image)
+            return None, frames, names
+
+        with mock.patch.object(runtime, 'verify'), mock.patch.object(gfx_svg, 'resolve', return_value=record), \
+                mock.patch.object(shell, '_read_png', side_effect=lambda _, p, **kw: p.read_bytes()), \
+                mock.patch.object(shell, '_export_bound_sources', side_effect=export) as render:
+            with self.assertRaises(WindowsPathAlias):
+                runtime.render_page(ctx, clip, record)
+            self.assertEqual(frame.read_bytes(), b'damaged')
+            self.assertEqual(marker.read_bytes(), gfx_svg.canonical(certified))
+            render.assert_not_called()
+            alias.unlink()
+            self.assertFalse(runtime.render_page(ctx, clip, record))
+            self.assertEqual(frame.read_bytes(), image)
+            self.assertTrue(runtime.render_page(ctx, clip, record))
+            render.assert_called_once()
+
     def test_composition_reads_only_locked_certified_frames(self):
         from vtx.render.gfx_svg_win_runtime import _WindowsRasterRuntime
 
