@@ -38,14 +38,16 @@ class BootstrapPowerShell(unittest.TestCase):
 
     def run_ps(self, body):
         script = self.base / 'test.ps1'
-        prefix = ("$ErrorActionPreference = 'Stop'\n. $env:FRAMIVRA_TEST_BOOTSTRAP\n"
+        prefix = ("$ErrorActionPreference = 'Stop'\n"
+                  "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)\n"
+                  ". $env:FRAMIVRA_TEST_BOOTSTRAP\n"
                   "function Test-ElevatedWindows { return $false }\n")
         script.write_text(prefix + body, encoding='utf-8-sig')
         env = dict(os.environ, FRAMIVRA_TEST_BOOTSTRAP=str(BOOTSTRAP),
                    FRAMIVRA_TEST_PYTHON=sys.executable, FRAMIVRA_TEST_TEMP=str(self.base),
                    LOCALAPPDATA=str(self.base / 'local-appdata'))
         result = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(script)],
-                                env=env, text=True, capture_output=True, timeout=90)
+                                env=env, encoding='utf-8', capture_output=True, timeout=90)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_parser_and_real_interpreter_probe(self):
