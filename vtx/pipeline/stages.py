@@ -776,8 +776,12 @@ def _windows_audio_argument_units(argv):
 
 def _run_audio_graph(c, argv, graph, tail):
     cmd = [*argv, '-filter_complex', graph, *tail]
-    if sys.platform != 'win32' or c.dry or getattr(c, '_windows_svg_media', None) is not None:
+    if sys.platform != 'win32' or c.dry:
         return c.run(cmd)
+    media = getattr(c, '_windows_svg_media', None)
+    if media is not None:
+        with media.audio_graph_scope():
+            return c.run(cmd)
 
     # Use the same canonical destination as atomic_ffmpeg: an in-project alias
     # can expand by much more than the transaction's format and staging suffix.
