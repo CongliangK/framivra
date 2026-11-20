@@ -249,8 +249,9 @@ function Get-InstallerOption([string]$Name, [string]$Default) {
 
 function Invoke-Bootstrap {
     if ($InstallerArgs -contains '--help') {
-        Write-Output 'Usage: .\bootstrap.ps1 [--yes] [--plan] [--no-system] [--update] [--network cn|official]'
+        Write-Output 'Usage: .\bootstrap.ps1 [--yes] [--plan] [--no-system] [--update] [--network cn|official] [--verify-render]'
         Write-Output 'Native Windows x64; private installation, resumable original packages. Native validation pending.'
+        Write-Output 'CDP end-to-end render verification is opt-in and may take several minutes.'
         return
     }
     $network = Get-InstallerOption '--network' 'cn'
@@ -276,6 +277,8 @@ function Invoke-Bootstrap {
     }
     if ($InstallerArgs -contains '--plan') {
         Write-Output 'Read-only bootstrap plan: same-commit installer bundle; source, native original packages, PyPI and pinned fonts. No network or files changed.'
+        $renderPlan = if ($InstallerArgs -ccontains '--verify-render') { 'enabled' } else { 'skipped' }
+        Write-Output "CDP render verification on install: $renderPlan."
         return
     }
     # Resolve main once, then fetch every module from precisely this commit.

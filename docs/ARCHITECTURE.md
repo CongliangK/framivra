@@ -230,7 +230,7 @@ wheel 包含 `vtx` 内核及其职责子包、仓级 vt 模块、schema/preview 
 
 `dsh-sidebar/` 是 DSH 外宿主适配器的源码 home，不新增运行时层；该适配器由 DSH 管理，不注册为 vtx app/hook，也不进入 Python wheel。
 
-受管源码安装由 `scripts/bootstrap.sh` / `bootstrap.ps1` 引导 `scripts/install_source.py`，完整仓与独立 editable venv 分离；布局和登记字段归[安装指南](<guides/installation.md#受管非-ai-制作环境>)。只在真实安装测试通过后发布 `framivra.installation/v1` 的 ready 回执，DSH 只发现、验证和显式连接。`vtx.runtime.managed` 仅在 CLI 入口、当前 venv 邻接登记绑定本源码时补充已登记工具 PATH、字体环境及默认 CDP/VTX_CONFIG；普通 clone/wheel 不扫描 HOME/工作区，也不自动采用另一份安装配置。显式 VTX_CONFIG 优先语义不变。
+受管源码安装由 `scripts/bootstrap.sh` / `bootstrap.ps1` 引导 `scripts/install_source.py`，完整仓与独立 editable venv 分离；布局归[安装指南](<guides/installation.md#受管非-ai-制作环境>)，`framivra.installation/v1` 的 ready 判据见[安装验证](<guides/installation.md#安装验证>)；DSH 只发现、验证和显式连接。`vtx.runtime.managed` 仅在 CLI 入口、当前 venv 邻接登记绑定本源码时补充已登记工具 PATH、字体环境及默认 CDP/VTX_CONFIG；普通 clone/wheel 不扫描 HOME/工作区，也不自动采用另一份安装配置。显式 VTX_CONFIG 优先语义不变。
 
 ### 5.3 配置
 

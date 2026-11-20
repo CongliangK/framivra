@@ -532,7 +532,7 @@ print(json.dumps([name for name in ('ffmpeg', 'ffprobe')
                            '. Remove the conflicting PATH tools or rerun with --update for an older owned source.')
 
 
-def verify(root, source, python, env):
+def verify(root, source, python, env, *, verify_render=False):
     # These are installation probes, not the frozen public-film acceptance gate.
     capabilities = {}
     vtx = root / 'venv' / ('Scripts/vtx.exe' if sys.platform == 'win32' else 'bin/vtx')
@@ -546,11 +546,14 @@ def verify(root, source, python, env):
     music = json.loads(command([python, source / 'apps/bgm/bgm.py', 'render', source / 'apps/bgm/examples/synth.json', '--quiet', '-o', root / 'verification' / uuid.uuid4().hex], env=env, cwd=root, capture=True))
     if music.get('qc_ok') is not True:
         raise InstallError('Non-AI music synthesis/QC failed')
+    if not verify_render:
+        return capabilities, None
     # Existing independent HTML/subtitle/media fixture + real all/strict QC/decode.
     evidence = root / 'verification' / ('cdp-' + uuid.uuid4().hex)
+    ffmpeg = env_tool(env, 'ffmpeg')
     command([python, source / 'tests/runners/run_e2e.py', '--repo', source, '--output', evidence,
-             '--ffmpeg', env_tool(env, 'ffmpeg'), '--chrome', env['VTX_CHROME'], '--scope', 'capability'], env=env, cwd=root, timeout=3600)
-    command([python, source / 'tests/runners/verify_e2e.py', evidence, '--ffmpeg', env_tool(env, 'ffmpeg'), '--scope', 'capability'], env=env, cwd=root)
+             '--ffmpeg', ffmpeg, '--chrome', env['VTX_CHROME'], '--scope', 'capability'], env=env, cwd=root, timeout=3600)
+    command([python, source / 'tests/runners/verify_e2e.py', evidence, '--ffmpeg', ffmpeg, '--scope', 'capability'], env=env, cwd=root)
     return capabilities, str(evidence)
 
 
@@ -585,6 +588,7 @@ def install(args):
           'System packages may require administrator approval; native managers display additional side effects.' % (root, args.ref, args.network), flush=True)
     if args.plan:
         print(json.dumps({'root': str(root), 'profile': 'non-ai', 'renderer': 'cdp', 'network': args.network,
+                          'verifyRender': args.verify_render,
                           'pythonPackages': PYTHON_PACKAGES, 'nativeCommandsConditional': True,
                           'nativeCommands': platform_packages(tools(root), needs_venv=sys.platform == 'linux' and importlib.util.find_spec('ensurepip') is None)}, indent=2))
         return 0
@@ -626,8 +630,9 @@ def install(args):
         # changing any persisted PATH. Every subsequent child inherits this only.
         os.environ['PATH'] = os.pathsep.join(dict.fromkeys([
             *(str(Path(value).parent) for value in found.values()), os.environ.get('PATH', '')]))
-        ownership = previous or dict(schema=SCHEMA, repository=args.repo,
-                                     sourceRoot=str(root / 'source'), ref=args.ref)
+        ownership = dict(previous or dict(schema=SCHEMA, repository=args.repo,
+                                          sourceRoot=str(root / 'source'), ref=args.ref))
+        ownership.pop('verification', None)
         atomic_json(root / 'installation.json', dict(ownership, status='preparing', sourceApproved=bool(resuming),
                     updateRequested=args.update, requestedRef=args.ref,
                     pythonDependenciesPrepared=bool(resuming and previous.get('pythonDependenciesPrepared'))))
@@ -660,7 +665,7 @@ def install(args):
         env.update(font_environment)
         if sys.platform == 'darwin':
             verify_macos_tool_paths(root, python, env, found)
-        capabilities, evidence = verify(root, source, python, env)
+        capabilities, evidence = verify(root, source, python, env, verify_render=args.verify_render)
         vtx = root / 'venv' / ('Scripts/vtx.exe' if sys.platform == 'win32' else 'bin/vtx')
         executable = vtx
         if sys.platform != 'win32':
@@ -670,14 +675,18 @@ def install(args):
             physical(executable)
             executable.write_text('#!/bin/sh\nexec ' + shlex.quote(str(vtx)) + ' "$@"\n', encoding='utf-8')
             executable.chmod(0o700)
-        atomic_json(root / 'installation.json', dict(schema=SCHEMA, status='ready',
-                    profile='non-ai', renderer='cdp', repository=args.repo, ref=args.ref,
-                    commit=commit, version=(source / 'VERSION').read_text(encoding='utf-8').strip(),
-                    sourceRoot=str(source), pythonExecutable=str(python), vtxExecutable=str(executable),
-                    configFile=str(root / 'config.json'), tools=found, environment=font_environment,
-                    network=args.network, nativePreparation=native_metadata,
-                    bootstrapCommit=args.source_commit, capabilities=capabilities,
-                    verification=evidence, installedAt=datetime.now(timezone.utc).isoformat()))
+        receipt = dict(schema=SCHEMA, status='ready',
+                       profile='non-ai', renderer='cdp', repository=args.repo, ref=args.ref,
+                       commit=commit, version=(source / 'VERSION').read_text(encoding='utf-8').strip(),
+                       sourceRoot=str(source), pythonExecutable=str(python), vtxExecutable=str(executable),
+                       configFile=str(root / 'config.json'), tools=found, environment=font_environment,
+                       network=args.network, nativePreparation=native_metadata,
+                       bootstrapCommit=args.source_commit, capabilities=capabilities,
+                       installedAt=datetime.now(timezone.utc).isoformat())
+        if evidence is not None:
+            receipt['verification'] = evidence
+        atomic_json(root / 'installation.json', receipt)
+    print('[install] CDP render verification: ' + ('passed (' + evidence + ')' if evidence is not None else 'skipped (opt in with --verify-render)'))
     print('\nREADY: non-AI CDP environment. In DSH: scan installed kernels → select registered installation → save → check connection.\nVTX: ' + str(executable))
     return 0
 
@@ -692,6 +701,7 @@ def main(argv=None):
     parser.add_argument('--yes', action='store_true', help='approve displayed downloads/writes (no AI)')
     parser.add_argument('--plan', action='store_true', help='read-only plan: no network, mkdir, install or execution of candidates')
     parser.add_argument('--no-system', action='store_true', help='use existing native tools; fail if any required tool is missing')
+    parser.add_argument('--verify-render', action='store_true', help='run the CDP end-to-end render and QC (off by default; may take several minutes)')
     parser.add_argument('--update', action='store_true', help='explicitly update a clean owned checkout; otherwise reuse pinned source')
     parser.add_argument('--restart-update', action='store_true', help='with --update, select a new target instead of resuming a completed checkout')
     args = parser.parse_args(argv)

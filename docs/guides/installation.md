@@ -6,7 +6,7 @@
 
 ### 默认套件与范围
 
-实际依赖唯一列表见[README 矩阵](<../../README.md#依赖矩阵>)。默认含完整 apps/plugins/templates 源码、editable venv、FFmpeg/ffprobe、原生浏览器、SoX、音频同步/图像/合成依赖与 Noto/DejaVu/Inter/JetBrains Mono 字体及许可。默认 CDP；保留 CPU x264、原生 AAC、`ass` 等完整编码器/滤镜检查，不因镜像失败改用裁剪版、未知静态包或跳过制作验收；libfdk_aac/GPU 不是硬要求。
+实际依赖唯一列表见[README 矩阵](<../../README.md#依赖矩阵>)。默认含完整 apps/plugins/templates 源码、editable venv、FFmpeg/ffprobe、原生浏览器、SoX、音频同步/图像/合成依赖与 Noto/DejaVu/Inter/JetBrains Mono 字体及许可。默认 CDP；保留 CPU x264、原生 AAC、`ass` 等完整编码器/滤镜检查，不因镜像失败改用裁剪版或未知静态包；libfdk_aac/GPU 不是硬要求。
 
 标准范围是 HTML/CDP、普通媒体、字幕、同步、基础 synth/sample 音乐与音效、混音/响度/导出。Blender、SVG/Inkscape、CEF/Electron、SF2/FluidSynth、SFZ/sfizz、matchering 和第三方音源仍按组件另装；非 AI 不等于默认已验收，素材名称不证明许可。默认不获取模型、Torch、ComfyUI、AI 服务或密钥；已有用户配置不重置，enabled 也不是所有插件的统一执行禁用门。macOS 完整 FFmpeg 的 whisper.cpp/ggml/tesseract 是编译库依赖，**不是下载模型，也不能宣传为不含任何 AI 相关库**。
 
@@ -14,17 +14,23 @@
 
 | 系统 | 默认用户根 | 适配与资格 |
 |---|---|---|
-| Linux | `~/.local/share/framivra` | apt-get/dnf/pacman；保留发行版/组件/架构与签名，不跨装发行版包。精简容器或缺库时明确失败；主干既有 [#381](https://github.com/CongliangK/framivra/issues/381) 阻止隔离安装 ready，本轮不修不绕 |
+| Linux | `~/.local/share/framivra` | apt-get/dnf/pacman；保留发行版/组件/架构与签名，不跨装发行版包。精简容器或缺库时明确失败 |
 | macOS | `~/.local/share/framivra` | 自动 bottles 路线限 Apple Silicon、macOS ≥15、原生 Google Chrome.app。macOS 26.5.2 arm64 已实机验收非 AI/CDP；Intel、其余系统版本及从无 Homebrew/Chrome 起步未验，不静默转源码编译 |
 | Windows | `%LOCALAPPDATA%\framivra`（缺失时用户 AppData/Local） | Win10 x64 已实跑到字体/CLI 协议，旧 Git 权限修复后可用；soxr 缺 C++ 运行库阻塞制作验收。新 MinGit/自动运行库修复待实机复验，不声明 SVG 主 Demo 支持；Linux portable PS7 夹具不证明 PS5 整体验收 |
 
 根内含 `source/`、`venv/`、`config.json`、`fonts/`、`verification/`、`installation.json` 和下载缓存；POSIX 入口 `bin/vtx`，Windows 入口 `venv/Scripts/vtx.exe`。配置、字体、验证产物在源码外。Linux 只用根内 fontconfig；macOS/Windows 另复制到用户字体目录，不覆盖不同字节的同名文件。已合格工具复用，缺失或 FFmpeg 能力不足才准备；keg-only/私有工具路径由受管 CLI 真实加载，重跑仍核验，不把登记路径当合格证明。
 
-登记 schema 为 `framivra.installation/v1`，含绝对 source/python/vtx/config 路径、完整 commit、版本、`non-ai`/`cdp`、工具、字体环境与验收输出。仅实际 import、协议、音乐合成/QC、HTML/字幕/音视频冷暖全链、严格 QC、解码通过后登记 `ready`；失败保留 `preparing` 并非零退出。capability scope 不替代 900 帧 SVG 主片、发行冻结或跨平台实测。
-
-DSH 先只读验证默认登记再扫描旧位置，候选不自动执行/切换，须选择、保存并检查真实 read/store。Windows 的 ExecutionPolicy Bypass 仅限子进程，不改持久策略或绕企业组策略；使用绝对 exe，不把 Windows 分号 PATH 填入 POSIX 受信 PATH。显式 `VTX_CONFIG` 仍优先。
+登记 schema 为 `framivra.installation/v1`，含绝对 source/python/vtx/config 路径、完整 commit、版本、`non-ai`/`cdp`、工具与字体环境。DSH 先只读验证默认登记再扫描旧位置，候选不自动执行/切换，须选择、保存并检查真实 read/store。Windows 的 ExecutionPolicy Bypass 仅限子进程，不改持久策略或绕企业组策略；使用绝对 exe，不把 Windows 分号 PATH 填入 POSIX 受信 PATH。显式 `VTX_CONFIG` 仍优先。
 
 Windows 主流程须普通非提升 PowerShell；提升写态在引导下载前拒绝，`--plan` 仍只读。新持久用户根继承可信父目录 ACL，不自动修既有 ACL。私有 Git 改用 MinGit ZIP，同主体解包完整运行库，不启动提权 Git 安装器。旧 Inno 目录原样保留，健康已登记工具仍复用；受限旧树不自动 takeown/reset、授 Everyone 或设置 `safe.directory=*`。
+
+### 安装验证
+
+默认安装和更新保留原生工具、Python import、CLI 读/编辑协议、同步入口与轻量音乐合成/QC 检查，不运行 CDP 端到端渲染。`ready` 表示已登记可连接的环境，不代表渲染实测通过。
+
+要运行原有 HTML/字幕/音视频的单进程与并行冷暖渲染、严格 QC 和解码，可加 `--verify-render`（可能耗时数分钟）。这是联网写操作，已有安装可不带 `--update`，复用当前源码。Linux/macOS 将 README 命令末尾换成 `| bash -s -- --verify-render`，Windows 在 `-File $p` 后加 `--verify-render`。`--plan` 只展示选择，不执行测试。
+
+任一已启用检查失败均非零退出、不登记 `ready`。只有本次 CDP 实测通过，登记才写入 `verification` 证据路径；默认跳过时不沿用旧证据。此 capability 实测不替代 900 帧 SVG 主片、发行冻结或跨平台实测。
 
 ### 国内优先与系统副作用
 
@@ -37,7 +43,7 @@ Windows 主流程须普通非提升 PowerShell；提升写态在引导下载前�
 - Ubuntu：优先已有合格原生浏览器；缺失时仅 amd64 选择 Google 官方签名 apt Chrome（核对锁定 key 及公开指纹），不静默走 Snap。额外确认 **Google 包正常 postinst 可能注册其自己的持久更新源**，这是厂商包副作用，不等于安装器获准重写其他源；其他架构需自行提供合格原生浏览器。
 - Homebrew：优先使用 `PATH` 上的 brew；不自动更新 brew 本体或改 remote。旧 brew 若无法解析签名 API，先自行 `brew update`（更新 Homebrew/元数据），或将受支持的新版 brew 放在 `PATH` 前端，再重跑。TUNA API/bottles 使用其官方回退，不把 cask/API 镜像当 Chrome DMG 镜像。普通 FFmpeg 不可用或缺 libass 时，先核验 Apple Silicon 默认前缀下已装的 `ffmpeg-full` 同套 ffmpeg/ffprobe，再考虑安装；不 force-link，递归依赖也强制 bottle，无匹配 bottle 就失败。Chrome 仍是厂商 DMG。缺 Homebrew 时执行官方安装脚本，cn 下**新建 brew** 优先 TUNA、失败官方，新 origin 可能保留所选镜像；CLT 仍是 Apple 渠道。Linux 尚无 Python 的 stage-zero 先用用户现有可信系统源，不冒称此阶段已强制国内镜像。
 - Windows：Python 原 exe、普通 MinGit 原 ZIP 使用固定身份的国内候选/官方回退；FFmpeg 仍取 Gyan 官方同一原 ZIP，SoX 私有解包完整归档。保留全部 helper/DLL/许可，不拿 busybox 实验变体代替。已有 Edge 可复用；缺浏览器时 winget 使用官方动态元数据，不冒称固定字节或高校镜像覆盖。
-- Windows C++：先真实 import 全套依赖并做 soxr 最小重采样；仅 ImportError 且白名单 CRT 确定缺失（含 ctypes 包装的 126）才准备固定微软 VC++ 14.44.35211 x64 原件。SHA256 与 Windows Authenticode Valid/Microsoft 发布者均须通过；没有已证实的高校等价镜像。确认/`--yes` 后仅厂商 exe 请求 UAC，会更新系统共享运行库、包缓存和卸载登记，可能影响其他应用。不拷 DLL/改 PATH/强制降级或自动重启；`--no-system` 在下载前阻止，取消/信任失败硬停。3010/1641 要求用户重启后重跑；0/1638 也仅在新进程实际 import/重采样通过后继续原制作验收。
+- Windows C++：先真实 import 全套依赖并做 soxr 最小重采样；仅 ImportError 且白名单 CRT 确定缺失（含 ctypes 包装的 126）才准备固定微软 VC++ 14.44.35211 x64 原件。SHA256 与 Windows Authenticode Valid/Microsoft 发布者均须通过；没有已证实的高校等价镜像。确认/`--yes` 后仅厂商 exe 请求 UAC，会更新系统共享运行库、包缓存和卸载登记，可能影响其他应用。不拷 DLL/改 PATH/强制降级或自动重启；`--no-system` 在下载前阻止，取消/信任失败硬停。3010/1641 要求用户重启后重跑；0/1638 也仅在新进程实际 import/重采样通过后继续安装验证。
 
 `--yes` 授权已展示的事务，不绕系统管理员权限；没有它时上述新增仓库/替换/厂商源注册/整机升级须明示确认。原生包安装本身会改包数据库/缓存并执行厂商脚本，不承诺无系统副作用。包源真实性与编解码 GPL/专利/再分发义务是不同问题，国内镜像不消除许可风险。
 
@@ -56,7 +62,7 @@ Windows 主流程须普通非提升 PowerShell；提升写态在引导下载前�
 
 **一般直接重跑同一命令即可恢复，不用删根重装。** 若安装器明确指出旧 macOS 源码的运行态 PATH 会遮住合格工具，使用 `--update` 更新 owned source 后重试。无新更新事务时复用原 owned source commit；Python 计划在解释器/平台/需求身份不变时复用，身份变化或新更新事务才重解析。`--update` 开启更新事务；一旦批准目标，失败重试（包括再次带 `--update`）先恢复该 commit/stage 和已完成的依赖计划，不因 main 前移另起事务。`.source-progress.json` 记录已批准 commit 与唯一自有 stage；继续其 Git 获取/验证，不收养未知克隆，不 reset/clean 开发目录。origin、所有权、HEAD、干净状态和 ignored→tracked 碰撞仍检查；异常目录不静默删除。
 
-安装日志的 `Source commit` 只标明本次选定的源码，不代表已通过验收。若上次 `--update` 已完成受管源码检出，且该提交导致的验证失败已在上游修复，可用 `--update --restart-update` 显式重新选源（联网写操作）。此操作要求已有受管检出且根目录无 `.source-progress.json`。默认 `main` 由引导器重新解析；若原命令固定了旧 SHA 或 tag，须改选包含修复的目标。重新选源不删除下载缓存，也不跳过依赖准备或制作验收；只有全部验收通过才登记 `ready`。若新尝试中断，保留本次选源参数，只去掉 `--restart-update` 续跑。
+安装日志的 `Source commit` 只标明本次选定的源码，不代表已通过验收。若上次 `--update` 已完成受管源码检出，且该提交导致的验证失败已在上游修复，可用 `--update --restart-update` 显式重新选源（联网写操作）。此操作要求已有受管检出且根目录无 `.source-progress.json`。默认 `main` 由引导器重新解析；若原命令固定了旧 SHA 或 tag，须改选包含修复的目标。重新选源不删除下载缓存，也不改变[安装验证](#安装验证)的范围。若新尝试中断，保留本次选源与验证参数，只去掉 `--restart-update` 续跑。
 
 根 `.install.lock` 是内核 advisory lock：**不删除“stale”锁文件**；文件保留不表示锁仍被占用，持锁进程退出后自动释放，活锁冲突明确失败。HTTP 部分文件、Git stage、pip 计划与系统包缓存各由对应层恢复；断点恢复不承诺跨层原子回滚，也不绕过任何原有 ready 判据。
 
