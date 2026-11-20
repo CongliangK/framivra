@@ -24,7 +24,7 @@ sys.path.insert(0, str(REPO))
 
 from vtx.pipeline.composite import RenderPlan, _graph_code_digest
 from vtx.pipeline.constraints import ALLOWED_FPS
-from vtx.pipeline.infra import Ctx
+from vtx.pipeline.infra import Ctx, filter_filename
 from vtx.media.subs import _active_subs
 
 FPS = 30
@@ -270,10 +270,24 @@ class SubtitleFrameIntegration(unittest.TestCase):
         self.records = []
         self.env = dict(os.environ, VTX_NO_NVENC='1', VTX_SEG_NVENC='0')
         self.run_tool([self.ff, '-version'], 'ffmpeg-version')
-        font = self.run_tool(['fc-match', 'Noto Sans CJK SC', '-f', '%{file}'], 'font')
-        font_path = Path(font.decode())
-        (self.root / 'font-identity.json').write_text(json.dumps({
-            'path': str(font_path), 'sha256': hashlib.sha256(font_path.read_bytes()).hexdigest()}))
+        if os.name == 'nt':
+            # Observe the provider and selected font from actual libass output.
+            # Its font name is not proof of an on-disk font path or byte identity.
+            ass = self.root / "font probe 中文 #;'.ass"
+            plan([{'in': 0, 'out': 30, 'text': 'TEST'}]).write_global_ass(ass)
+            probe, = self.burn_ass(ass, 1, 'font')
+            self.assertTrue(any(probe), 'native font probe must produce text pixels')
+            log = (self.root / 'font.stderr').read_text(encoding='utf-8', errors='replace')
+            provider = [line for line in log.splitlines() if 'Using font provider' in line]
+            selection = [line for line in log.splitlines() if 'fontselect:' in line]
+            self.assertTrue(provider and selection, log)
+            font_record = {'provider_log': provider, 'selection_log': selection,
+                           'path': None, 'sha256': None}
+        else:
+            font = self.run_tool(['fc-match', 'Noto Sans CJK SC', '-f', '%{file}'], 'font')
+            font_path = Path(font.decode())
+            font_record = {'path': str(font_path), 'sha256': hashlib.sha256(font_path.read_bytes()).hexdigest()}
+        (self.root / 'font-identity.json').write_text(json.dumps(font_record), encoding='utf-8')
         self.addCleanup(self.freeze_manifest)
 
     def freeze_manifest(self):
@@ -298,11 +312,11 @@ class SubtitleFrameIntegration(unittest.TestCase):
     def burn_ass(self, path, count, name):
         raw = self.run_tool([self.ff, '-v', 'info', '-f', 'lavfi', '-i',
             f'color=black:s=160x90:r=30:d={count / FPS + 1}',
-            '-vf', f'subtitles=filename={path},format=gray,showinfo',
+            '-vf', f'subtitles=filename={filter_filename(path)},format=gray,showinfo',
             '-frames:v', str(count), '-threads', '1', '-pix_fmt', 'gray',
             '-f', 'rawvideo', 'pipe:1'], name)
         self.assertEqual(len(raw), count * 160 * 90)
-        log = (self.root / (name + '.stderr')).read_text()
+        log = (self.root / (name + '.stderr')).read_text(encoding='utf-8', errors='replace')
         self.assertIn('time_base: 1/30', log)
         observed_pts = emitted_showinfo_pts(log, count)
         self.assertEqual(observed_pts, [(n, n) for n in range(count)])
