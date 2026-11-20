@@ -28,6 +28,7 @@ async function bench(options = {}) {
     let value = operation === 'frame' ? { schema: 'framivra.timeline.frame/v1', operation, ok: true, diagnostics: [], content_version: version, image: { path: '/never/read.png' } }
       : { schema: 'framivra.timeline.read/v1', operation, ok: true, diagnostics: [], content_version: options.saved?.() ?? version, document: { project: { duration_frames: 36, fps: 23.976 } }, coverage: { complete: true, scope: 'unit fixture', unexpanded: [] }, capabilities: { operations: ['inspect', 'query'], preview_window: spec.argv[0] === windowLauncher ? options.windowCapability : options.ordinaryWindowCapability, frame: options.unsupported ? {} : { schema: 'framivra.timeline.frame/v1', explicit_render_required: true, ...(options.prepareCapability ? { prepare_gfx: options.prepareCapability } : {}), inline_png: { flag: '--include-png', encoding: 'base64', wire_limit_bytes: FRAME_WIRE_LIMIT } } } }
     if (operation === 'inspect' && options.videoTracks) value.document.video_tracks = options.videoTracks
+    if (operation === 'capabilities' && options.storageCapability) value.capabilities.storage = options.storageCapability
     if (operation === '--first-frame-capabilities') value = options.firstFrameCapability ?? { ok: false }
     if (operation === '--formal-archive-capabilities') value = options.archiveCapability ?? { ok: false }
     if (operation === 'preview-formal-archive') {
@@ -245,6 +246,86 @@ test('frame + semantic mutual exclusion lasts through HTTP cancel until actual d
 })
 
 const linuxWindow = { skip: process.platform !== 'linux' }
+test('whole-timeline Host lease is separate, canonical, and freshness-fenced on cache reads', linuxWindow, async t => {
+  const b = await bench({ windowCapability: { ...windowCapability, input_epoch: true },
+    storageCapability: { schema: 'framivra.storage/v1', request_stdin: true, operations: ['inspect', 'plan', 'clean'] },
+    windowResult: value => ({ ...value, input_epoch: nextVersion }) })
+  t.after(() => b.host.dispose())
+  const ownerId = b.opening.previewSession.ownerId
+  assert.deepEqual(b.opening.previewSession.programRun, { version: 1 })
+  const scope = { op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 28, contentVersion: version,
+    authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' }
+  const stopAttempt = { op: 'cancel-program-authorization', grant: b.grant, ownerId, authorizationId: scope.authorizationId }
+  assert.equal((await b.control(stopAttempt)).status, 200)
+  assert.equal((await b.control(scope)).status, 409, 'cancel can overtake its authorization POST')
+  scope.authorizationId = randomUUID()
+  const auth = await b.control(scope); assert.equal(auth.status, 200, await auth.clone().text())
+  const { grant } = await auth.json()
+  assert.equal(grant.maxWindows, 1024)
+  assert.deepEqual(grant.programRun, { version: 1, contentVersion: version, frame: 28, duration: 36, span: 24, maxBytes: 512 * 1024 * 1024 })
+  assert.equal((await b.window()).status, 409, 'manual window must not compete with the whole-timeline queue')
+  assert.equal((await b.control({ op: 'authorize-write', grant: b.grant })).status, 409)
+  const clean = await b.control({ op: 'storage-clean', grant: b.grant, confirm: 'stopped-writers-and-cleanup', planToken: 'irrelevant' })
+  assert.equal((await clean.json()).error, 'PROGRAM_RUN_BUSY')
+  const render = (frame, op = 'program-render') => b.window({ op, frame, ownerId, previewGrant: grant.id, renderConsent: undefined, prepareInputs: undefined })
+  assert.equal((await render(0, 'session-render')).status, 403)
+  assert.equal((await render(0)).status, 409, 'first window is the one containing the explicit playhead')
+  const first = await render(24); assert.equal(first.status, 200, await first.clone().text())
+  assert.equal(first.headers.get('X-Framivra-End'), '36')
+  assert.equal(first.headers.get('X-Framivra-Media-Kind'), 'program-preview-window/v1')
+  assert.equal((await render(24)).status, 409, 'a completed window cannot be rerendered on the same lease')
+  const check = { op: 'program-check', grant: b.grant, previewGrant: grant.id, ownerId, frame: 24, sha256 }
+  assert.equal((await b.control(check)).status, 200)
+  b.fs.files.get('/workspace/timeline.json').version = 'changed'
+  assert.equal((await b.control(check)).status, 409, 'retained bytes are not authorized after the file changes')
+  assert.equal((await render(0)).status, 403)
+  assert.equal((await b.control({ ...stopAttempt, authorizationId: scope.authorizationId })).status, 200)
+
+  scope.authorizationId = randomUUID()
+  const replacement = await b.control(scope)
+  assert.equal(replacement.status, 200)
+  b.fs.files.set('/elsewhere', { type: 'directory', version: 'other-root' })
+  b.fs.files.set('/elsewhere/timeline.json', { type: 'file', version: 'other-timeline' })
+  b.cwd.value = '/elsewhere'
+  const moved = await b.control({ op: 'open', timeline: 'timeline.json' })
+  assert.equal(moved.status, 200, await moved.clone().text())
+  assert.equal((await b.window({ grant: (await moved.json()).grant })).status, 200, 'abandoned workspace cannot block the new preview')
+  assert.equal((await b.control({ ...stopAttempt, authorizationId: scope.authorizationId })).status, 200, 'exact stale-scope cleanup still works')
+})
+test('another open preview taking ownership during authorization prevents whole-timeline mint', { ...linuxWindow, timeout: 2500 }, async t => {
+  const beforeFinal = Promise.withResolvers(), finishAuthorization = Promise.withResolvers()
+  const started = Promise.withResolvers(), finishWindow = Promise.withResolvers()
+  const b = await bench({ windowCapability: { ...windowCapability, input_epoch: true },
+    windowResult: value => ({ ...value, input_epoch: nextVersion }),
+    windowHandle(spec, text) {
+      started.resolve()
+      return { stdout: Readable.from([Buffer.from(text)]), done: finishWindow.promise, terminate() {}, waitForExit: async () => true }
+    } })
+  t.after(async () => { finishAuthorization.resolve(); finishWindow.resolve({ exitCode: 0 }); await b.host.dispose() })
+  const other = await (await b.control({ op: 'open', timeline: 'timeline.json' })).json()
+  const stat = b.fs.stat.bind(b.fs), startAt = b.calls.length
+  let blocked = false
+  b.fs.stat = async (...args) => {
+    if (!blocked && b.calls.slice(startAt).some(call => call.argv[4] === 'inspect')) {
+      blocked = true
+      beforeFinal.resolve()
+      await finishAuthorization.promise
+    }
+    return stat(...args)
+  }
+  const authorizing = b.control({ op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 28, contentVersion: version,
+    authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' })
+  await beforeFinal.promise
+  const competing = b.window({ grant: other.grant })
+  await started.promise
+  finishAuthorization.resolve()
+  const refused = await authorizing
+  assert.equal(refused.status, 409)
+  assert.equal((await refused.json()).error, 'PROGRAM_RUN_BUSY')
+  finishWindow.resolve({ exitCode: 0 })
+  assert.equal((await competing).status, 200)
+})
+
 test('window uses separate owner POST, actual capability and two consents; only verified bytes leave Host', linuxWindow, async t => {
   for (const [options, probeCount] of [[{ ordinaryWindowCapability: windowCapability }, 0], [{ windowCapability: bareWindowCapability }, 1],
     [{ windowCapability: { ...windowCapability, prepare_inputs: false } }, 1]]) {
