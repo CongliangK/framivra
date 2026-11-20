@@ -82,10 +82,11 @@ class TestAtempoChain(unittest.TestCase):
         import subprocess
         import tempfile
         with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, PYTHONIOENCODING='cp936:strict' if os.name == 'nt' else 'utf-8')
             result = subprocess.run([sys.executable, audio_processing.__file__, 'tempo', '9.14', '7.62'],
-                                    cwd=directory, capture_output=True, text=True)
+                                    cwd=directory, env=env, capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn('atempo=1.199475', result.stdout)
+            self.assertIn('✓ r=1.199475 → atempo=1.199475', result.stdout.decode('utf-8'))
             self.assertEqual(os.listdir(directory), [])
 
 
@@ -107,8 +108,10 @@ def synth_wav(path, amp=0.1, dur=1.0, freq=440):
 
 class TestLevelNorm(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="vt_tts_norm_")
-        self.wav = synth_wav(os.path.join(self.tmp, "w.wav"), amp=0.1)
+        directory = tempfile.TemporaryDirectory(prefix='vt_tts_norm_')
+        self.addCleanup(directory.cleanup)
+        self.tmp = directory.name
+        self.wav = synth_wav(os.path.join(self.tmp, '终😀.wav'), amp=0.1)
 
     def test_peak_measure(self):
         p = audio_processing.peak_db(self.wav)

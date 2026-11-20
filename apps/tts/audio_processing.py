@@ -11,6 +11,13 @@ import argparse
 import math
 import os
 import subprocess
+import sys
+
+
+def _run_media_tool(cmd):
+    # FFmpeg/ffprobe emit UTF-8 filenames and markers even under a legacy Windows ACP.
+    return subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
+
 
 MIN_TEMPO = 0.5
 MAX_TEMPO = 2.0
@@ -64,7 +71,7 @@ def apply_atempo(raw_path: str, budget_s: float, out_path: str,
            "-filter:a", (chain + ",apad") if chain else "apad",
            "-t", f"{budget_s:.6f}",
            "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", out_path]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = _run_media_tool(cmd)
     if r.returncode:
         raise RuntimeError(f"atempo 贴预算失败：{r.stderr[:300]}")
     return probe_duration(out_path)
@@ -72,9 +79,8 @@ def apply_atempo(raw_path: str, budget_s: float, out_path: str,
 
 def probe_duration(path: str) -> float:
     """ffprobe 容器时长（秒）。"""
-    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
-                        "format=duration", "-of", "csv=p=0", path],
-                       capture_output=True, text=True)
+    r = _run_media_tool(["ffprobe", "-v", "error", "-show_entries",
+                         "format=duration", "-of", "csv=p=0", path])
     if r.returncode:
         raise RuntimeError(f"ffprobe 失败 {path}：{r.stderr[:200]}")
     return float(r.stdout.strip())
@@ -87,8 +93,8 @@ APPLY_EPS_DB = 0.05  # 增益小于此值视为无需应用（normalize.py 同�
 
 def peak_db(path: str) -> float:
     """ffmpeg volumedetect 测 max_volume（dBFS）。"""
-    r = subprocess.run(["ffmpeg", "-i", path, "-af", "volumedetect",
-                        "-f", "null", "-"], capture_output=True, text=True)
+    r = _run_media_tool(["ffmpeg", "-i", path, "-af", "volumedetect",
+                         "-f", "null", "-"])
     for ln in r.stderr.splitlines():
         if "max_volume" in ln:
             return float(ln.split("max_volume:")[1].split("dB")[0])
@@ -107,10 +113,9 @@ def normalize_file(path: str, target_db: float = TARGET_DB) -> float:
     if abs(gain) < APPLY_EPS_DB:
         return 0.0
     tmp = path + ".norm.tmp"
-    r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", path,
-                        "-af", f"volume={gain}dB", "-c:a", "pcm_s16le",
-                        "-ar", "48000", "-ac", "1", "-f", "wav", tmp],
-                       capture_output=True, text=True)
+    r = _run_media_tool(["ffmpeg", "-y", "-v", "error", "-i", path,
+                         "-af", f"volume={gain}dB", "-c:a", "pcm_s16le",
+                         "-ar", "48000", "-ac", "1", "-f", "wav", tmp])
     if r.returncode:
         raise RuntimeError(f"✗ 归一失败 {path}：{r.stderr[:300]}")
     os.replace(tmp, path)
@@ -164,4 +169,8 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    if sys.platform == 'win32':
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, 'reconfigure'):
+                stream.reconfigure(encoding='utf-8', errors='replace')
     main()
