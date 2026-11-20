@@ -111,7 +111,7 @@ class TestTlMerge(unittest.TestCase):
         bad = [{"in": 100, "out": 50, "text": "in>=out"}]     # 违反 0<=in<out
         with self.assertRaises(ValueError):
             tl_merge.merge_subtitles(str(self.tl), bad)
-        self.assertEqual(json.loads(self.tl.read_text())["subtitles"],
+        self.assertEqual(json.loads(self.tl.read_text(encoding="utf-8"))["subtitles"],
                          self.before["subtitles"], "非法条目必须拒绝且保护现状")
         bad2 = [{"in": 0, "out": 30}]                          # 缺 text
         with self.assertRaises(ValueError):
