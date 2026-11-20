@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
-from tests._support import cleanup_timeline, tree_sha256, temporary_root
+from tests._support import cleanup_timeline, cli_python, tree_sha256, temporary_root
 
 REPO = Path(__file__).resolve().parents[2]
 VTX = REPO / "vtx" / "vtx.py"
@@ -93,9 +93,9 @@ class CleanupProtectionFixture(unittest.TestCase):
     def run_vtx(self, *args):
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", VTX_NO_NVENC="1",
                    VTX_DOCTOR_OFFLINE="1")
-        return subprocess.run(["env", "python3", "-B", str(VTX),
+        return subprocess.run([*cli_python(), "-X", "utf8", "-B", str(VTX),
                                "-t", str(self.timeline), *args],
-                              cwd=REPO, env=env, capture_output=True, text=True,
+                              cwd=REPO, env=env, capture_output=True, encoding="utf-8",
                               timeout=60)
 
     def assert_ok(self, result):
@@ -252,7 +252,7 @@ class CleanPreviewTest(CleanupProtectionFixture):
         self.assertIn("--i-know-this-nukes-everything", result.stdout)
         for name in ("out/final.mp4", "out/VERSIONS.json", "out/history",
                      "out/FREEZE.json"):
-            self.assertIn(name, result.stdout)
+            self.assertIn(str(Path(name)), result.stdout)
         self.assertEqual(present(self.root), before)
 
     def test_nuke_clean_dry_previews_destruction_warning(self):
@@ -261,7 +261,7 @@ class CleanPreviewTest(CleanupProtectionFixture):
         self.assert_ok(result)
         self.assertIn("危险操作", result.stdout)
         self.assertIn("将被一并删除", result.stdout)
-        self.assertIn("out/final.mp4", result.stdout)
+        self.assertIn(str(Path("out/final.mp4")), result.stdout)
         self.assertEqual(present(self.root), before)
 
     def test_deep_gc_dry_mentions_protection(self):
