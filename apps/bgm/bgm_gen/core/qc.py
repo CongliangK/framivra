@@ -97,8 +97,10 @@ def hf_energy_ratio(path, cutoff_hz=HF_CUTOFF_HZ, nfft=8192, hop=2048):
 
 
 def _run_script(script, path, runtime=None):
+    # The analysis programs print text (including file names and Unicode arrows).
+    env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
     r = subprocess.run([_python(runtime), os.path.join(PKG_DIR, "analysis", script), path],
-                       capture_output=True, text=True, timeout=300)
+                       env=env, capture_output=True, encoding='utf-8', errors='replace', timeout=300)
     if r.returncode != 0:
         return None, ((r.stderr or "") + (r.stdout or ""))[-400:]
     return (r.stdout or "").strip().splitlines()[-1] if (r.stdout or "").strip() else "", None
