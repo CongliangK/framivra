@@ -30,7 +30,7 @@ test('a playhead pin supersedes its pending read; pausing does not revoke the ba
   const media = monitor.state.active
   assert.equal(media.frame, 60); assert.equal(media.initialPin.frame, 63); assert.equal(monitor.playOperation, media.operationId)
   assert(owner.pin(64, media)); assert.equal(monitor.state.active, media, 'native playback notification is not a seek')
-  monitor.ended(media)
+  owner.pin(90)
   assert.equal(calls.at(-1).frame, 90)
   run.abort()
   calls.at(-1).deliver(); await Promise.resolve()

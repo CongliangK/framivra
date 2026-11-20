@@ -354,8 +354,11 @@ export class WindowMonitor {
 
   settledSuccessor(active, spare) {
     return !this.state.job && !this.state.failed && this.owns(active) && this.state.spare === spare && this.ownsMedia(spare) &&
-      active.reaped && spare.reaped && spare.automatic === active.automatic && matchesWindowBinding(spare, active) && spare.clock === active.clock &&
-      spare.from === active.operationId && spare.frame === active.end && versionToken.test(spare.inputEpoch) && spare.inputEpoch === active.inputEpoch
+      // Program reads have already checked their settled receipt, unlike the
+      // automatic continuation producer which must separately prove reap.
+      (active.program ? spare.program === active.program : active.reaped && spare.reaped && spare.automatic === active.automatic) &&
+      matchesWindowBinding(spare, active) && spare.clock === active.clock && spare.from === active.operationId && spare.frame === active.end &&
+      versionToken.test(spare.inputEpoch) && spare.inputEpoch === active.inputEpoch
   }
 
   parkedSpare(active, spare) {
@@ -451,7 +454,7 @@ export class WindowMonitor {
     // The container may include an audio-sample/codec tail. Do not derive a
     // project-frame endpoint from that duration.
     if (node.videoWidth !== 1920 || node.videoHeight !== 1080 || !Number.isFinite(node.duration) || Math.abs(node.duration - expected) > step / 2) {
-      this.cancel(media.formalArchiveOwner ? '解码后的归档 A/V 尺寸或时长不符。' : '解码后的窗口尺寸或时长不符。'); return
+      this.rejectMedia(media, media.formalArchiveOwner ? '解码后的归档 A/V 尺寸或时长不符。' : '解码后的窗口尺寸或时长不符。'); return
     }
     if (media.awaitPlayable && node.readyState < HAVE_FUTURE_DATA) return
     if (pin) {
@@ -495,9 +498,14 @@ export class WindowMonitor {
     media.playIntent = false
     media.resume = false
     media.resumeAttempt = undefined
+    if (media.program) {
+      if (this.playOperation === media.operationId) this.playOperation = undefined
+      if (media.node?.paused) retireWindowCallback(media)
+      media.program.pause(media)
+    }
     if (media.waiting) {
       media.waiting = false
-      this.update({ ...this.state })
+      this.refresh()
     }
   }
   played(media) {
@@ -506,38 +514,51 @@ export class WindowMonitor {
       media.playDenied = false
       this.update({ ...this.state, message: undefined })
     } else this.refresh()
-    if (media.automatic?.continuation) {
+    if (media.program || media.automatic?.continuation) {
       media.playIntent = true
       media.atEnd = media.waiting = false
       this.advance()
     }
   }
   ended(media) {
-    if (this.owns(media) && media.program) { media.program.ended(media); return }
     if (!this.owns(media) || !media.playIntent) return
     media.atEnd = true
     this.advance()
   }
   advance() {
     const { active, spare, job } = this.state
-    if (!this.owns(active) || !active.ready || !active.playIntent || !active.automatic?.continuation || active.end >= active.duration ||
+    if (!this.owns(active) || !active.ready || !active.playIntent || !(active.program || active.automatic?.continuation) || active.end >= active.duration ||
         (active.atEnd ? !active.node?.ended : active.node?.paused)) return
     if (active.atEnd && !job && spare?.ready) {
       const node = spare.node
       if (!this.settledSuccessor(active, spare) || node !== spare.readyNode || !attachedWindowNode(spare, node) || node.error || node.ended) {
-        void this.cancel('下一窗的来源或播放状态已失效。'); return
+        this.rejectMedia(spare, '下一窗的来源或播放状态已失效。'); return
       }
-      if (node.readyState >= HAVE_CURRENT_DATA) {
-        // A hidden spare is silent and has never advanced. No guessed seek can
-        // substitute for starting at its exact audio/video origin.
-        if (!node.paused || node.seeking || node.currentTime !== 0) {
-          void this.cancel('下一窗不在音画起点。'); return
+      // Program consumption requires a currently playable parked node, not
+      // just a decoded still left behind after readiness regressed.
+      if (node.readyState >= (active.program ? HAVE_FUTURE_DATA : HAVE_CURRENT_DATA)) {
+        if (!node.paused || node.seeking || node.currentTime !== 0 || (active.program && !node.muted)) {
+          this.rejectMedia(spare, '下一窗不在静止音画起点。'); return
         }
-        spare.resume = true
-        this.update({ active: spare })
-        disposeWindowMedia(active)
+        if (!active.program || this.parkedSpare(active, spare)) {
+          spare.resume = true
+          this.update({ active: spare })
+          disposeWindowMedia(active)
+          return
+        }
+      }
+    }
+    if (active.program) {
+      if (active.successorFailed) {
+        if (active.atEnd) {
+          active.playIntent = active.waiting = false
+          this.update({ ...this.state, message: '下一窗不可播放；音画已停止。' })
+        }
         return
       }
+      if (active.atEnd && !active.waiting) { active.waiting = true; this.refresh() }
+      if (!spare) active.program.prefetch(active)
+      return
     }
     const canPrepare = active.automatic.canDispatch?.() === true
     if (active.atEnd && !active.waiting && (job || spare || canPrepare)) {
@@ -604,8 +625,26 @@ export class WindowMonitor {
     }
   }
 
+  dropSpare(spare) {
+    if (this.state.spare !== spare) return
+    this.update({ ...this.state, spare: undefined })
+    disposeWindowMedia(spare)
+  }
+
+  rejectMedia(media, message) {
+    if (!this.ownsMedia(media)) return
+    if (media.program && this.state.spare === media) {
+      // Speculation may fail without interrupting the valid current A/V.
+      const active = this.state.active
+      if (this.owns(active) && active.program === media.program) active.successorFailed = true
+      this.dropSpare(media)
+      this.advance()
+    } else void this.cancel(message)
+  }
+
   dropMedia(state) {
     const { active, spare } = this.state
+    active?.program?.abortPrefetch(active)
     this.playOperation = undefined
     this.update({ ...state, active: undefined, spare: undefined })
     disposeWindowMedia(active)
@@ -858,7 +897,7 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
           },
           onWaiting: event => { if (!event.currentTarget.ended) monitor.playable(item, event.currentTarget, false) },
           onEmptied: event => monitor.playable(item, event.currentTarget, false),
-          onError: () => { if (monitor.ownsMedia(item)) monitor.cancel(archive ? '浏览器无法解码归档 A/V。' : '浏览器无法解码窗口。') },
+          onError: () => monitor.rejectMedia(item, archive ? '浏览器无法解码归档 A/V。' : '浏览器无法解码窗口。'),
           onPlay: event => observe(item, event.currentTarget),
           onPause: event => {
             const node = event.currentTarget
@@ -872,6 +911,9 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
             const requested = item.pendingSeek
             item.pendingSeek = undefined
             if (requested === undefined || Math.abs(node.currentTime - requested) > 1e-6) publish(item, node, node.currentTime)
+            // Native seeking cancels the old lookahead. A seek that did not
+            // pause the element may keep playing without another `play` event.
+            if (item.program && !node.paused && !node.ended) observe(item, node)
             if (monitor.playOperation === item.operationId) monitor.refresh()
           },
           onTimeUpdate: event => { const node = event.currentTarget; if (!node.seeking && (node.paused || typeof node.requestVideoFrameCallback !== 'function')) publish(item, node, node.currentTime) },
