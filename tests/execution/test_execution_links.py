@@ -202,13 +202,31 @@ class PackageLinkTests(test_acceptance.AcceptanceFixture, unittest.TestCase):
                 self.verify()
 
     def test_swapped_responses_reject(self):
-        self.build(self.observed_render)
+        if os.name == 'nt':
+            # The private producer bridge requires POSIX descriptors. Supply
+            # its bytes at the transport seam, not at the package verifier.
+            from vtx.runtime.events import ExecutionContext
+
+            def response_bytes(_project, request):
+                path = self.root / f'child-{request["command_index"]}.jsonl'
+                with path.open('x', encoding='utf-8', newline='\n') as stream:
+                    ExecutionContext(stream=stream, request=request).finish(0)
+                return path.read_bytes()
+
+            with patch.object(links, 'response_bytes', side_effect=response_bytes), \
+                    patch.object(links, 'initialize', return_value=True), \
+                    patch.object(links, '_bridge', side_effect=OSError('POSIX bridge unavailable')), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.build()
+        else:
+            self.build(self.observed_render)
+        self.assertEqual(self.verify()['execution_linkage'], 'complete')
         sidecar = self.sidecar()
         sidecar['commands'][0]['response'], sidecar['commands'][1]['response'] = (
             sidecar['commands'][1]['response'], sidecar['commands'][0]['response'])
         self.rewrite(links.SIDECAR, sidecar)
         self.rehash(links.SIDECAR)
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, 'unsafe execution response'):
             self.verify()
 
     def test_receipt_commit_reference_and_tamper(self):

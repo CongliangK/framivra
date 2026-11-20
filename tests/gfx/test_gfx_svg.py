@@ -210,7 +210,7 @@ class SvgContract(unittest.TestCase):
         self.assertIn(name, files)
         self.assertEqual(node['inputs']['dependencies'], {str(self.root / n): d for n, d in files.items()})
         self.assertEqual(node['key'], expected.directory.name)
-        self.assertEqual(node['artifact'], str(expected.directory.relative_to(self.root)))
+        self.assertEqual(node['artifact'], expected.directory.relative_to(self.root).as_posix())
         final = read.call_args_list[-len(files):]
         self.assertEqual([call.args[1] for call in final], list(files))
         self.assertTrue(all(call.args[0].root == root for call in read.call_args_list))
