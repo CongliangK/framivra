@@ -442,6 +442,31 @@ class CliSurface(unittest.TestCase):
         parser.parse_args.assert_called_once_with(["a.wav", "b.wav"])  # 命令面 <in> <out>
         ch.assert_called_once_with("a.wav", "b.wav")                  # CLI 缺省 mono
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows legacy pipe encoding')
+    def test_windows_probe_and_cli_report_missing_unicode_paths_under_cp936(self):
+        with tempfile.TemporaryDirectory(prefix='denoise ') as temp:
+            root = Path(temp) / '配音😀'
+            root.mkdir()
+            python = root / '不存在.exe'
+            weights = root / '权重'
+            env = dict(os.environ, DENOISE_PY=str(python), RESEMBLE_WEIGHTS=str(weights),
+                       PYTHONIOENCODING='cp936:strict', PYTHONUTF8='0', PYTHONDONTWRITEBYTECODE='1')
+            scripts = Path(dv.__file__).parent
+            for script, args, stream, text in (
+                ('health_check.py', [], 'stdout', 'denoise health: unhealthy'),
+                ('denoise_voice.py', ['input.wav', 'out.wav'], 'stderr', '✗ denoise 环境缺失'),
+            ):
+                with self.subTest(script=script):
+                    command = [sys.executable, '-B', str(scripts / script), *args]
+                    result = subprocess.run(command, cwd=root, env=env, capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 1, result)
+                    data = getattr(result, stream).decode('utf-8')
+                    self.assertIn(text, data)
+                    self.assertIn(str(python), data)
+                    self.assertIn(str(weights), data)
+                    self.assertNotIn(b'Traceback', result.stderr)
+            self.assertEqual(list(root.iterdir()), [])
+
     def test_missing_env_fail_hard_before_chain(self):
         with mock.patch("plugins.denoise.denoise_voice.missing_env",
                         return_value=["conda denoise 环境解释器 /x/py"]), \
