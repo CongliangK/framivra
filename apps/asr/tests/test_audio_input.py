@@ -26,9 +26,11 @@ class AudioInputDiagnostics(unittest.TestCase):
                 self.assertIn(cmd[0], ('ffmpeg', 'ffprobe'))
                 self.assertIn(str(source), cmd)
                 options.setdefault('encoding', 'ascii')
-                return run([sys.executable, '-c',
-                            f'import sys; sys.stderr.buffer.write({message!r}); sys.exit(1)'],
-                           timeout=30, **options)
+                result = run([sys.executable, '-c',
+                              f'import sys; sys.stderr.buffer.write({message!r}); sys.exit(1)'],
+                             timeout=30, **options)
+                self.assertEqual(result.stderr, message.decode('utf-8', errors='replace'))
+                return result
 
             with mock.patch.object(client.subprocess, 'run', side_effect=tool) as media_tool:
                 with self.assertRaisesRegex(RuntimeError, r'Cannot open 终😀\.mp4: invalid input�'):
