@@ -7,6 +7,17 @@ from vtx.inspection.impact import capture, compare
 
 
 class HtmlHarnessTests(unittest.TestCase):
+    def test_compare_accepts_legacy_windows_gfx_artifact_spelling(self):
+        root = r'C:\project'
+        node = dict(stage='gfx', key='f92b41e18731', inputs={}, parents=[])
+        snapshot = dict(schema='framivra-impact-snapshot-v2', root=root, audio_mix='same',
+                        warnings=[], limitations=[])
+        old = dict(snapshot, nodes={'clip:0:0': dict(node, artifact=r'cache\gfx\f92b41e18731')})
+        new = dict(snapshot, nodes={'clip:0:0': dict(node, artifact='cache/gfx/f92b41e18731')})
+        report = compare(old, new)
+        for field in ('affected_nodes', 'new_artifacts', 'retired_artifacts', 'suggested_stages'):
+            self.assertEqual(report[field], [], field)
+
     def test_consumed_dependencies_and_effective_restored_mtime_edits(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

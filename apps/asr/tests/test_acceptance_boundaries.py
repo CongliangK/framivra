@@ -14,6 +14,21 @@ import independence
 
 
 class AcceptanceBoundaries(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "native Windows CLI streams")
+    def test_disabled_cli_keeps_refusal_under_legacy_redirected_encoding(self):
+        with tempfile.TemporaryDirectory(prefix="asr-disabled-") as tmp:
+            home = Path(tmp)
+            config = home / "config.json"
+            config.write_text('{"asr":{"enabled":false}}', encoding="utf-8")
+            env = dict(SystemRoot=os.environ["SystemRoot"], USERPROFILE=str(home), PATH="",
+                       VTX_CONFIG=str(config), PYTHONUTF8="0", PYTHONIOENCODING="cp936")
+            cli = Path(__file__).resolve().parents[1] / "asr_cli.py"
+            result = subprocess.run([sys.executable, "-s", "-B", str(cli), "transcribe", "unused.wav"],
+                                    cwd=home, env=env, capture_output=True, timeout=15)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("✗ ASR 独立性校验失败", result.stdout.decode("utf-8"))
+            self.assertEqual(result.stderr, b"")
+
     def test_public_http_helpers_reject_ime_port_before_transport(self):
         cfg = {"asr": {"enabled": True}}
         with mock.patch.object(client.urllib.request, "urlopen") as request:

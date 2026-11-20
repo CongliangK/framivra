@@ -65,7 +65,8 @@ def read_json(path):
 
 
 def write_json(path, data):
-    with Path(path).open('x', encoding='utf-8') as f:
+    # The verifier binds the exact LF-terminated empty plugin config bytes.
+    with Path(path).open('x', encoding='utf-8', newline='\n') as f:
         json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False)
         f.write('\n')
 
@@ -251,7 +252,7 @@ def build(timeline, output, *, chrome=None):
         statuses['media'] = {'status': 'unknown', 'detail': 'No final media produced'}
     else:
         statuses['media'] = {'status': 'passed', 'detail': 'final.mp4 retained'}
-    files = {str(p.relative_to(output)): describe(p) for p in sorted(output.rglob('*')) if p.is_file()}
+    files = {p.relative_to(output).as_posix(): describe(p) for p in sorted(output.rglob('*')) if p.is_file()}
     # Portable logical commands; raw log retains the actual temporary argv.
     def logical(command):
         return command[:4] + ['$PROJECT/' + timeline.name] + command[5:]

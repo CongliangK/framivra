@@ -21,7 +21,7 @@
 
 - **app 级（manifest requires，doctor 可探测）**：ffmpeg / ffprobe（atempo 应用器、时长实测、峰值归一、volumedetect）；CLI 面（tts_cli/spec）系统 python3 stdlib 零第三方依赖。
 - **indextts 路径**：`gen` 和 `probe` 先查 `tts.python` 指定的解释器（未配置或为 `null` 时查默认 Conda 环境），找不到时再查 `tts.repo` 下的 `.venv`。Windows 分别查找环境根下的 `python.exe` 和 `.venv/Scripts/python.exe`；如旧配置仍写着 POSIX `bin/python`，可将该键设为 `null` 或指定实际解释器。Windows 请从仓根用原生 Python 运行 `python apps/tts/tts_cli.py probe`。找到文件不证明解释器能启动，更不代表推理可用。
-- **edge 兜底引擎**：用 CLI 的系统 Python，无需 IndexTTS 解释器、权重、音色参考或 GPU。`probe` 和 `gen` 先查 `tts.edge_bin`（默认 `~/miniconda3/bin/edge-tts`），路径不存在才回退到 PATH 上的 `edge-tts`。客户端需另行安装。
+- **edge 兜底引擎**：用 CLI 的系统 Python，无需 IndexTTS 解释器、权重、音色参考或 GPU。`probe` 和 `gen` 先查 `tts.edge_bin`（未设置或为 `null` 时，Windows 查 `~/miniconda3/Scripts/edge-tts.exe`，其他平台查 `~/miniconda3/bin/edge-tts`），找不到文件才查 PATH。客户端需另行安装。
 
 ## 健康检查
 

@@ -89,12 +89,14 @@ init 生成 `config.local.json`；参数原样透传，如 `bash -s -- -- --fix`
 以下为原生 PowerShell，无需 WSL/Git Bash；脚本先保存再执行，控制台直连不吞交互：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing https://raw.githubusercontent.com/CongliangK/framivra/main/scripts/install_windows.ps1 -OutFile $env:TEMP\vt-i.ps1; & $env:TEMP\vt-i.ps1"
+$p = Join-Path $env:TEMP 'vt-i.ps1'
+Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/CongliangK/framivra/main/scripts/install_windows.ps1 -OutFile $p
+powershell -NoProfile -ExecutionPolicy Bypass -File $p
 ```
 
 默认克隆位置 `%LOCALAPPDATA%\framivra-repo`。引导器检测 python≥3.9 与 git；缺失时使用 winget 用户级安装（Git 包为 Git.Git），失败给手动指引。winget 新装后需新开终端更新 PATH。企业域控无 winget 时手动装 Python 与 Git；隔离内网不在支持范围。
 
-脚本名后参数原样交给 init，短横线开头须加引号，如 `& $env:TEMP\vt-i.ps1 '--fix'`；`--fix` 自动装缺失基础依赖。
+脚本名后参数原样交给 init，如 `powershell -NoProfile -ExecutionPolicy Bypass -File $p '--fix'`；`--fix` 自动装缺失基础依赖。
 
 ## 可选音乐环境
 

@@ -8,14 +8,68 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 
 
 def tool_search_order():
-    # Keep shared bins (e.g. Git or SoX's) from shadowing the macOS full keg.
-    if sys.platform == 'darwin':
+    # Shared bins (e.g. Git/SoX or Windows shims) can contain reduced FFmpeg.
+    if sys.platform in ('darwin', 'win32'):
         return ('ffmpeg', 'ffprobe', 'git', 'sox', 'chrome')
     return ('git', 'ffmpeg', 'ffprobe', 'sox', 'chrome')
+
+
+def _windows_pre_path_dirs():
+    """Get the documented CreateProcess locations ahead of PATH, excluding cwd."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    # Maximum Win32 extended path length including the terminating NUL.
+    buffer = ctypes.create_unicode_buffer(32768)
+
+    def query(api, argtypes=(), *args):
+        api.argtypes = (*argtypes, wintypes.LPWSTR, wintypes.DWORD)
+        api.restype = wintypes.DWORD
+        length = api(*args, buffer, len(buffer))
+        if not length:
+            error = ctypes.WinError(ctypes.get_last_error())
+            raise RuntimeError('Cannot qualify Windows executable search: ' + api.__name__) from error
+        if length >= len(buffer) or not (path := Path(buffer.value)).is_absolute():
+            raise RuntimeError('Invalid Windows executable search path: ' + api.__name__)
+        return path
+
+    # A Windows venv redirector can report its Scripts/python.exe as
+    # sys.executable while the process image is the base installation's python.exe.
+    image = query(kernel.GetModuleFileNameW, (wintypes.HMODULE,), None)
+    system = query(kernel.GetSystemDirectoryW)
+    windows = query(kernel.GetWindowsDirectoryW)
+    return image.parent, system, windows / 'System', windows
+
+
+def shadowed_windows_tools(paths, tools):
+    """Check bare native .exe lookup for this process image and the proposed PATH.
+
+    The launcher must set NoDefaultCurrentDirectoryInExePath in its own
+    environment. This is a point-in-time check, not a pin across file changes
+    or a qualification of subprocess grandchildren with a different image.
+    """
+    directories = (*_windows_pre_path_dirs(), *(Path(d.strip('"')) for d in paths if d.strip('"')))
+    shadowed = []
+    for name in ('ffmpeg', 'ffprobe', 'git', 'sox'):
+        selected = None
+        for directory in directories:
+            candidate = directory / (name + '.exe')
+            try:
+                mode = candidate.stat().st_mode
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            if stat.S_ISREG(mode):
+                selected = candidate.resolve(strict=True)
+                break
+        if selected is None or selected != Path(tools[name]).resolve(strict=True):
+            shadowed.append(name)
+    return shadowed
 
 
 def configure_environment(prefix=None, source=None, environment=None):
@@ -49,6 +103,12 @@ def configure_environment(prefix=None, source=None, environment=None):
         if not isinstance(value, str) or not Path(value).is_absolute() or not Path(value).is_file():
             raise RuntimeError('Managed tool unavailable: ' + name)
         paths.append(str(Path(value).parent))
+    windows = sys.platform == 'win32'
+    if windows:
+        shadowed = shadowed_windows_tools(paths, tools)
+        if shadowed:
+            raise RuntimeError('Managed runtime executable search shadows selected tools: ' +
+                               ', '.join(shadowed) + '. Remove the conflicting tools or rerun the installer.')
     config = data.get('configFile')
     if config != str(root / 'config.json') or not Path(config).is_file():
         raise RuntimeError('Managed configuration unavailable')
@@ -61,6 +121,9 @@ def configure_environment(prefix=None, source=None, environment=None):
             raise RuntimeError('Managed font configuration unavailable')
         env.setdefault(key, value)
     env['PATH'] = os.pathsep.join(dict.fromkeys([*paths, env.get('PATH', '')]))
+    if windows:
+        # Bare native subprocess commands must not prefer the caller's directory.
+        env.setdefault('NoDefaultCurrentDirectoryInExePath', '1')
     env.setdefault('VTX_CONFIG', config)
     env.setdefault('VTX_CHROME', tools['chrome'])
     env.setdefault('VTX_GFX', 'cdp')

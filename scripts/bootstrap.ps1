@@ -259,7 +259,7 @@ function Invoke-Bootstrap {
         return
     }
     $network = Get-InstallerOption '--network' 'cn'
-    $root = Get-InstallerOption '--root' (Join-Path $env:LOCALAPPDATA 'framivra')
+    $root = Get-InstallerOption '--root' ''
     if ($network -notin @('cn', 'official')) { throw '--network must be cn or official' }
     if (-not ($InstallerArgs -contains '--plan') -and (Test-ElevatedWindows)) {
         throw 'Per-user Windows installation requires a non-administrator PowerShell; rerun from an ordinary PowerShell. Existing files and ACLs were not changed.'
@@ -269,6 +269,13 @@ function Invoke-Bootstrap {
         if (($InstallerArgs -contains '--plan') -or ($InstallerArgs -contains '--no-system')) { throw 'Python x64 >=3.9 is missing; no changes made.' }
         if (-not ($InstallerArgs -contains '--yes')) {
             if ((Read-Host 'Download verified user-level Python 3.13.17 and prepare Framivra? [y/N]') -notmatch '^(y|yes)$') { throw 'Cancelled' }
+        }
+        # The Python installer resolves its own default. Only a bootstrapped
+        # Python download needs the same root before Python is available.
+        if (-not $root) {
+            $local = $env:LOCALAPPDATA
+            if (-not $local) { $local = Join-Path $HOME 'AppData\Local' }
+            $root = Join-Path $local 'framivra'
         }
         $installer = Get-LockedPython (Join-Path $root 'cache\downloads') $network
         $process = Start-Process -FilePath $installer -ArgumentList '/quiet', 'InstallAllUsers=0', 'PrependPath=1', 'Include_test=0', 'Include_launcher=1', 'InstallLauncherAllUsers=0' -Wait -PassThru
