@@ -10,7 +10,19 @@ Windows x64 原生配置只支持 `gfx`、单个 SVG 剪辑、无普通素材/�
 
 ## 锁定 portable-v2 主片的 `all`
 
-在上述两个 SVG 根之外，设置 `VTX_WINDOWS_SVG_MEDIA_BIN` 指向已验的 Gyan FFmpeg 9.0.2 full 静态版 `bin`（固定 `ffmpeg.exe` 和 `ffprobe.exe` 字节）。只接受 portable-v2 的原始时间线、帧、字体、声明依赖和两份 WAV。`python -m vtx -t <timeline.json> all` 是写操作：执行正式阶段、写缓存及封装，并默认做严格 QC。仅 CPU/完整输出、不运行插件；阶段串行，视频分段仍由 `VTX_VIDEO_SEGMENTS` 控制。
+在上述两个 SVG 根之外，设置 `VTX_WINDOWS_SVG_MEDIA_BIN` 指向已验的 Gyan FFmpeg 9.0.2 full 静态版 `bin`（固定 `ffmpeg.exe` 和 `ffprobe.exe` 字节）。三个变量仅为本次主片操作配置；不要在普通项目的环境里全局设置。暂存路径也不能含 `%`，且不得与媒体工具目录重叠。只接受 portable-v2 的原始时间线、帧、字体、声明依赖和两份 WAV。
+
+从源码按[主片准备说明](../../templates/demo-timeline-svg/README.md#准备与正式运行)执行。PowerShell 示例（`$Project` 指向可信固定 NTFS 上一个全新、仓库 / HOME / 缓存外的目录，`$Fonts` 指向四份锁定字体所在目录；父目录和私有暂存必须已存在）：
+
+```powershell
+python -X utf8 scripts/demo.py preflight --fonts-dir $Fonts
+python -X utf8 scripts/demo.py prepare --output $Project --fonts-dir $Fonts
+python -X utf8 scripts/demo.py verify --project $Project
+python -X utf8 -m vtx -t "$Project/timeline.json" all
+python -X utf8 -m vtx -t "$Project/timeline.json" qc --strict
+```
+
+检查预检的 `prepare_ready`，并在任一后续步骤非零退出时停止。预检不启动渲染器；`prepare` 写入工程并执行真正的产品 `validate`，`verify` 只查输入；`all` 写缓存和封装并默认做严格 QC。`all` 仅限 CPU 完整输出、不运行插件；阶段串行，视频分段仍由 `VTX_VIDEO_SEGMENTS` 控制。单独的 `qc --strict` 要求当前指纹下成功的封装回执及两份有证书的媒体（终片和 QC 参考），重新测量并写 QC 报告与回执，不重建媒体；不匹配时请重跑 `all`。
 
 FFmpeg 在私有 Job 中处理被锁定的素材、认证帧和中间媒体；私有拼接清单只引用已认证段。媒体出 Job 后完整解码并提交，暖认证绑定目标、输入和工具，QC 回执绑定本轮实际终片和参考视频。工程、工具与暂存根须由可信写者控制；这些检查不提供权限沙箱，也不开放通用 Windows 工程合成。
 

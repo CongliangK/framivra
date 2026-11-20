@@ -19,7 +19,8 @@ _TOOL_LIMIT = 256 * 1024 * 1024
 _MEDIA_LIMIT = 512 * 1024 * 1024
 _MARKER_LIMIT = 16 * 1024
 _STANDARD_TIMELINE = 'a7008c2e5b2833da13021c3a1ccb46a09068ca1775b6724328563d2d37f7d105'
-_STANDARD_INPUTS = 'ee88e5d4be9fb74ade319eda4fa868866de6e5849be338147aec7b1c9ba0f8fe'
+# Raw LF bytes of the frozen input lock (the Git blob and source archives).
+_STANDARD_INPUTS = 'b4a687a8cdaf3166b0f74f30015ef9c24ff8d1a27cdd9f491e5e4b78ea3d1bb0'
 # Gyan 9.0.2 full static build exercised by the Windows reference run.
 _STANDARD_TOOLS = {
     'ffmpeg': '589e50b766d251afdf181dd664d40bd94407e200b019989fd7468c7d118a28d0',
@@ -186,13 +187,15 @@ class WindowsSvgMedia:
                 yield rec['sha256']
 
     @contextmanager
-    def qc_scope(self, c):
+    def qc_scope(self, c, *, standalone=False):
         paths = (c.out / 'final.mp4', c.cache / 'qc_clean.mp4')
         with ExitStack() as pins:
             hashes = {}
             for path in paths:
                 sha = pins.enter_context(self.certified_file(c, path, c.dur))
-                if sha != self.published.get(path):
+                # A separate strict QC invocation has no in-process publication.
+                # The all route must still match both publications from this run.
+                if not standalone and sha != self.published.get(path):
                     raise ValueError('Windows SVG QC input differs from the movie published in this run')
                 hashes[path.name] = sha
             self.qc_identity = hashes

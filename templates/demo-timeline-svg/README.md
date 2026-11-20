@@ -19,7 +19,7 @@ python3 scripts/demo.py fonts
 python3 scripts/demo.py preflight --fonts-dir "/path/to/existing-font-files"
 ```
 
-`fonts` 列出固定公开来源与包/字体 SHA256，未提供已有目录时报告 MISSING、退出 1；`fonts --fonts-dir DIR` 校验已有字体。preflight 退出 0 只代表报告完整；平台不支持时 `prepare_supported` 为 false，平台、字体或工具有缺项时 `prepare_ready` 为 false。依赖诊断逐项列出 Python/Node/FFmpeg/ffprobe/Inkscape/fc-scan/jsonschema 的缺失或失败；Inkscape 只发现路径和字节，不启动进程。预检不联网、不证明运行库/选面/原生渲染通过。
+`fonts` 列出固定公开来源与包/字体 SHA256，未提供已有目录时报告 MISSING、退出 1；`fonts --fonts-dir DIR` 校验已有字体。preflight 退出 0 只代表报告完整；平台不支持时 `prepare_supported` 为 false，平台、字体或工具有缺项时 `prepare_ready` 为 false。依赖诊断检查 Python、Node、jsonschema 和本平台所需媒体工具；Windows 只发现显式配置的媒体路径，不启动 Inkscape、Fontconfig 或 FFmpeg。预检不联网、不证明运行库、选面或原生渲染通过。
 
 以下为**显式联网与写操作**：从 Debian 官方公开包下载并校验字体，不执行包安装器；生成音频、帧、缓存及成片。必须在同一 Bash 会话中使用全新物理 RUN，不能复用用户工程或证据目录。prepare 拒绝已有输出、symlink 组件、缺父目录及仓/HOME/cache 内输出；失败保留日志且停止后续步骤。
 
@@ -35,7 +35,7 @@ python3 -m vtx -t "$PROJECT/timeline.json" qc --strict > "$RUN/qc-strict.log" 2>
 
 示例使用默认正式分段，不设置单段绕行；[帧时钟修复 #359](https://github.com/CongliangK/framivra/pull/359) 已合入。完整解码和 strict QC 仍不能替代全部 900 帧 PTS=`n/30` 的独立检查；历史单段成功、旧多段失败均保留原身份，不自动升级成当前平台通过。自定义 TMPDIR 也须位于仓/HOME/cache 外且无链接组件。
 
-**Windows 尚不支持本主片的 SVG 后端。** 可以在 PowerShell 运行只读预检 `python -X utf8 scripts/demo.py preflight`；`prepare` 会在下载和创建项目之前拒绝执行。Windows 的 HTML 能力检查不替代本主片验收。
+Windows x64 使用同一 `prepare`/`verify`，不使用上面 Bash 的临时目录示例。按 [Windows SVG 指南](../../docs/reference/windows-svg.md#锁定-portable-v2-主片的-all)设置三个运行时根，再从 PowerShell 执行同一流程：把 `python3` 换成 `python -X utf8`，指定仓库、用户主目录和缓存之外的全新工程目录，每步检查退出码再继续。Windows 的 HTML 能力检查不替代本主片验收。
 
 离线准备时把 `--fetch-fonts` 换为 `--fonts-dir DIR`，目录须含原文件名的四份锁定字体；两参数互斥。也可先显式运行 `python3 scripts/demo.py fonts --output "$RUN/fonts"`（联网写入新目录），再复用该目录。网络失败或包/字体 SHA 不符会明确失败，不自动采用其他版本或本机同名字体；无系统全局安装。已有完整项目携带字体，正式渲染不需要联网。
 
@@ -53,7 +53,7 @@ prepare 真实生成全 900 SVG、manifest、字体副本和两份新音频，�
 
 - 图形生成用 Node.js 18+ 标准库，无 npm 依赖；音频生成用 Python 3.9+ 标准库，无 NumPy、音乐插件、外部采样、音色库、模型、FFmpeg 编码或私有工程依赖。
 - prepare 保留真实 schema 检查：`test_schema.py` 需要 `jsonschema`，缺少即 BLOCKED，不安装、不降级为部分验证。复制到仓外的两项自测可用 `--schema` 指定产品 schema。
-- 产品链仍需 Framivra、FFmpeg/ffprobe、Inkscape 和 Fontconfig `fc-scan`。SVG 运行身份支持 Linux ELF 与 macOS arm64，**Windows SVG 不支持**；Linux 另需 system `ldd`。macOS 要求自包含 Inkscape.app 的真实 arm64 Mach-O 程序及可解析依赖，不接受启动脚本。按 `VTX_INKSCAPE`、PATH 顺序定位，macOS 再查系统/用户 Applications。prepare 的产品 validate 也会探测这些身份；preflight 的 `prepare_ready` 不代表实际探针/原生能力已通过。[SVG 后端](../../vtx/render/gfx_svg.py)用私有配置隔离用户环境；face 枚举不等于逐字形选面或跨平台像素等价。
+- Linux ELF / macOS arm64 的产品链需要 Framivra、FFmpeg/ffprobe、Inkscape 和 Fontconfig `fc-scan`；Linux 另需 system `ldd`。macOS 要求 Inkscape.app 的真实 arm64 Mach-O 与可解析依赖，不接受启动脚本。先查 `VTX_INKSCAPE`、PATH，macOS 再查系统/用户 Applications。[Windows x64](../../docs/reference/windows-svg.md)用指定版本的便携 Inkscape、私有 Fontconfig 和固定 FFmpeg，不从 PATH 查找它们。实际身份由 `prepare` 的产品校验核实；`prepare_ready` 不代表运行时或渲染验收通过。face 枚举也不等于逐字形选面或跨平台像素等价。
 
 **字体规范**：优先系统通用或业内标准公开字体，避免冷门、需特殊授权安装的字体。本片沿用 Noto Sans CJK SC Regular/Bold 与 DejaVu Sans Book/Bold；family、字重、TTC face index、版本和字体 SHA256 的权威为 [fonts.lock.json](fonts.lock.json)。不能把“系统同名”当成同一依赖，也不能静默 fallback。
 

@@ -32,7 +32,9 @@ def main(argv=None):
             stack.enter_context(contextlib.redirect_stderr(errors))
         try:
             path = Path(os.path.abspath(os.path.expanduser(args.timeline)))
-            c = Ctx(path, diagnostics=records if structured else None)
+            from .cli.windows_svg import context_options, stage_scope
+            scope = context_options(stack, args.command, path, strict=args.strict)
+            c = Ctx(path, diagnostics=records if structured else None, **scope)
             c.strict = args.strict
             c.draft = False
             c.frames = None
@@ -47,8 +49,14 @@ def main(argv=None):
                     mark_handled(error)
                     raise
             print(f'== {args.command} ==')
-            c.begin_stage(args.command)
-            {'validate': validate, 'audit': audit, 'qc': qc}[args.command](c)
+            with stage_scope(c):
+                c.begin_stage(args.command)
+                media = getattr(c, '_windows_svg_media', None)
+                if args.command == 'qc' and media is not None:
+                    with media.qc_scope(c, standalone=True):
+                        qc(c)
+                else:
+                    {'validate': validate, 'audit': audit, 'qc': qc}[args.command](c)
             print('完成：', [args.command])
         except SystemExit as error:
             exit_code = error.code if isinstance(error.code, int) else (0 if error.code is None else 1)

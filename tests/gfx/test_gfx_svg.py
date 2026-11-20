@@ -853,6 +853,27 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
         self.assertEqual({path.name for path in root.iterdir()}, {'timeline.json'})
 
 
+    def test_locked_stage_dispatch_does_not_claim_unrelated_windows_projects(self):
+        from contextlib import ExitStack
+        from vtx.cli.windows_svg import context_options
+        from vtx.render import gfx_svg_win_runtime
+
+        root = temporary_root(self).resolve()
+        standard = Path(__file__).resolve().parents[2] / 'templates/demo-timeline-svg/timeline.json'
+        timeline = root / 'timeline.json'
+        env = {f'VTX_WINDOWS_SVG_{key}': str(root / value) for key, value in (
+            ('PORTABLE', 'package'), ('SCRATCH', 'scratch'), ('MEDIA_BIN', 'media'))}
+        with mock.patch.dict(os.environ, env), ExitStack() as stack, \
+                mock.patch.object(gfx_svg_win_runtime, 'owned_runtime', side_effect=AssertionError('unexpected tool launch')):
+            timeline.write_bytes(standard.read_bytes())
+            for command in ('validate', 'qc'):
+                self.assertTrue(context_options(stack, command, timeline, strict=True)['_svg_all'])
+            self.assertEqual(context_options(stack, 'qc', timeline), {})
+            self.assertEqual(context_options(stack, 'audit', timeline), {})
+            timeline.write_bytes(b'{"project":{},"video_tracks":[{"kind":"gfx","clips":[{"src":"page.html"}]}]}')
+            for command in ('validate', 'qc'):
+                self.assertEqual(context_options(stack, command, timeline, strict=True), {})
+
     def test_producer_refuses_an_unpinned_record_before_opening_cache(self):
         from vtx.render.gfx_svg_win_runtime import _WindowsRasterRuntime
 

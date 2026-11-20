@@ -71,7 +71,8 @@ class PortableEntryTests(unittest.TestCase):
     def test_failed_public_acquisition_retains_failure_not_success(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp).resolve() / 'project'
-            with patch.object(demo, 'unsupported_prepare_platform', return_value=None), \
+            with patch.object(Path, 'home', return_value=project.parent / 'home'), \
+                    patch.object(demo, 'unsupported_prepare_platform', return_value=None), \
                     patch.object(demo, 'dependency_identity', return_value={}), \
                     patch.object(demo_fonts, 'fetch_fonts', side_effect=demo_fonts.FontError('offline fixture')), \
                     contextlib.redirect_stdout(io.StringIO()):
@@ -88,7 +89,8 @@ class PortableEntryTests(unittest.TestCase):
             if name == 'node':
                 raise demo.DemoError('Node.js 18+ required')
             return None if name in ('ffprobe', 'inkscape', 'fc-scan') else {'version_line': 'fixture'}
-        with patch.object(demo, 'tool_identity', side_effect=probe), \
+        with patch.object(demo.sys, 'platform', 'linux'), \
+                patch.object(demo, 'tool_identity', side_effect=probe), \
                 patch.object(demo, 'package_version', return_value=None):
             with self.assertRaises(demo.DemoError) as failed:
                 demo.dependency_identity(False)
@@ -119,21 +121,48 @@ class PortableEntryTests(unittest.TestCase):
                     with self.assertRaises((demo.DemoError, UnicodeError)):
                         demo.tool_identity('node')
 
-    def test_windows_does_not_claim_preparation_ready_or_touch_output(self):
-        args = SimpleNamespace(fonts_dir=None, audio_inputs=None, output='unused')
-        with patch.object(demo.sys, 'platform', 'win32'), \
-                patch.object(demo, 'engine_identity', return_value={}), \
-                patch.object(demo, 'dependency_identity', return_value={}), \
-                patch.object(demo, 'check_fonts', return_value={}), \
-                patch.object(demo, 'check_output_path', side_effect=AssertionError('output inspected')), \
-                contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(demo.cmd_preflight(args), 0)
-            status = json.loads(output.getvalue())
-            self.assertTrue(all(row['ok'] for row in status['checks'].values()))
-            self.assertFalse(status['prepare_supported'])
-            self.assertFalse(status['prepare_ready'])
-            with self.assertRaisesRegex(demo.DemoError, 'BLOCKED: .* requires the SVG runtime'):
-                demo.cmd_prepare(args)
+    def test_windows_preflight_checks_explicit_roots_without_launching_media(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            project = base / 'new-project'
+            args = SimpleNamespace(fonts_dir=None, audio_inputs=None, output=str(project), fetch_fonts=True)
+            paths = {'PORTABLE': base / 'package', 'SCRATCH': base / 'scratch', 'MEDIA_BIN': base / 'tools'}
+            env = {'VTX_WINDOWS_SVG_' + k: str(v) for k, v in paths.items()}
+            for p in (paths['PORTABLE'] / 'inkscape/bin/inkscape.com',
+                      paths['MEDIA_BIN'] / 'ffmpeg.exe', paths['MEDIA_BIN'] / 'ffprobe.exe'):
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_bytes(b'discovery-only, not a valid executable')
+            paths['SCRATCH'].mkdir()
+            with patch.object(Path, 'home', return_value=base / 'home'), \
+                    patch.object(demo.sys, 'platform', 'win32'), \
+                    patch.object(demo.sysconfig, 'get_platform', return_value='win-amd64'), \
+                    patch.object(demo, 'engine_identity', return_value={}), \
+                    patch.object(demo, 'check_fonts'), \
+                    patch.object(demo, 'package_version', return_value='fixture'), \
+                    patch.object(demo, 'tool_identity', side_effect=lambda name: {'name': name}
+                                 if name in ('python', 'node') else self.fail('unexpected PATH probe: ' + name)), \
+                    patch.object(demo.subprocess, 'run', side_effect=AssertionError('unexpected process')):
+                with patch.dict(os.environ, env | {'VTX_WINDOWS_SVG_MEDIA_BIN': ''}), \
+                        contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(demo.cmd_preflight(args), 0)
+                    status = json.loads(output.getvalue())
+                    self.assertTrue(status['prepare_supported'])
+                    self.assertFalse(status['prepare_ready'])
+                    self.assertIn('VTX_WINDOWS_SVG_MEDIA_BIN', status['checks']['dependencies']['error'])
+                    with self.assertRaisesRegex(demo.DemoError, 'BLOCKED: .*MEDIA_BIN'):
+                        demo.cmd_prepare(args)
+                with patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(demo.cmd_preflight(args), 0)
+                    status = json.loads(output.getvalue())
+                    self.assertTrue(status['prepare_ready'])
+                    self.assertFalse(status['render']['ready'])
+                    self.assertEqual(demo.windows_dependencies()['inkscape']['runtime_probe'], 'UNRUN')
+                    with self.assertRaisesRegex(demo.DemoError, 'must not overlap'):
+                        demo.windows_dependencies(paths['SCRATCH'] / 'new-project')
+                with patch.object(demo.sysconfig, 'get_platform', return_value='win-arm64'):
+                    with self.assertRaisesRegex(demo.DemoError, 'requires the SVG runtime'):
+                        demo.cmd_prepare(args)
+            self.assertFalse(project.exists())
 
     def test_windows_reparse_components_are_rejected_before_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
