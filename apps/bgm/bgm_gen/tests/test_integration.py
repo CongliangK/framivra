@@ -15,6 +15,12 @@ from bgm_gen.engines.sf2 import _runtime_fluidsynth_lib
 
 pytestmark = pytest.mark.fast
 APP = Path(__file__).resolve().parents[2]
+CLI_PYTHON = sys.executable if os.name == 'nt' else 'python3'
+
+
+def _run_bgm(*args, cwd, env):
+    return subprocess.run([CLI_PYTHON, str(APP / 'bgm.py'), *args], cwd=cwd, env=env,
+                          capture_output=True, encoding='utf-8', timeout=90)
 
 
 @pytest.fixture
@@ -72,7 +78,7 @@ def test_bad_explicit_runtime_fails_without_traceback(fresh_env, tmp_path, value
     env = {**fresh_env, "MUSIC_RUNTIME": str(config)}
     spec = tmp_path / "spec.json"
     spec.write_text(json.dumps({"payload": {"program": "kick", "notes": [[36, 0, .25, 100]]}}))
-    result = subprocess.run(["python3", str(APP / "bgm.py"), "render-engine", "--engine", "synth", "--spec", str(spec)], env=env, cwd=tmp_path, capture_output=True, text=True)
+    result = _run_bgm('render-engine', '--engine', 'synth', '--spec', str(spec), env=env, cwd=tmp_path)
     assert result.returncode == 1
     assert "MUSIC_RUNTIME" in result.stderr and "Traceback" not in result.stderr
 
@@ -112,10 +118,12 @@ def test_windows_bgm_entry_preserves_unicode_json_and_errors(fresh_env, tmp_path
 
     result = show(project)
     assert result.returncode == 0, result.stderr
+    assert data['name'].encode('utf-8') in result.stdout
     assert json.loads(result.stdout.decode('utf-8'))['project'] == data['name']
     missing = show(tmp_path / '缺少 🎵.json')
     assert missing.returncode == 1 and missing.stdout == b''
     error = missing.stderr.decode('utf-8')
+    assert error.startswith('show structure 失败：')
     assert '缺少 🎵.json' in error and 'Traceback' not in error
     assert project.read_bytes() == authored
     assert set(tmp_path.iterdir()) == {project}
@@ -128,9 +136,8 @@ def test_fresh_synth_project_end_to_end(fresh_env, tmp_path):
     if os.name == 'nt':
         # Exercise both native FFmpeg decoding and the real CLI stdout boundary.
         env.update(PYTHONUTF8='0', PYTHONIOENCODING='cp936:strict')
-    python = sys.executable if os.name == 'nt' else 'python3'
-    command = [python, str(APP / "bgm.py"), "render", str(APP / "examples/synth.json"), "-o", str(out), "-q"]
-    result = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, encoding='utf-8', timeout=90)
+    source = str(APP / 'examples/synth.json')
+    result = _run_bgm('render', source, '-o', str(out), '-q', cwd=tmp_path, env=env)
     assert result.returncode == 0, result.stderr
     assert 'UnicodeDecodeError' not in result.stderr
     report = json.loads(result.stdout)
@@ -144,8 +151,7 @@ def test_fresh_synth_project_end_to_end(fresh_env, tmp_path):
     assert qc['measured']['key_top3'], 'the real analysis subprocess must return key measurements'
     # A second independent render must reproduce the audio, not rely on old out/.
     again = tmp_path / "again"
-    command[-2] = str(again)
-    other = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, encoding='utf-8', timeout=90)
+    other = _run_bgm('render', source, '-o', str(again), '-q', cwd=tmp_path, env=env)
     assert other.returncode == 0, other.stderr
     assert (out / "mix.flac").read_bytes() == (again / "mix.flac").read_bytes()
 
@@ -219,10 +225,11 @@ def test_cli_output_overrides_and_catalog_never_write_app(fresh_env, tmp_path):
     spec = tmp_path / "spec.json"
     spec.write_text(json.dumps({"out": str(tmp_path / "not-selected.wav"), "payload": {"program": "kick", "notes": [[36, 0, .25, 100]]}}))
     selected = tmp_path / "selected.wav"
-    result = subprocess.run(["python3", str(APP / "bgm.py"), "render-engine", "--engine", "synth", "--spec", str(spec), "-o", str(selected)], env=fresh_env, cwd=tmp_path, capture_output=True, text=True)
+    result = _run_bgm('render-engine', '--engine', 'synth', '--spec', str(spec), '-o', str(selected),
+                      env=fresh_env, cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert selected.is_file() and not (tmp_path / "not-selected.wav").exists()
-    result = subprocess.run(["python3", str(APP / "bgm.py"), "catalog", "--write"], env=fresh_env, cwd=tmp_path, capture_output=True, text=True)
+    result = _run_bgm('catalog', '--write', env=fresh_env, cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "catalog/timbres.json").is_file()
 
