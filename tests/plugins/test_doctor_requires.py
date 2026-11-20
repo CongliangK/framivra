@@ -77,6 +77,7 @@ class ResolveRequiredBinary(unittest.TestCase):
         # 单个含反斜杠文件名——夹具按同语义落点，命中即证明拼接正确。
         with tempfile.TemporaryDirectory(prefix="vt-win-chrome-") as tmp:
             chrome = Path(tmp) / r"ProgramFiles\Google\Chrome\Application\chrome.exe"
+            chrome.parent.mkdir(parents=True, exist_ok=True)
             chrome.write_bytes(b"stub")
             pf = Path(tmp) / "ProgramFiles"
             with mock.patch.object(vt_mod, "OS", "win32"), \
@@ -90,6 +91,7 @@ class ResolveRequiredBinary(unittest.TestCase):
                 self.assertTrue(ok, missing)
         with tempfile.TemporaryDirectory(prefix="vt-win-edge-") as tmp2:
             edge = Path(tmp2) / r"ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+            edge.parent.mkdir(parents=True, exist_ok=True)
             edge.write_bytes(b"stub")
             pf2 = Path(tmp2) / "ProgramFiles"
             with mock.patch.object(vt_mod, "OS", "win32"), \
@@ -230,30 +232,42 @@ class DependencyGrading(unittest.TestCase):
 class MissingFfmpegSubprocess(unittest.TestCase):
     """③ 子进程级：构造缺 ffmpeg/ffprobe（核心齐备）环境 → doctor exit 1 含 error 行。
 
-    PATH 只含 env/bash/git/node/真实浏览器/python3——组件段 builtin 降 ℹ，
-    exit 1 必须来自依赖面 error（error ⇔ exit 1 的合同验证）。
+    PATH 只含测试需要的工具：POSIX 用私有链接；Windows 用选定的原生 Git 目录，
+    正例额外用 FFmpeg/ffprobe 目录。组件段 builtin 降 ℹ，exit 1 必须来自依赖面 error。
     """
 
     @staticmethod
     def _env(root: Path, include_ffmpeg: bool):
         tools = root / ("bin-full" if include_ffmpeg else "bin-noff")
         tools.mkdir()
-        names = ["env", "bash", "git", "node"]
-        if include_ffmpeg:
-            names += ["ffmpeg", "ffprobe"]
-        for name in names:
-            real = shutil.which(name)
-            assert real, f"fixture 需要真实 {name}"
-            (tools / name).symlink_to(real)
-        (tools / "python3").symlink_to(sys.executable)
+        media = ['ffmpeg', 'ffprobe'] if include_ffmpeg else []
+        native = os.name == 'nt'
+        path_entries = [str(tools)]
+        if native:
+            # Keep real native tool directories (DLLs stay beside their .exe),
+            # without inheriting PATH or requiring Windows symlink privileges.
+            for name in ['git', *media]:
+                real = shutil.which(name)
+                assert real and Path(real).suffix.lower() == '.exe', f'fixture 需要原生 {name}.exe'
+                path_entries.append(str(Path(real).parent))
+            path_entries = list(dict.fromkeys(path_entries))
+            for name in ('ffmpeg', 'ffprobe'):
+                assert bool(shutil.which(name, path=os.pathsep.join(path_entries))) == include_ffmpeg, name
+        else:
+            for name in ['env', 'bash', 'git', 'node', *media]:
+                real = shutil.which(name)
+                assert real, f"fixture 需要真实 {name}"
+                (tools / name).symlink_to(real)
+            (tools / "python3").symlink_to(sys.executable)
         # Google Chrome in CI and native Chromium locally satisfy the same
         # availability contract. Preserve the selected binary's real name;
         # never disguise Chromium as google-chrome or skip a missing browser.
         browser = vt_mod.find_chrome()
         assert browser, "fixture 需要真实 Chrome/Chromium/Edge"
         browser = Path(browser).absolute()
-        browser_link = tools / browser.name
-        browser_link.symlink_to(browser)
+        browser_link = browser if native else tools / browser.name
+        if not native:
+            browser_link.symlink_to(browser)
         home = root / "home"
         home.mkdir(exist_ok=True)
         (home / ".config").mkdir(exist_ok=True)
@@ -263,18 +277,27 @@ class MissingFfmpegSubprocess(unittest.TestCase):
                if not k.startswith(("VTX_", "VT_", "BGM_", "RESEMBLE_"))
                and k not in ("PYTHONPATH", "PYTHONHOME")}
         env.update(HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"),
-                   PATH=str(tools), VTX_CHROME=str(browser_link),
+                   PATH=os.pathsep.join(path_entries), VTX_CHROME=str(browser_link),
                    VTX_CONFIG=str(cfg), VTX_DOCTOR_OFFLINE="1",
                    PYTHONNOUSERSITE="1", VT_MOUNT_ROOT=str(home / "video"),
                    VTX_NO_NVENC="1", VTX_SEG_NVENC="0")
+        if native:
+            env.update(USERPROFILE=str(home), APPDATA=str(home / 'Roaming'),
+                       LOCALAPPDATA=str(home / 'Local'), MUSIC_RUNTIME=str(cfg),
+                       NoDefaultCurrentDirectoryInExePath='1')
         return env
+
+    @staticmethod
+    def _doctor(env, *args):
+        python = [sys.executable] if os.name == 'nt' else ['env', 'python3']
+        return subprocess.run([*python, str(REPO / 'vt.py'), 'doctor', *args],
+                              capture_output=True, encoding='utf-8', cwd=REPO, env=env, timeout=120)
 
     def test_doctor_fails_closed_without_ffmpeg(self):
         with tempfile.TemporaryDirectory(prefix="vt-noffmpeg-") as tmp:
             root = Path(tmp)
             env = self._env(root, include_ffmpeg=False)
-            r = subprocess.run(["env", "python3", str(REPO / "vt.py"), "doctor", "--json"],
-                               capture_output=True, text=True, cwd=str(REPO), env=env)
+            r = self._doctor(env, '--json')
             self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
             data = json.loads(r.stdout)
             browser = data["dependencies"]["items"]["browser"]
@@ -288,8 +311,7 @@ class MissingFfmpegSubprocess(unittest.TestCase):
             for e in data["components"]["entries"]:
                 self.assertFalse(e["fail"], e)
             # 人类可读面：error 行 + 结论行
-            r2 = subprocess.run(["env", "python3", str(REPO / "vt.py"), "doctor"],
-                                capture_output=True, text=True, cwd=str(REPO), env=env)
+            r2 = self._doctor(env)
             self.assertEqual(r2.returncode, 1, r2.stdout + r2.stderr)
             self.assertIn("✗ ffmpeg 缺失", r2.stdout)
             self.assertIn("依赖面存在 error", r2.stdout)
@@ -298,14 +320,18 @@ class MissingFfmpegSubprocess(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="vt-full-") as tmp:
             root = Path(tmp)
             env = self._env(root, include_ffmpeg=True)
-            r = subprocess.run(["env", "python3", str(REPO / "vt.py"), "doctor", "--json"],
-                               capture_output=True, text=True, cwd=str(REPO), env=env)
+            r = self._doctor(env, '--json')
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             data = json.loads(r.stdout)
             browser = data["dependencies"]["items"]["browser"]
             self.assertTrue(browser["ok"])
             self.assertTrue(Path(browser["detail"]).samefile(vt_mod.find_chrome()))
             self.assertEqual(data["dependencies"]["errors"], [])
+            if os.name == 'nt':
+                for command in ('ffmpeg', 'ffprobe'):
+                    item = data['dependencies']['items'][command]
+                    self.assertTrue(item['ok'], item)
+                    self.assertTrue(Path(item['detail']).samefile(shutil.which(command)), item)
             # blender 缺失只 warn；对应 builtin 件 ℹ unavailable 而非 FAIL
             self.assertTrue(any("blender 缺失" in w
                                 for w in data["dependencies"]["warns"]))
@@ -313,9 +339,9 @@ class MissingFfmpegSubprocess(unittest.TestCase):
             bb = by_name[("plugin", "blender-bridge")]
             self.assertFalse(bb["fail"], bb)
             self.assertIn("缺 blender", bb.get("unavailable", []))
-            self.assertIn("② 依赖面", subprocess.run(
-                ["env", "python3", str(REPO / "vt.py"), "doctor"],
-                capture_output=True, text=True, cwd=str(REPO), env=env).stdout)
+            text = self._doctor(env)
+            self.assertEqual(text.returncode, 0, text.stdout + text.stderr)
+            self.assertIn("② 依赖面", text.stdout)
 
 
 if __name__ == "__main__":
