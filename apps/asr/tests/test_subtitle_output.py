@@ -78,6 +78,10 @@ class TestSrtOut(unittest.TestCase):
                                     cwd=root, env=env, capture_output=True, timeout=30)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(out.read_bytes(), srt)
+            result = subprocess.run(cmd, input=br'[{"in":0,"out":30,"text":"\ud800"}]',
+                                    cwd=root, env=env, capture_output=True, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, b'')
 
 
 # tl merge contracts

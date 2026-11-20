@@ -58,8 +58,8 @@ if __name__ == "__main__":
         # Redirected Python streams otherwise use the legacy Windows code page.
         # Decode the JSON strictly so bad bytes cannot silently alter subtitles.
         sys.stdin.reconfigure(encoding='utf-8', errors='strict')
-        for stream in (sys.stdout, sys.stderr):
-            stream.reconfigure(encoding='utf-8', errors='replace')
+        sys.stdout.reconfigure(encoding='utf-8', errors='strict')
+        sys.stderr.reconfigure(encoding='utf-8', errors='backslashreplace')
     ap = argparse.ArgumentParser(description="subtitles[]（stdin json）→ SRT（stdout / -o 文件）")
     ap.add_argument("-o", "--out", default=None)
     from pathlib import Path
