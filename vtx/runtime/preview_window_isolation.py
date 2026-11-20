@@ -76,14 +76,12 @@ def identity_digest(*fields):
     return 'sha256:' + hashlib.sha256(payload).hexdigest()
 
 
-def binding_digest(fd, guard, limit, check):
-    """Hash the full original descriptor without changing the bind FD offset."""
+def _binding_blocks(fd, guard, limit, check):
     check()
     guard()
     size = os.fstat(fd).st_size
     if not 0 <= size <= limit:
         raise IsolationError('input exceeds the full-byte verification limit')
-    h = hashlib.sha256()
     offset = 0
     while offset < size:
         check()
@@ -91,9 +89,22 @@ def binding_digest(fd, guard, limit, check):
         if not block:
             raise IsolationError('binding input changed during full-byte verification')
         offset += len(block)
-        h.update(block)
+        yield block
     guard()
+
+
+def binding_digest(fd, guard, limit, check):
+    """Hash the full original descriptor without changing the bind FD offset."""
+    h, size = hashlib.sha256(), 0
+    for block in _binding_blocks(fd, guard, limit, check):
+        h.update(block)
+        size += len(block)
     return size, h.hexdigest()
+
+
+def binding_read(fd, guard, limit, check):
+    """Read the full original descriptor into memory, with a small caller-supplied limit."""
+    return b''.join(_binding_blocks(fd, guard, limit, check))
 
 
 def _scan_tree(path, check):

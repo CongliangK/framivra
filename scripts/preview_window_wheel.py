@@ -5,8 +5,8 @@ Set previewWindowExecutable (not vtxExecutable) to a trusted copy of this
 executable in a dedicated private Host configuration directory outside all
 Session workspaces. Place the approved artifact at kernel.whl and its
 independently approved SHA-256 at kernel.sha256 (lowercase hex + LF). This
-launcher only serves the capability probe and the preview-window command, and
-does not use VTX_CONFIG.
+launcher serves only fixed preview commands without VTX_CONFIG. Optional formal
+archive reads require a separate administrator manifest pin.
 
 Offline, --stage-from /absolute/site-packages checks the installed wheel members
 and creates a new runtime/ projection from the approved bytes. It never uses
@@ -16,15 +16,18 @@ before importing anything from the wheel. The launch directory and its contents
 must stay under the trusted operator's control, including against same-UID writes;
 this is not isolation from arbitrary code already running as that operator.
 """
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
+import base64
 import hashlib
 import io
 import json
 import os
 from pathlib import Path
 import re
+import select
 import stat
 import sys
+import time
 import zipfile
 from email.parser import BytesParser
 
@@ -37,6 +40,10 @@ _LAUNCHER = 'framivra.preview-window.fixed-wheel/v1'
 _INPUT_EPOCH_ABI = 'framivra.preview-window.inputs/v1'
 _WARM_SVG_MEDIA_ABI = 'framivra.preview-window.warm-svg-media/v1'
 _PROGRAM_AUDIO_ABI = 'framivra.preview-window.program-audio/v1'
+_FORMAL_ARCHIVE = 'preview-formal-archive'
+_FORMAL_ARCHIVE_PROBE = '--formal-archive-capabilities'
+_FORMAL_ARCHIVE_ABI = 'framivra.preview-formal-archive/v1'
+_FORMAL_ARCHIVE_MEMBER = 'vtx/runtime/preview_formal_archive.py'
 _PREVIEW_FLAGS = {
     ('--render', '--include-media', '--prepare-inputs'): 'preview-window',
     ('--read-warm-svg',): 'preview-warm-svg',
@@ -187,6 +194,18 @@ def _stage(site, target, installed, runtime):
 def _operation(args, profile):
     if len(args) == 3 and args[0] == '-t' and args[2] == 'capabilities':
         return 'capabilities'  # Host may supply a placeholder; never open it.
+    if args == [_FORMAL_ARCHIVE_PROBE]:
+        return _FORMAL_ARCHIVE_PROBE
+    if len(args) > 3 and args[3] == _FORMAL_ARCHIVE:
+        # Do not resolve, stat or open a caller-supplied selector. It must
+        # first compare as an exact string against the pinned manifest.
+        _require(len(args) == 9 and args[0] == '-t' and args[1].startswith('/')
+                 and args[2] == 'timeline' and args[4] == '--frame'
+                 and re.fullmatch(r'0|[1-9][0-9]{0,15}', args[5])
+                 and re.fullmatch(r'--expected-content-version=sha256:[0-9a-f]{64}', args[6])
+                 and args[7] == '--read-approved-archive' and re.fullmatch(r'--nonce=[0-9a-f]{32}', args[8]),
+                 'expected only the exact formal archive selectors')
+        return _FORMAL_ARCHIVE
     op = _PREVIEW_FLAGS.get(tuple(args[7:]))
     _require(op is not None and args[0] == '-t' and args[2:5] == ['timeline', 'preview-window', '--frame']
              and re.fullmatch(r'0|[1-9][0-9]{0,15}', args[5])
@@ -209,6 +228,96 @@ def _qualified_command():
             and getattr(timeline_preview_window, 'INPUT_EPOCH_ABI', None) == _INPUT_EPOCH_ABI):
         return timeline_preview_window.run_preview_window_command
     return None
+
+
+def _write_record(data, check):
+    # The render command redirects Python's sys.stdout to stderr for diagnostics.
+    # Both transport records belong on the launcher's OS stdout, never its log.
+    fd = 1
+    old = os.get_blocking(fd)
+    deadline = time.monotonic() + 5
+    data = memoryview(data)
+    os.set_blocking(fd, False)
+    try:
+        while data:
+            check()
+            if time.monotonic() >= deadline:
+                raise ProfileError('preview record reader did not drain its pipe')
+            if select.select([], [fd], [], .05)[1]:
+                try:
+                    data = data[os.write(fd, data):]
+                except BlockingIOError:
+                    continue
+    finally:
+        os.set_blocking(fd, old)
+
+
+def _dispatch_formal_archive(op, args, profile, proof, reverify, runtime):
+    probe = op == _FORMAL_ARCHIVE_PROBE
+    nonce = None if probe else args[8].split('=', 1)[1]
+    phase = 'archive.unavailable'
+    emitting = False
+    deadline = time.monotonic() + 30
+
+    def check():
+        _require(time.monotonic() < deadline, 'formal archive verification deadline exceeded')
+
+    def wire(result):
+        return (json.dumps(result, ensure_ascii=True, allow_nan=False, separators=(',', ':')) + '\n').encode('ascii')
+
+    capability = {'schema': 'framivra.preview-formal-archive.capabilities/v1', 'available': False, **proof}
+    try:
+        _require(_FORMAL_ARCHIVE_MEMBER in runtime, 'wheel does not support formal archive qualification')
+        from vtx.runtime import preview_formal_archive as archive
+
+        _require(archive.SCHEMA == _FORMAL_ARCHIVE_ABI, 'unsupported formal archive ABI')
+        with ExitStack() as stack:
+            manifest, manifest_sha, media, bundle = archive.read_bundle(stack, profile, proof, check)
+            if probe:
+                reverify()
+                archive.recheck(bundle, check)
+                capability['available'] = True
+            else:
+                phase = 'archive.selector_mismatch'
+                _require(args[1] == manifest['timeline'] and int(args[5]) == manifest['start']
+                         and args[6].split('=', 1)[1] == manifest['content_version'],
+                         'request does not match the approved archive')
+                phase = 'archive.inputs_mismatch'
+                inputs, still_local = archive.pin_inputs(stack, manifest, profile, check)
+                result = {k: manifest[k] for k in ('content_version', 'start', 'end', 'fps', 'byte_length', 'sha256')}
+                data = wire(dict(result, **proof, schema=_FORMAL_ARCHIVE_ABI, ok=True, nonce=nonce,
+                                 manifest_sha256=manifest_sha, width=1920, height=1080,
+                                 audio_sample_rate=48000, audio_channels=2, mime='video/mp4',
+                                 base64=base64.b64encode(media).decode('ascii')))
+                phase = 'archive.unavailable'
+                _require(len(data) <= archive.WIRE_LIMIT, 'formal archive exceeds its wire limit')
+                reverify()
+                archive.recheck(bundle, check)
+                phase = 'archive.inputs_mismatch'
+                still_local()
+                archive.recheck(inputs, check)
+                phase = 'archive.unavailable'
+                for _, guard, _ in bundle:
+                    guard()
+                check()
+                # A reader may hold the pipe open while the project changes.
+                # Keep the fds through publication and settle only if still
+                # observed unchanged. Never append a second JSON to this wire.
+                emitting = True
+                _write_record(data, check)
+                for _, guard, _ in inputs + bundle:
+                    guard()
+                check()
+                return 0
+    except (OSError, ValueError, RuntimeError) as error:
+        if emitting:
+            raise ProfileError('formal archive did not settle after publication') from error
+        if not probe:
+            _write_record(wire({'schema': _FORMAL_ARCHIVE_ABI, 'ok': False, 'nonce': nonce, 'code': phase}),
+                          lambda: None)
+            return 1
+    _write_record(wire(capability), lambda: None)
+    return 0
 
 
 def _dispatch(op, args, proof):
@@ -290,6 +399,27 @@ def main():
     # The verified projection contains neither the original site-packages, a
     # venv interpreter, generated entry points nor any .pth or bytecode files.
     sys.path.insert(0, str(target))
+
+    def reverify():
+        try:
+            _tree(target, runtime)
+            _require(_read(profile / 'kernel.sha256', 65, trusted=True) == pin_line.encode('ascii')
+                     and _sha(_read(profile / 'kernel.whl', _LIMIT, trusted=True)) == pin,
+                     'wheel or pin changed during preview')
+        except (OSError, ValueError) as error:
+            if isinstance(error, ProfileError):
+                raise
+            raise ProfileError('cannot reverify the fixed wheel profile') from error
+
+    if op in (_FORMAL_ARCHIVE, _FORMAL_ARCHIVE_PROBE):
+        # The archive wire uses _write_record, which restores the inherited
+        # stdout flags. Do not normalize the caller's shared descriptors.
+        try:
+            return _dispatch_formal_archive(op, args, profile, proof, reverify, runtime)
+        except (OSError, ProfileError):
+            print('preview wheel refused: formal archive transport unavailable', file=sys.stderr)
+            return 2
+
     from vtx.runtime.stdio import ensure_blocking_stdio
 
     ensure_blocking_stdio()  # Same transport preparation as the normal CLI.
@@ -300,10 +430,7 @@ def main():
         status = _dispatch(op, args, proof)
     if status == 0:
         try:
-            _tree(target, runtime)
-            _require(_read(profile / 'kernel.sha256', 65, trusted=True) == pin_line.encode('ascii')
-                     and _sha(_read(profile / 'kernel.whl', _LIMIT, trusted=True)) == pin,
-                     'wheel or pin changed during preview')
+            reverify()
         except (OSError, ValueError) as error:
             message = str(error) if isinstance(error, ProfileError) else 'cannot reverify the fixed wheel profile'
             print('preview wheel refused: ' + message, file=sys.stderr)
