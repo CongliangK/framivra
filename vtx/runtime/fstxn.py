@@ -43,9 +43,9 @@ API（上下文管理器 + mutator 两形态）：
                                  → dump 后经 ①② 落盘。mutator 返回 None 中止
                                  事务不写（目标不动）。账本类目标的末段符号链接
                                  允许被原子替换（目标侧免疫，issue #23/#31 语义）。
-  atomic_write(path, data)       无锁原子写（仅 ②）：调用方已持锁区段内的
-                                 伴生件写入用（如 receipt 轮转旁证 prev.json，
-                                 持 receipt.json 锁的写者天然独占）。
+  atomic_write(path, data)       不获取事务锁的原子写：调用方已持锁区段内的
+                                 伴生件写入用（如 receipt 轮转旁证 prev.json）。
+                                 Windows 仅协调同进程竞争的最终替换。
   mkdir/unlink/replace           写点原语的 fd 锚定形态（降级平台等价 main 行为）。
   pinned_parent/fd_path/flock_at/remove_at/entry_identity/check_regular_at
                                  fd 锚定公开原语（目录操作要求目录能力；
