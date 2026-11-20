@@ -87,7 +87,7 @@ clip 的 scale/x/y/opacity/fade 全部可选（缺省＝全屏不透明），fad
 依赖与各后端前置条件以仓根 README.md「依赖矩阵」为准。
 """
 import argparse, difflib, json, os, shutil, sys, threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import ExitStack
 from enum import Enum
 from pathlib import Path
@@ -202,6 +202,44 @@ def gfx(c: Ctx):
         sys.exit(1)
 
 
+def _run_windows_cef_blocks(render_one, jobs, workers, cancel):
+    """Join only cooperatively stopped Jobs on the exception path."""
+    from ..render.cef_client import _check_windows_cancel
+    from ..runtime.windows_browser import job_cleanup_unconfirmed, JobSettlementError
+
+    futures = []
+    try:
+        with ThreadPoolExecutor(min(workers, len(jobs))) as pool:
+            try:
+                for job in jobs:
+                    _check_windows_cancel(cancel)
+                    futures.append(pool.submit(render_one, job))
+                pending = set(futures)
+                while pending:
+                    # An infinite lock wait can hide Ctrl-C in Windows Python <3.14.
+                    done, pending = wait(pending, timeout=.1, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        future.result()
+                    _check_windows_cancel(cancel)
+            except BaseException:
+                cancel.set()  # active Jobs see this before executor shutdown joins
+                for future in futures:
+                    future.cancel()  # do not start queued page blocks
+                raise
+    except BaseException as primary:
+        # A user interrupt stays the primary exception. Still surface any Job
+        # which could not be proved empty during the cooperative unwind.
+        if not job_cleanup_unconfirmed(primary):
+            for future in futures:
+                if future.done() and not future.cancelled():
+                    failure = future.exception()
+                    if failure is not None and job_cleanup_unconfirmed(failure):
+                        cause = failure if isinstance(failure, JobSettlementError) else failure.__cause__
+                        raise primary from cause
+        raise
+    return [future.result() for future in futures]  # keep submission-order page notes
+
+
 def _gfx(c: Ctx):
     if getattr(c, '_svg_runtime', None) is None:
         budget_gate(c, "gfx")
@@ -227,6 +265,23 @@ def _gfx(c: Ctx):
     engine_notes = []          # 每页渲染引擎与耗时（receipt 用）
     from ..render.gfx_backend import selected
     backend = selected()
+    windows_cef_cancel = None
+    if backend == 'cef' and sys.platform == 'win32' and not c.dry:
+        from ..render.cef_client import _check_windows_cancel
+        # `all` already shares this event with Windows CDP. A standalone gfx
+        # command owns a fresh event for its own pool.
+        windows_cef_cancel = getattr(c, '_windows_cdp_cancel', None) or threading.Event()
+
+    def check_cef_cancel():
+        if windows_cef_cancel is not None:
+            _check_windows_cancel(windows_cef_cancel)
+
+    def verify_gfx_inputs():
+        check_cef_cancel()
+        c.verify_inputs('gfx')
+        check_cef_cancel()
+
+    check_cef_cancel()
     if strict and backend in ("cef", "electron"):
         raise DependencyError("strict dependencies require CDP; Electron/CEF/CLI unsupported")
     if backend == "electron":
@@ -283,6 +338,7 @@ def _gfx(c: Ctx):
     for tr in c.tl["video_tracks"]:
         if tr.get("kind") != "gfx": continue
         for cl in tr["clips"]:
+            check_cef_cancel()
             cid = Path(cl["src"]).stem
             # 内容寻址键（2026-09-11 治理升级）：键 = sha1(html字节+fps+视口+时长)[:12]。
             # html 变了键就变（新条目），旧键由 gc 回收——D29 mtime 补丁与 D38 同索引
@@ -298,10 +354,11 @@ def _gfx(c: Ctx):
                                                      backend_ns=backend_ns,
                                                      dependency_digest=dependency_digest,
                                                      environment=environment)
+            check_cef_cancel()
             if not bad:
                 if needs_marker and not c.dry:
                     gfx_cli.complete_page(d, n, key, c.w, c.h,
-                                          verify_inputs=lambda: c.verify_inputs("gfx"),
+                                          verify_inputs=verify_gfx_inputs,
                                           backend_ns=backend_ns, environment=environment, root=c.root)
                 events.cache_hit(c, "inspect_page", frames=[0, n])
                 print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1; continue
@@ -363,12 +420,15 @@ def _gfx(c: Ctx):
         return job[7].call(render_block, job)
 
     def render_block(job):
+        check_cef_cancel()
         cid, key, cl, n, d, html, frames, observation = job
         st = None
         if backend == "cef":
             from ..render.gfx_cef import render_page
             st = observation.attempt(render_page, html, d, n, ctx=c,
-                                     width=c.w, height=c.h, frames=frames)
+                                     width=c.w, height=c.h, frames=frames,
+                                     **({'cancel': windows_cef_cancel} if windows_cef_cancel is not None else {}))
+            check_cef_cancel()
             # Block completion is not page completion: the shared aggregator
             # below certifies only after every disjoint block has succeeded.
             # Native failures escape unchanged; CEF never falls back to CDP/CLI.
@@ -409,7 +469,7 @@ def _gfx(c: Ctx):
             rendered_via = (st if backend == "cef" else
                             "cli 6 并发" if st is None else _cdp_via(st))
             gfx_cli.complete_page(d, n, key, c.w, c.h,
-                                  verify_inputs=lambda: c.verify_inputs("gfx"),
+                                  verify_inputs=verify_gfx_inputs,
                                   backend_ns=backend_ns,
                                   environment=environment, mixed_producer=str(d) in mixed_pages,
                                   **({'dependency_digest': digest(dependency_records[key]),
@@ -444,7 +504,7 @@ def _gfx(c: Ctx):
         else:
             rendered_via = "cli 6 并发" + (f"（split×{k}）" if k > 1 else "")
         gfx_cli.complete_page(d, n, key, c.w, c.h,
-                              verify_inputs=lambda: c.verify_inputs("gfx"),
+                              verify_inputs=verify_gfx_inputs,
                               backend_ns=backend_ns, environment=environment,
                               mixed_producer=str(d) in mixed_pages, root=c.root)
         print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
@@ -458,6 +518,11 @@ def _gfx(c: Ctx):
             for cid, key, cl, n, d, html, frames, observation in jobs:
                 print(f"  [dry-run] gfx {cid}[{key}]: 将渲染 {n} 帧（{backend.upper()} {c.w}×{c.h}）")
             total += len(jobs)
+        elif windows_cef_cancel is not None:
+            for cid, rendered_via in _run_windows_cef_blocks(render_one, jobs, page_workers, windows_cef_cancel):
+                if rendered_via is not None:
+                    engine_notes.append(f"{cid}: {rendered_via}")
+                    total += 1
         else:
             with ThreadPoolExecutor(min(page_workers, len(jobs))) as pex:
                 for cid, rendered_via in pex.map(render_one, jobs):
@@ -465,6 +530,7 @@ def _gfx(c: Ctx):
                         continue    # split 中间块：✓ 行由末块聚合输出
                     engine_notes.append(f"{cid}: {rendered_via}")
                     total += 1
+    check_cef_cancel()
     c.receipt("gfx", True, f"{total} gfx clips"
               + ("｜" + "; ".join(engine_notes) if engine_notes else ""))
 

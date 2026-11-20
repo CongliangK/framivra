@@ -52,15 +52,15 @@
 - **控制流**：Unix Domain Socket，单宿主契约。Linux 由 worker
   `--ipc-socket=<path>` 监听，`VTXCEF_SERVE_READY socket=… pid=… run_id=… slots=4`
   stdout 行后可连接；Darwin 由宿主经 `--ipc-fd=N` 传入已连接的 Unix
-  stream socketpair 端点，与 `--ipc-socket` 互斥，消息与 SHM 布局不变。
-- **数据流（模式 2）**：POSIX SHM 4-Slot 环。**零残留设计**：
+  stream socketpair 端点，与 `--ipc-socket` 互斥，消息与 SHM 布局不变。Windows 用 Job 内 worker 继承的两条单向匿名管道（`--ipc-read-handle`/`--ipc-write-handle`），不监听、不把控制字节混入日志；仅支持 exact PNG。
+- **数据流（模式 2，限 POSIX）**：POSIX SHM 4-Slot 环。**零残留设计**：
   `shm_open(O_CREAT|O_EXCL)` → `ftruncate` → `mmap` → **立即
   `shm_unlink`** —— 解绑成功后名字消失，实体在最后 fd/映射释放后由内核
   回收。创建到解绑之间被 SIGKILL 或解绑失败仍可能留下 `vtx_shm_*` 名字；
   当前实现不检查解绑返回值，不能保证任何时刻零残留。消费端 fd 经 Hello
   消息 **SCM_RIGHTS** 随带交付
   （工单「消费端映射同一 shm_open 句柄」）。
-- **字节序**：小端（Linux x86-64 / Darwin arm64）；全部消息定长、无隐式
+- **字节序**：小端（Linux x86-64 / Darwin arm64 / Windows x64）；全部消息定长、无隐式
   填充（`<` packed 语义与 C++ 原生偏移一致，静态断言钉死）。
 
 ## §2 SHM 环布局
@@ -100,11 +100,11 @@ acquire 见 `READY` 即见完整帧（读写同步不依赖信号量/轮询数�
 `seq` 为该槽累计发布序号（通知回传，ABA 防御）。Python 客户端通过
 `struct` 读写槽门，不实现 C++ atomic acquire/release；快照校验见 §4。
 
-## §3 消息（Socket 控制流）
+## §3 消息（控制流）
 
 | 方向 | 消息 | 定长 | magic | 载要 |
 | --- | --- | --- | --- | --- |
-| W→C | HelloInfo | 64B | `VTXH` 0x…48 | run_id/pid/slots/几何 + **SCM_RIGHTS(SHM fd)** |
+| W→C | HelloInfo | 64B | `VTXH` 0x…48 | run_id/pid/slots/几何；POSIX 附 **SCM_RIGHTS(SHM fd)** |
 | C→W | FrameRequest | 64B | `VTXQ` 0x…51 | flags/request_id/frame_index/期望尺寸/out_png_path[40]（≤39+NUL） |
 | W→C | FrameSlotHeader（模式 1 回执） | 128B | `VTXF` 0x…46 | 工单冻结字段集（见 §4） |
 | W→C | SlotNotice（模式 2） | 32B | `VTXN` 0x…4E | status/request_id/frame_index/slot_index(0xFF=无)/seq/backpressure_wait_us |
@@ -112,6 +112,7 @@ acquire 见 `READY` 即见完整帧（读写同步不依赖信号量/轮询数�
 `HelloInfo.flags`：bit0 表示随附 SHM fd；bit1 表示本次 worker 启用了 paired-exact。
 生产适配在任何帧请求前要求 bit1；旧 worker 即使 protocol_version=1 也明确拒绝，
 须从同一源码重新构建 `VTX_CEF_WORKER`，不静默使用旧实现。消息大小/偏移不变。
+Windows Hello 仅设 bit1，`ring_slots=0`，`frame_bytes=width*height*4`，无附带句柄；FrameRequest 只接受 `flags=0` 和私有工作目录中的 `frame0.png` / `frame1.png`。
 
 `FrameRequest.flags`：bit0=WANT_SLOT（模式 2）、bit1=DUMP_RAW（诊断：
 交付字节同时直写 `<out_png_path>.raw`，供端到端逐字节对照）。

@@ -28,6 +28,7 @@ import stat
 from concurrent.futures import ThreadPoolExecutor
 
 SCHEMA = 'vtx.gfx-environment/1'
+WINDOWS_CEF_RESOLVER = 'windows-x64-cef/1'
 CHROME_VISUAL_FLAGS = ('--headless', '--disable-gpu', '--hide-scrollbars',
                        '--force-device-scale-factor=1', '--force-color-profile=srgb',
                        '--font-render-hinting=none')
@@ -499,7 +500,7 @@ def _collect_darwin(backend, binary, mode):
             'implementation': renderer['implementation']}
 
 
-def _windows_registry(root, name):
+def _windows_registry(root, name, *, strict=False):
     """Inventory names/types and hash values; never publish raw preferences."""
     import winreg
     result = {}
@@ -515,9 +516,15 @@ def _windows_registry(root, name):
             with winreg.OpenKey(key, child) as sub:
                 visit(sub, prefix + '/' + child)
     try:
-        with winreg.OpenKey(root, name, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+        key = winreg.OpenKey(root, name, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY)
+    except FileNotFoundError:
+        return {'absent': digest(name)}
+    try:
+        with key:
             visit(key, name)
     except FileNotFoundError:
+        if strict:
+            raise
         return {'absent': digest(name)}
     return result or {'empty': digest(name)}
 
@@ -560,50 +567,40 @@ def _windows_boot():
     return str(boot)
 
 
-def _collect_windows(backend, binary, mode):
+def _windows_host(windows, *, cef=False):
+    """Conservative host, boot, renderer-library and font scope shared by Windows backends."""
     import winreg
-    if (backend not in ('cdp', 'cli') or mode is not None
-            or platform.machine().upper() not in ('AMD64', 'X86_64') or struct.calcsize('P') != 8):
-        raise EnvironmentError('Windows resolver requires native x64 Chrome/Edge CDP or CLI')
-    if any(os.environ.get(k) for k in ('FONTCONFIG_FILE', 'FONTCONFIG_PATH', 'FONTCONFIG_SYSROOT',
-                                      'LD_PRELOAD', 'LD_LIBRARY_PATH', 'VK_ICD_FILENAMES', 'VK_DRIVER_FILES')):
-        raise EnvironmentError('unsupported Windows renderer environment override')
-    executable = Path(shutil.which(str(binary)) or binary).resolve(strict=True)
-    if executable.name.lower() not in ('chrome.exe', 'msedge.exe') or executable.parent.name != 'Application':
-        raise EnvironmentError('Windows resolver requires a Chrome/Edge Application distribution')
-    with executable.open('rb') as stream:
-        if stream.read(2) != b'MZ':
-            raise EnvironmentError('Windows renderer is not a native PE executable')
-        stream.seek(60)
-        offset = struct.unpack('<I', stream.read(4))[0]
-        stream.seek(offset)
-        if stream.read(6) != b'PE\0\0d\x86':
-            raise EnvironmentError('Windows renderer requires AMD64 PE architecture')
-    version = _windows_version(executable)
-    version_root = executable.parent / version
-    if not version_root.is_dir() or not (version_root / ('chrome.dll' if executable.name.lower() == 'chrome.exe' else 'msedge.dll')).is_file():
-        raise EnvironmentError('Windows renderer version/distribution mismatch')
-    windows = Path(os.environ['SystemRoot']).resolve(strict=True)
     system = windows / 'System32'
     # Include delay-loaded DLLs and graphics driver packages, not just imports.
-    libraries = _files(p for p in system.iterdir() if p.is_file() and p.suffix.lower() in ('.dll', '.exe', '.nls'))
+    extensions = ('.dll', '.exe', '.nls', '.drv', '.ocx', '.manifest') if cef else ('.dll', '.exe', '.nls')
+    libraries = _files(p for p in system.iterdir() if p.is_file() and p.suffix.lower() in extensions)
     drivers = []
     driver_root = system / 'DriverStore/FileRepository'
     for base, dirs, names in os.walk(driver_root, onerror=lambda e: _raise(e)):
-        if any((Path(base) / d).is_symlink() for d in dirs):
+        if any((Path(base) / d).is_symlink() or (cef and getattr((Path(base) / d).lstat(),
+                   'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT) for d in dirs):
             raise EnvironmentError('unknown Windows driver directory link')
         drivers.extend(Path(base) / n for n in names if Path(n).suffix.lower() in ('.dll', '.sys', '.exe', '.json', '.inf'))
+    if cef and (not libraries or not drivers):
+        raise EnvironmentError('empty Windows CEF system/driver inventory')
     font_paths = []
-    font_roots = [windows / 'Fonts', Path(os.environ['LOCALAPPDATA']) / 'Microsoft/Windows/Fonts']
-    for root in font_roots:
-        if root.exists():
+    local = os.environ.get('LOCALAPPDATA') if cef else os.environ['LOCALAPPDATA']
+    if cef and (not local or not Path(local).is_absolute()):
+        raise EnvironmentError('unknown Windows CEF user font directory')
+    font_roots = [windows / 'Fonts', Path(local) / 'Microsoft/Windows/Fonts']
+    for index, root in enumerate(font_roots):
+        if cef:
+            from .gfx_environment_windows_cef import font_directory
+            font_paths.extend(font_directory(root, optional=index == 1))
+        elif root.exists():
             font_paths.extend(p for p in root.rglob('*') if p.is_file())
     registry = {}
     for label, root in (('machine', winreg.HKEY_LOCAL_MACHINE), ('user', winreg.HKEY_CURRENT_USER)):
         for suffix in ('Fonts', 'FontSubstitutes', 'FontLink', 'FontMapper', 'Font Drivers'):
             name = 'SOFTWARE/Microsoft/Windows NT/CurrentVersion/' + suffix
             name = name.replace('/', chr(92))
-            registry[label + '/' + suffix] = _windows_registry(root, name)
+            registry[label + '/' + suffix] = (_windows_registry(root, name, strict=True) if cef
+                                                else _windows_registry(root, name))
             if suffix == 'Fonts':
                 try:
                     with winreg.OpenKey(root, name) as key:
@@ -618,29 +615,74 @@ def _collect_windows(backend, binary, mode):
     if not font_paths:
         raise EnvironmentError('empty Windows font inventory')
     for name in ('Control Panel/Desktop', 'Control Panel/Colors', 'Control Panel/International'):
-        registry[name] = _windows_registry(winreg.HKEY_CURRENT_USER, name.replace('/', chr(92)))
+        path = name.replace('/', chr(92))
+        root = winreg.HKEY_CURRENT_USER
+        registry[name] = _windows_registry(root, path, strict=True) if cef else _windows_registry(root, path)
     with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 'SOFTWARE\\Microsoft\\Cryptography', 0,
                         winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
         machine, _ = winreg.QueryValueEx(key, 'MachineGuid')
-    return {'schema': SCHEMA, 'status': 'input-bound', 'pixel_equivalence': 'unproven',
-            'backend': backend, 'mode': mode, 'platform_resolver': 'windows-x64/1',
-            'browser': _files([executable]), 'version': version,
-            'runtime': {str(executable.parent): (_windows_chrome_runtime(executable.parent)
-                        if executable.name.lower() == 'chrome.exe' else _tree(executable.parent))},
-            'libraries': libraries, 'graphics_libraries': _files(drivers),
+    if cef:
+        if not isinstance(machine, str) or not re.fullmatch(r'[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', machine):
+            raise EnvironmentError('unknown Windows CEF machine identity')
+        for suffix in ('TimeZoneInformation', 'Nls/CodePage', 'Nls/Locale'):
+            name = ('SYSTEM/CurrentControlSet/Control/' + suffix).replace('/', chr(92))
+            registry['machine/' + suffix] = _windows_registry(winreg.HKEY_LOCAL_MACHINE, name, strict=True)
+    keys = set(PIXEL_ENV) | {'SystemRoot', 'LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'PATH'}
+    if cef:
+        keys.update(('WINDIR', 'SYSTEMDRIVE'))
+        keys.update(k for k in os.environ if k.startswith('LC_'))
+    return {'libraries': libraries, 'graphics_libraries': _files(drivers),
             'fonts': {'files': _files(font_paths), 'configs': {'registry': digest(registry)},
                       'tools': _files([sys.executable, _ROOT / 'render/gfx_environment.py']), 'libraries': libraries},
             'registry': registry,
             'host_boot': {'machine_guid': digest(machine), 'boot_filetime': _windows_boot()},
-            'os': list(platform.uname()), 'environment': {k: os.environ.get(k) for k in
-                sorted(set(PIXEL_ENV) | {'SystemRoot', 'LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'PATH'})},
-            'launch_flags': list(CHROME_VISUAL_FLAGS),
+            'os': list(platform.uname()), 'environment': {k: os.environ.get(k) for k in sorted(keys)},
+            'python_runtime': _python_runtime()}
+
+
+def _collect_windows(backend, binary, mode):
+    if backend != 'cef' and (backend not in ('cdp', 'cli') or mode is not None
+            or platform.machine().upper() not in ('AMD64', 'X86_64') or struct.calcsize('P') != 8):
+        raise EnvironmentError('Windows resolver requires native x64 Chrome/Edge CDP or CLI')
+    if any(os.environ.get(k) for k in ('FONTCONFIG_FILE', 'FONTCONFIG_PATH', 'FONTCONFIG_SYSROOT',
+                                      'LD_PRELOAD', 'LD_LIBRARY_PATH', 'VK_ICD_FILENAMES', 'VK_DRIVER_FILES')):
+        raise EnvironmentError('unsupported Windows renderer environment override')
+    extra_code = ()
+    if backend == 'cef':
+        from . import gfx_environment_windows_cef
+        facts = gfx_environment_windows_cef.collect(binary, mode)
+        extra_code = ('render/gfx_environment_windows_cef.py', 'runtime/proc_supervisor.py',
+                      'runtime/windows_cleanup.py', 'runtime/fstxn.py')
+    else:
+        executable = Path(shutil.which(str(binary)) or binary).resolve(strict=True)
+        if executable.name.lower() not in ('chrome.exe', 'msedge.exe') or executable.parent.name != 'Application':
+            raise EnvironmentError('Windows resolver requires a Chrome/Edge Application distribution')
+        with executable.open('rb') as stream:
+            if stream.read(2) != b'MZ':
+                raise EnvironmentError('Windows renderer is not a native PE executable')
+            stream.seek(60)
+            offset = struct.unpack('<I', stream.read(4))[0]
+            stream.seek(offset)
+            if stream.read(6) != b'PE\0\0d\x86':
+                raise EnvironmentError('Windows renderer requires AMD64 PE architecture')
+        version = _windows_version(executable)
+        version_root = executable.parent / version
+        if not version_root.is_dir() or not (version_root / ('chrome.dll' if executable.name.lower() == 'chrome.exe' else 'msedge.dll')).is_file():
+            raise EnvironmentError('Windows renderer version/distribution mismatch')
+        facts = _windows_host(Path(os.environ['SystemRoot']).resolve(strict=True))
+        facts.update(platform_resolver='windows-x64/1', browser=_files([executable]), version=version,
+                     runtime={str(executable.parent): (_windows_chrome_runtime(executable.parent)
+                              if executable.name.lower() == 'chrome.exe' else _tree(executable.parent))},
+                     launch_flags=list(CHROME_VISUAL_FLAGS))
+        if backend == 'cdp':
+            extra_code = ('render/gfx_windows.py', 'render/gfx_svg_win_publish.py',
+                          'render/gfx_svg_win_input.py', 'render/gfx_svg_win_snapshot.py')
+    return {'schema': SCHEMA, 'status': 'input-bound', 'pixel_equivalence': 'unproven',
+            'backend': backend, 'mode': mode, **facts,
             'protocol': {'device_scale': 1, 'color': 'srgb', 'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
-            'python_runtime': _python_runtime(),
             'implementation': _files([_ROOT / p for p in ('render/gfx_environment.py', 'runtime/file_clone.py', 'render/gfx_backend.py',
                 'render/gfx_render.py', 'render/gfx_cli.py', 'render/gfx_cef.py', 'render/cef_client.py', 'runtime/windows_browser.py',
-                'render/browser_paths.py') + (('render/gfx_windows.py', 'render/gfx_svg_win_publish.py',
-                'render/gfx_svg_win_input.py', 'render/gfx_svg_win_snapshot.py') if backend == 'cdp' else ())])}
+                'render/browser_paths.py') + extra_code])}
 
 
 class EnvironmentError(ValueError):
@@ -1020,7 +1062,12 @@ def resolve(c):
         # Loading/validating a timeline remains possible without a renderer.
         # Unknown is diagnostic data, never a cache eligibility certificate.
         with contextlib.redirect_stdout(io.StringIO()):
-            binary, mode = cef_config() if backend == 'cef' else (find_chrome(), None)
+            try:
+                binary, mode = cef_config() if backend == 'cef' else (find_chrome(), None)
+            except ValueError as error:
+                if backend != 'cef' or platform.system() != 'Windows':
+                    raise
+                raise EnvironmentError(str(error)) from error
         record = collect(backend, binary, mode)
     except (EnvironmentError, OSError, SystemExit) as error:
         record = {'schema': SCHEMA, 'status': 'unknown', 'backend': backend,
@@ -1074,9 +1121,22 @@ def recheck(c):
         return
     if pinned[1]['status'] != 'input-bound':
         return  # metadata-only contexts; certificate() refuses this path
-    current = resolve(c)
-    if current == pinned[1]:
-        current = collect(pinned[1]['backend'], pinned[2], pinned[3])
+    if pinned[1].get('platform_resolver') == WINDOWS_CEF_RESOLVER:
+        from .gfx_backend import selected, cef_config
+        # A fixed canonical executable is pinned, but the original selector
+        # could be redirected to another file without changing its spelling.
+        try:
+            selection_matches = selected() == 'cef' and cef_config() == (pinned[2], pinned[3])
+        except (OSError, ValueError, RuntimeError):
+            selection_matches = False
+        if not selection_matches:
+            raise EnvironmentError('gfx environment changed during invocation; changed inputs: '
+                                   '["browser"]; restart with current inputs')
+        current = collect('cef', pinned[2], pinned[3])
+    else:
+        current = resolve(c)
+        if current == pinned[1]:
+            current = collect(pinned[1]['backend'], pinned[2], pinned[3])
     if current != pinned[1]:
         raise EnvironmentError('gfx environment changed during invocation; changed inputs: '
                                + _changed_inputs(pinned[1], current)
@@ -1126,14 +1186,20 @@ def verify_certificate(record):
                 or not isinstance(architecture, list) or 0x100000c not in architecture
                 or not isinstance(axes.get('dependencies'), dict) or not axes['dependencies']):
             raise EnvironmentError('incomplete Darwin gfx input environment certificate')
-    if axes.get('platform_resolver') == 'windows-x64/1':
+    if axes.get('platform_resolver') in ('windows-x64/1', WINDOWS_CEF_RESOLVER):
         host = axes.get('host_boot')
-        if (axes.get('backend') not in ('cdp', 'cli') or axes.get('mode') is not None
-                or not isinstance(host, dict) or not host.get('machine_guid')
+        if (not isinstance(host, dict) or not host.get('machine_guid')
                 or not str(host.get('boot_filetime', '')).isdigit()
                 or not isinstance(axes.get('registry'), dict) or not axes['registry']
                 or not isinstance(axes.get('graphics_libraries'), dict) or not axes['graphics_libraries']):
             raise EnvironmentError('incomplete Windows gfx input environment certificate')
+        if axes['platform_resolver'] == 'windows-x64/1':
+            if axes.get('backend') not in ('cdp', 'cli') or axes.get('mode') is not None:
+                raise EnvironmentError('incomplete Windows gfx input environment certificate')
+        else:
+            from .gfx_environment_windows_cef import complete_certificate_axes
+            if not complete_certificate_axes(axes):
+                raise EnvironmentError('incomplete Windows CEF input environment certificate')
     if (axes.get('backend') not in ('cdp', 'cli', 'cef')
             or axes.get('pixel_equivalence') != 'unproven'
             or not isinstance(axes.get('fonts'), dict)

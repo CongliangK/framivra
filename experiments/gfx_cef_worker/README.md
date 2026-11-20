@@ -32,6 +32,18 @@ EOF 与独立监管守卫负责父死清理；macOS 没有 Linux PDEATHSIG。mac
 browser/helper 使用 `--use-mock-keychain`，凭据仅存在 worker 进程内；渲染
 profile 不访问系统登录钥匙串，以免非交互关停等待钥匙串授权。
 
+## Windows x64 构建
+
+在 Visual Studio 的 **x64 Developer Command Prompt** 中使用 MSVC C++20 工具链、Windows SDK、x64 Python ≥3.9、CMake ≥3.21 和 Ninja。以下是**写操作**：下载并按锁校验官方 CEF Minimal 和 zlib，写入用户缓存并编译，不安装系统组件。
+
+```bat
+python experiments/gfx_cef_worker/build_windows.py
+```
+
+将 `VTX_CEF_WORKER` 设为 `experiments/gfx_cef_worker/build/windows64/bin/vtx_cef_worker.exe` 的绝对路径，同时保留同目录 DLL、资源和 `locales/`；只复制 exe 会失败。用 `--sanity` 自检构建与已装载的 CEF API。Windows 仅接纳原生 x64、A0 软件渲染和生产 exact PNG；不支持 A1、Ozone 或 POSIX SHM，不属于受管安装。每次运行的 PNG 暂存位于项目缓存；Windows 的 Chromium profile 与临时环境使用系统 LocalAppData 下的短私有路径，避免 Chromium 内部目录碰到旧路径上限。Job Object 在运行前接管 worker，取消或宿主退出时回收整树；宿主被强杀可能留下私有暂存，存活时只在确认进程树已退出后清理。
+
+原生验收是独立写操作（临时渲染和媒体文件）：从仓根运行 `python -m unittest tests.gfx.test_cef_windows_acceptance -v`，先设置 `VTX_TEST_CEF_WORKER` 指向实际 exe，并准备 FFmpeg/ffprobe。该入口不代替安装验收或 30 秒 SVG 主片。
+
 ## 生产接线（实验性 Alpha）
 
 CEF 通过 `VTX_GFX=cef` 显式选择；未知后端值拒绝执行，默认仍为 CDP。CEF 初始化、
@@ -39,7 +51,7 @@ CEF 通过 `VTX_GFX=cef` 显式选择；未知后端值拒绝执行，默认仍�
 worker 及同目录锁定 CEF 运行库须另行构建。升级后必须重编 worker：生产在首帧前
 核验 Hello 的 paired-exact bit1，旧 protocol-v1 worker 也会早拒绝；`--sanity` 的
 `worker=paired-exact-v1` 仅为诊断标签，不替代能力握手或实际二进制身份。
-仅平台完整进程监管可用时启动（Linux `/proc`，macOS `libproc`）；
+仅平台完整进程监管可用时启动（Linux `/proc`，macOS `libproc`，Windows [Job Object](#windows-x64-构建)）；
 worker 当前禁用 Chromium sandbox，**只渲染受信任本地 HTML，不处理不可信页面**。
 
 生产 CEF 默认 **Mode N**：每帧导航原页面 `?f=N`，不要求页面实现
@@ -89,8 +101,7 @@ OnPaint 借用缓冲的快速筛选**不授予证明权限**：未围栏的拒�
 原生逐事件日志、进程日志、逐帧回执及 `*.pipeline.json` 保留在项目
 `cache/reports/cef/`；失败亦保留。后者记录块墙钟、请求往返、宿主校验/提交耗时、
 配置和完成状态；原生回执的分项不是完整导航/帧墙钟，不能相加当作 gfx 总耗时。
-所有运行 scratch/profile 落监管 `cache/tmp/`；Linux 长路径通过父 fd 别名访问，
-macOS 使用继承的 Unix socketpair fd 连接，不依赖 `/proc`。
+生产 PNG 暂存落监管 `cache/tmp/`；POSIX profile 同在该目录。Linux 长路径通过父 fd 别名访问，macOS 使用继承的 Unix socketpair fd 连接，不依赖 `/proc`；Windows profile 见[构建说明](#windows-x64-构建)。
 
 下例为**实际写操作**，仅在已确认允许写入且 `cache/`、`out/` 全新的项目副本执行；
 不要把 `PROJECT_COPY` 指向原项目。全片验收还须检查内容门、外引 BGM 与 Blender 收尾，

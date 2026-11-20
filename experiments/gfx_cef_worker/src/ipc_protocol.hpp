@@ -169,15 +169,11 @@ static_assert(std::is_standard_layout_v<HelloInfo>);
 
 // ---------------------------------------------------------------- 小工具
 
-// 定长消息整读整写辅助：sock 循环收满 n 字节；EOF/错误/超时返回 false。
-// （实现于 serve.cpp；此处声明供协议面共用。）
-int RecvAllOrShort(int fd, void* buf, size_t n, int timeout_ms);
-bool SendAll(int fd, const void* buf, size_t n);
-
 // 请求路径合法性：非空、无内嵌 NUL 前的长度 ≤ kMaxOutPngPath。
 inline bool RequestPathValid(const FrameRequest& req) {
-  const size_t n = ::strnlen(req.out_png_path, sizeof(req.out_png_path));
-  return n > 0 && n <= kMaxOutPngPath;
+  const auto* end = static_cast<const char*>(
+      std::memchr(req.out_png_path, '\0', sizeof(req.out_png_path)));
+  return end && end != req.out_png_path;
 }
 
 }  // namespace vtx_cef

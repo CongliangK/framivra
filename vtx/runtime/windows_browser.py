@@ -102,6 +102,7 @@ def _api():
         'DuplicateHandle': (_B, _H, _H, _H, C.POINTER(_H), _D, _B, _D),
         'SetNamedPipeHandleState': (_B, _H, C.POINTER(_D), _PTR, _PTR),
         'ReadFile': (_B, _H, _PTR, _D, C.POINTER(_D), _PTR),
+        'WriteFile': (_B, _H, _PTR, _D, C.POINTER(_D), _PTR),
         'WaitForSingleObject': (_D, _H, _D),
         'GetExitCodeProcess': (_B, _H, C.POINTER(_D)),
         'CloseHandle': (_B, _H),
@@ -159,8 +160,8 @@ def _launch_handles():
 
 
 @contextmanager
-def _startup(api, job, stdio):
-    distinct = tuple(dict.fromkeys(stdio))
+def _startup(api, job, stdio, inherited_handles=()):
+    distinct = tuple(dict.fromkeys((*stdio, *inherited_handles)))
     handles = (_H * len(distinct))(*distinct)
     values = ((_JOB_LIST, (_H * 1)(job)), (_HANDLE_LIST, handles))
     size = _SIZE()
@@ -259,7 +260,11 @@ class _OwnedJob:
         self._capture_limit = _CAPTURE_LIMIT if capture_limit is None else capture_limit
         self.proc = _Process(api, self._info, argv)
 
-    def _launch(self, args, stdout, stderr, *, stdin=None, cwd=None, environment=None, debug_images=False):
+    def _launch(self, args, stdout, stderr, *, stdin=None, cwd=None, environment=None, debug_images=False,
+                inherited_handles=(), log_handle=None):
+        """Extra inheritable handles are caller-owned; log_handle is borrowed and duplicated."""
+        if log_handle is not None and (stdout, stderr) != (subprocess.DEVNULL, subprocess.DEVNULL):
+            raise ValueError('an owned Job log replaces both output streams')
         api = self._api
         self._job.value = _check(api.CreateJobObjectW(None, None), 'CreateJobObjectW')
         limits = _ExtendedLimits()
@@ -282,14 +287,22 @@ class _OwnedJob:
                 _check(api.DuplicateHandle(current, stdin, current, C.byref(inherited), 0, True, 2),
                        'DuplicateHandle (stdin)')  # DUPLICATE_SAME_ACCESS
             stdio = [inherited.value if stdin is not None else nul]
-            for stream in (stdout, stderr):
-                if stream == subprocess.PIPE:
-                    capture = _Capture()
-                    self._captures.append(capture)
-                    stdio.append(capture.open(api, temporary, close))
-                else:
-                    stdio.append(nul)
-            with _startup(api, self._job.value, stdio) as startup, _remember_interrupt(interrupted):
+            if log_handle is not None:
+                log = _H()
+                temporary.callback(close, api, log, 'value')
+                current = _H(-1)
+                _check(api.DuplicateHandle(current, log_handle, current, C.byref(log), 0, True, 2),
+                       'DuplicateHandle (log)')
+                stdio.extend((log.value, log.value))
+            else:
+                for stream in (stdout, stderr):
+                    if stream == subprocess.PIPE:
+                        capture = _Capture()
+                        self._captures.append(capture)
+                        stdio.append(capture.open(api, temporary, close))
+                    else:
+                        stdio.append(nul)
+            with _startup(api, self._job.value, stdio, inherited_handles) as startup, _remember_interrupt(interrupted):
                 cmd = C.create_unicode_buffer(subprocess.list2cmdline(args))
                 flags = _EXTENDED_STARTUPINFO
                 if debug_images:
