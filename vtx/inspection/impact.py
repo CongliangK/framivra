@@ -11,7 +11,7 @@ import hashlib
 import json
 import os
 import subprocess
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 
 from ..cache.cache_state import file_digest, media_stat_digest
@@ -134,7 +134,7 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
                     key = source.directory.name
                     if windows_svg and key != gfx_svg.record_key(svg_record):
                         raise ValueError('SVG PNG source identity differs from the observed input record')
-                    artifact = str(source.directory.relative_to(root))
+                    artifact = source.directory.relative_to(root).as_posix()
                     upstream = source.identity
                     # Declared closure is not runtime proof of dynamic JS/network.
                     if dependency_record['closure'] == 'unproven':
@@ -251,6 +251,15 @@ def compare(before, after):
     if before['root'] != after['root']:
         raise ValueError('impact snapshots must refer to the same project root')
     old, new = before['nodes'], after['nodes']
+    windows_root = PureWindowsPath(before['root']).is_absolute()
+
+    def artifact(row):
+        path = row['artifact']
+        # Older Windows v2 snapshots used native separators for GFX only.
+        if windows_root and row['stage'] == 'gfx' and path:
+            return path.replace('\\', '/')
+        return path
+
     changed = []
     for node in sorted(set(old) | set(new)):
         a, b = old.get(node), new.get(node)
@@ -261,15 +270,15 @@ def compare(before, after):
             reasons.append('node_removed')
         elif a['key'] is None or b['key'] is None:
             reasons.append('identity_unavailable')
-        elif a['key'] != b['key'] or a['artifact'] != b['artifact']:
+        elif a['key'] != b['key'] or artifact(a) != artifact(b):
             reasons = ['input_changed:' + k for k in sorted(set(a['inputs']) | set(b['inputs']))
                        if a['inputs'].get(k) != b['inputs'].get(k)] or ['execution_identity_changed']
         if reasons:
             changed.append({'node': node, 'stage': (b or a)['stage'],
                             'old_key': a['key'] if a else None,
                             'new_key': b['key'] if b else None, 'reasons': reasons})
-    old_paths = {v['artifact'] for v in old.values() if v['artifact']}
-    new_paths = {v['artifact'] for v in new.values() if v['artifact']}
+    old_paths = {artifact(v) for v in old.values() if v['artifact']}
+    new_paths = {artifact(v) for v in new.values() if v['artifact']}
     uncertain = {w['node'] for snapshot in (before, after) for w in snapshot['warnings']}
     for node, value in new.items():
         if any(p in uncertain for p in value['parents']):

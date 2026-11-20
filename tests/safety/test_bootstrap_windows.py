@@ -89,6 +89,21 @@ Invoke-Bootstrap
 if (Test-Path -LiteralPath $env:LOCALAPPDATA) { throw 'Plan created a root' }
 ''')
 
+    def test_plan_without_localappdata_never_resolves_a_download_cache(self):
+        self.run_ps('''
+Remove-Item Env:LOCALAPPDATA
+function Find-Python { return (Test-Python $env:FRAMIVRA_TEST_PYTHON) }
+function Get-LockedPython { throw 'Read-only plan must not download' }
+function Get-SmallText { throw 'Read-only plan must not access the network' }
+$target = Join-Path $env:FRAMIVRA_TEST_TEMP 'explicit root'
+foreach ($argsVariant in @(@('--plan'), @('--plan', '--root', $target))) {
+    $script:InstallerArgs = @($argsVariant)
+    $message = Invoke-Bootstrap | Out-String
+    if ($message -notmatch 'Read-only bootstrap plan') { throw 'Expected read-only plan' }
+}
+if (Test-Path -LiteralPath $target) { throw 'Plan created the explicit root' }
+''')
+
     def test_nonzero_installer_is_not_failure_if_real_python_is_now_usable(self):
         self.run_ps('''
 $script:InstallerArgs = @('--yes')

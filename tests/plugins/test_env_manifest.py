@@ -160,7 +160,9 @@ def _drop_inter(m):
 
 class TestCollectManifestStructure(unittest.TestCase):
     def test_full_manifest_structure_and_fields(self):
-        m = stub_collect()
+        # This fixture represents a Linux /proc host regardless of the test host.
+        with mock.patch.object(em, "sys", mock.Mock(platform="linux")):
+            m = stub_collect()
         self.assertEqual(m["schema"], "vtx.env_manifest/1")
         self.assertEqual(m["backend_id"], "cdp-baseline")
         for key in ("run_id", "collected_at_utc", "git_sha", "git_clean", "uncommitted",
@@ -258,8 +260,23 @@ class TestOsHardware(unittest.TestCase):
         with patched_seams(texts={}, environ=dict(ENV_X11)):
             m = em.collect_env_manifest("x", rt_info())
         self.assertTrue(isinstance(m["cpu_model"], str) and m["cpu_model"])
-        # sysconf 回退在本机必得正值；不可得平台亦只是 None（不崩）
-        self.assertTrue(m["ram_total_mib"] is None or m["ram_total_mib"] > 0)
+        if sys.platform == "win32":
+            # Exercise the real native memory query without /proc, sysconf or WMI.
+            self.assertGreater(m["ram_total_mib"], 0)
+        else:
+            self.assertTrue(m["ram_total_mib"] is None or m["ram_total_mib"] > 0)
+
+    def test_windows_native_probes_and_fallback(self):
+        with mock.patch.object(em, "sys", mock.Mock(platform="win32")), \
+                mock.patch.object(em, "_read_text", side_effect=AssertionError("Windows must not read /proc")), \
+                mock.patch.object(em, "_windows_cpu_model", return_value="Native CPU") as cpu, \
+                mock.patch.object(em, "_windows_ram_total_mib", return_value=32000) as ram, \
+                mock.patch.object(em.platform, "processor", return_value="Fallback CPU"):
+            self.assertEqual(em._collect_cpu_model(), "Native CPU")
+            self.assertEqual(em._collect_ram_total_mib(), 32000)
+            cpu.return_value = ram.return_value = None
+            self.assertEqual(em._collect_cpu_model(), "Fallback CPU")
+            self.assertIsNone(em._collect_ram_total_mib())
 
 
 class TestDisplayServer(unittest.TestCase):
