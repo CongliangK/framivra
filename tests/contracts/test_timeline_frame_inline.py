@@ -447,6 +447,103 @@ class PreviewWindowCandidate(unittest.TestCase):
             self.assertEqual(chunk.getnframes(), stop - start)
             self.assertEqual(chunk.readframes(stop - start), pcm[start * 4:stop * 4])
 
+    @unittest.skipUnless(sys.platform == 'linux' and artifact.fstxn.directory_write_capability(),
+                         'requires Linux directory anchoring')
+    def test_first_frame_is_supervised_provisional_and_uses_the_same_bound_files(self):
+        from fractions import Fraction
+        from vtx.runtime import preview_window_isolation as isolation, preview_window_stream as stream
+        from vtx.timeline_preview_window import SCHEMA, WIRE_LIMIT
+
+        raw = (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 1920, 1080, 8, 2, 0, 0, 0))
+               + chunk(b'tEXt', b'unapproved\0metadata')
+               + chunk(b'IDAT', zlib.compress(b'\0' * (1080 * (1 + 1920 * 3)))) + chunk(b'IEND', b''))
+        nonce, version, fp, env = 'a' * 32, 'sha256:' + hashlib.sha256(b'timeline').hexdigest(), 'b' * 64, 'sha256:' + 'c' * 64
+        first = {'frame': 10, 'window': [10, 40], 'segment': [10, 18], 'fps': {'num': 30, 'den': 1},
+                 'content_version': version, 'input_fingerprint': fp, 'vpts': 0, 'width': 1920, 'height': 1080,
+                 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
+                 'base64': base64.b64encode(raw).decode('ascii'), 'environment': env}
+        payload = b'\0\0\0\x18ftypisom\0\0\0\0'  # fake final producer, no media tools
+        final = {'schema': SCHEMA, 'ok': True, 'content_version': version, 'start': 10, 'end': 40,
+                 'fps': first['fps'], 'width': 1920, 'height': 1080, 'audio_sample_rate': 48000,
+                 'audio_channels': 2, 'mime': 'video/mp4', 'byte_length': len(payload),
+                 'sha256': hashlib.sha256(payload).hexdigest(), 'base64': base64.b64encode(payload).decode('ascii'),
+                 '_input_environment': env}
+        profile = (Path('/opt/trusted-source'), Path('/usr/bin/python3'), [], [], {})
+        proof = {'launcher': 'framivra.preview-window.fixed-wheel/v1', 'wheel_sha256': 'd' * 64,
+                 'runtime_projection_sha256': 'e' * 64}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            timeline, media = root / 'timeline.json', root / 'media.wav'
+            timeline.write_bytes(b'timeline')
+            roles = {timeline: [('timeline',)], media: [('source', 'voice', media.name)]}
+            for case in ('good', 'before', 'after', 'profile-changed', 'nonce', 'position', 'sha', 'png', 'trailing',
+                         'worker-final-failed'):
+                with self.subTest(case=case):
+                    media.write_bytes(b'original')
+                    events, images = [], []
+
+                    def reverify():
+                        events.append('profile')
+                        if case == 'profile-changed':
+                            raise ValueError('profile changed')
+
+                    def emit(image, check):
+                        self.assertEqual(events, ['profile', 'inputs'])
+                        self.assertFalse(images)
+                        self.assertTrue(image['provisional'])
+                        data = base64.b64decode(image['base64'])
+                        self.assertNotIn(b'unapproved', data)
+                        self.assertEqual(hashlib.sha256(data).hexdigest(), image['sha256'])
+                        images.append(image)
+
+                    def worker(argv, fds, check, limit, *, framed):
+                        self.assertEqual(argv[-1], 'first-frame:' + nonce)
+                        self.assertEqual({os.fstat(fd).st_ino for fd in fds}, {timeline.stat().st_ino, media.stat().st_ino})
+                        if case == 'before':
+                            media.write_bytes(b'changed!')
+                        record = dict(first)
+                        if case == 'position':
+                            record['segment'] = [10, 19]
+                        if case == 'sha':
+                            record['sha256'] = '0' * 64
+                        if case == 'png':
+                            corrupt = raw[:-1] + bytes([raw[-1] ^ 1])
+                            record.update(base64=base64.b64encode(corrupt).decode('ascii'),
+                                          sha256=hashlib.sha256(corrupt).hexdigest())
+                        framed_reply = stream.pack(stream.FIRST, {'nonce': 'f' * 32 if case == 'nonce' else nonce,
+                                                                  'result': record}, limit)
+                        framed.feed(framed_reply[:2])
+                        self.assertFalse(images)
+                        framed.feed(framed_reply[2:])
+                        # The parent qualified/emitted it without receiving a terminal or an exit status.
+                        self.assertEqual(len(images), 1)
+                        if case == 'after':
+                            media.write_bytes(b'changed!')
+                        terminal = {'ok': False} if case == 'worker-final-failed' else final
+                        framed.feed(stream.pack(stream.FINAL, {'nonce': nonce, 'result': terminal}, limit))
+                        if case == 'trailing':
+                            framed.feed(b'unexpected stdout')
+                        return (1 if case == 'worker-final-failed' else 0), framed.finish(), b'private diagnostics'
+
+                    def run():
+                        with contextlib.ExitStack() as stack:
+                            return isolation.execute(stack, timeline, roles, 10, version, lambda _caption: fp, 1024**2, WIRE_LIMIT,
+                                                     lambda: None, root_identity=artifact.project_identity(root),
+                                                     qualification=proof, recheck=lambda _caption: events.append('inputs'),
+                                                     first_frame=(nonce, lambda env: (40, 18, Fraction(30)), reverify, emit))
+
+                    with patch.object(isolation, 'available', return_value=True), \
+                            patch.object(isolation, '_profile', return_value=profile), \
+                            patch.object(isolation, '_read_worker', side_effect=worker):
+                        if case == 'good':
+                            result = run()
+                            self.assertRegex(result['input_epoch'], r'^sha256:[0-9a-f]{64}$')
+                            self.assertNotIn('_input_environment', result)
+                        else:
+                            with self.assertRaises((isolation.IsolationError, ValueError)):
+                                run()
+                        self.assertEqual(bool(images), case in ('good', 'after', 'trailing', 'worker-final-failed'))
+
     def test_preflight_rejects_declared_bgm_mid_window_gfx_and_unsafe_environment(self):
         from vtx.timeline_preview_window import _preflight, WindowError
 

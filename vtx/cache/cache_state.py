@@ -410,9 +410,9 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     h = hashlib.sha256()
     if timeline_bytes is None:
         reader = getattr(c, "_read_timeline_bytes", None)
-        timeline_bytes = reader() if reader is not None else read_timeline_input(c)
-    h.update(timeline_bytes)
-    del timeline_bytes
+        h.update(reader() if reader is not None else read_timeline_input(c))
+    else:
+        h.update(timeline_bytes)
     def source_key(entry):
         index, source = entry
         origin = f'$.sources[{index}]'

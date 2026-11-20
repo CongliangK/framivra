@@ -40,6 +40,9 @@ _LAUNCHER = 'framivra.preview-window.fixed-wheel/v1'
 _INPUT_EPOCH_ABI = 'framivra.preview-window.inputs/v1'
 _WARM_SVG_MEDIA_ABI = 'framivra.preview-window.warm-svg-media/v1'
 _PROGRAM_AUDIO_ABI = 'framivra.preview-window.program-audio/v1'
+_FIRST_FRAME_ABI = 'framivra.preview-window.first-frame/v1'
+_FIRST_FRAME = 'preview-window-first-frame'
+_FIRST_FRAME_PROBE = '--first-frame-capabilities'
 _FORMAL_ARCHIVE = 'preview-formal-archive'
 _FORMAL_ARCHIVE_PROBE = '--formal-archive-capabilities'
 _FORMAL_ARCHIVE_ABI = 'framivra.preview-formal-archive/v1'
@@ -206,8 +209,16 @@ def _operation(args, profile):
                  and args[7] == '--read-approved-archive' and re.fullmatch(r'--nonce=[0-9a-f]{32}', args[8]),
                  'expected only the exact formal archive selectors')
         return _FORMAL_ARCHIVE
+    if args == [_FIRST_FRAME_PROBE]:
+        return _FIRST_FRAME_PROBE
+    first_frame = len(args) == 11 and args[3] == _FIRST_FRAME and re.fullmatch(r'--nonce=[0-9a-f]{32}', args[10])
+    if first_frame:
+        _require(args[7:10] == ['--render', '--include-media', '--prepare-inputs'],
+                 'first-frame transport requires ordinary media flags only')
     op = _PREVIEW_FLAGS.get(tuple(args[7:]))
-    _require(op is not None and args[0] == '-t' and args[2:5] == ['timeline', 'preview-window', '--frame']
+    op = _FIRST_FRAME if first_frame else op
+    _require(op is not None and args[0] == '-t' and args[2:5] == [
+        'timeline', _FIRST_FRAME if first_frame else 'preview-window', '--frame']
              and re.fullmatch(r'0|[1-9][0-9]{0,15}', args[5])
              and re.fullmatch(r'--expected-content-version=sha256:[0-9a-f]{64}', args[6]),
              'only the fixed isolated media or SVG warm commands are enabled')
@@ -227,6 +238,17 @@ def _qualified_command():
     if (getattr(timeline_preview_window, 'FIXED_WHEEL_LAUNCHER', None) == _LAUNCHER
             and getattr(timeline_preview_window, 'INPUT_EPOCH_ABI', None) == _INPUT_EPOCH_ABI):
         return timeline_preview_window.run_preview_window_command
+    return None
+
+
+def _qualified_first_frame_command():
+    from vtx.cli import timeline_preview_window
+
+    command = getattr(timeline_preview_window, 'run_first_frame_command', None)
+    if (_qualified_command() is not None
+            and getattr(timeline_preview_window, 'FIRST_FRAME_ABI', None) == _FIRST_FRAME_ABI
+            and callable(command)):
+        return command
     return None
 
 
@@ -250,6 +272,43 @@ def _write_record(data, check):
                     continue
     finally:
         os.set_blocking(fd, old)
+
+
+def _dispatch_first_frame(op, args, proof, reverify):
+    from vtx.timeline_preview_window import WIRE_LIMIT, supported
+
+    command = _qualified_first_frame_command()
+    enabled = command is not None and supported()
+    if op == _FIRST_FRAME_PROBE:
+        print(json.dumps({'schema': _FIRST_FRAME_ABI, 'available': enabled, **proof,
+                          'record_payload_limit_exclusive': WIRE_LIMIT}, ensure_ascii=True))
+        return 0
+    _require(enabled, 'wheel does not support launcher first-frame qualification')
+    from vtx.runtime import preview_window_stream as stream
+
+    nonce = args[10].split('=', 1)[1]
+    broken = False
+
+    def emit(kind, result, check):
+        nonlocal broken
+        data = stream.pack(kind, {'nonce': nonce, 'result': result}, WIRE_LIMIT)
+        # A partial record cannot be followed by another header.
+        broken = True
+        _write_record(data, check)
+        broken = False
+
+    def first(record, check):
+        emit(stream.FIRST, {**record, **proof}, check)
+
+    normalized = [*args[:3], 'preview-window', *args[4:10]]
+    status, result = command(normalized, qualification=proof, nonce=nonce,
+                             reverify_profile=reverify, emit=first)
+    if broken:
+        return 1
+    if status == 0:
+        reverify()
+    emit(stream.FINAL, result, lambda: None)
+    return status
 
 
 def _dispatch_formal_archive(op, args, profile, proof, reverify, runtime):
@@ -423,6 +482,14 @@ def main():
     from vtx.runtime.stdio import ensure_blocking_stdio
 
     ensure_blocking_stdio()  # Same transport preparation as the normal CLI.
+    if op in (_FIRST_FRAME, _FIRST_FRAME_PROBE):
+        try:
+            if op == _FIRST_FRAME_PROBE:
+                reverify()
+            return _dispatch_first_frame(op, args, proof, reverify)
+        except (OSError, ProfileError):
+            print('preview wheel refused: first-frame wire or wheel profile unavailable', file=sys.stderr)
+            return 2
     if op == 'capabilities':
         return _dispatch(op, args, proof)
     wire = io.StringIO()

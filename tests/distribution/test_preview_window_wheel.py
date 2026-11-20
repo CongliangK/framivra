@@ -277,6 +277,59 @@ class PreviewWheelTests(unittest.TestCase):
                 (profile / 'formal-archive.sha256').write_text(launch._sha(raw) + '\n', encoding='ascii')
                 self.assertEqual(self._formal_call(profile, proof, args, status=1)['code'], 'archive.inputs_mismatch')
 
+    def test_stage_is_written_to_wire_not_redirected_render_log(self):
+        r = subprocess.run([sys.executable, '-B', '-c',
+            'import contextlib,sys; from scripts.preview_window_wheel import _write_record; '
+            'ctx=contextlib.redirect_stdout(sys.stderr); ctx.__enter__(); '
+            'print("diagnostic"); _write_record(b"frame",lambda:None)'],
+            capture_output=True, check=True, cwd=Path(launch.__file__).resolve().parents[1])
+        self.assertEqual((r.stdout, r.stderr), (b'frame', b'diagnostic\n'))
+
+    def test_first_frame_probe_and_launcher_use_only_the_opt_in_fixed_abi(self):
+        from vtx.cli import timeline_preview_window as cli
+        from vtx.runtime import preview_window_stream as stream
+
+        nonce = 'c' * 32
+        args = ['-t', '/project/timeline.json', 'timeline', launch._FIRST_FRAME, '--frame', '1',
+                '--expected-content-version=sha256:' + 'a' * 64,
+                '--render', '--include-media', '--prepare-inputs', '--nonce=' + nonce]
+        profile = Path('/trusted-profile')
+        self.assertEqual(launch._operation(args, profile), launch._FIRST_FRAME)
+        self.assertEqual(launch._operation([launch._FIRST_FRAME_PROBE], profile), launch._FIRST_FRAME_PROBE)
+        for invalid in (args[:-1], args + ['--other'], [*args[:-1], '--nonce=' + 'C' * 32],
+                        [*args[:3], 'preview-window', *args[4:]]):
+            with self.assertRaises(launch.ProfileError):
+                launch._operation(invalid, profile)
+        self.assertFalse(cli.matches(args))
+
+        proof = {'launcher': launch._LAUNCHER, 'wheel_sha256': 'a' * 64, 'runtime_projection_sha256': 'b' * 64}
+        events = []
+
+        def command(argv, *, qualification, nonce, reverify_profile, emit):
+            self.assertEqual(argv, [*args[:3], 'preview-window', *args[4:10]])
+            self.assertEqual(qualification, proof)
+            self.assertEqual(nonce, 'c' * 32)
+            reverify_profile()
+            emit({'provisional': True}, lambda: None)
+            events.append('settlement failed')
+            return 1, {'ok': False}
+
+        def write(data, check):
+            check()
+            events.append((data[:1], json.loads(data[5:])))
+
+        with patch('vtx.timeline_preview_window.supported', return_value=True), \
+                patch.object(cli, 'FIRST_FRAME_ABI', None), contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(launch._dispatch_first_frame(launch._FIRST_FRAME_PROBE, [], proof, lambda: None), 0)
+            self.assertFalse(json.loads(out.getvalue())['available'])
+        with patch('vtx.timeline_preview_window.supported', return_value=True), \
+                patch.object(cli, 'run_first_frame_command', side_effect=command), \
+                patch.object(launch, '_write_record', side_effect=write):
+            self.assertEqual(launch._dispatch_first_frame(launch._FIRST_FRAME, args, proof,
+                                                         lambda: events.append('profile verified')), 1)
+        self.assertEqual(events, ['profile verified', (stream.FIRST, {'nonce': nonce, 'result': {'provisional': True, **proof}}),
+                                  'settlement failed', (stream.FINAL, {'nonce': nonce, 'result': {'ok': False}})])
+
     def test_capability_and_dispatch_share_qualification_without_advertising_legacy_wheel(self):
         from vtx.cli import timeline_preview_window as cli
         from vtx import timeline

@@ -279,7 +279,7 @@ def _profile(check, *, svg=False):
     return source, python, trees, profile_files, env
 
 
-def _read_worker(argv, descriptors, check, limit, *, keep_on_signal=False):
+def _read_worker(argv, descriptors, check, limit, *, keep_on_signal=False, framed=None):
     """Capture only enclosed pipes. On success Popen.wait includes PID-1 exit."""
     child = subprocess.Popen(argv, pass_fds=descriptors, stdin=subprocess.DEVNULL,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -298,6 +298,9 @@ def _read_worker(argv, descriptors, check, limit, *, keep_on_signal=False):
                             sel.unregister(key.fileobj)
                             continue
                         buffer, cap = key.data
+                        if buffer is output and framed is not None:
+                            framed.feed(chunk)
+                            continue
                         room = cap - len(buffer)
                         if buffer is output and len(chunk) > room:
                             raise IsolationError('isolated JSON exceeds the wire limit')
@@ -319,7 +322,7 @@ def _read_worker(argv, descriptors, check, limit, *, keep_on_signal=False):
                 except (OSError, subprocess.TimeoutExpired):
                     pass  # Retain the original failure, never publish output.
             raise
-        return child.returncode, bytes(output), bytes(errors)
+        return child.returncode, framed.finish() if framed is not None else bytes(output), bytes(errors)
     finally:
         child.stdout.close()
         child.stderr.close()
@@ -327,7 +330,9 @@ def _read_worker(argv, descriptors, check, limit, *, keep_on_signal=False):
 
 def execute(stack, path, files, start, version, prepare_fingerprint, bytes_limit, wire_limit, check,
             *, root_identity, qualification=None, recheck=None, svg_mode=None, caption=None, read_caption=None,
-            program_paths=()):
+            program_paths=(), first_frame=None):
+    if first_frame is not None and (qualification is None or recheck is None or svg_mode is not None or program_paths):
+        raise IsolationError('first frame requires the qualified ordinary window supervisor')
     if program_paths and (qualification is None or svg_mode == 'svg-read'):
         raise IsolationError('program audio requires an explicitly qualified fixed wheel media mode')
     if svg_mode is not None and (svg_mode not in ('svg-read', 'svg-media') or qualification is None):
@@ -420,7 +425,7 @@ def execute(stack, path, files, start, version, prepare_fingerprint, bytes_limit
             observed.append((str(src), str(dest), roles, size, sha))
         return observed, total
 
-    def run(mode, fingerprint, *extra):
+    def run(mode, fingerprint, *extra, framed=None):
         command = [*argv, '--size', str(bytes_limit), '--tmpfs', str(scratch), '--remount-ro', '/',
                    '--chdir', str(root), '--', '/usr/bin/setpriv', '--no-new-privs',
                    str(python), '-I', '-B', '-S', '-c', _BOOT,
@@ -428,18 +433,20 @@ def execute(stack, path, files, start, version, prepare_fingerprint, bytes_limit
         for guard in guards:
             guard()
         worker_options = {'keep_on_signal': True} if frame_paths else {}
+        if framed is not None:
+            worker_options['framed'] = framed
         status, output, errors = _read_worker(command, tuple(fds), check, wire_limit, **worker_options)
         if frame_paths and status < 0:
             failure = IsolationError('isolated worker did not return a settled result')
             failure._vtx_isolation_unsettled = True
             raise failure
-        if errors:
+        if errors and framed is None:
             sys.stderr.write(errors.decode('utf-8', errors='replace'))
         for guard in guards:
             guard()
         if status not in (0, 1) or not output:
             raise IsolationError('isolated worker did not return a settled result')
-        result = json.loads(output)
+        result = json.loads(output) if framed is None else output
         if not isinstance(result, dict) or result.get('ok') is not (status == 0):
             raise IsolationError('isolated worker result disagrees with process status')
         return status, result
@@ -506,7 +513,40 @@ def execute(stack, path, files, start, version, prepare_fingerprint, bytes_limit
         status, result = run(mode, fingerprint, relative, *program_args)
     else:
         mode = 'program-audio' if program_args else 'input-epoch' if qualification is not None else 'unqualified'
-        status, result = run(mode, prepare_fingerprint(caption_observation[1]), *program_args)
+        fingerprint = prepare_fingerprint(caption_observation[1])
+        if first_frame is None:
+            status, result = run(mode, fingerprint, *program_args)
+        else:
+            from . import preview_window_stream as stream
+
+            nonce, expected_position, reverify_profile, emit = first_frame
+            if not stream.NONCE.fullmatch(nonce):
+                raise IsolationError('invalid first-frame nonce')
+            end, segment_end, rate = expected_position(env)
+            first, first_environment = None, None
+
+            def first_record(record):
+                nonlocal first, first_environment
+                check()
+                for guard in guards:
+                    guard()
+                verified = stream.verify_first(record, start=start, end=end, segment_end=segment_end, rate=rate,
+                                               version=version, fingerprint=fingerprint, limit=wire_limit)
+                reverify_profile()
+                observation = observe_caption()
+                recheck(observation[1])
+                verify_project(observation)
+                for guard in guards:
+                    guard()
+                check()
+                emit(verified, check)
+                first, first_environment = verified, record['environment']
+
+            framed = stream.Decoder(wire_limit, nonce, first_record)
+            status, result = run('first-frame:' + nonce, fingerprint, framed=framed)
+            if status:
+                raise IsolationError('isolated window did not settle successfully')
+            stream.verify_final(result, first, first_environment)
 
     if ('input_epoch' in result or 'warm' in result
             or ('_input_environment' in result and (svg_mode == 'svg-read' or pinned is None or status != 0))):

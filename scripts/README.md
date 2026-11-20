@@ -12,6 +12,7 @@
 | 新建项目 | `new_project.sh DIR [SECS]`（默认 30，ASCII 十进制 ≥7 秒）使用 `templates/gfx-starter.html`；新建/完整替换 unmanaged timeline 经公共 plan/CAS/history，拒绝 managed/坏输入；不是无损初始化或目录级原子事务，详见[新项目写态](../docs/skill/references/edit.md)。 |
 | 主 Demo | `demo_workbench.py` 准备可编辑工程，`demo_workbench_acceptance.py` 按实际后端验收原版和编辑版；见[操作与依赖](../templates/demo-workbench/README.md)。 |
 | SVG 性能源 | `demo.py` 准备/核验锁定的 30 秒 portable-v2 输入，`fonts` 诊断公开字体来源；见[源基线](../templates/demo-timeline-svg/README.md#主性能基线)。 |
+| Linux 固定 wheel 预览 | [`preview_window_wheel.py`](preview_window_wheel.py) 仅用系统 Python 与私有可信部署目录（工程及 Session 工作区之外），按独立批准的 `kernel.sha256` 核对 `kernel.whl`。`--stage-from` 是写操作，从独立安装目录核验已安装字节后新建 `runtime/`，拒绝替换已有投影；`--verify` 只读核验。窗口与授权边界见[区间渲染](../docs/ARCHITECTURE.md#区间渲染)。 |
 | 发布 | `release/release_github.py` 执行发布事务；`release/verify_release.py` 核验身份；`release/release_acceptance.py` 在隔离冻结源码上验收。真实发布需要授权。 |
 | 图形基线与证据 | `gfx/gfx_golden.py` 是命令入口，`gfx/gfx_evidence.py` 是验证库；使用说明见 [图形证据](../docs/cache-provenance.md#golden-evidence)。 |
 | CEF 配对性能 | `gfx/bench_cef.py plan/run/report`；只读计划、新目录冷暖全链、JSON/Markdown 报告；[输入与 Mac 交接](../experiments/gfx_cef_worker/README.md#有界调度与-mac-性能交接)。 |

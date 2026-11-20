@@ -484,7 +484,7 @@ def _timeline_reader(path, root_identity, version, check_cancelled):
 
 
 def _dispatch(path, reference, root_identity, start, check_cancelled, qualification=None, *, svg_mode=None,
-              program_audio=False):
+              program_audio=False, first_frame=None):
     from .cache.cache_state import receipt_fingerprint, verify_input_identity
     from .timeline_structure import strict_loads
 
@@ -497,6 +497,25 @@ def _dispatch(path, reference, root_identity, start, check_cancelled, qualificat
         raise WindowError('audio.program_unsupported', 'program audio requires qualified whole-program media')
     end, rate = _preflight(stored, start, isolation.managed_font(), allow_svg=allow_svg,
                            svg_read_only=svg_mode == 'svg-read')
+    if first_frame is not None:
+        if allow_svg or program_audio or qualification is None:
+            raise WindowError('input_epoch.unavailable', 'first frame requires the qualified ordinary window supervisor')
+        from .pipeline.composite import DEFAULT_SEGMENTS, choose_cutpoints
+        from .pipeline.range import select_segments
+
+        def position(env):
+            count = int(env.get('VTX_VIDEO_SEGMENTS', str(DEFAULT_SEGMENTS)))
+            if not 1 <= count <= _WORK_FILE_COUNT:
+                raise WindowError('work.limit', 'invalid preview segment count')
+            bounds = [(clip['dst_in'], clip['dst_in'] + clip['dur'])
+                      for track in stored['video_tracks'] for clip in track['clips']]
+            duration = stored['project']['duration_frames']
+            cuts = choose_cutpoints(bounds, duration, count)
+            (_, segment_end), *_ = select_segments([0, *cuts, duration], start, end)
+            return end, segment_end, rate
+
+        nonce, reverify_profile, emit = first_frame
+        first_frame = (nonce, position, reverify_profile, emit)
     program_paths = ()
     if program_audio:
         from .pipeline import preview_program_audio as program
@@ -534,7 +553,8 @@ def _dispatch(path, reference, root_identity, start, check_cancelled, qualificat
                                    _WORK_MEDIA_LIMIT, WIRE_LIMIT, check_cancelled,
                                    root_identity=root_identity, qualification=qualification, recheck=recheck,
                                    svg_mode=svg_mode, caption=caption, read_caption=read_caption,
-                                   program_paths=program_paths)
+                                   program_paths=program_paths,
+                                   **({"first_frame": first_frame} if first_frame is not None else {}))
     schema = WARM_SVG_SCHEMA if svg_mode == 'svg-read' else SCHEMA
     if svg_mode == 'svg-media' and not result['ok'] and result.get('schema') == WARM_SVG_SCHEMA:
         # The shared input-only planner uses the warm-read envelope on failure.
@@ -672,7 +692,8 @@ def _verified_media(output, workspace, request, identity, start, end, rate, chec
 
 
 def _render(path, reference, root_identity, start, result, check_cancelled, expected_inputs, *, epoch,
-            svg_pack=None, program_manifest=None, operator_run=None, operator_part_seconds=None):
+            svg_pack=None, program_manifest=None, operator_run=None, operator_part_seconds=None,
+            first_frame_ready=None):
     from .cache.cache_state import verify_input_identity
     from .pipeline import composite, range as range_pipeline, stages
     from .render import frame_environment
@@ -695,6 +716,8 @@ def _render(path, reference, root_identity, start, result, check_cancelled, expe
     program_audio = program_manifest is not None
     windows = ((start, end),)
     span_run = operator_part_seconds is not None
+    if first_frame_ready is not None and (not epoch or program_audio or svg_pack is not None or operator_run is not None):
+        raise WindowError('input_epoch.unavailable', 'first frame requires a verified isolated ordinary window')
     if operator_run is not None:
         if not (epoch and program_audio and svg_pack is None):
             raise WindowError('audio.program_unsupported', 'operator run requires isolated ordinary program media')
@@ -862,7 +885,16 @@ def _render(path, reference, root_identity, start, result, check_cancelled, expe
                 if segment_relay is not None:
                     following = windows[index + 1] if index + 1 < len(windows) else None
                     segment_relay.begin_window(workspace, workspace_identity, (fa, fb), following)
-                if svg_pack is None and not program_audio:
+                if first_frame_ready is not None:
+                    def observe(stage, facts=None):
+                        if stage == 'first_frame_verified':
+                            checkpoint()
+                            first_frame_ready(facts, tool_identity[0])
+
+                    output = range_pipeline._render_native_window(
+                        c, fa, fb, workspace=workspace, check_cancel=check_cancelled,
+                        expected_svg_pack=None, mux_concat=epoch, observe=observe)
+                elif svg_pack is None and not program_audio:
                     output = range_pipeline.render_1080p_window(c, fa, fb, workspace=workspace, _mux_concat=epoch)
                 else:
                     pcm_options = {'program_pcm': program_pcm} if program_pcm is not None else {}
@@ -1018,7 +1050,8 @@ def _run_operator_program(path, start, count, expected_content_version, expected
 
 def preview_window(path, *, start, expected_content_version, check_cancelled, _expected_inputs=None,
                    _qualification=None, _epoch=False, _svg_mode=None, _relative=None,
-                   _program_audio=False, _program_manifest=None):
+                   _program_audio=False, _program_manifest=None,
+                   _first_frame=None, _first_frame_ready=None):
     if type(start) is not int or not isinstance(expected_content_version, str) or not _VERSION.fullmatch(expected_content_version):
         return error_result('cli.arguments', 'integer --frame and lowercase sha256: --expected-content-version required')
     if _expected_inputs is None and not supported():
@@ -1038,7 +1071,8 @@ def preview_window(path, *, start, expected_content_version, check_cancelled, _e
         else:
             if _expected_inputs is None:
                 success = _dispatch(path, reference, identity, start, check_cancelled, _qualification,
-                                    svg_mode=_svg_mode, program_audio=_program_audio)
+                                    svg_mode=_svg_mode, program_audio=_program_audio,
+                                    **({"first_frame": _first_frame} if _first_frame is not None else {}))
             elif _svg_mode in ('svg-plan', 'svg-read'):
                 success = _svg_projection(path, reference, identity, start, check_cancelled,
                                           _expected_inputs, mode=_svg_mode, relative=_relative)
@@ -1046,7 +1080,8 @@ def preview_window(path, *, start, expected_content_version, check_cancelled, _e
                 success = _render(path, reference, identity, start, result, check_cancelled,
                                   _expected_inputs, epoch=_epoch,
                                   svg_pack=_relative if _svg_mode == 'svg-media' else None,
-                                   program_manifest=_program_manifest)
+                                  program_manifest=_program_manifest,
+                                  **({"first_frame_ready": _first_frame_ready} if _first_frame_ready is not None else {}))
             if _wire_size(success, WIRE_LIMIT - 2) >= WIRE_LIMIT - 1:
                 return error_result('output.limit', 'preview window exceeds JSON wire limit')
             return success

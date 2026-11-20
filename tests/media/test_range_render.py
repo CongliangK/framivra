@@ -1037,6 +1037,79 @@ class TestRangeIntegration(unittest.TestCase):
                     self.assertFalse(c.out.exists())
             self.assertEqual(observation.getvalue(), before)
 
+    @unittest.skipUnless(sys.platform == 'linux', 'uses the Linux window worker context')
+    def test_private_native_first_frame_from_real_segment(self):
+        import hashlib
+        from vtx.cache.recovery import completion_marker
+        from vtx.pipeline.range import _measure_1080p_window
+        from vtx.pipeline.stages import validate_core
+        from vtx.timeline_preview_window import _context
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, lavfi in (
+                    ('base', "color=red:s=320x180:r=30:d=3,drawbox=c=lime:t=fill:enable='gte(n,24)'"),
+                    ('pip', 'color=blue:s=320x180:r=30:d=3')):
+                subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', lavfi,
+                                '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo:d=3',
+                                '-map', '0:v', '-map', '1:a', '-c:a', 'aac',
+                                '-c:v', 'libx264', str(root / f'{name}.mp4')],
+                               check=True, capture_output=True, timeout=60)
+            timeline = root / 'timeline.json'
+            timeline.write_text(json.dumps({
+                **TestCliGuards._min_tl(video_tracks=[
+                    {'name': name, 'kind': kind, 'clips': [
+                        {'src': name, 'src_in': 0, 'src_out': 80, 'dst_in': 105, 'dur': 80, **placement}]}
+                    for name, kind, placement in (('base', 'aroll', {}),
+                        ('pip', 'pip', {'x': 40, 'y': 40, 'scale': 1}))]),
+                'project': {'fps': 30, 'width': 1920, 'height': 1080, 'duration_frames': 300},
+                'sources': [{'id': name, 'path': f'{name}.mp4'} for name in ('base', 'pip')],
+            }), encoding='utf-8')
+            workspace = root / 'cache' / 'preview' / 'first-frame'
+            workspace.mkdir(parents=True)
+            with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0', 'VTX_VIDEO_SEGMENTS': '2'}):
+                c = _context(timeline, lambda: None, os.environ.copy(), timeline.read_bytes)
+                self.assertEqual(validate_core(c), [])
+                c.write_root = workspace
+                output, first, stages = _measure_1080p_window(c, 140, 170, workspace=workspace)
+
+            self.assertEqual(first['window'], (140, 170))
+            self.assertEqual(first['segment'], (140, 150))
+            self.assertEqual((first['frame'], first['vpts'], first['fps']), (140, 0, Fraction(30)))
+            self.assertEqual((first['width'], first['height']), (1920, 1080))
+            self.assertEqual(first['content_version'], 'sha256:' + hashlib.sha256(timeline.read_bytes()).hexdigest())
+            self.assertEqual(first['input_fingerprint'], c.input_fingerprint)
+            segments = list((workspace / 'work' / 'preview').glob('rseg_*.mp4'))
+            self.assertEqual(len(segments), 2)
+            segment = next(p for p in segments if p.name.startswith('rseg_000140_000150_'))
+            self.assertEqual(first['segment_key'], segment.stem.rsplit('_', 1)[1])
+            self.assertEqual(first['segment_sha256'], hashlib.sha256(segment.read_bytes()).hexdigest())
+            self.assertEqual(json.loads(completion_marker(output).read_bytes())['frames'], 30)
+            self.assertEqual(first['sha256'], hashlib.sha256(first['png']).hexdigest())
+            self.assertEqual(first['bytes'], len(first['png']))
+            self.assertGreater(stages['layers_ready'], 0)
+            self.assertLess(stages['layers_ready'], stages['first_segment_committed'])
+            self.assertLess(stages['first_segment_committed'], stages['first_frame_verified'])
+            self.assertLess(stages['first_frame_verified'], stages['window_verified'])
+
+            def first_rgb(source, data=None):
+                return subprocess.run(['ffmpeg', '-v', 'error', '-xerror', *source,
+                    '-map', '0:v:0', '-frames:v', '1', '-pix_fmt', 'rgb24',
+                    '-c:v', 'rawvideo', '-threads:v', '1', '-f', 'rawvideo', 'pipe:1'],
+                    input=data, check=True, capture_output=True, timeout=60).stdout
+
+            pixels = first_rgb(['-f', 'png_pipe', '-i', 'pipe:0'], first['png'])
+            self.assertEqual(len(pixels), 1920 * 1080 * 3)
+            self.assertEqual(pixels, first_rgb(['-i', str(output)]))
+            # Not the source's first (red) frame, nor a layer-only or black still.
+            pip = 3 * (64 * 1920 + 64)
+            self.assertGreater(pixels[pip + 2], 200)
+            self.assertLess(max(pixels[pip:pip + 2]), 40)
+            base = 3 * (500 * 1920 + 800)
+            self.assertGreater(pixels[base + 1], 200)
+            self.assertLess(max(pixels[base], pixels[base + 2]), 40)
+            self.assertFalse((root / 'out').exists())
+
     def test_range_render(self):
         self._assert_short_ntsc_range_keeps_all_video_frames_when_audio_rounds_down()
         from vtx.pipeline.range import run_range  # noqa: F401  （经 CLI 子进程实跑，见下）

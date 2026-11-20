@@ -265,6 +265,85 @@ def _stage_window_gfx(c, fa, fb, scratch, check_cancel, *, expected_svg_pack=Non
     return staged, rechecks
 
 
+def _first_frame_from_segment(c, segment, key, window, part):
+    """Extract from this render's sealed composite, never from a source/still."""
+    from ..cache.recovery import completion_marker
+    from ..render.png_artifact import read_artifact, read_png
+
+    a, b = part
+    marker = completion_marker(segment)
+    root = c.preview_cache
+    record = read_artifact(marker, root=root, limit=4096)
+    if not media_cache_valid(segment, frames=b - a):
+        raise RuntimeError('first-frame segment lacks an exact media completion record')
+    c.verify_inputs(None)
+
+    source = ['-protocol_whitelist', 'file', '-f', 'mov', '-i', str(segment)]
+    probe = c.run(['ffprobe', '-v', 'error', '-nofind_stream_info', *source, '-show_streams', '-show_packets',
+                   '-show_entries', 'stream=index,codec_type,codec_name,width,height,time_base:'
+                   'packet=stream_index,pts,duration', '-of', 'json'])
+    if probe.stderr.strip():
+        raise RuntimeError('first-frame segment probe reported a media error')
+    info = json.loads(probe.stdout)
+    streams = info['streams']
+    if len(streams) != 1 or (streams[0]['codec_type'], streams[0]['codec_name'],
+                             streams[0]['width'], streams[0]['height']) != ('video', 'h264', c.w, c.h):
+        raise RuntimeError('first-frame segment is not native single-stream H.264')
+    stream = streams[0]
+    tb = Fraction(stream['time_base'])
+    packets = info['packets']
+    pts = sorted(int(p['pts']) for p in packets)
+    if (not window[0] == a < b <= window[1]
+            or any(p['stream_index'] != stream['index'] or int(p['duration']) * tb != 1 / c.frame_rate
+                   for p in packets)
+            or [p * tb for p in pts] != [i / c.frame_rate for i in range(b - a)]):
+        raise RuntimeError('first-frame segment is not on the exact window presentation clock')
+    first_pts = pts[0]
+
+    # Check the first *decoded* frame at its real input PTS as well. Do not
+    # seek, synthesize/filter-shift PTS, or pick the first packet in DTS order.
+    png = segment.with_suffix('.first.png')
+    extracted = c.run(['ffmpeg', '-v', 'error', '-xerror', '-nostdin', '-copyts', '-noautorotate',
+                       *source, '-map', '0:v:0', '-vf', f'select=eq(n\\,0)*eq(pts\\,{first_pts})',
+                       '-frames:v', '1', '-fps_mode', 'passthrough', '-c:v', 'png', '-pix_fmt', 'rgb24',
+                       '-threads:v', '1', '-f', 'image2', '-update', '1', str(png)])
+    if extracted.stderr.strip():
+        raise RuntimeError('first-frame extraction reported a media error')
+    facts, data = read_png(png, root=root, width=c.w, height=c.h)
+    if (read_artifact(marker, root=root, limit=4096) != record
+            or not media_cache_valid(segment, frames=b - a)):
+        raise RuntimeError('first-frame segment changed during extraction')
+    c.verify_inputs(None)
+    return {'window': window, 'segment': part, 'frame': a, 'fps': c.frame_rate,
+            'content_version': 'sha256:' + c.timeline_sha256, 'input_fingerprint': c.input_fingerprint,
+            # Same ordered layers, transforms, ASS bytes and graph as the composited segment.
+            'segment_key': key, 'segment_sha256': json.loads(record)['sha256'],
+            'vpts': first_pts, 'video_time_base': tb, 'width': c.w, 'height': c.h,
+            **facts, 'png': data}
+
+
+def _measure_1080p_window(c, fa, fb, *, workspace):
+    """Private candidate on the existing supervised runner, not a publish path.
+
+    Elapsed nanoseconds from this kernel call, not Host/CLI or Web latencies.
+    Extraction is synchronous; the observed whole-window time includes its cost.
+    """
+    if not callable(getattr(c, '_preview_window_tasks', None)):
+        raise ValueError('first-frame measurement requires the window task runner')
+    start = time.monotonic_ns()
+    elapsed, receipt = {}, {}
+
+    def observe(stage, facts=None):
+        elapsed[stage] = time.monotonic_ns() - start
+        if facts is not None:
+            receipt.update(facts)
+
+    output = _render_native_window(c, fa, fb, workspace=workspace, check_cancel=None,
+                                   expected_svg_pack=None, observe=observe)
+    observe('window_verified')
+    return output, receipt, elapsed
+
+
 def render_1080p_window(c, fa: int, fb: int, *, workspace: Path, check_cancel=None, _mux_concat=False) -> Path:
     """Internal media producer; the separate warm read does not authorize composition."""
     if type(fa) is int and type(fb) is int and any(
@@ -276,7 +355,7 @@ def render_1080p_window(c, fa: int, fb: int, *, workspace: Path, check_cancel=No
 
 
 def _render_native_window(c, fa, fb, *, workspace, check_cancel, expected_svg_pack, program_sources=None,
-                          mux_concat=False, program_pcm=None, program_part_seconds=None):
+                          mux_concat=False, program_pcm=None, program_part_seconds=None, observe=None):
     """Shared private implementation, including the transplanted staging logic.
 
     Caller supplies a trusted, validated Ctx (including trusted methods and
@@ -291,6 +370,10 @@ def _render_native_window(c, fa, fb, *, workspace, check_cancel, expected_svg_pa
     """
     if any(os.environ.get(name) for name in ('FFREPORT', 'LD_PRELOAD', 'LD_AUDIT')):
         raise ValueError('1080p window refuses FFREPORT and loader injection overrides')
+    if observe is not None and (program_sources is not None or expected_svg_pack is not None
+                                or any(_intersects(clip, fa, fb) for track in c.tl['video_tracks']
+                                       if track.get('kind') == 'gfx' for clip in track['clips'])):
+        raise ValueError('first frame requires an ordinary window')
     if (program_sources is not None and getattr(c, '_program_audio_verified', False) is not True
             or program_pcm is not None and (program_sources is None or expected_svg_pack is not None)):
         raise ValueError('whole-program audio requires a verified isolated preview context')
@@ -341,7 +424,7 @@ def _render_native_window(c, fa, fb, *, workspace, check_cancel, expected_svg_pa
                          gfx_rechecks=rechecks, check_cancel=check_cancel,
                          run_tasks=getattr(ctx, '_preview_window_tasks', None), program_sources=program_sources,
                          mux_concat=mux_concat and expected_svg_pack is None, program_pcm=program_pcm,
-                         program_part_seconds=program_part_seconds)
+                         program_part_seconds=program_part_seconds, observe=observe)
 
 
 def _program_composite_args(plan, layer, out, a, b, sub_file, wav):
@@ -376,7 +459,7 @@ def _program_composite_args(plan, layer, out, a, b, sub_file, wav):
 
 def _render_range(c, fa, fb, *, draft, staged_gfx=None, gfx_rechecks=(), check_cancel=lambda: None,
                   run_tasks=None, program_sources=None, mux_concat=False, program_pcm=None,
-                  program_part_seconds=None):
+                  program_part_seconds=None, observe=None):
     t0 = time.monotonic()
     f = 0.5 if draft else 1.0
     W, H = ((c.w // 2) // 2 * 2, (c.h // 2) // 2 * 2) if draft else (c.w, c.h)
@@ -394,6 +477,8 @@ def _render_range(c, fa, fb, *, draft, staged_gfx=None, gfx_rechecks=(), check_c
         check_cancel()
         layers = prepare_layers(c, native_window=(fa, fb), staged_gfx=staged_gfx,
                                 run_tasks=run_tasks)
+    if observe is not None:
+        observe('layers_ready')
     print(f"[timing] gfx/seg 复用检查（{len(layers)} 层）: {time.monotonic() - t:.1f}s")
     # Draft keeps its full-project gate. Native layers have already been staged
     # and _layer_input_args verifies the private sequence before consumption.
@@ -455,10 +540,14 @@ def _render_range(c, fa, fb, *, draft, staged_gfx=None, gfx_rechecks=(), check_c
         if media_cache_valid(segp, frames=b - a):
             print(f"  ✓ 子段 {i} [{a},{b}) 已缓存，[timing] 段命中: "
                   f"{time.monotonic() - t:.1f}s")
-            segs.append(segp); continue
-        plan.composite(sl, segp, True, a=a, b=b, sub_file=sfile)
-        print(f"[timing] 段合成 [{a},{b})（{b - a} 帧，{len(sl)} 层）: "
-              f"{time.monotonic() - t:.1f}s")
+        else:
+            plan.composite(sl, segp, True, a=a, b=b, sub_file=sfile)
+            print(f"[timing] 段合成 [{a},{b})（{b - a} 帧，{len(sl)} 层）: "
+                  f"{time.monotonic() - t:.1f}s")
+        if i == 0 and observe is not None:
+            observe('first_segment_committed')
+            first_frame = _first_frame_from_segment(c, segp, key, (fa, fb), (a, b))
+            observe('first_frame_verified', first_frame)
         segs.append(segp)
     _, enc = pick_vcodec(c, draft)
     video_intermediate = None

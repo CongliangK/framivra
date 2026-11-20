@@ -4,8 +4,8 @@
 
 ## 独立审批与部署
 
-1. 由可信操作方在私有环境生成正式成片并归档精确 `[start,end)`。独立管理员核对同一已批准时间线、全部声明源、正式生成证据和归档的**完整 decoded A/V QC**：对照正式成片的解码视频和正式终态音频/相位/增益，检查所有呈现帧、绝对帧切点对应的 48 kHz 样本端点、归档起点与持续时间、H.264 1080p + AAC 48 kHz 双声道及浏览器可播。没有等价证据就不要批准。现有 [Operator 正式视频段](preview-formal-segment.md) 可取视频来源，但它没有给音频、封装或 A/V 等价背书；这里不实施生成流程或复查 decoded QC。
-2. 沿用[独立可信 fixed-wheel profile](preview-window-first-frame.md) 的 Linux launcher、`kernel.sha256`、`kernel.whl` 及 `runtime/`。在同一 owner 私有目录旁置且仅置以下固定授权文件（不在 session 或项目内；普通、单链接、no-follow、可信 owner 或 root、不可由组/其他用户写）：
+1. 由可信操作方在私有环境生成正式成片并归档精确 `[start,end)`。独立管理员核对同一已批准时间线、全部声明源、正式生成证据和归档的**完整 decoded A/V QC**：对照正式成片的解码视频和正式终态音频/相位/增益，检查所有呈现帧、绝对帧切点对应的 48 kHz 样本端点、归档起点与持续时间、H.264 1080p + AAC 48 kHz 双声道及浏览器可播。没有等价证据就不要批准。单独核验一段视频不能为音频、封装或 A/V 等价背书；这里不实施生成流程或复查 decoded QC。
+2. 沿用[独立可信 fixed-wheel profile](../../scripts/README.md#按职责查找) 的 Linux launcher、`kernel.sha256`、`kernel.whl` 及 `runtime/`。在同一 owner 私有目录旁置且仅置以下固定授权文件（不在 session 或项目内；普通、单链接、no-follow、可信 owner 或 root、不可由组/其他用户写）：
    - `formal-archive.mp4`：已独立认证的 MP4 原样字节，最多 5 MiB；不得直接把 `out/` 或 `cache/` 路径通给 Host。
    - `formal-archive.json`：下列精确字段的 UTF-8 JSON，最多 16 KiB。`timeline` 是规范绝对 `.json` 路径（其父目录即绝对项目根），拒绝符号链接、`cache`、`out` 或路径上与 profile 重叠；不识别底层 bind mount 别名，可信部署须保证实际隔离。`content_version` 是 `sha256:` 加时间线文件**原始字节**摘要。`sources` 是全声明路径集合（包括未引用源，同字面路径只列一次）；全部为直连 `assets/` 下的普通 `.mp4`/`.wav`，basename 为 1–96 位 ASCII 字母数字、点、下划线、连字符且以字母数字开始（不含扩展名）。时间线最多 12 项源声明（即使重复路径），每源 ≤64 MiB，总 ≤256 MiB，时间线 ≤1 MiB。禁止 symlink、硬链接、插件、扩展键、GFX、外部字幕和额外依赖。支持 1080p v2 和内联字幕，时基限 30/1 或 30000/1001，区间在工程内且视觉时长严格为 1–4 秒（以有理数比较）。只取本地支持的工程文件系统。源格式的自包含性及内容由管理员核对，消费不打开其内嵌引用。
    - `formal-archive.sha256`：独立管理员发布的 manifest **原始字节** SHA-256，一行小写 64 hex + LF。把它当作审批锚；不要由 Host 或消费端对收到的 manifest 现场补算写入。wheel pin/投影来自可信部署 `--verify`，不是生成者的自报。普通预览不依赖这三个文件。

@@ -2,12 +2,14 @@
 import argparse
 from contextlib import contextmanager, redirect_stdout
 import json
+import os
 import re
 import signal
 import sys
 import threading
 
 from .timeline import _integer
+from ..runtime import preview_window_stream as stream
 from ..timeline_preview_window import WARM_SVG_SCHEMA, WIRE_LIMIT, WindowError, error_result, preview_window
 
 
@@ -16,6 +18,7 @@ FIXED_WHEEL_LAUNCHER = 'framivra.preview-window.fixed-wheel/v1'
 INPUT_EPOCH_ABI = 'framivra.preview-window.inputs/v1'
 WARM_SVG_MEDIA_ABI = 'framivra.preview-window.warm-svg-media/v1'
 PROGRAM_AUDIO_ABI = 'framivra.preview-window.program-audio/v1'
+FIRST_FRAME_ABI = stream.ABI
 _QUALIFICATION_KEYS = ('launcher', 'wheel_sha256', 'runtime_projection_sha256')
 
 
@@ -64,6 +67,19 @@ def _cancellation():
 
 def run_preview_window_command(argv, *, qualification=None):
     """Only a trusted launcher supplies qualification; argv cannot select it."""
+    code, wire = _command(argv, qualification)
+    print(wire)
+    return code
+
+
+def run_first_frame_command(argv, *, qualification, nonce, reverify_profile, emit):
+    """Fixed-wheel launcher ABI; ordinary CLI ingress cannot select it."""
+    if qualification is None or not stream.NONCE.fullmatch(nonce):
+        raise WindowError('input_epoch.unavailable', 'first frame requires a qualified launcher and nonce')
+    return _command(argv, qualification, first_frame=(nonce, reverify_profile, emit))
+
+
+def _command(argv, qualification, *, first_frame=None):
     parser = _Parser(allow_abbrev=False, add_help=False)
     parser.add_argument('-t', '--timeline', required=True, action='append')
     parser.add_argument('group', choices=['timeline'])
@@ -79,6 +95,8 @@ def run_preview_window_command(argv, *, qualification=None):
         if (any(len(v) != 1 for v in (args.timeline, args.frame, args.expected_content_version))
                 or flags not in ((1, 1, 1, 0), (0, 0, 0, 1), (1, 1, 1, 1))):
             raise WindowError('cli.arguments', 'select the complete media flags, --read-warm-svg, or both')
+        if first_frame is not None and (flags != (1, 1, 1, 0) or args.use_program_audio):
+            raise WindowError('cli.arguments', 'first-frame transport requires ordinary media flags only')
         if args.use_program_audio:
             suffix = ['--render', '--include-media', '--prepare-inputs']
             if args.read_warm_svg:
@@ -101,7 +119,8 @@ def run_preview_window_command(argv, *, qualification=None):
             result = preview_window(args.timeline[0], start=_integer(args.frame[0]),
                                     expected_content_version=args.expected_content_version[0],
                                     check_cancelled=check_cancelled, _qualification=qualification,
-                                    _svg_mode=svg_mode, _program_audio=bool(args.use_program_audio))
+                                    _svg_mode=svg_mode, _program_audio=bool(args.use_program_audio),
+                                    **({"_first_frame": first_frame} if first_frame is not None else {}))
             if result['ok']:
                 if svg_mode == 'svg-read':
                     result.update(qualification)
@@ -123,16 +142,21 @@ def run_preview_window_command(argv, *, qualification=None):
         result['schema'] = WARM_SVG_SCHEMA
     wire = json.dumps(result, ensure_ascii=True, allow_nan=False)
     if len(wire) + 1 > WIRE_LIMIT:
-        print(json.dumps(error_result('output.limit', 'preview window exceeds JSON wire limit')))
-        return 1
-    print(wire)
-    return code
+        code = 1
+        result = error_result('output.limit', 'preview window exceeds JSON wire limit')
+        wire = json.dumps(result)
+    return code, result if first_frame is not None else wire
 
 
 def _isolated_worker(args):
     # Invoked only by the fixed bootstrap argv. The renderer checks PID-1,
     # privilege state, the live mounts and the inherited input fingerprint.
     timeline, start, version, fingerprint, mode, *extra = args
+    if mode.startswith('first-frame:'):
+        nonce = mode.split(':', 1)[1]
+        if extra or os.getpid() != 1 or not stream.NONCE.fullmatch(nonce):
+            raise WindowError('input_epoch.unavailable', 'first frame requires an isolated protocol writer')
+        return _stream_worker(timeline, start, version, fingerprint, nonce)
     program = mode in ('program-audio', 'svg-media-program-audio')
     mode = 'svg-media' if mode == 'svg-media-program-audio' else mode
     has_pack = mode in ('svg-read', 'svg-media')
@@ -150,3 +174,31 @@ def _isolated_worker(args):
             check_cancelled()
     print(json.dumps(result, ensure_ascii=True, allow_nan=False))
     return 0 if result['ok'] else 1
+
+
+def _stream_worker(timeline, start, version, fingerprint, nonce):
+    import ctypes
+
+    # Reuse the one bwrap stdout pipe. Only the fixed-wheel PID 1 retains its
+    # private non-inheritable copy. Subtools receive ordinary stderr/captured
+    # output, and cannot reopen PID 1's pipe through its /proc fd entries.
+    if ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0) != 0:  # PR_SET_DUMPABLE
+        raise WindowError('isolation.unavailable', 'could not protect isolated protocol writer')
+    with os.fdopen(os.dup(1), 'wb') as wire:
+        os.dup2(2, 1)
+
+        def emit(kind, result):
+            wire.write(stream.pack(kind, {'nonce': nonce, 'result': result}, WIRE_LIMIT))
+            wire.flush()
+
+        def first_frame_ready(facts, environment):
+            emit(stream.FIRST, stream.worker_first(facts, environment))
+
+        with _cancellation() as check_cancelled, redirect_stdout(sys.stderr):
+            result = preview_window(timeline, start=_integer(start), expected_content_version=version,
+                                    check_cancelled=check_cancelled, _expected_inputs=fingerprint,
+                                    _epoch=True, _first_frame_ready=first_frame_ready)
+            if result['ok']:
+                check_cancelled()
+        emit(stream.FINAL, result)
+        return 0 if result['ok'] else 1
