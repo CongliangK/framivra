@@ -486,12 +486,24 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   }
   const disclosureGroup = React.useId()
   const transport = ready ? h(Transport, { disclosureGroup, frameText: frame, frameError, duration, fps, onFrame: pin, onText: pin, onQuery: () => void load(true) }) : null
+  const togglePreview = useRef()
   function editorKey(event) {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'Escape' && !event.defaultPrevented) {
       const disclosure = event.target.closest?.('.fv-monitor-disclosure[open],.fv-disclosure[open]')
       if (disclosure) { event.preventDefault(); event.stopPropagation(); disclosure.open = false; disclosure.querySelector('summary')?.focus(); return }
     }
-    if (!ready || event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey || editingTarget(event.target) || (!event.target.closest?.('.fv-monitor,.fv-timeline-pane') || event.target.closest?.('video'))) return
+    if (!ready || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || editingTarget(event.target) ||
+        !event.target.closest?.('.fv-monitor,.fv-timeline-pane') || event.target.closest?.('video,audio')) return
+    if (event.key === ' ') {
+      // Native buttons (including clip/track controls), summaries and video
+      // still own their Space activation. Repeats elsewhere never scroll or toggle.
+      if (event.shiftKey || !togglePreview.current || event.target.closest?.('button,summary,a[href],[role="button"],[role="checkbox"],[role="radio"],[role="switch"]')) return
+      event.preventDefault()
+      if (!event.repeat) togglePreview.current()
+      return
+    }
+    if (event.repeat) return
     if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
       if (event.target.closest?.('[role=slider],[role=separator]')) return
       let next = event.key === 'Home' ? 0 : event.key === 'End' && Number.isSafeInteger(duration) ? duration - 1 : stepFrame(frameValue, duration, event.key === 'ArrowLeft' ? -1 : 1, event.shiftKey ? 10 : 1)
@@ -529,8 +541,8 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       h('div', { className: 'fv-body' },
         h('div', { className: 'fv-upper' },
           filesVisible ? h(FileBrowser, { key: `${sessionId}:${browserEpoch}`, sessionId, tabSignal: tab.signal, call: control, selectedPath: ready ? activePath : undefined, onChoose: path => void load(false, path), onClose: closeFiles, recalibrate: browserRecalibrate, hostOps: state.opened?.host?.ops }) : null,
-          h('main', { className: 'fv-monitor', 'aria-label': ready ? '画面预览' : '时间线启动区' },
-            ready ? (valid && !grantDead ? h('fieldset', { disabled: storageBusy, style: { display: 'contents' } }, h(ProgramMonitor, { key: state.opened.grant, suspended: storageBusy || Boolean(state.loading), owner: frameOwner, opened: state.opened, timeline: activePath, selectionDisplay, sessionId, frame: frameValue, blank: frame === '', fps, duration, onFrame: pin, selection, tabSignal: tab.signal, getDraftServices, call: control, transport, disclosureGroup, onGrantDead: grantDied, previewSession: currentPreviewSession, sessionControls })) : h('div', { className: 'fv-monitor-toolbar' }, transport,
+          h('main', { className: 'fv-monitor', tabIndex: valid && !grantDead ? 0 : undefined, 'aria-label': ready ? '画面预览' : '时间线启动区' },
+            ready ? (valid && !grantDead ? h('fieldset', { disabled: storageBusy, style: { display: 'contents' } }, h(ProgramMonitor, { key: state.opened.grant, suspended: storageBusy || Boolean(state.loading), owner: frameOwner, opened: state.opened, timeline: activePath, selectionDisplay, sessionId, frame: frameValue, blank: frame === '', fps, duration, onFrame: pin, selection, tabSignal: tab.signal, getDraftServices, call: control, transport, disclosureGroup, onGrantDead: grantDied, previewSession: currentPreviewSession, sessionControls, togglePreview })) : h('div', { className: 'fv-monitor-toolbar' }, transport,
               sessionControls?.needsRevoke ? h('button', { type: 'button', disabled: sessionControls.pending, onClick: sessionControls.revoke }, sessionControls.failed ? '重试撤销自动预览授权' : '停止并撤销自动预览') : null)) :
               h('div', { className: 'fv-empty' }, h(Icon, { name: 'film', size: 32 }), h('h3', null, '从一条时间线开始'), h('p', null, '选择当前工作区中的时间线 JSON 文件，开始预览与剪辑。'),
                 h('div', { className: 'fv-start-actions' },

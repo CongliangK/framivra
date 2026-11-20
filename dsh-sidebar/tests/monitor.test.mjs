@@ -316,6 +316,43 @@ async function untilWindow(predicate) {
   assert(predicate(), 'window DOM state did not settle')
 }
 
+test('preview Play waits for verified decode, handles browser refusal, and ignores a superseded rejection', async t => {
+  const f = await fixture(t, ProgramMonitor, { opened: windowOpened, timeline: 'timeline.json', frame: 25 }, { mockBlobURLs: true })
+  serveWindows(f, request => request.op === 'render' ? windowReply(request, request.frame + 30) : reaped())
+  await f.click('播放预览')
+  for (const input of windowInputs()) await toggle(input)
+  await f.click('播放预览')
+  await untilWindow(f.video)
+  const node = f.video(), denied = deferred(), nativePlay = node.play
+  let attempts = 0
+  node.play = () => { attempts++; return denied.promise.then(() => { throw new Error('NotAllowedError') }) }
+  assert.equal(attempts, 0, 'receiving verified bytes cannot play before decoder qualification')
+  Object.assign(f.state(node), { videoWidth: 1920, videoHeight: 1080, duration: 1, readyState: 3 })
+  await f.emit(node, 'loadeddata')
+  assert.equal(attempts, 1)
+  assert(f.button('取消待播放'))
+  assert.equal(node.muted, false, 'no silent autoplay fallback')
+  await act(async () => denied.resolve())
+  assert.match(document.body.textContent, /浏览器未开始播放；请手动播放/)
+  assert(node.paused && node.controls)
+  node.play = nativePlay
+  await f.click('播放预览')
+  assert.deepEqual(f.plays, [node])
+  assert.doesNotMatch(document.body.textContent, /浏览器未开始播放/)
+  await f.click('暂停预览')
+  assert(node.paused)
+
+  const stale = deferred()
+  node.play = () => stale.promise.then(() => { throw new Error('obsolete attempt') })
+  await f.click('播放预览')
+  await f.pin(26)
+  await act(async () => stale.resolve())
+  assert.equal(f.video(), null)
+  assert.equal(f.frame(), 26)
+  assert.doesNotMatch(document.body.textContent, /浏览器未开始播放/)
+  assert.deepEqual(f.requests.map(({ request }) => request.op), ['render', 'cancel'], 'no denial or pause retries the render')
+})
+
 test('audio window requires both capabilities and both click-time permissions; success uses one decoded Blob and shares the frame without echo seeking', async t => {
   const f = await fixture(t, ProgramMonitor, { opened: { ...windowOpened, host: { ops: [] } }, frame: 290 }, { mockBlobURLs: true, deferNativePins: true })
   assert.equal(f.button('音画窗口'), undefined, 'kernel advertisement alone is insufficient')
