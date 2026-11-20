@@ -18,7 +18,7 @@ from ..cache.cache_state import (DOWNSTREAM, InputIdentityError, load_receipt,
 from .constraints import AUDIO_SAMPLE_RATE, ALLOWED_FPS, fps_error, parse_fps, frame_sample
 from ..runtime.diagnostics import emit, required_field, mark_handled, producer_exit, operation, indexed
 from ..media.encoders import (NVENC_RETRY_ATTEMPTS, nvenc_budget, nvenc_guard_note,
-                       nvenc_retry_run, video_alpha_info)
+                       nvenc_retry_run, video_alpha_info, display_video_size)
 
 
 _probe_json_path = ContextVar("vtx_probe_json_path", default="$")
@@ -471,9 +471,16 @@ class Ctx:
             missing = [name for name in dependencies.get(stage, [])
                        if not isinstance(rec['stages'].get(name), dict)
                        or rec['stages'][name].get('ok') is not True]
+            detail = '输入已变化，旧成功不继承'
+            if not missing and stage in ('mux', 'qc'):
+                from ..cache._formal_video import missing_prerequisite
+                predecessor = missing_prerequisite(self, stage)
+                if predecessor is not None:
+                    missing.append(predecessor)
+                    detail = '当前视频产物缺少有效几何证明，旧成功不继承'
             if missing:
                 error = RuntimeError('当前输入要求先成功完成阶段: ' + ', '.join(missing) +
-                                     '（输入已变化，旧成功不继承；请按序重跑或直接 vtx all）')
+                                     f'（{detail}；请按序重跑或直接 vtx all）')
                 emit(self, str(error), rule_id='runtime.stage_prerequisite',
                      measured={'stage': stage}, threshold={'current_input_prerequisites': 'successful'},
                      suggested_actions=[{'op': 'run_pipeline', 'params': {'command': 'vtx all'}}])
@@ -499,11 +506,11 @@ class Ctx:
 
     # ---- 16:9 中心裁切（任意源尺寸通用，保持偶数） ----
     def crop169(self, sid):
-        i = self.probe(self.src_path(sid))
-        cw = i["w"] - i["w"] % 2
-        ch = int(i["w"] * 9 / 16); ch -= ch % 2
-        if ch > i["h"]: ch = i["h"] - i["h"] % 2; cw = int(i["h"] * 16 / 9); cw -= cw % 2
-        return f"crop={cw}:{ch}:{(i['w'] - cw) // 2}:{(i['h'] - ch) // 2}"
+        width, height = display_video_size(self.probe(self.src_path(sid)))
+        cw = width - width % 2
+        ch = int(width * 9 / 16); ch -= ch % 2
+        if ch > height: ch = height - height % 2; cw = int(height * 16 / 9); cw -= cw % 2
+        return f"crop={cw}:{ch}:{(width - cw) // 2}:{(height - ch) // 2}"
 
 
 # ---------------------------------------------------------------- 并行基础设施（阶段三 2026-09-10）

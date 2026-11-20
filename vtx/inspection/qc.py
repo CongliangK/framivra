@@ -692,17 +692,31 @@ def qc(c):
                 i = c.probe(resource)
                 provider = {"provider": "source_probe", "resource": str(resource), "origin": path}
                 sc = get(cl, "scale", path, 1.0)
-                width = field(i, "w", "$", source=provider)
+                turned = isinstance(i, dict) and i.get('quarter_turn') is True
+                wk, hk = ('h', 'w') if turned else ('w', 'h')
+                width = field(i, wk, "$", source=provider)
                 w2 = native("int", native("multiply", width, sc, path=path,
-                    paths=("provider:$.w", path + ".scale"), source=provider),
+                    paths=(f"provider:$.{wk}", path + ".scale"), source=provider),
                     path=path, source=provider)
-                height = field(i, "h", "$", source=provider)
+                height = field(i, hk, "$", source=provider)
                 h2 = native("int", native("multiply", height, sc, path=path,
-                    paths=("provider:$.h", path + ".scale"), source=provider),
+                    paths=(f"provider:$.{hk}", path + ".scale"), source=provider),
                     path=path, source=provider)
-                crop = (f"{w2}:{h2 + 2}:"
-                        f"{native('max', 0, native('subtract', get(cl, 'x', path, 0), 10, path=path + '.x'), path=path + '.x')}:"
-                        f"{native('max', 0, native('subtract', get(cl, 'y', path, 0), 10, path=path + '.y'), path=path + '.y')}")
+                if turned:
+                    # Sample the visible part of the same even-sized window
+                    # the renderer overlays, without sampling beyond the canvas.
+                    x, y = get(cl, 'x', path, 0), get(cl, 'y', path, 0)
+                    left, top = max(0, x), max(0, y)
+                    right, bottom = min(c.w, x + w2 // 2 * 2), min(c.h, y + h2 // 2 * 2)
+                    if right - left >= 2 and bottom - top >= 2:
+                        crop = f'{right - left}:{bottom - top}:{left}:{top}'
+                    else:
+                        up_res[key] = None
+                        continue  # Pixels from another layer cannot certify this window.
+                else:
+                    crop = (f"{w2}:{h2 + 2}:"
+                            f"{native('max', 0, native('subtract', get(cl, 'x', path, 0), 10, path=path + '.x'), path=path + '.x')}:"
+                            f"{native('max', 0, native('subtract', get(cl, 'y', path, 0), 10, path=path + '.y'), path=path + '.y')}")
                 launch(lambda m=m, crop=crop, key=key, path=path:
                        up_res.__setitem__(key, fdiff(m, crop=crop, tag=f"{m}_", origin=path)))
             else:
@@ -921,7 +935,12 @@ def qc(c):
                 if key in exempt:
                     ok_exempt(f"窗口 clip {field(tr, 'name', track_path)} @frame {m} 生效", exempt[key], **diagnostic)
                     continue
-                d_, cov = up_res[key]
+                sample = up_res[key]
+                if sample is None:
+                    ok(f"窗口 clip {field(tr, 'name', track_path)} @frame {m} 生效", False,
+                       "旋转窗口没有可采样的画布内区域", **diagnostic)
+                    continue
+                d_, cov = sample
                 ok(f"窗口 clip {field(tr, 'name', track_path)} @frame {m} 生效", d_ > QC_WINDOW_MEAN_MIN or cov > QC_WINDOW_COVER_MIN,
                    f"区域差 {d_:.1f}，覆盖 {cov*100:.1f}%",
                    measured={"mean_pixel_difference": {"value": d_, "unit": "8-bit intensity"},

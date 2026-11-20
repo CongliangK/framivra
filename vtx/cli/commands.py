@@ -597,7 +597,9 @@ def _observed_stage(c, name, fn, *, capture_exit=False, standalone_qc=False):
             with media.qc_scope(c, standalone=standalone_qc):
                 result = fn(c)
         else:
-            result = fn(c)
+            from ..cache._formal_video import producer_scope
+            with producer_scope(c, stage):
+                result = fn(c)
         if session is not None:
             session.completed.add(name)
         return result

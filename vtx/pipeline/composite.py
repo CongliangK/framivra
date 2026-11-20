@@ -11,7 +11,8 @@ from fractions import Fraction
 
 from .constraints import fps_expression, parse_fps
 
-from ..media.encoders import pick_vcodec, nvenc_budget, nvenc_concurrency, seg_encoder_kind, seg_needs_alpha
+from ..media.encoders import (pick_vcodec, nvenc_budget, nvenc_concurrency, seg_encoder_kind,
+                              seg_needs_alpha, display_video_size)
 from ..cache.hygiene import budget_gate, manifest_record, seg_key
 from ..runtime import events
 from .infra import Ctx, run_parallel, filter_filename, filter_threads
@@ -958,10 +959,10 @@ def _media_geometry(c, cl):
     """Share the original clip transform with fresh-source QC references."""
     windowed = any(k in cl for k in ('scale', 'x', 'y'))
     if windowed:
-        info = c.probe(c.src_path(cl['src']))
+        width, height = display_video_size(c.probe(c.src_path(cl['src'])))
         scale = cl.get('scale', 1.0)
-        width = int(info['w'] * scale) // 2 * 2
-        height = int(info['h'] * scale) // 2 * 2
+        width = int(width * scale) // 2 * 2
+        height = int(height * scale) // 2 * 2
         return windowed, cl.get('x', 0), cl.get('y', 0), width, height, [f'scale={width}:{height}:flags=lanczos']
     return windowed, 0, 0, None, None, [c.crop169(cl['src']), f'scale={c.w}:{c.h}:flags=lanczos']
 
@@ -1014,7 +1015,7 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None, staged_gfx=Non
             # 参数)[:12]。源或 clip 参数变了键就变，旧 seg 由 gc 回收——不再依赖
             # 「源/clip 变更后须手工 rm cache/seg」（旧 D29 注释）。
             skey = seg_key(c, cl, ti, ci, windowed, need_alpha,
-                           "prores" if need_alpha else seg_kind)
+                           "prores" if need_alpha else seg_kind, source_info=source_info)
             if need_alpha:
                 vf.append("format=yuva420p")
                 vf += _clip_alpha_filters(cl, c.spf)
@@ -1092,7 +1093,11 @@ def needs_qc_clean(c):
     # short-circuit after the first alpha source and race cold metadata probes.
     clips = tracks[0]['clips']
     sources = dict.fromkeys(cl['src'] for cl in clips)
-    alpha = [seg_needs_alpha({}, c.probe(c.src_path(sid))) for sid in sources]
+    facts = {sid: c.probe(c.src_path(sid)) for sid in sources}
+    alpha = [seg_needs_alpha({}, info) for info in facts.values()]
+    if any(facts[cl['src']].get('quarter_turn') and any(key in cl for key in ('scale', 'x', 'y'))
+           for cl in clips):
+        return True  # The fresh reference must reproduce placement on the canvas.
     if getattr(c, '_windows_svg_media', None) is not None:
         # Raw original pixels are only equivalent for normalized opaque clips.
         return any(alpha) or any(

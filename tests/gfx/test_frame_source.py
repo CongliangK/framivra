@@ -654,6 +654,19 @@ class TestSubtitleReadiness(unittest.TestCase):
                             with self.assertRaisesRegex(RuntimeError, 'decoder failed'):
                                 subs._bg_frame(c, 18, root, False)
 
+    def test_rotated_bottom_does_not_read_unversioned_qc_clean(self):
+        from vtx.media import subs
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            clip = {'src': 'portrait'}
+            c = SimpleNamespace(cache=root, dur=24, dry=True, w=16, h=16, tl={'video_tracks': [
+                {'kind': 'aroll', 'clips': [clip]}]}, src_path=lambda sid: root / sid,
+                probe=lambda _: {'quarter_turn': True})
+            with mock.patch.object(subs, 'media_cache_valid', return_value=True), \
+                    mock.patch.object(subs, '_layer_ready', return_value=[]) as layers:
+                self.assertIn('图层单帧', subs._bg_frame(c, 18, root, True)[1])
+            layers.assert_called_once_with(c, 18)
+
     @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'), 'set VTX_TEST_FFMPEG to ffmpeg executable')
     def test_partial_preview_renders_and_missing_current_uses_black_fallback(self):
         import subprocess

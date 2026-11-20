@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -330,6 +331,151 @@ class SamplingMediaContract(unittest.TestCase):
         self.assertEqual(len(failed), 1, failed)
         self.assertTrue(failed[0]['name'].startswith('窗口 clip'))
         self.assert_out_of_gamut_bottom_and_real_leak(env)
+
+    def test_quarter_turn_windows_match_decoded_geometry_and_strict_qc(self):
+        for color in ('white', 'gray'):
+            self.command(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+                          f'color={color}:s=640x360:r=30:d=1', '-f', 'lavfi', '-i',
+                          'sine=440:48000:duration=1', '-c:v', 'libx264', '-threads', '1',
+                          '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', self.root / f'{color}.mp4'])
+        # Write a known 89.5° MP4 display matrix, including on older FFmpeg
+        # builds without the -display_rotation authoring option.
+        movie = bytearray((self.root / 'white.mp4').read_bytes())
+
+        def children(start, end, kind):
+            while start < end:
+                size, tag = struct.unpack_from('>I4s', movie, start)
+                self.assertTrue(8 <= size <= end - start, (size, tag))
+                if tag == kind:
+                    yield start + 8, start + size
+                start += size
+
+        moov, = children(0, len(movie), b'moov')
+        video = []
+        for track in children(*moov, b'trak'):
+            mdia, = children(*track, b'mdia')
+            (handler, _), = children(*mdia, b'hdlr')
+            if movie[handler + 8:handler + 12] == b'vide':
+                video.extend(children(*track, b'tkhd'))
+        (header, end), = video
+        self.assertIn(movie[header], (0, 1))
+        matrix = header + (40 if movie[header] == 0 else 52)
+        self.assertLessEqual(matrix + 36, end)
+        struct.pack_into('>9i', movie, matrix, 571, -65533, 0, 65533, 571, 0, 0, 0, 1 << 30)
+        rotated = self.root / 'rotated.mp4'
+        rotated.write_bytes(movie)
+        from vtx.media.encoders import display_video_size, probe_video_alpha
+        self.assertIs(probe_video_alpha(rotated).get('quarter_turn'), True)
+
+        cfg = self.root / 'config.json'
+        cfg.write_text('{"cache":{"mode":"aggressive"}}', encoding='utf-8')
+        env = dict(os.environ, VTX_CONFIG=str(cfg), VTX_PIPELINE='0', VTX_VIDEO_SEGMENTS='1',
+                   VTX_SEG_NVENC='0', VTX_NO_NVENC='1')
+        for upper, scale, visible in ((False, None, (640, 360)), (False, .5, (180, 320)),
+                                      (True, .9, (324, 360))):
+            with self.subTest(upper=upper, scale=scale):
+                project = self.root / f'{upper}-{scale}'
+                project.mkdir()
+                shutil.copyfile(rotated, project / '素材.mp4')
+                shutil.copyfile(self.root / 'gray.mp4', project / 'background.mp4')
+                clip = dict(src='turned', src_in=0, src_out=30, dst_in=0, dur=30)
+                if scale is not None:
+                    clip.update(scale=scale, x=0, y=0)
+                tracks = [{'name': 'turned', 'kind': 'aroll', 'clips': [clip]}]
+                if upper:
+                    tracks.insert(0, {'name': 'base', 'kind': 'aroll',
+                                     'clips': [dict(clip, src='background')]})
+                    for key in ('scale', 'x', 'y'):
+                        del tracks[0]['clips'][0][key]
+                timeline = project / 'timeline.json'
+                timeline.write_text(json.dumps({
+                    'version': 2, 'project': {'fps': 30, 'width': 640, 'height': 360, 'duration_frames': 30},
+                    'sources': [{'id': 'turned', 'path': '素材.mp4'},
+                                {'id': 'background', 'path': 'background.mp4'}],
+                    'video_tracks': tracks, 'subtitles': [],
+                    'audio_tracks': [{'name': 'voice', 'events': [
+                        {'src': 'background', 'in': 0, 'out': 30, 'volume': 1.0}]}],
+                }, ensure_ascii=False), encoding='utf-8')
+                cli = [sys.executable, '-B', '-X', 'utf8', REPO/'vtx/vtx.py', '-t', timeline]
+                if not upper and scale is None:
+                    out = project / 'out'
+                    redirected = project / 'real-output'
+                    redirected.mkdir()
+                    if os.name == 'nt':
+                        self.command(['cmd.exe', '/d', '/c', 'mklink', '/J', out, redirected])
+                    else:
+                        out.mkdir()
+                        (redirected / 'alternate.mp4').touch()
+                        (out / 'video_noaudio.mp4').symlink_to(redirected / 'alternate.mp4')
+                self.command([*cli, 'all', '--until', 'mux'], cwd=REPO, env=env)
+                if not upper and scale is not None:
+                    from vtx.cache._formal_video import proof_name
+                    out = project / 'out'
+                    ledger = out / 'receipt.json'
+                    published = [ledger, out / 'video_noaudio.mp4', out / 'final.mp4']
+                    before_gate = [path.read_bytes() for path in published]
+                    for stage, file, stale in (('mux', 'video_noaudio.mp4', None),
+                                                ('qc', 'final.mp4', b'{broken')):
+                        proof = out / proof_name(file)
+                        current = proof.read_bytes()
+                        if stale is None:
+                            proof.unlink()  # Simulate a complete pre-fix handoff.
+                            from vtx.api import atomic_media
+                            media = out / file
+                            payload = media.read_bytes()
+                            atomic_media(Ctx(timeline), media, lambda path: path.write_bytes(payload))
+                            self.assertFalse(proof.exists(), 'a generic publisher cannot qualify a formal handoff')
+                        else:
+                            proof.write_bytes(stale)
+                        result = subprocess.run(list(map(str, [*cli, stage])), cwd=REPO, env=env,
+                                                capture_output=True, timeout=180)
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                        self.assertIn('当前输入要求先成功完成阶段', result.stdout.decode('utf-8'))
+                        self.assertEqual([path.read_bytes() for path in published], before_gate)
+                        proof.write_bytes(current)
+                    reference = project / 'cache/qc_clean.mp4'
+                    final = project / 'out/final.mp4'
+                    before = final.read_bytes()
+                    self.assertTrue(reference.is_file())
+                    self.command([*cli, 'gc'], cwd=REPO, env=env)
+                    self.assertFalse(reference.exists())
+                    self.command([*cli, 'qc', '--strict'], cwd=REPO, env=env)
+                    self.assertEqual(final.read_bytes(), before)
+                    self.assertTrue(reference.is_file())
+                    self.command([*cli, 'gc'], cwd=REPO, env=env)
+                    self.assertFalse(reference.exists())
+                    diagnostic = self.command([sys.executable, '-B', '-X', 'utf8', '-m',
+                        'vtx.agent_diagnostics', '-t', timeline, 'qc', '--strict',
+                        '--format', 'agent-json'], cwd=REPO, env=env)
+                    self.assertEqual(json.loads(diagnostic.stdout)['exit_code'], 0)
+                    self.assertEqual(final.read_bytes(), before)
+                    self.assertTrue(reference.is_file())
+                else:
+                    self.command([*cli, 'qc', '--strict'], cwd=REPO, env=env)
+                c = Ctx(timeline)
+                self.assertEqual(display_video_size(c.probe(project / '素材.mp4')), (360, 640))
+                report = json.loads((project / 'out/qc_report.json').read_bytes())
+                self.assertEqual(report['skipped_probes'], [])
+                self.assertTrue(all(row['pass'] for row in report['checks']), report)
+                pixels = self.command(['ffmpeg', '-v', 'error', '-i', project/'out/final.mp4',
+                                       '-frames:v', '1', '-pix_fmt', 'gray', '-f', 'rawvideo', '-']).stdout
+                self.assertEqual(len(pixels), 640 * 360)
+                rows = [sum(value > 200 for value in pixels[n:n + 640]) for n in range(0, len(pixels), 640)]
+                self.assertEqual(rows, [visible[0]] * visible[1] + [0] * (360 - visible[1]))
+                if upper:
+                    # Another visible layer changes the canvas; it must not
+                    # make an entirely offscreen rotated layer pass QC.
+                    doc = json.loads(timeline.read_bytes())
+                    doc['video_tracks'].append({'name': 'offscreen', 'kind': 'aroll',
+                                               'clips': [dict(clip, x=640)]})
+                    timeline.write_text(json.dumps(doc, ensure_ascii=False), encoding='utf-8')
+                    self.command([*cli, 'all', '--until', 'mux'], cwd=REPO, env=env)
+                    result = subprocess.run(list(map(str, [*cli, 'qc', '--strict'])),
+                                            cwd=REPO, env=env, capture_output=True, timeout=180)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    report = json.loads((project / 'out/qc_report.json').read_bytes())
+                    failed = [row['name'] for row in report['checks'] if not row['pass']]
+                    self.assertEqual(failed, ['窗口 clip offscreen @frame 15 生效'], report)
 
     def assert_out_of_gamut_bottom_and_real_leak(self, env):
         project = self.root / 'gamut'; project.mkdir()

@@ -324,6 +324,7 @@ class WindowsSvgMedia:
     def publish(self, c, target, producer, *, max_frames, before_commit, after_commit):
         from ..cache.cache_state import verify_input_identity
         from ..cache.recovery import _inspect
+        from ..cache._formal_video import publish as publish_formal_video
 
         suffix = target.suffix.lower()
         if _PRIVATE_OUTPUT.get() == (self, target):
@@ -376,5 +377,6 @@ class WindowsSvgMedia:
                 self.published[target] = rec['sha256']
             if after_commit is not None:
                 after_commit()
+            publish_formal_video(c, target, rec, write=parent.publish)
             self.directory.remove(leaf)
             return result

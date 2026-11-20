@@ -18,7 +18,7 @@ from ..cache.cache_state import file_digest, media_stat_digest
 from ..pipeline.composite import (RenderPlan, _graph_code_digest, choose_cutpoints,
                         segment_content_key, pass_content_key, needs_qc_clean)
 from ..cache.hygiene import audio_key, seg_key
-from ..media.encoders import seg_needs_alpha, probe_video_alpha
+from ..media.encoders import seg_needs_alpha, probe_video_alpha, display_video_size
 
 SCHEMA = 'framivra-impact-snapshot-v2'
 
@@ -141,18 +141,19 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
                         warnings.append({'node': ident, 'reason': 'gfx_dependency_closure_unproven'})
                 else:
                     windowed = any(k in clip for k in ('scale', 'x', 'y'))
-                    alpha = seg_needs_alpha(clip, source_info(c.src_path(clip['src'])))
+                    info = source_info(c.src_path(clip['src']))
+                    alpha = seg_needs_alpha(clip, info)
                     if windowed:
                         if probe is None:
                             raise ValueError('windowed media dimensions unavailable')
-                        dims = source_info(c.src_path(clip['src']))
-                        w2 = int(dims['w'] * clip.get('scale', 1.0)) // 2 * 2
-                        h2 = int(dims['h'] * clip.get('scale', 1.0)) // 2 * 2
+                        width, height = display_video_size(info)
+                        w2 = int(width * clip.get('scale', 1.0)) // 2 * 2
+                        h2 = int(height * clip.get('scale', 1.0)) // 2 * 2
                     else:
                         x = y = 0
                     inputs['source'] = source_ids[clip['src']]
                     key = seg_key(c, clip, ti, ci, windowed, alpha,
-                                  'prores' if alpha else encoder)
+                                  'prores' if alpha else encoder, source_info=info)
                     upstream = key + ('.mov' if alpha else '.mp4')
                     artifact = 'cache/seg/' + upstream
             except (OSError, ValueError, KeyError, RuntimeError) as error:
