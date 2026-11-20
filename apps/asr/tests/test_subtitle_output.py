@@ -4,7 +4,9 @@
 
 # srt contracts
 # srt_out 单测（方案 §9.1：时间码毫秒格式、序号连续、空行分隔——golden 文本比对）。
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -47,11 +49,44 @@ class TestSrtOut(unittest.TestCase):
     def test_empty_subs(self):
         self.assertEqual(srt_out.render_srt([]), "")
 
+    @unittest.skipUnless(os.name == 'nt', 'native Windows redirected streams')
+    def test_cli_utf8_stdin_and_both_output_modes(self):
+        text = '你好 🎵'
+        subs = [{'in': 24, 'out': 42, 'text': text}]
+        srt = f'1\n00:00:00,800 --> 00:00:01,400\n{text}\n'.replace('\n', os.linesep).encode('utf-8')
+        env = dict(os.environ, PYTHONUTF8='0', PYTHONIOENCODING='cp936:strict')
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            cmd = [sys.executable, '-B', srt_out.__file__]
+            for ensure_ascii in (False, True):
+                with self.subTest(ensure_ascii=ensure_ascii):
+                    out = root / f'字幕 🎵 {ensure_ascii}.srt'
+                    payload = json.dumps(subs, ensure_ascii=ensure_ascii).encode('utf-8')
+                    result = subprocess.run(cmd, input=payload, cwd=root, env=env,
+                                            capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, srt)
+                    self.assertEqual(result.stderr, b'')
+                    self.assertFalse(out.exists())
+                    result = subprocess.run([*cmd, '-o', out], input=payload, cwd=root, env=env,
+                                            capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(f'✓ SRT 已写出：{out}'.encode('utf-8'), result.stdout)
+                    self.assertEqual(result.stderr, b'')
+                    self.assertEqual(out.read_bytes(), srt)
+            result = subprocess.run([*cmd, '-o', out], input=b'[{"in":0,"out":30,"text":"\xff"}]',
+                                    cwd=root, env=env, capture_output=True, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(out.read_bytes(), srt)
+            result = subprocess.run(cmd, input=br'[{"in":0,"out":30,"text":"\ud800"}]',
+                                    cwd=root, env=env, capture_output=True, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, b'')
+
 
 # tl merge contracts
 # tl_merge 单测（方案 §9.1：合并后除 subtitles 外逐键相等、备份落 cache/reports/、
 # --dry-run 不写、损坏 JSON 拒绝并保原文件）。
-import json
 import shutil
 
 import tl_merge  # noqa: E402

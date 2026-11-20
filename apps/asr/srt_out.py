@@ -52,7 +52,14 @@ def write_file(subs, out_path, fps=30):
 if __name__ == "__main__":
     import argparse
     import json
+    import os
     import sys
+    if os.name == 'nt':
+        # Redirected Python streams otherwise use the legacy Windows code page.
+        # Decode the JSON strictly so bad bytes cannot silently alter subtitles.
+        sys.stdin.reconfigure(encoding='utf-8', errors='strict')
+        sys.stdout.reconfigure(encoding='utf-8', errors='strict')
+        sys.stderr.reconfigure(encoding='utf-8', errors='backslashreplace')
     ap = argparse.ArgumentParser(description="subtitles[]（stdin json）→ SRT（stdout / -o 文件）")
     ap.add_argument("-o", "--out", default=None)
     from pathlib import Path
