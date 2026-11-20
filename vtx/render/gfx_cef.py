@@ -470,13 +470,20 @@ def render_page(html, outdir, n_frames, *, ctx, width, height, frames=None, canc
                                         raise
                                     session_error.args = (f"{session_error}; CEF native evidence failed: {diagnostic_error}",
                                                           *session_error.args[1:])
-                except Exception as error:
+                except (Exception, KeyboardInterrupt) as error:
+                    if isinstance(error, KeyboardInterrupt) and not windows:
+                        raise
+                    # The owned Windows Job has already settled (or explicitly
+                    # reported uncertain cleanup). Keep its staged log and then
+                    # propagate the original interrupt, never a render error.
                     failure = error
         except Exception as diagnostic_error:
             if failure is None:
                 raise
             failure.args = (f"{failure}; CEF worker log commit failed: {diagnostic_error}",
                             *failure.args[1:])
+        if isinstance(failure, KeyboardInterrupt):
+            raise failure
         if failure is not None:
             cause = failure
             if windows:
