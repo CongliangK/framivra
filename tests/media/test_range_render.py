@@ -154,6 +154,17 @@ class TestWindows(unittest.TestCase):
         self.assertEqual(window_from_clip(TL, "page"), (30, 90))   # gfx html stem
         self.assertIsNone(window_from_clip(TL, "nope"))
 
+    def test_declared_media_stem_preserves_existing_matches_and_track_order(self):
+        tl = {**TL, 'sources': [
+            {'id': 'a.mp4', 'path': '素材 #/take 01.mp4'},
+            {'id': 'b.mp4', 'path': '素材 #/page.mp4'},
+            {'id': 'cam.mp4', 'path': 'alt/take 01.mov'},
+        ]}
+        self.assertEqual(window_from_clip(tl, 'take 01'), (0, 180))
+        self.assertEqual(window_from_clip(tl, 'b'), (180, 360))
+        # A newly recognized media stem must not redirect an existing command.
+        self.assertEqual(window_from_clip(tl, 'page'), (30, 90))
+
     def test_track_window(self):
         self.assertEqual(window_from_track(TL, "pip"), (60, 150))
         self.assertEqual(window_from_track(TL, "base"), (0, 360))
@@ -229,6 +240,31 @@ class TestCliGuards(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("空轨", r.stdout)
             self.assertIn("ghost", r.stdout)
+
+    def test_dry_run_clip_selects_declared_media_stem(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            path = root / '时间线.json'
+            config = root / 'config.json'
+            config.write_bytes(b'{}')
+            # Lexical selection does not need the media file or an FFmpeg probe.
+            media = str(Path('素材 #') / '片段 01.mp4')
+            tl = self._min_tl()
+            tl['sources'] = [{'id': 'camera-main', 'path': media}]
+            tl['video_tracks'] = [{'name': 'base', 'kind': 'aroll', 'clips': [
+                {'src': 'camera-main', 'src_in': 0, 'src_out': 30, 'dst_in': 24, 'dur': 30}]}]
+            authored = json.dumps(tl, ensure_ascii=False).encode('utf-8')
+            path.write_bytes(authored)
+            env = dict(os.environ, VTX_CONFIG=str(config))
+            result = subprocess.run(
+                [*cli_python(), '-X', 'utf8', str(REPO / 'vtx' / 'vtx.py'), '-t', str(path),
+                 'video', '--draft', '--clip', '片段 01', '--dry-run'],
+                capture_output=True, encoding='utf-8', cwd=REPO, env=env, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('[dry-run] video draft 区间 [24,54)', result.stdout)
+            self.assertEqual(path.read_bytes(), authored)
+            self.assertEqual(config.read_bytes(), b'{}')
+            self.assertEqual(set(root.iterdir()), {path, config})
 
     def test_window_from_track_empty_returns_none(self):
         self.assertIsNone(window_from_track(
