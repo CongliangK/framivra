@@ -8,7 +8,24 @@
 /LICENSE text eol=lf
 /dsh-sidebar/THIRD-PARTY-NOTICES.md text eol=lf
 
-# The frozen GFX suite hashes raw checkout bytes, including pages outside its own directory.
+# The payload inventory verifies original bytes for these notices, source files,
+# dependency locks and evidence. Keep the indexed LF, not a local normalization.
+/experiments/gfx_cef_worker/third_party/fpng/LICENSE text eol=lf
+/experiments/gfx_cef_worker/third_party/fpng/fpng.h text eol=lf
+/experiments/gfx_cef_worker/third_party/fpng/fpng.cpp text eol=lf
+/experiments/gfx_cef_worker/third_party/spng/LICENSE text eol=lf
+/experiments/gfx_cef_worker/third_party/spng/spng.c text eol=lf
+/experiments/gfx_cef_worker/third_party/spng/spng.h text eol=lf
+/experiments/gfx_cef_worker/cef_lock.json text eol=lf
+/experiments/gfx_electron_worker/SOURCE-LICENSE-NOTICE.txt text eol=lf
+/experiments/gfx_electron_worker/package.json text eol=lf
+/experiments/gfx_electron_worker/package-lock.json text eol=lf
+/docs/reports/assets/html-preview/composite-capture.json text eol=lf
+/docs/reports/assets/html-preview/closeout-capture.json text eol=lf
+/docs/reports/assets/html-preview/qc-correction-capture.json text eol=lf
+
+# The frozen GFX suite hashes its manifest and pages, including pages outside its own directory.
+/tests/gfx_bench_suite/suite_manifest.json text eol=lf
 /tests/gfx_bench_suite/pages/*.html text eol=lf
 /docs/skill/assets/lower-third.html text eol=lf
 /docs/skill/assets/title-card.html text eol=lf
