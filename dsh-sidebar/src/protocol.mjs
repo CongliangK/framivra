@@ -52,7 +52,7 @@ export const HOST_LIB_MODULES = ['configuration', 'kernel-config', 'kernel-manag
 export const CLIENT_MODULES = [
   'icons', 'icon-controls', 'editor-controls', 'viewport', 'timeline', 'manual',
   'selection', 'reference', 'draft-summary', 'frame', 'edit-review', 'settings', 'kernel-settings', 'draft-services',
-  'grant-lifecycle', 'official-draft', 'timecode', 'monitor', 'preview-session', 'preview-session-access', 'preview-program-run', 'workbench', 'storage', 'index',
+  'grant-lifecycle', 'official-draft', 'timecode', 'monitor', 'preview-session', 'preview-session-access', 'preview-program-run', 'preview-program-playback', 'workbench', 'storage', 'index',
 ]
 /** Stamp recipe: prefix + first 16 hex of sha256 over the per-file sha256
  *  digests of the modules above (joined with '\n'), in the listed order.

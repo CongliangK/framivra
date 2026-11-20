@@ -557,11 +557,12 @@ test('rejects unknown window bounds, bad checksum and oversized stream before cr
   const responses = [request => windowReply(request, 56), request => windowReply(request, 55, { headers: { 'X-Framivra-SHA256': '0'.repeat(64) } }),
     request => windowReply(request, 55, { body: new ReadableStream({ start: stream => stream.enqueue(new Uint8Array(5 * 1024 * 1024 + 1)) }) }),
     request => windowReply(request, 55, { headers: { 'X-Framivra-Program-Audio': '1' } }),
+    () => Response.json({ ok: false, error: 'WINDOW_REJECTED', diagnostics: [{ code: 'gfx.unsupported', message: 'INTERNAL_SERVER_SENTINEL' }] }, { status: 422 }),
     () => new Response('INTERNAL_SERVER_SENTINEL', { status: 502 })]
   serveWindows(f, request => request.op === 'render' ? responses.shift()(request) : reaped())
   await f.click('音画窗口')
   for (const input of windowInputs()) await toggle(input)
-  for (const message of [/区间/, /SHA-256/, /5 MiB/, /窗口音频模式或输入身份不符/, /读取或校验窗口失败/]) {
+  for (const message of [/区间/, /SHA-256/, /5 MiB/, /窗口音频模式或输入身份不符/, /不能完整核验这个工程的图形轨/, /读取或校验窗口失败/]) {
     await f.click(generateWindow)
     await untilWindow(() => !f.button(generateWindow).disabled)
     assert.match(document.querySelector('[aria-label="单窗口音画监看"] [role="status"]').textContent, message)
@@ -569,7 +570,7 @@ test('rejects unknown window bounds, bad checksum and oversized stream before cr
     assert.equal(f.urls.length, 0)
   }
   assert(!document.body.textContent.includes('INTERNAL_SERVER_SENTINEL'))
-  assert.deepEqual(f.requests.map(({ request }) => request.op), Array.from({ length: 5 }, () => ['render', 'cancel']).flat())
+  assert.deepEqual(f.requests.map(({ request }) => request.op), Array.from({ length: 6 }, () => ['render', 'cancel']).flat())
 })
 
 function sessionAdapter(request, patch = {}) {

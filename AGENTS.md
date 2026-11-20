@@ -14,7 +14,7 @@ Framivra 把时间线和素材变成帧精确的音视频，并负责缓存与 Q
 | 你要判断什么？ | 从哪里读 |
 |---|---|
 | 这个行为由谁决定，谁依赖它，怎么验证？ | 从[开发入口](docs/DEV.md#从一个行为开始)按行为定位，再查[架构职责表](docs/ARCHITECTURE.md#11-执行与状态)。`vtx/` 内核永不可关；应用产素材，插件扩时间线；已启用的依赖或失败不能忽略。已知不可用声明先于 probe 拒绝，源声明在 prepare/range 裸缓存前同拒。 |
-| 侧栏操作会不会写盘？模型工具能不能代写？ | [用户操作与平台资格](dsh-sidebar/README.md)、[手动编辑与回执](dsh-sidebar/DEVELOPMENT.md#manual-editing-writes-require-explicit-authorization)、[界面设计](dsh-sidebar/DESIGN.md)。侧栏独立发行；模型工具只读，人工写入走[内核事务](docs/reference/timeline-api.md)。预览、成片播放不授写入或合成资格。 |
+| 侧栏操作会不会写盘？模型工具能不能代写？ | [用户操作与平台资格](dsh-sidebar/README.md)、[手动编辑与回执](dsh-sidebar/DEVELOPMENT.md#manual-editing-writes-require-explicit-authorization)、[界面设计](dsh-sidebar/DESIGN.md)。侧栏独立发行；模型工具只读，人工写入走[内核事务](docs/reference/timeline-api.md)。整片后台预览独立授权，只消费固定内核已核验的窗口；站点缓存不授 HTML 执行、编辑或成片资格。 |
 | 改音画、缓存或平台实现会影响什么？ | [区间渲染](docs/ARCHITECTURE.md#区间渲染)、[帧率与时钟](docs/ARCHITECTURE.md#帧率与时钟)、[混音增益](docs/ARCHITECTURE.md#12-响度终链)、[正式阶段回执](docs/cache-provenance.md#正式阶段身份与增益)、[BGM 引用与身份](docs/cache-provenance.md#音乐组件输入身份)。浏览器排错看[启动与收尾](docs/reference/known-issues.md#浏览器启动与收尾)。 |
 | 安装成功是否等于可以使用？ | [安装/更新](docs/guides/installation.md)和[依赖矩阵](README.md#依赖矩阵)：Python ≥3.9、模型默认关，空 Python 依赖不等于只需标准库。安装登记不替代验收，Windows 主进程不提权；IndexTTS 的 probe/gen 共用解释器发现，发现不等于获许可推理。 |
 | 制作而不是改代码？ | 先查[制作技能](docs/skill/SKILL.md)，再按需选[工作流](templates/README.md)或[组件](docs/catalog.md)。音乐用[原生验收](apps/bgm/README.md#macos-原生验收)：隔离配置与原创输入走完全链，基础、可选引擎、人工听审分别记账。 |
