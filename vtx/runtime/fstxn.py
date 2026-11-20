@@ -255,6 +255,10 @@ except ImportError:
 # never evict an active lock or delete its on-disk sidecar to reclaim memory.
 _LOCKS_GUARD = threading.Lock()
 _LOCKS = weakref.WeakValueDictionary()
+# Windows can reject simultaneous replacements of the same directory entry.
+# Keep this bounded lock table separate from transaction locks: a caller may
+# already own a transaction lock when publishing a companion file.
+_WIN_REPLACE_LOCKS = tuple(threading.Lock() for _ in range(64))
 
 
 def _thread_lock_for(path: Path) -> threading.Lock:
@@ -709,7 +713,7 @@ def replace(source, target, *, root=None):
 
 
 def atomic_write(path, data, *, root=None):
-    """无锁原子写（tmp + os.replace）：调用方已持锁区段内的伴生件写入用
+    """原子写（tmp + os.replace，不获取事务锁）：调用方已持锁区段内的伴生件写入用
     （如 _archive_stale_receipt 的 receipt.prev.json——receipt.json 锁的持有
     者独占轮转，无需再拿第二把锁文件）。str 按 UTF-8 编码，bytes 直写。
     目标目录不存在时自动建；写失败抛原始异常（残件在 finally 清理）；
@@ -725,7 +729,12 @@ def atomic_write(path, data, *, root=None):
         try:
             with os.fdopen(fd, "wb") as stream:
                 stream.write(payload)
-            os.replace(name, p)
+            if os.name == 'nt':
+                key = os.path.normcase(os.fspath(p))
+                with _WIN_REPLACE_LOCKS[hash(key) % len(_WIN_REPLACE_LOCKS)]:
+                    os.replace(name, p)
+            else:
+                os.replace(name, p)
         finally:
             Path(name).unlink(missing_ok=True)   # 成功路径已被 replace 移走；失败清残件
         return
