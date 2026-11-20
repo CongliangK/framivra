@@ -48,6 +48,8 @@
 - **Windows 原生内核**：x64 Python 与 Chrome/Edge 覆盖安装自检、CDP/CLI、FFmpeg 全链、缓存与 gc/clean。环境指纹绑定浏览器发行目录、系统库/驱动、系统/用户字体及注册表、主机与启动边界；未知输入拒绝复用，不承诺跨机器像素等价，保守扫描成本高于 Linux。Chrome 由 Job Object 在宿主强杀后回收整树，事务使用字节范围锁，删除以拒绝写入/改名共享的祖先句柄与按句柄删除并拒绝 junction 祖先。原生安全由本地 Windows 测试、中文/空格/# 路径单双分段/冷温缓存/严格 QC/解码/黑场/真峰值由本地 [E2E 运行器](../tests/runners/run_e2e.py) 的显式 `--scope capability` 及[独立验证器](../tests/runners/verify_e2e.py) 的同一 scope 验收；定时 / 手动 CI windows-install 覆盖安装安全/安装端到端及两项定向原生清理，并非 Windows 全套。[Windows CEF](../experiments/gfx_cef_worker/README.md#windows-x64-构建) 与模型侧车生命周期不在该验收内，平台专用测试必须分别报告。
   Windows SVG 成片与单帧的[独立原生配置](reference/windows-svg.md)覆盖普通 SVG-sequence 工程和锁定主片；内部验收不授生产资格。capability 只验独立 HTML/字幕/普通媒体机制，不授完整 30 秒或发布资格，也不自动 skip 主片后标完整通过。默认 `--scope full` 仍要求主片 900 帧与机制 180 帧两者全链；run/verify scope 必须一致，当前候选是否通过只以实际证据判断。
 
+  [Windows 原生渲染验收 #420](https://github.com/CongliangK/framivra/issues/420)跟踪的三个后端分别见：[SVG #563](https://github.com/CongliangK/framivra/pull/563)锁定主片 900 帧、逐帧 PTS、音频样本、冷暖与损坏恢复；[CDP #550](https://github.com/CongliangK/framivra/pull/550)用 Edge 验 180 帧能力片、默认分段与取消回收；[CEF #573](https://github.com/CongliangK/framivra/pull/573)验原生 x64 A0 Alpha 的透明帧证明、取消回收与 30 帧音视频交付。三者分别核对严格 QC，只证明各自记录的提交、环境和工作负载，不代替[受管安装验证](guides/installation.md#安装验证)或稳定发布。
+
   以下为写操作（生成媒体与缓存，调用本地 FFmpeg/浏览器）。从仓根在 PowerShell 执行，替换为已有工具路径；全新 RUN 不得复用：
 
   ```powershell
