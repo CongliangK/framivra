@@ -246,8 +246,9 @@ H 包括进程启动、环境身份与 validate/audit/prepare，R 包括 video/m
 
 | 文件 | 职责 |
 | --- | --- |
-| `cef_lock.json` | 版本锁：精确 CEF/Chromium 版本 + 官方 URL + `size_bytes`/`sha256`/`sha1_official_index` 双校验和 |
-| `build_cef_worker.sh` | 唯一构建入口：校验锁 → 下载（仓外缓存 `~/.cache/cef/`）→ 解包 → CMake+Ninja → 布置运行时 → ldd+sanity 验证 |
+| `cef_lock.json` | Linux 版本锁：精确 CEF/Chromium 版本、官方 URL、`size_bytes`/`sha256`/`sha1_official_index` |
+| `build_cef_worker.sh` | Linux 构建入口：校验锁 → 下载（仓外缓存 `~/.cache/cef/`）→ 解包 → CMake+Ninja → 布置运行时 → ldd+sanity 验证 |
+| `build_windows.py` | [Windows x64 构建入口](#windows-x64-构建)：依照 `cef_lock.windows64.json` 核对官方 CEF Minimal 与 zlib，构建并校验同目录运行时 |
 | `CMakeLists.txt` | C++20；编译 `libcef_dll_wrapper` 静态库、`vtx_cef_worker` 与 `shm_ring_selftest`；`-O3 -march=x86-64-v3 -Wall -Wextra -Werror`；`RPATH=$ORIGIN`；链接系统 zlib（PNG 编码） |
 | `src/main.cpp` | worker 入口：PDEATHSIG 首行 + `CefExecuteProcess` 子进程再入 + `--parent-alive-fd` 守卫线程（EOF→`kill(0,SIGKILL)`，仅组长）+ A0/A1 参数面（含 `--serve` 帧服务分支）+ 外置泵阶段机 + 结果 JSON（探针证据/计时/启动环境快照） |
 | `src/app_handler.{h,cpp}` | `WorkerApp`（OnBeforeCommandLineProcessing 按 A0/A1 注入开关 + OnScheduleMessagePumpWork）与 `WorkerClient`（OSR OnPaint 全帧 BGRA→RGBA、#110 serve 捕获路径、GetViewRect、console marker 探针通道）+ 共享装配（MakeWorkerSettings/CreateOsrBrowser/PumpDriver） |
