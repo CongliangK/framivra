@@ -35,7 +35,7 @@ REPO = Path(__file__).resolve().parents[2]
 if __name__ == "__main__" and not __package__:
     sys.path.insert(0, str(REPO))
 
-from tests._support import OwnedInitCheckout
+from tests._support import OwnedInitCheckout, cli_python
 
 INIT_KEYS = [
     "python", "ffmpeg", "ffprobe", "chrome",                       # 1/5 基础
@@ -489,8 +489,8 @@ class CanonicalInitEntry(unittest.TestCase):
 
 class VtxRegression(unittest.TestCase):
     def test_vtx_help_still_works(self):
-        r = subprocess.run(["env", "python3", str(REPO / "vtx" / "vtx.py"), "-h"],
-                           capture_output=True, text=True, cwd=str(REPO))
+        r = subprocess.run([*cli_python(), "-X", "utf8", str(REPO / "vtx" / "vtx.py"), "-h"],
+                           capture_output=True, encoding="utf-8", cwd=str(REPO), timeout=30)
         self.assertEqual(r.returncode, 0)
         self.assertIn("vtx", r.stdout)
 
