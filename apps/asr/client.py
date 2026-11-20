@@ -453,7 +453,8 @@ def extract_wav16k(src, out_dir, runid="x"):
     out = out_dir / ("asr16k_%s.wav" % runid)
     cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(src),
            "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(out)]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    # Media tools emit UTF-8 paths independently of the Windows code page.
+    r = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
     if r.returncode != 0 or not out.exists():
         raise RuntimeError("ffmpeg 抽取 16k wav 失败：%s\n%s" % (src, r.stderr.strip()[:500]))
     return str(out)
@@ -462,7 +463,8 @@ def extract_wav16k(src, out_dir, runid="x"):
 def probe_duration_s(path):
     """ffprobe 时长（秒）；失败 None。"""
     r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                        "-of", "csv=p=0", str(path)], capture_output=True, text=True)
+                        "-of", "csv=p=0", str(path)], capture_output=True,
+                       encoding='utf-8', errors='replace')
     try:
         return float(r.stdout.strip())
     except Exception:
