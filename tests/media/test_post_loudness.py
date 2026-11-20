@@ -157,6 +157,26 @@ class TestWindowsAudioGraphTransport(unittest.TestCase):
             self.assertEqual(len(files), 2)
             self.assertTrue(all(not p.parent.exists() for p in files))
 
+    def test_budget_accounts_for_atomic_destination_expansion(self):
+        graph = 'x' * 32600
+        c = SimpleNamespace(dry=False)
+        target = Path('expanded') / ('x' * 180) / 'audio.wav'
+        seen = []
+
+        def run(cmd):
+            index = cmd.index('-/filter_complex')
+            path = Path(cmd[index + 1])
+            self.assertEqual(path.read_bytes(), graph.encode('utf-8'))
+            self.assertEqual(cmd[-1], 'out/audio.wav')
+            seen.append(path)
+
+        c.run = run
+        with mock.patch.object(stages.sys, 'platform', 'win32'), \
+             mock.patch.object(stages.recovery, 'media_output', return_value=target):
+            stages._run_audio_graph(c, ['ffmpeg'], graph, ['out/audio.wav'])
+        self.assertEqual(len(seen), 1)
+        self.assertFalse(seen[0].exists())
+
     def test_oversized_input_argv_fails_before_run_and_dry_run_writes_nothing(self):
         c = SimpleNamespace(dry=False, run=mock.Mock())
         inputs = ['ffmpeg', '-i', 'x' * 33000]
