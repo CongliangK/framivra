@@ -59,10 +59,15 @@ class SourceInstall(unittest.TestCase):
     def test_plan_is_read_only(self):
         destination = self.base / 'not-created'
         found = {name: '/tools/' + name for name in (*install.TOOL_NAMES, 'chrome')}
-        with mock.patch.object(install, 'tools', return_value=found), mock.patch.object(install, 'command') as run, contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(install.main(['--root', str(destination), '--plan']), 0)
-        self.assertFalse(destination.exists())
-        run.assert_not_called()
+        for options in ([], ['--verify-render']):
+            with self.subTest(options=options), \
+                    mock.patch.object(install, 'tools', return_value=found), \
+                    mock.patch.object(install, 'command') as run, contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(install.main(['--root', str(destination), '--plan', *options]), 0)
+            plan = json.loads('{' + output.getvalue().split('\n{', 1)[1])
+            self.assertIs(plan['verifyRender'], bool(options))
+            self.assertFalse(destination.exists())
+            run.assert_not_called()
 
     def test_elevated_windows_install_stops_before_creating_root_or_tools(self):
         destination = self.base / 'elevated-root'
@@ -310,36 +315,67 @@ class SourceInstall(unittest.TestCase):
         args = ['--root', str(self.root), '--repo', str(self.upstream), '--yes', '--update']
         receipt = self.root / 'installation.json'
 
-        def verify(root, source, python, env):
-            if self.run_git('rev-parse', 'HEAD', cwd=source) != new:
-                raise install.InstallError('old verification failed')
-            return {}, 'fixture evidence'
-
+        source = self.root / 'source'
         font_env = {'FONTCONFIG_FILE': str(self.root / 'fonts/fonts.conf')} if sys.platform == 'linux' else {}
         install_command = install.command
+        probes = []
+        render_outputs = []
 
         def command(argv, **kwargs):
-            if Path(argv[1]).name == 'install_runtime_fonts.py':
+            if argv[0] not in (Path(sys.executable), self.root / 'venv/bin/vtx', self.root / 'venv/Scripts/vtx.exe'):
+                return install_command(argv, **kwargs)  # real Git
+            step = Path(argv[1]).name
+            probes.append(step)
+            if step == 'install_runtime_fonts.py':
                 return json.dumps({'environment': font_env})
-            return install_command(argv, **kwargs)
+            if argv[1:] == ['capabilities']:
+                return '{"schema":"framivra.timeline.read/v1"}'
+            if argv[1:] == ['store', 'capabilities']:
+                return '{}'
+            if step == 'bgm.py':
+                return '{"qc_ok":true}'
+            if step == 'run_e2e.py':
+                self.assertEqual(argv[-2:], ['--scope', 'capability'])
+                render_outputs.append(argv[argv.index('--output') + 1])
+            if step == 'verify_e2e.py':
+                self.assertEqual(argv[-2:], ['--scope', 'capability'])
+                self.assertEqual(argv[2], render_outputs[-1])
+                if self.run_git('rev-parse', 'HEAD', cwd=source) != new:
+                    raise install.InstallError('old verification failed')
 
         with mock.patch.object(install, 'prepare_tools', return_value={}), \
                 mock.patch.object(install, 'verify_native_tools'), \
-                mock.patch.object(install, 'prepare_python', return_value=(Path(sys.executable), {})), \
+                mock.patch.object(install, 'prepare_python', return_value=(Path(sys.executable), {'VTX_CHROME': 'chrome'})), \
                 mock.patch.object(install.windows, 'ensure_python_runtime'), \
                 mock.patch.object(install, 'verify_macos_tool_paths'), \
+                mock.patch.object(install, 'env_tool', return_value='ffmpeg'), \
                 mock.patch.object(install, 'command', side_effect=command), \
-                mock.patch.object(install, 'verify', side_effect=verify) as probe, \
-                contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(install.main(args + ['--source-commit', old]), 1)
-            self.assertEqual(install.main(args + ['--source-commit', new]), 1)
-            self.assertEqual(install.json_record(receipt)['commit'], old)
-            self.assertEqual(install.json_record(receipt)['status'], 'preparing')
+                contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()) as errors:
+            opt_in = args + ['--verify-render']
+            self.assertEqual(install.main(opt_in + ['--source-commit', old]), 1)
+            self.assertEqual(install.main(opt_in + ['--source-commit', new]), 1)
+            state = install.json_record(receipt)
+            self.assertEqual((state['commit'], state['status']), (old, 'preparing'))
+            self.assertNotIn('verification', state)
+            self.assertIn('old verification failed', errors.getvalue())
             self.assertIn('resuming', output.getvalue())
-            self.assertEqual(install.main(args + ['--restart-update', '--source-commit', new]), 0)
-        self.assertEqual(probe.call_count, 3)
-        self.assertEqual(install.json_record(receipt)['commit'], new)
-        self.assertEqual(install.json_record(receipt)['status'], 'ready')
+
+            self.assertEqual(install.main(opt_in + ['--restart-update', '--source-commit', new]), 0)
+            state = install.json_record(receipt)
+            self.assertEqual((state['commit'], state['status']), (new, 'ready'))
+            self.assertEqual(state['verification'], str(render_outputs[-1]))
+            self.assertEqual(probes.count('verify_e2e.py'), 3)
+            self.assertIn('CDP render verification: passed', output.getvalue())
+
+            probes.clear()
+            self.assertEqual(install.main(args), 0)
+            self.assertNotIn('run_e2e.py', probes)
+            self.assertNotIn('verify_e2e.py', probes)
+            self.assertTrue({'capabilities', 'store', '-I', 'sync_audio.py', 'bgm.py'}.issubset(probes))
+            state = install.json_record(receipt)
+            self.assertEqual(state['status'], 'ready')
+            self.assertNotIn('verification', state)
+            self.assertIn('CDP render verification: skipped', output.getvalue())
         self.assertEqual(config.read_text(encoding='utf-8'), '{"cache":{"mode":"core"}}')
 
     def test_foreign_receipt_cannot_authorize_an_unmanaged_venv(self):

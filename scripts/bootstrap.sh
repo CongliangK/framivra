@@ -4,10 +4,10 @@
 set -euo pipefail
 bootstrap() {
   if [ "${1-}" = '--help' ]; then
-    printf '%s\n' 'Usage: bash scripts/bootstrap.sh [--yes] [--plan] [--no-system] [--update [--restart-update]] [--network cn|official]' 'Installs non-AI/CDP under ~/.local/share/framivra. Verified downloads resume across invocations.'
+    printf '%s\n' 'Usage: bash scripts/bootstrap.sh [--yes] [--plan] [--no-system] [--update [--restart-update]] [--network cn|official] [--verify-render]' 'Installs non-AI/CDP under ~/.local/share/framivra. Verified downloads resume across invocations.' 'CDP end-to-end render verification is opt-in and may take several minutes.'
     exit 0
   fi
-  SYSTEM_ALLOWED=1; AUTO_YES=0; NETWORK=cn; SOURCE_REF=main; SOURCE_COMMIT=''
+  SYSTEM_ALLOWED=1; AUTO_YES=0; NETWORK=cn; SOURCE_REF=main; SOURCE_COMMIT=''; RENDER_PLAN=skipped
   next=''
   for arg in "$@"; do
     if [ -n "$next" ]; then
@@ -17,6 +17,7 @@ bootstrap() {
     case "$arg" in
       --plan|--no-system) SYSTEM_ALLOWED=0;;
       --yes) AUTO_YES=1;;
+      --verify-render) RENDER_PLAN=enabled;;
       --network) next=network;; --network=*) NETWORK="${arg#*=}";;
       --ref) next=ref;; --ref=*) SOURCE_REF="${arg#*=}";;
       --source-commit) next=commit;; --source-commit=*) SOURCE_COMMIT="${arg#*=}";;
@@ -146,7 +147,7 @@ bootstrap() {
   "$PYTHON" -I -c 'import sys; raise SystemExit(sys.version_info < (3,9))'
   for arg in "$@"; do
     if [ "$arg" = '--plan' ]; then
-      printf '%s\n' 'Read-only bootstrap plan: same-commit source installer bundle; native packages, pinned wheels and fonts. No network or files changed.'
+      printf '%s\n' 'Read-only bootstrap plan: same-commit source installer bundle; native packages, pinned wheels and fonts. No network or files changed.' "CDP render verification on install: $RENDER_PLAN."
       exit 0
     fi
   done
