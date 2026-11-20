@@ -468,25 +468,38 @@ def _preflight_system_identity(context, package_images, signer_pins, deadline):
     images = tuple(image.handle for image in package_images.values())
     records = []
     with win_catalog._installed_catalogs(pins, host, system32, signer_pins, deadline) as verify:
-        # The OS can create its console host for a child. Select that exact
-        # system executable independently; CREATE events never extend scope.
-        console = system32 / 'conhost.exe'
-        with ExitStack() as candidate:
-            handle = win_system._open_pin(candidate, host.kernel, console, directory=False)
-            facts = win_system._facts(host.kernel, handle, console, host.device, directory=False)
-            records.append(host.pin_catalogued_image(pins, (facts[1], *facts[0]), verify, deadline, console_host=True))
-        console_pin = host.leaves[-1][1]
-        helpers = (console_pin, package_images['bin/gdbus.exe'].handle)
+        def pin_system32(name, *, console=False, optional=False):
+            path = system32 / name
+            with ExitStack() as candidate:
+                try:
+                    handle = win_system._open_pin(candidate, host.kernel, path, directory=False)
+                except FileNotFoundError:
+                    if optional:
+                        return
+                    raise
+                facts = win_system._facts(host.kernel, handle, path, host.device, directory=False)
+                records.append(host.pin_catalogued_image(pins, (facts[1], *facts[0]), verify, deadline,
+                                                         console_host=console))
+
+        # CREATE events never extend the child executable scope.
+        pin_system32('conhost.exe', console=True)
+        helpers = (host.leaves[-1][1], package_images['bin/gdbus.exe'].handle)
+        # Windows resource loading can map this library only on some launches.
+        # If installed, include its certified bytes even on launches without
+        # the event, so that an incidental load does not revoke stage receipts.
+        pin_system32('mrmdeploy.dll', optional=True)
+        pinned = images + tuple(row[1] for row in host.leaves)
+        prebound_count = len(records)
 
         def certify(key, event_deadline):
             records.append(host.pin_catalogued_image(pins, key, verify, min(deadline, event_deadline)))
 
         with _fixed_stdin(cwd, b'quit\n') as stdin:
             _run(operation, executable, cwd, environment, stdin, deadline=deadline,
-                 capture_limit=_FACTS_CAPTURE_LIMIT, held_images=(entry, images + (console_pin,), certify, helpers))
+                 capture_limit=_FACTS_CAPTURE_LIMIT, held_images=(entry, pinned, certify, helpers))
     host.verify(deadline)
-    if len(records) < 2:
-        raise ValueError('Windows SVG preflight did not certify any system libraries')
+    if len(records) == prebound_count:
+        raise ValueError('Windows SVG preflight did not certify any loaded system libraries')
     return tuple(sorted(records)), (entry, images + tuple(row[1] for row in host.leaves), None, helpers), host.verify
 
 
@@ -552,9 +565,10 @@ def _fixed_shell(portable_root, scratch, *, retain_package_images=False):
 
 
 @contextmanager
-def _fixed_stdin(cwd, actions):
-    plan = cwd / 'actions.txt'
-    plan.write_bytes(actions)
+def _fixed_stdin(cwd, actions, *, export_id=None):
+    plan = cwd / ('actions.txt' if export_id is None else f'actions-{export_id}.txt')
+    with plan.open('wb' if export_id is None else 'xb') as stream:
+        stream.write(actions)
     with _pin_entry(plan) as (handle, info, _, directory):
         if _read_pinned(handle, info, directory, len(actions)) != actions:
             raise ValueError('Windows SVG fixed actions changed')
@@ -759,27 +773,30 @@ def _require_staged_font_faces(operation, executable, cwd, staged, pins, launch_
 
 
 def _export_bound_sources(context, indexed_sources, width, height, *, deadline, capture_limit,
-                          image_roots=None, held_images=None):
+                          image_roots=None, held_images=None, export_id=None):
     """Render already-validated source bytes in the caller's owned runtime."""
     operation, executable, cwd, environment, pins = context
-    frames = cwd / 'frames'
+    if export_id is not None and not re.fullmatch(r'[0-9a-f]{16}', export_id):
+        raise ValueError('Windows SVG invalid private export ID')
+    frames = cwd / ('frames' if export_id is None else f'frames-{export_id}')
     frames.mkdir()
     pins.enter_context(_pin_dir(frames))
     actions, outputs = [], []
     for index, data in indexed_sources:
         _raster_time(deadline)
         stem = f'f{index:04d}'
-        target = cwd / (stem + '.svg')
+        source = stem if export_id is None else f'{export_id}-{stem}'
+        target = cwd / (source + '.svg')
         with target.open('xb') as stream:
             stream.write(data)
         handle, info, _, directory = pins.enter_context(_pin_entry(target))
         if _read_pinned(handle, info, directory, len(data)) != data:
             raise ValueError('Windows SVG staged raster source changed')
         outputs.append(stem + '.png')
-        actions.append(_EXPORT.format(stem=stem, width=width, height=height, png='frames/' + outputs[-1]))
+        actions.append(_EXPORT.format(stem=source, width=width, height=height, png=frames.name + '/' + outputs[-1]))
     script = (''.join(actions) + 'quit\n').encode('ascii')
     _require_runtime_facts(operation, executable, cwd, environment, pins, deadline, held_images=held_images)
-    with _fixed_stdin(cwd, script) as stdin:
+    with _fixed_stdin(cwd, script, export_id=export_id) as stdin:
         origins = _run(operation, executable, cwd, environment, stdin, deadline=deadline,
                        capture_limit=capture_limit, image_roots=image_roots, held_images=held_images)
     # The child never receives project/output paths. Return its expected

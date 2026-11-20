@@ -190,6 +190,7 @@ class MediaRecovery(unittest.TestCase):
         media.project = self.root
         media.identity = {'profile': 'fixture'}
         media.published = {}
+        self.c.tl['video_tracks'] = [{'kind': 'gfx', 'clips': []}]
         paths = (self.c.out / 'final.mp4', self.c.cache / 'qc_clean.mp4')
         expected = {}
         for path in paths:

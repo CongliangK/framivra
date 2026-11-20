@@ -513,30 +513,46 @@ def qc(c):
         （空页）/矩形退化 → None 回落整帧口径（旧行为）。仅改采样域：阈值、
         检查名、checks 数量全部不变。历史案例中裁域避免了信号稀释；当前仅修正
         源内容域的几何投影，不承诺任意内容经 Lanczos 后的统计或 PASS 单调。"""
+        media = getattr(c, '_windows_svg_media', None)
         try:
-            png = gfx_dir(c, cl) / f"f{cl['dur'] // 2:04d}.png"
-            if not png.is_file():
-                return None
-            with png.open("rb") as fh:
-                head = fh.read(24)
-            if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
-                return None
-            pw = int.from_bytes(head[16:20], "big")
-            ph = int.from_bytes(head[20:24], "big")
-            if pw <= 0 or ph <= 0:
-                return None
-            # Each probe owns its output; never follow a preplaced shared leaf
-            # or consume another concurrent probe's bytes after a failed run.
-            with tempfile.TemporaryDirectory(prefix="qc_gfx_", dir=c.cache) as work:
-                tmp = Path(work) / "bbox.raw"
-                c.run(["ffmpeg", "-v", "error", "-y", "-i", str(png), "-vf", "format=rgba",
-                       "-frames:v", "1", "-f", "rawvideo", str(tmp)], need=False)
-                raw = tmp.read_bytes()
-            if len(raw) < pw * ph * 4:
-                return None
+            index = cl['dur'] // 2
+            sample_cmd = ["ffmpeg", "-v", "error", "-y", "-i"]
+            sample_args = ["-vf", "format=rgba", "-frames:v", "1", "-f", "rawvideo"]
+            if media is not None:
+                from ..render import gfx_svg
+                with gfx_svg._resolved_runtime(c, cl) as (runtime, record):
+                    data = runtime.cached_frame(c, cl, record, index)
+                pw, ph = record['width'], record['height']
+                with media.private_input(data, '.png') as png:
+                    result = media.execute(sample_cmd + [str(png), '-vf', 'format=rgba,alphaextract',
+                        '-frames:v', '1', '-f', 'rawvideo', '-'], text=False,
+                        capture_limit=min(64 * 1024 * 1024, pw * ph + 65536))
+                alpha = result.stdout
+                if result.returncode or len(alpha) != pw * ph:
+                    raise ValueError('Windows SVG QC could not decode the certified overlay PNG')
+            else:
+                png = gfx_dir(c, cl) / f"f{index:04d}.png"
+                if not png.is_file():
+                    return None
+                with png.open("rb") as fh:
+                    head = fh.read(24)
+                if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+                    return None
+                pw = int.from_bytes(head[16:20], "big")
+                ph = int.from_bytes(head[20:24], "big")
+                if pw <= 0 or ph <= 0:
+                    return None
+                # Each probe owns its output, not another probe's stale bytes.
+                with tempfile.TemporaryDirectory(prefix="qc_gfx_", dir=c.cache) as work:
+                    tmp = Path(work) / "bbox.raw"
+                    c.run(sample_cmd + [str(png)] + sample_args + [str(tmp)], need=False)
+                    raw = tmp.read_bytes()
+                if len(raw) < pw * ph * 4:
+                    return None
+                alpha = raw[3::4]
             # alpha>24 视为内容（与 QC_PIXEL_DIFF 同量级的存在性阈）；
             # translate + 逐行 find 全 C 路径，1080p 单帧毫秒级。
-            t = raw[3::4].translate(bytes(1 if v > 24 else 0 for v in range(256)))
+            t = alpha.translate(bytes(1 if v > 24 else 0 for v in range(256)))
             x0 = y0 = x1 = y1 = -1
             for y in range(ph):
                 row = t[y * pw:(y + 1) * pw]
@@ -569,7 +585,9 @@ def qc(c):
             w -= w % 2; h -= h % 2   # crop 宽高偶对齐；放置坐标仍为 int(x/y)。
             return f"{w}:{h}:{cx0}:{cy0}"
         except Exception:
-            return None   # 任何失败回落整帧——探针永不因本 helper 阻断 qc
+            if media is not None:
+                raise  # An invalid native cache is not a trusted QC input.
+            return None   # Legacy crop probe falls back to the full frame.
 
     # ---- 并行任务收集（结果按 timeline 顺序回填，checks 顺序不变）----
     tasks = []   # (key, callable)
@@ -593,9 +611,17 @@ def qc(c):
             # cut in that track needs its actual effects/window geometry, even
             # a neighboring opaque source. Reuse RenderPlan, not a parallel
             # overlay formula or the prepared cache under test.
-            with tempfile.TemporaryDirectory(prefix='qc_source_', dir=c.cache) as temporary:
-                reference = render_source_frame(c, cl, j, Path(temporary))
-                b = gray_frame(reference, 0, tag=f'c{df}_', origin=path)
+            media = getattr(c, '_windows_svg_media', None)
+            if media is not None:
+                from ..render.gfx_svg_win_publish import anchored
+                with media.private_reference() as directory:
+                    reference = render_source_frame(c, cl, j, directory)
+                    with anchored(directory) as parent, parent.open_read(reference.name):
+                        b = gray_frame(reference, 0, tag=f'c{df}_', origin=path)
+            else:
+                with tempfile.TemporaryDirectory(prefix='qc_source_', dir=c.cache) as temporary:
+                    reference = render_source_frame(c, cl, j, Path(temporary))
+                    b = gray_frame(reference, 0, tag=f'c{df}_', origin=path)
         else:
             b = gray_frame(c.src_path(field(cl, "src", path)), sf,
                            pre_crop=f"{c.crop169(field(cl, 'src', path))},scale={c.w}:{c.h}:flags=lanczos",

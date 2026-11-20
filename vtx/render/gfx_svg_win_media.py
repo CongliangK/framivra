@@ -1,11 +1,14 @@
 """Media execution/publication for the owned Windows SVG composition lane."""
 from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 import ctypes
 import hashlib
 import json
+import os
 from pathlib import Path
 import secrets
 import subprocess
+import tempfile
 import time
 from types import SimpleNamespace
 
@@ -17,7 +20,18 @@ from .gfx_svg_win_snapshot import _local_path
 
 _TOOL_LIMIT = 256 * 1024 * 1024
 _MEDIA_LIMIT = 512 * 1024 * 1024
+_SOURCE_LIMIT = 4 * 1024 * 1024 * 1024
+_MAX_SOURCES = 256
+# Force a single-file demuxer; a playlist renamed as a .mp4 must not be
+# auto-probed as a playlist. MOV external data references stay disabled.
+_SOURCE_FORMATS = {
+    '.wav': 'wav', '.flac': 'flac', '.mp3': 'mp3', '.aac': 'aac',
+    '.ogg': 'ogg', '.opus': 'ogg', '.m4a': 'mov', '.mp4': 'mov',
+    '.m4v': 'mov', '.mov': 'mov', '.mkv': 'matroska', '.webm': 'matroska',
+    '.avi': 'avi',
+}
 _MARKER_LIMIT = 16 * 1024
+_PRIVATE_OUTPUT = ContextVar('windows_svg_private_output', default=None)
 _STANDARD_TIMELINE = 'a7008c2e5b2833da13021c3a1ccb46a09068ca1775b6724328563d2d37f7d105'
 # Raw LF bytes of the frozen input lock (the Git blob and source archives).
 _STANDARD_INPUTS = 'b4a687a8cdaf3166b0f74f30015ef9c24ff8d1a27cdd9f491e5e4b78ea3d1bb0'
@@ -49,6 +63,35 @@ def bind_standard_audio(pins, project):
             raise ValueError('Windows SVG portable-v2 audio byte identity mismatch')
         digests[name] = facts['sha256']
     return digests
+
+
+def bind_project_inputs(pins, c):
+    """Fingerprint and hold exact original source names before any media probe."""
+    sources = c.tl.get('sources', [])
+    if not isinstance(sources, list) or len(sources) > _MAX_SOURCES:
+        raise ValueError(f'Windows SVG supports at most {_MAX_SOURCES} local media declarations')
+    rows = {}
+    for source in sources:
+        name = source['path']
+        parts = relative_parts(name)
+        if parts[0].lower() in ('cache', 'out') or Path(name).suffix.lower() not in _SOURCE_FORMATS:
+            raise ValueError(f'Windows SVG requires a local, self-contained media source: {name!r}')
+        rows[name] = parts
+    if not rows:
+        return {}
+    root = pins.enter_context(anchored(c.root))
+    directories = {(): root}
+    result = {}
+    for name, parts in rows.items():
+        parent = root
+        for i, part in enumerate(parts[:-1]):
+            branch = tuple(parts[:i + 1])
+            if branch not in directories:
+                directories[branch] = pins.enter_context(parent.child(part, create=False))
+            parent = directories[branch]
+        handle, size = pins.enter_context(parent.open_read(parts[-1]))
+        result[name] = WindowsSvgMedia._digest(parent.chunks(handle, size, limit=_SOURCE_LIMIT))
+    return result
 
 
 class WindowsSvgMedia:
@@ -84,33 +127,53 @@ class WindowsSvgMedia:
 
     @contextmanager
     def command_inputs(self, cmd):
-        # Private PNG/concat paths have their own scopes. Hold direct project
-        # media through the child run, not merely while hashing it in Python.
+        # Declared sources are already held for the entire operation. Derived
+        # project media must have a current certificate and a new read pin.
+        # Private sequences and concat lists are held by their callers.
+        argv = [self.tools[cmd[0]], *map(str, cmd[1:])]
         with ExitStack() as pins:
             if self.ctx is not None:
+                sources = getattr(self.ctx, '_svg_source_digests', None)
+                locked_audio = getattr(self.ctx, '_svg_audio_digests', {})
                 if cmd[0] == 'ffprobe':
-                    inputs = (cmd[-1],)
+                    inputs = ((len(cmd) - 1, len(cmd) - 1),)
                 else:
-                    inputs = (cmd[i+1] for i, option in enumerate(cmd[:-1]) if option == '-i')
-                for item in inputs:
+                    inputs = ((i, i + 1) for i, option in enumerate(cmd[:-1]) if option == '-i')
+                insertions = []
+                for option, index in inputs:
+                    item = os.fspath(cmd[index])
                     path = Path(item)
                     if path.is_absolute() and path.is_relative_to(self.project):
                         rel = path.relative_to(self.project).as_posix()
-                        if rel not in self.ctx._svg_audio_digests:
+                        if sources is not None and rel in sources:
+                            format_name = _SOURCE_FORMATS[path.suffix.lower()]
+                            options = ['-protocol_whitelist', 'file,pipe', '-f', format_name]
+                            if format_name == 'mov':
+                                options += ['-enable_drefs', '0']
+                            insertions.append((option, options))
+                        elif rel not in locked_audio:
                             pins.enter_context(self.certified_file(self.ctx, path))
-            yield
+                    elif sources is not None:
+                        private = path.is_absolute() and path.is_relative_to(self.scratch.parent.parent)
+                        lavfi = cmd[0] == 'ffmpeg' and list(cmd[option-2:option]) == ['-f', 'lavfi']
+                        if not (private or lavfi):
+                            raise ValueError('Windows SVG media input is outside the owned input scope')
+                for option, options in reversed(insertions):
+                    argv[option:option] = options
+            yield argv
 
-    def execute(self, cmd, *, text=True):
+    def execute(self, cmd, *, text=True, capture_limit=16 * 1024 * 1024):
+        if not 0 < capture_limit <= 64 * 1024 * 1024:
+            raise ValueError('Windows SVG media capture exceeds its byte budget')
         if self.operation.keep:
             raise ValueError('Windows SVG media operation has an unconfirmed writer')
-        argv = [self.tools[cmd[0]], *map(str, cmd[1:])]
         # A sibling worker's successful close must never clear another worker's
         # unresolved ownership. Only propagate the sticky failure back upward.
         state = SimpleNamespace(keep=False)
         try:
-            with self.command_inputs(cmd):
+            with self.command_inputs(cmd) as argv:
                 job, _ = shell._run_owned(state, argv, self.scratch, self.environment, None,
-                                          deadline=time.monotonic() + 600, capture_limit=16 * 1024 * 1024,
+                                          deadline=time.monotonic() + 600, capture_limit=capture_limit,
                                           phase='media tool')
         finally:
             if state.keep:
@@ -187,8 +250,33 @@ class WindowsSvgMedia:
                 yield rec['sha256']
 
     @contextmanager
+    def private_input(self, data, suffix):
+        leaf = 'sample-' + secrets.token_hex(12) + suffix
+        self.directory.write_new(leaf, data)
+        with self.directory.open_read(leaf) as (handle, size):
+            if b''.join(self.directory.chunks(handle, size, limit=len(data))) != data:
+                raise ValueError('Windows SVG private sample differs from the certified bytes')
+            yield self.scratch / leaf
+        self.directory.remove(leaf)
+
+    @contextmanager
+    def private_reference(self):
+        """Permit exactly one private QC reference output, never a project writer."""
+        directory = Path(tempfile.mkdtemp(prefix='reference-', dir=self.scratch))
+        with anchored(directory):
+            token = _PRIVATE_OUTPUT.set((self, directory / 'reference.mp4'))
+            try:
+                yield directory
+            finally:
+                _PRIVATE_OUTPUT.reset(token)
+
+    @contextmanager
     def qc_scope(self, c, *, standalone=False):
-        paths = (c.out / 'final.mp4', c.cache / 'qc_clean.mp4')
+        from ..pipeline.composite import needs_qc_clean
+
+        paths = [c.out / 'final.mp4']
+        if needs_qc_clean(c):
+            paths.append(c.cache / 'qc_clean.mp4')
         with ExitStack() as pins:
             hashes = {}
             for path in paths:
@@ -233,6 +321,20 @@ class WindowsSvgMedia:
         from ..cache.recovery import _inspect
 
         suffix = target.suffix.lower()
+        if _PRIVATE_OUTPUT.get() == (self, target):
+            if before_commit is not None or after_commit is not None or target.exists():
+                raise ValueError('Windows SVG private reference must be a fresh uncommitted output')
+            result = producer(target)
+            if self.operation.keep:
+                raise ValueError('Windows SVG reference writer settlement unconfirmed')
+            with anchored(target.parent) as parent, parent.open_read(target.name) as (_, size):
+                if not 0 < size <= _MEDIA_LIMIT:
+                    raise ValueError('Windows SVG private reference exceeds its byte budget or is empty')
+                inspected = _inspect(target, suffix, execute=self.execute)
+                if inspected is None or inspected['frames'] != 1:
+                    raise RuntimeError('Windows SVG private reference requires one decoded frame')
+                verify_input_identity(c)
+            return result
         with self.target_parent(target, create=True) as (parent, name), parent.lock(name):
             parent._check_existing(name)
             parent._check_existing(name + '.complete.json')

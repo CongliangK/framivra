@@ -2,6 +2,7 @@
 
 Integrations require VTX_TEST_FFMPEG=1; all projects are external temporary dirs.
 """
+import base64
 import contextlib
 import hashlib
 import io
@@ -96,10 +97,20 @@ class FrameReadOnly(unittest.TestCase):
         frame_timeline(self.path, frame=1)
         self.assertIs(signal.getsignal(signal.SIGTERM), previous)
 
+    def configured_frame(self):
+        if sys.platform != 'win32':
+            return frame_timeline(self.path, frame=1, render=True)
+        roots = dict(VTX_WINDOWS_SVG_PORTABLE=str(self.root), VTX_WINDOWS_SVG_SCRATCH=str(self.root),
+                     VTX_WINDOWS_SVG_MEDIA_BIN=str(self.root))
+        version = 'sha256:' + hashlib.sha256(self.path.read_bytes()).hexdigest()
+        with patch.dict(os.environ, roots):
+            return frame_timeline(self.path, frame=1, expected_content_version=version,
+                                  render=True, prepare_gfx=True, include_png=True)
+
     def test_active_plugin_rejected_before_ctx(self):
         with patch("vtx.pluginlib.hooks.active_plugins", return_value=[{"name": "unsafe"}]), \
                 patch("vtx.pipeline.infra.Ctx.__init__", side_effect=AssertionError("Ctx")):
-            result = frame_timeline(self.path, frame=1, render=True)
+            result = self.configured_frame()
         self.assertEqual(result["diagnostics"][0]["code"], "plugins.unsupported")
         self.assertEqual(list(self.root.iterdir()), [self.path])
 
@@ -109,8 +120,9 @@ class FrameReadOnly(unittest.TestCase):
         doc['video_tracks'] = [{'kind': 'broll', 'name': 'later', 'clips': [
             {'src': 's', 'src_in': 0, 'src_out': 3, 'dst_in': 8, 'dur': 3}]}]
         self.path.write_text(json.dumps(doc))
-        with patch('vtx.timeline_frame._environment', side_effect=AssertionError('environment')):
-            result = frame_timeline(self.path, frame=1, render=True)
+        with patch('vtx.timeline_frame._environment', side_effect=AssertionError('environment')), \
+                patch('vtx.pipeline.infra.Ctx.__init__', side_effect=AssertionError('Ctx')):
+            result = self.configured_frame()
         self.assertEqual(result['diagnostics'][0]['code'], 'plugins.unsupported')
         self.assertFalse((self.root / 'cache').exists())
 
@@ -121,18 +133,94 @@ class FrameReadOnly(unittest.TestCase):
         self.assertEqual(list(self.root.iterdir()), [self.path])
 
     @unittest.skipUnless(sys.platform == 'win32', 'native Windows preview admission')
-    def test_configured_windows_preview_rejects_unlocked_timeline_before_runtime(self):
-        roots = dict(VTX_WINDOWS_SVG_PORTABLE=str(self.root), VTX_WINDOWS_SVG_SCRATCH=str(self.root),
-                     VTX_WINDOWS_SVG_MEDIA_BIN=str(self.root))
-        version = 'sha256:' + hashlib.sha256(self.path.read_bytes()).hexdigest()
-        with patch.dict(os.environ, roots), \
-                patch('vtx.render.preview_windows._FrameCtx', side_effect=AssertionError('must not construct Ctx')):
-            result = frame_timeline(self.path, frame=1, expected_content_version=version,
-                                    render=True, prepare_gfx=True, include_png=True)
-        self.assertFalse(result['ok'])
-        self.assertIsNone(result['image'])
-        self.assertIn('portable-v2 timeline', result['diagnostics'][0]['message'])
+    def test_configured_windows_preview_rejects_html_and_subtitles_before_runtime(self):
+        doc = document()
+        clip = {'src': 'gfx.frames.json', 'dst_in': 8, 'dur': 3}
+        doc['video_tracks'] = [{'kind': 'gfx', 'name': 'later', 'clips': [clip]}]
+        with patch('vtx.pipeline.infra.Ctx.__init__', side_effect=AssertionError('must not construct Ctx')):
+            for fields, message in (({}, 'no HTML'), ({'format': 'svg-sequence'}, 'subtitles')):
+                with self.subTest(message=message):
+                    clip.update(fields)
+                    if fields:
+                        doc['subtitles'] = [{'in': 8, 'out': 9, 'text': 'Not visible yet'}]
+                    self.path.write_text(json.dumps(doc))
+                    result = self.configured_frame()
+                    self.assertFalse(result['ok'])
+                    self.assertIsNone(result['image'])
+                    self.assertEqual(result['diagnostics'][0]['code'], 'platform.unsupported')
+                    self.assertIn(message, result['diagnostics'][0]['message'])
         self.assertEqual(list(self.root.iterdir()), [self.path])
+
+
+@unittest.skipUnless(sys.platform == 'win32' and all(os.environ.get(name) for name in (
+    'VTX_WINDOWS_SVG_PORTABLE', 'VTX_WINDOWS_SVG_SCRATCH', 'VTX_WINDOWS_SVG_MEDIA_BIN')),
+    'requires configured owned Windows SVG runtime')
+class WindowsSvgFramePixels(unittest.TestCase):
+    def test_overlapping_layers_clip_local_frame_and_black_gap_leave_project_unchanged(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / 'timeline.json'
+            ffmpeg = str(Path(os.environ['VTX_WINDOWS_SVG_MEDIA_BIN']) / 'ffmpeg.exe')
+            subprocess.run([ffmpeg, '-v', 'error', '-f', 'lavfi', '-i',
+                            'color=lime:s=1920x1080:r=30:d=0.166667', '-f', 'lavfi', '-i',
+                            'anullsrc=r=48000:cl=stereo', '-shortest', '-c:v', 'libx264', '-threads', '2',
+                            '-c:a', 'aac', str(root / 'source.mp4')], check=True, capture_output=True)
+
+            def clip(name, start, colors, *, width=640, x=0):
+                frames = []
+                for i, color in enumerate(colors):
+                    frame_file = root / f'{name}-{i}.svg'
+                    frame_file.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" '
+                                          'viewBox="0 0 1920 1080">'
+                                          f'<rect width="{width}" height="1080" fill="{color}"/></svg>')
+                    frames.append(frame_file.name)
+                manifest = root / f'{name}.frames.json'
+                manifest.write_text(json.dumps({'format': 'framivra-svg-sequence/v1', 'fps': 30,
+                                                'width': 1920, 'height': 1080, 'frame_count': len(frames),
+                                                'frames': frames}))
+                return {'src': manifest.name, 'format': 'svg-sequence', 'dst_in': start,
+                        'dur': len(frames), 'x': x}
+
+            doc = document()
+            doc['video_tracks'] = [
+                {'kind': 'broll', 'name': 'native', 'clips': [
+                    {'src': 's', 'src_in': 1, 'src_out': 4, 'dst_in': 1, 'dur': 3}]},
+                {'kind': 'gfx', 'name': 'bottom', 'clips': [clip('first', 1, ['red', '#00ffff']),
+                                                           clip('later', 9, ['white'])]},
+                {'kind': 'gfx', 'name': 'top', 'clips': [clip('top', 2, ['blue'], x=320)]},
+            ]
+            path.write_text(json.dumps(doc), encoding='utf-8')
+            original = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in root.iterdir()}
+            version = 'sha256:' + original[path.name]
+
+            def pixels(frame):
+                image = frame_timeline(path, frame=frame, expected_content_version=version,
+                                       render=True, include_png=True, prepare_gfx=True)
+                self.assertTrue(image['ok'], image['diagnostics'])
+                image = image['image']
+                self.assertEqual(image['delivery'], 'inline-only')
+                self.assertIsNone(image['path'])
+                self.assertFalse(image['cache_hit'])
+                png = base64.b64decode(image['inline']['data'], validate=True)
+                self.assertEqual(hashlib.sha256(png).hexdigest(), image['sha256'])
+                raw = subprocess.run([ffmpeg, '-v', 'error', '-f', 'png_pipe', '-i', '-',
+                                      '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-threads', '1', '-'],
+                                     input=png, check=True, capture_output=True).stdout
+                self.assertEqual(len(raw), 1920 * 1080 * 3)
+                return raw
+
+            def assert_pixel(raw, x, expected):
+                offset = (540 * 1920 + x) * 3
+                actual = tuple(raw[offset:offset + 3])
+                self.assertTrue(all(abs(a - b) < 8 for a, b in zip(actual, expected)), (x, actual))
+
+            active = pixels(2)
+            for x, expected in ((100, (0, 255, 255)), (500, (0, 0, 255)), (1500, (0, 255, 0))):
+                assert_pixel(active, x, expected)
+            assert_pixel(pixels(3), 500, (0, 255, 0))  # Both SVG layers ended; native green remains.
+            self.assertEqual(set(pixels(8)), {0})
+            self.assertEqual({p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in root.iterdir()},
+                             original)
 
 
 @unittest.skipUnless(os.environ.get("VTX_TEST_FFMPEG") and shutil.which("ffmpeg"),

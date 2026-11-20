@@ -1098,8 +1098,9 @@ def _main_owned(execution, ownership):
     try:
         from .windows_svg import context_options, stage_scope
         scope = {} if policy.dry else context_options(
-            ownership, a.command, tp, strict=a.strict,
-            truncated=a.draft or a.frames is not None or a.gpu or a.until is not None)
+            ownership, a.command, tp, strict=a.strict, window=range_flags,
+            truncated=a.draft or a.frames is not None or a.gpu,
+            report=a.report or a.report_only)
         c = Ctx(tp, execution=execution, **scope)
     except (ValueError, KeyError, TypeError, ZeroDivisionError, OSError) as e:
         # 2026-09-11 扩捕获：timeline 结构缺键（KeyError）/类型错（TypeError）/fps=0

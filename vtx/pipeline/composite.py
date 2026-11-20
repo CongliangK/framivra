@@ -30,7 +30,7 @@ DEFAULT_SEGMENTS = 8    # VTX_VIDEO_SEGMENTS 默认段数
 _SEGMENT_WORKER_RAM_BYTES = 1280 * 1024**2
 
 
-def _concat_manifest(segments, fps):
+def _concat_manifest(segments, fps, *, resolve_paths=True):
     """Place (path, start_frame, end_frame) segments on the frame clock.
 
     Concat otherwise infers offsets from container durations, which may round
@@ -51,8 +51,10 @@ def _concat_manifest(segments, fps):
         start = microseconds(a - origin)
         end = microseconds(b - origin)
         duration = end - start
-        # Absolute POSIX paths preserve Windows paths containing '#' as well.
-        name = path.resolve().as_posix().replace("'", "'\\''")
+        # Absolute slash-separated paths preserve Windows paths containing '#'.
+        # The native owner pins the original project names; resolving here could
+        # put a different, unpinned alias into the child manifest before that gate.
+        name = (path.resolve() if resolve_paths else path).as_posix().replace("'", "'\\''")
         lines.append(f"file '{name}'\nduration {duration // 1_000_000}.{duration % 1_000_000:06d}\n")
     return "".join(lines)
 
@@ -543,6 +545,10 @@ class RenderPlan:
         Recheck it after hashing too: a sidecar changed during the media gate
         must still fail at the original final-check point.
         """
+        media = getattr(self.c, '_windows_svg_media', None)
+        if media is not None:
+            return media.valid(self.c, p, seglen)
+
         def sidecar_matches():
             try:
                 return int((p.with_suffix(p.suffix + ".n")).read_text()) == seglen
@@ -564,6 +570,7 @@ class RenderPlan:
             retention = os.environ.get("VTX_PASS_CACHE", "checkpoint")
         if retention not in ("checkpoint", "all", "none"):
             raise ValueError("VTX_PASS_CACHE must be checkpoint, all or none")
+        media = getattr(self.c, '_windows_svg_media', None)
         pdir = self.scratch_dir if self.scratch_dir is not None else self.c.cache / "vseg_pass"
         seed = (f"{a}|{b}|{self.W}x{self.H}|{int(bool(self.draft))}|{int(bool(with_subs))}"
                 f"|fps={fps_expression(self.c.fps)}")
@@ -638,10 +645,11 @@ class RenderPlan:
                 L, target, last = layers_subset[k], targets[k], k == n - 1
                 # Only absent entries created by this chain may be released. Never
                 # turn rendering into a migration/deletion of pre-existing caches.
-                family = (target, target.with_suffix(target.suffix + ".n"),
-                          target.with_suffix(target.suffix + ".complete.json"))
-                new_entries = [p for p in family if fstxn.cleanup_identity(p) is None] \
-                    if not last and not c.dry and retention != "all" else []
+                new_entries = []
+                if media is None and not last and not c.dry and retention != "all":
+                    family = (target, target.with_suffix(target.suffix + ".n"),
+                              target.with_suffix(target.suffix + ".complete.json"))
+                    new_entries = [p for p in family if fstxn.cleanup_identity(p) is None]
                 cmd = ["ffmpeg", "-v", "error", "-y"]
                 if prev is None:
                     cmd += ["-f", "lavfi", "-i",
@@ -695,8 +703,14 @@ class RenderPlan:
                     # exact target; a second .part rename would orphan its marker.
                     tail = ["-frames:v", str(seglen), "-c:v", "ffv1", "-level", "3",
                             "-g", "1", str(target)]
-                c.run(cmd + ["-filter_complex_threads", "1",
-                             "-filter_complex", ";".join(parts), "-map", "[vout]", *tail])
+                # Keep the exact certified predecessor pinned through the next
+                # child and publication, not just while checking a warm hit.
+                previous_input = (media.certified_file(c, prev, seglen)
+                                  if media is not None and prev is not None and not c.dry
+                                  else contextlib.nullcontext())
+                with previous_input:
+                    c.run(cmd + ["-filter_complex_threads", "1",
+                                 "-filter_complex", ";".join(parts), "-map", "[vout]", *tail])
                 if c.dry:
                     # dry-run：命令已由 Ctx.run 打印（[dry-run] 前缀），不执行不落盘
                     # ——跳过原子替换/帧数校验/旁车，继续打印余下 pass 命令。dry 口径
@@ -715,20 +729,23 @@ class RenderPlan:
                     print(f"✗ pass {k + 1}/{n} 帧数自检失败：{target.name} ≠ {seglen} 帧"
                           f"（framesync 节律异常/中间物损坏，禁止向下游传递）")
                     sys.exit(1)
-                if not last:
-                    # 帧数硬校验通过后落旁车（_pass_fresh sidecar 快路径的凭据，
-                    # 见其 docstring；截断/中断产物到不了这里，不会误发旁车）
-                    fstxn.atomic_write(target.with_suffix(target.suffix + ".n"), str(seglen), root=self.c.root)
-                # The successor is complete before its owned predecessor is removed.
-                # On failure the latest good checkpoint stays available for retry.
-                if not last or retention == "none":
-                    for path, identity in owned_previous:
-                        fstxn.remove_pinned(path, identity, preserve=lambda _: False)
-                owned_previous = tuple((p, fstxn.cleanup_identity(p)) for p in new_entries)
+                if media is None:
+                    if not last:
+                        # Legacy .n is only an additional gate after full certification.
+                        fstxn.atomic_write(target.with_suffix(target.suffix + ".n"), str(seglen), root=c.root)
+                    # The successor is complete before its owned predecessor is removed.
+                    # On failure the latest good checkpoint stays available for retry.
+                    if not last or retention == "none":
+                        for path, identity in owned_previous:
+                            fstxn.remove_pinned(path, identity, preserve=lambda _: False)
+                    owned_previous = tuple((p, fstxn.cleanup_identity(p)) for p in new_entries)
                 prev = target
             return enc
 
-        if self.c.dry:
+        if self.c.dry or media is not None:
+            # Native publication creates each target parent and serializes its
+            # writers. Only certified checkpoints are reused; no pass is
+            # retired here, so readers do not need the legacy chain lock.
             return render_chain()
         fstxn.mkdir(pdir, root=self.c.root)
         # Same seed can share lower-layer files despite different upper layers.
@@ -773,6 +790,8 @@ class RenderPlan:
         # 段目录自建（parents 兜底 fresh 项目直渲本目录的首个落笔点）。
         vdir = c.cache / tag
         media = getattr(c, "_windows_svg_media", None)
+        if media is not None and with_subs:
+            raise ValueError("Windows SVG all does not support subtitle compositing")
         if media is None:
             fstxn.mkdir(vdir, root=self.c.root)
         else:
@@ -880,8 +899,8 @@ class RenderPlan:
         lst = vdir / "list.txt"
         # PR#1（Windows 实测）：相对路径 concat 项在含 '#' 等特殊字符的目录下会被
         # 按清单目录做 URL 基准解析出错；绝对 POSIX 路径 + 引号转义规避（-safe 0 已带）。
-        manifest = _concat_manifest(((path, a, b) for path, a, b in zip(segs, edges, edges[1:])), c.fps)
-        media = getattr(c, '_windows_svg_media', None)
+        manifest = _concat_manifest(((path, a, b) for path, a, b in zip(segs, edges, edges[1:])),
+                                    c.fps, resolve_paths=media is None)
         if media is None:
             fstxn.atomic_write(lst, manifest, root=self.c.root)
         else:
@@ -1029,7 +1048,7 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None, staged_gfx=Non
                 continue
             # Verify a successful decode's digest/frame record, or fully decode
             # legacy media. Container header counts alone cannot certify a hit.
-            if relay is None and media_cache_valid(seg, cl['dur'], allow_short_verified=True):
+            if relay is None and media_cache_valid(seg, cl['dur'], allow_short_verified=True, c=c):
                 events.cache_hit(c, "media_cache_valid", frames=[0, cl['dur']])
                 layers.append({"cl": cl, "seg": seg, "x": x, "y": y, "w2": w2, "h2": h2,
                                "gfx": False, "ti": ti})
@@ -1051,7 +1070,7 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None, staged_gfx=Non
 
 
 def needs_qc_clean(c):
-    """Native-alpha bottom tracks need the same black-canvas reference as gfx."""
+    """Decide whether QC can sample the original or needs a black-canvas reference."""
     tracks = c.tl['video_tracks']
     if not tracks:
         return False
@@ -1059,8 +1078,14 @@ def needs_qc_clean(c):
         return True
     # Warm every distinct source before QC's parallel cut references. Do not
     # short-circuit after the first alpha source and race cold metadata probes.
-    sources = dict.fromkeys(cl['src'] for cl in tracks[0]['clips'])
+    clips = tracks[0]['clips']
+    sources = dict.fromkeys(cl['src'] for cl in clips)
     alpha = [seg_needs_alpha({}, c.probe(c.src_path(sid))) for sid in sources]
+    if getattr(c, '_windows_svg_media', None) is not None:
+        # Raw original pixels are only equivalent for normalized opaque clips.
+        return any(alpha) or any(
+            any(key in cl for key in ('scale', 'x', 'y'))
+            or seg_needs_alpha(cl, {'has_alpha': False}) for cl in clips)
     return any(alpha)
 
 
@@ -1076,16 +1101,36 @@ def render_source_frame(c, clip, frame, directory):
     seek = max(0, (source_frame - .2) / c.fps)
     filters = [f'setpts=PTS-STARTPTS+{frame}/({fps_expression(c.fps)})/TB', *geometry,
                'format=yuva420p', *_clip_alpha_filters(clip, c.spf)]
-    c.run(['ffmpeg', '-v', 'error', '-y', '-ss', f'{seek:.6f}',
-           '-i', str(c.src_path(clip['src'])), '-map', '0:v:0', '-an',
-           '-vf', ','.join(filters), '-frames:v', '1', '-pix_fmt', 'rgba',
-           str(directory / 'f0000.png')])
+    command = ['ffmpeg', '-v', 'error', '-y', '-ss', f'{seek:.6f}',
+               '-i', str(c.src_path(clip['src'])), '-map', '0:v:0', '-an',
+               '-vf', ','.join(filters), '-frames:v', '1', '-pix_fmt', 'rgba']
     source = frame_source.PngSequence(directory, 'qc-source-frame', 1, c.fps,
                                       width or c.w, height or c.h)
     layer = dict(cl={'dst_in': 0, 'dur': 1}, source=source, gfx=True,
                  x=x, y=y, w2=None, h2=None, ti=0)
     output = directory / 'reference.mp4'
-    RenderPlan(c, False, 1, c.w, c.h).composite([layer], output, False, a=0, b=1)
+    plan = RenderPlan(c, False, 1, c.w, c.h)
+    media = getattr(c, '_windows_svg_media', None)
+    if media is None:
+        c.run(command + [str(directory / 'f0000.png')])
+        plan.composite([layer], output, False, a=0, b=1)
+    else:
+        from ..render.gfx_svg_win_publish import anchored
+
+        # The QC caller owns the private directory and the reference movie's
+        # publication scope. The decoder only writes stdout; publish and hold
+        # the PNG ourselves so image2 cannot open a changed path or input.
+        if directory.parent != media.scratch:
+            raise ValueError('Windows SVG QC reference requires its private work directory')
+        with anchored(directory) as parent:
+            result = media.execute(command + ['-c:v', 'png', '-f', 'image2pipe', '-'], text=False)
+            if result.returncode or result.stderr.strip() or not result.stdout:
+                raise RuntimeError('Windows SVG QC could not decode the fresh source frame')
+            parent.write_new('f0000.png', result.stdout)
+            with parent.open_read('f0000.png') as (handle, size):
+                if size != len(result.stdout) or b''.join(parent.chunks(handle, size, limit=size)) != result.stdout:
+                    raise ValueError('Windows SVG QC private source frame changed')
+                plan.composite([layer], output, False, a=0, b=1)
     return output
 
 
@@ -1107,6 +1152,11 @@ def build_video(c: Ctx, layers=None):
     （seg 内容寻址键与渲染时机无关，波内先行写入的段文件 video 阶段直接命中）。
     """
     draft = getattr(c, "draft", False); nframes = getattr(c, "frames", None)
+    with_subs = getattr(c, '_windows_svg_media', None) is None
+    if not with_subs and (c.tl.get('subtitles') or c.tl.get('subtitles_src')):
+        # A private ASS file alone does not bind libass's font inputs. Fail
+        # explicitly rather than silently publishing an unsubtitled movie.
+        raise ValueError("Windows SVG all does not support subtitle compositing")
     # budget_gate 仍在 video 阶段开头执行（流水线下为提示性门）：seg 预编码已在波内
     # 先行落盘，但 gc 只回收「键集外」条目——先行写入的当前键 seg 不在回收集，
     # 无冲突；超预算提示/自动回收语义与线性路径一致。
@@ -1123,9 +1173,6 @@ def build_video(c: Ctx, layers=None):
         plan = RenderPlan(c=c, draft=draft, f=f, W=W, H=H, nframes=nframes,
                           nseg=int(os.environ.get("VTX_VIDEO_SEGMENTS", str(DEFAULT_SEGMENTS))),
                           layers=layers)
-        # The locked Windows demo has no subtitles; don't hand an empty but
-        # mutable project-side ASS path to a native child.
-        with_subs = getattr(c, '_windows_svg_media', None) is None
         if with_subs:
             plan.write_global_ass(c.cache / ("subs_draft.ass" if draft else "subs.ass"))
         # 默认 8（阶段三 2026-09-10 调优：voice-ime 实测 N=8 89.8s vs N=6 112.9s，-20%；

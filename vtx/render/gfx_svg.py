@@ -618,21 +618,19 @@ def validate_windows_gfx_profile(c):
     """Reject unsupported Timeline I/O before resolving any asset pathname."""
     if sys.platform != 'win32' or getattr(c, '_svg_runtime_factory', None) is None:
         return
-    tl = c.tl
-    tracks = tl.get('video_tracks', [])
-    if getattr(c, '_svg_all', False):
-        from .gfx_svg_win_media import require_standard_timeline
-        require_standard_timeline(c.timeline_sha256)
-    elif (set(tl) - {'version', 'project', 'video_tracks', 'sources', 'audio_tracks', 'subtitles'}
-            or set(tl['project']) - {'fps', 'width', 'height', 'duration_frames', 'cache_dependencies'}
-            or any(tl.get(key) for key in ('sources', 'audio_tracks', 'subtitles'))
-            or route(c) != 'svg-sequence' or len(tracks) != 1 or len(tracks[0].get('clips', [])) != 1
-            or set(tracks[0]) - {'name', 'kind', 'clips'}
-            or set(tracks[0]['clips'][0]) - {'format', 'src', 'dst_in', 'dur', 'cache_dependencies'}):
-        raise ValueError('Windows SVG gfx profile requires one SVG clip without external media, subtitles or plugins')
+    from .gfx_svg_win_media import _STANDARD_TIMELINE, require_standard_timeline
     from ..pluginlib.hooks import active_plugins
+
+    if route(c) != 'svg-sequence':
+        raise ValueError('Windows SVG runtime requires an explicit SVG-sequence timeline')
+    if c._svg_standard is None:
+        c._svg_standard = c._svg_all and c.timeline_sha256 == _STANDARD_TIMELINE
+    if c._svg_standard:
+        require_standard_timeline(c.timeline_sha256)
     if active_plugins(c):
-        raise ValueError('Windows SVG gfx does not support active plugins')
+        raise ValueError('Windows SVG does not support active plugins')
+    if c._svg_all and (c.tl.get('subtitles') or c.tl.get('subtitles_src')):
+        raise ValueError('Windows SVG delivery does not support subtitles')
 
 
 def _context_runtime(c, fonts=None):
@@ -642,9 +640,8 @@ def _context_runtime(c, fonts=None):
             if fonts is None:
                 raise ValueError('Windows SVG production runtime requires a validated clip manifest')
             c._svg_runtime = factory(c, tuple(fonts))
-        if fonts is not None:
-            c._svg_runtime.require_fonts(fonts)
-        return contextlib.nullcontext(c._svg_runtime)
+        runtime = c._svg_runtime if fonts is None else c._svg_runtime.for_fonts(c, tuple(fonts))
+        return contextlib.nullcontext(runtime)
     return _runtime_identity_scope()
 
 
@@ -693,7 +690,7 @@ def _resolved_runtime(c, clip):
     raw = read_input(c, clip['src'], limit=MAX_MANIFEST_BYTES)
     if len(raw) > MAX_MANIFEST_BYTES:
         raise ValueError('SVG manifest exceeds 8 MiB input limit')
-    if getattr(c, '_svg_all', False):
+    if getattr(c, '_svg_standard', False):
         from .gfx_svg_win_shell import _RASTER_MANIFEST_SHA256
         if digest(raw) != _RASTER_MANIFEST_SHA256:
             raise ValueError('Windows SVG all requires the locked portable-v2 manifest')
@@ -753,7 +750,7 @@ def _resolve_inputs(c, clip, raw, manifest, rate, runtime):
         add(name, expected_path=expected_path)
     families = {family.strip() for faces in font_faces.values() for face in faces
                 for family in face['family'].split(',')}
-    standard = getattr(c, '_svg_all', False)
+    standard = getattr(c, '_svg_standard', False)
     if standard:
         from .gfx_svg_win_shell import (_RASTER_SOURCE_DEPS, _RASTER_SVG_SHA256, _fold_frame,
                                         _locked_runtime_digests, _raster_fold)

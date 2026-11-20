@@ -96,7 +96,9 @@ def png_consumer_scope(layers, *, c=None):
                     changes = {'_png_facts': binding}
                     snapshot = getattr(source.interval_check, '__self__', None)
                     if runtime is not None and type(snapshot) is SequenceSnapshot:
-                        directory, hashes = frozen.enter_context(runtime.composition_frames(c, snapshot.record))
+                        clip_runtime = runtime.for_fonts(c, tuple(snapshot.record['fonts']))
+                        directory, hashes = frozen.enter_context(
+                            clip_runtime.composition_frames(c, snapshot.clip, snapshot.record))
                         changes.update(directory=directory, environment_check=lambda hashes=hashes: hashes,
                                        interval_check=None)
                     elif (type(snapshot) is SequenceSnapshot

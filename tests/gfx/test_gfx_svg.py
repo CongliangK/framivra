@@ -845,9 +845,11 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'one hard link'):
             Ctx(timeline, _svg_runtime_factory=runtime)
         (root / 'alias.json').unlink()
-        with self.assertRaisesRegex(ValueError, 'without external media'):
-            Ctx(timeline, _svg_runtime_factory=runtime)
         with self.assertRaisesRegex(ValueError, 'exact portable-v2 timeline'):
+            Ctx(timeline, _svg_runtime_factory=runtime, _svg_all=True, _svg_standard=True)
+        doc['subtitles_src'] = 'must-not-read.json'
+        timeline.write_text(json.dumps(doc), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'does not support subtitles'):
             Ctx(timeline, _svg_runtime_factory=runtime, _svg_all=True)
         runtime.assert_not_called()
         self.assertEqual({path.name for path in root.iterdir()}, {'timeline.json'})
@@ -873,6 +875,15 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
             timeline.write_bytes(b'{"project":{},"video_tracks":[{"kind":"gfx","clips":[{"src":"page.html"}]}]}')
             for command in ('validate', 'qc'):
                 self.assertEqual(context_options(stack, command, timeline, strict=True), {})
+            timeline.write_bytes(b'{"video_tracks":[{"kind":"gfx","clips":[{"format":"svg-sequence"}]}]}')
+            for command in ('prepare', 'gfx', 'video', 'audio', 'mux', 'all'):
+                self.assertTrue(context_options(stack, command, timeline)['_svg_all'])
+            with self.assertRaisesRegex(ValueError, 'does not support audio reports'):
+                context_options(stack, 'audio', timeline, report=True)
+            with mock.patch.dict(os.environ, {'VTX_WINDOWS_SVG_MEDIA_BIN': ''}):
+                self.assertFalse(context_options(stack, 'gfx', timeline)['_svg_all'])
+                with self.assertRaisesRegex(ValueError, 'require VTX_WINDOWS_SVG_MEDIA_BIN'):
+                    context_options(stack, 'all', timeline)
 
     def test_producer_refuses_an_unpinned_record_before_opening_cache(self):
         from vtx.render.gfx_svg_win_runtime import _WindowsRasterRuntime
@@ -880,7 +891,7 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
         root = temporary_root(self).resolve()
         runtime = _WindowsRasterRuntime(root, None, {'name': 'fixture'}, None, None)
         record = {'fonts': [], 'engine': runtime.engine_identity()}
-        ctx = SimpleNamespace(root=root, _svg_receipt_record='prior-record')
+        ctx = SimpleNamespace(root=root, _svg_receipt_records={gfx_svg.canonical({}): 'prior-record'})
         with self.assertRaisesRegex(ValueError, 'pinned receipt input'):
             runtime.render_page(ctx, {}, record)
         self.assertEqual(list(root.iterdir()), [])
@@ -897,12 +908,13 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
         (private / 'fonts').mkdir()
         frames = private / 'frames'
         frames.mkdir()
-        runtime = _WindowsRasterRuntime(root, (None, None, private, None, None), ENGINE, None, None)
+        runtime = _WindowsRasterRuntime(root, (SimpleNamespace(keep=False), None, private, None, None),
+                                        ENGINE, None, None)
         clip = dict(format='svg-sequence', src='manifest.json', dst_in=0, dur=2)
         record = {'engine': ENGINE, 'fonts': [], 'width': 2, 'height': 2, 'frame_count': 2}
         key = gfx_svg.record_key(record)
         ctx = SimpleNamespace(root=root, w=2, h=2, verify_inputs=mock.Mock(),
-                              _svg_receipt_record=gfx_svg.digest(gfx_svg.canonical(record)))
+                              _svg_receipt_records={gfx_svg.canonical(clip): gfx_svg.digest(gfx_svg.canonical(record))})
         page = root / 'cache' / 'gfx_exp' / gfx_svg.NAMESPACE / key
         page.mkdir(parents=True)
         names = ['f0000.png', 'f0001.png']
@@ -952,10 +964,10 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
         cwd.mkdir()
         runtime = _WindowsRasterRuntime(root, (None, None, cwd), ENGINE, None, None)
         record = {'engine': ENGINE, 'fonts': [], 'width': 2, 'height': 2, 'frame_count': 1}
-        ctx = SimpleNamespace(root=root, _svg_runtime=runtime,
-                              _svg_receipt_record=gfx_svg.digest(gfx_svg.canonical(record)),
-                              verify_inputs=mock.Mock())
         clip = dict(format='svg-sequence', src='manifest.json', dst_in=0, dur=1)
+        ctx = SimpleNamespace(root=root, _svg_runtime=runtime,
+                              _svg_receipt_records={gfx_svg.canonical(clip): gfx_svg.digest(gfx_svg.canonical(record))},
+                              verify_inputs=mock.Mock())
         key = gfx_svg.record_key(record)
         page = root / 'cache' / 'gfx_exp' / gfx_svg.NAMESPACE / key
         page.mkdir(parents=True)

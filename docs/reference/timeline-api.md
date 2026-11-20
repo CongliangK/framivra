@@ -172,9 +172,9 @@ HTML 执行许可独立于预览写入：只信任自己检查过的保存页面
 
 稀疏帧与生产者输入、完整现有环境证书及输出 SHA 一起绑定到合成身份，发布前后重验；未知环境、变化、坏依赖或取消均不返回成功。缓存档位不授予冷准备许可；新路径不复用跨请求临时图或把 `off` 暗改为读取普通 gfx 缓存。写域仅独立 `cache/preview` 请求目录，不修改 timeline/store/out/正式回执。冷交付为 **inline-only**：同一完整验证后的不可变 PNG bytes 用于 SHA/base64，返回 `image.path:null`，成功响应前清理请求 PNG、媒体和浏览器 profile；不为不可读的临时路径许诺持久寿命。终止未确认时保留必要恢复账本并拒绝成功，不能清掉仍在运行的浏览器证据。再次显式冷准备只恢复带本项目/本 schema 标记的 `request_<32hex>` 内原生 worker 账本，沿用原 reaper 的宿主、进程 lineage/身份复核；仍存活或终止未确认即保留并拒绝。未知标记、无账本的 SIGKILL 残件须核实后显式清理，不自动认作缓存或扩大扫描删除范围。已有默认 metadata-only 路径的合同不变。
 
-### Windows 锁定主片预览
+### Windows SVG 单帧预览
 
-Windows x64 仅接通 [portable-v2 锁定主片](windows-svg.md#锁定-portable-v2-主片的-all)的显式冷准备。设置相同的三个运行时根，再用 `timeline frame --frame N --expected-content-version sha256:VERSION --render --prepare-gfx --include-png`，不传 `--trust-html`。它冻结整个保存版本和输入，真栅格化所选 SVG，再用内核合成器合成整帧，不读取成片、不复用正式缓存。所有中间文件只在配置的私有暂存根（路径不能含 `%`），进程由 Job 监管，确认收尾并清理后才返回内联 PNG。未开放默认暖预览、普通媒体、字幕、HTML、侧栏编辑或其他工程，不等于成片/QC。
+不同于上文 POSIX 路径，Windows x64 使用[独立原生配置](windows-svg.md#普通-svg-sequence-工程)，可对符合该配置的工程（包括锁定主片）执行显式冷准备。设置三个运行时根，再用 `timeline frame --frame N --expected-content-version sha256:VERSION --render --prepare-gfx --include-png`，不传 `--trust-html`。它复核保存版本及声明输入，栅格化可见 SVG，并按内核时钟合成整帧；不读成片或正式缓存。普通视频取经裁切和变换的原生帧，不做正式视频段再编码。中间文件仅写私有暂存，确认进程收尾并清理后才返回内联 PNG。此路不开放默认暖预览、HTML、字幕或连续预览，不授侧栏编辑、成片或 QC 资格。
 
 ## 显式写事务第一切片（v1；不是完整编辑器）
 

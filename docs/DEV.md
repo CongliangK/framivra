@@ -46,7 +46,7 @@
 ## 支持与验证边界
 
 - **Windows 原生内核**：x64 Python 与 Chrome/Edge 覆盖安装自检、CDP/CLI、FFmpeg 全链、缓存与 gc/clean。环境指纹绑定浏览器发行目录、系统库/驱动、系统/用户字体及注册表、主机与启动边界；未知输入拒绝复用，不承诺跨机器像素等价，保守扫描成本高于 Linux。Chrome 由 Job Object 在宿主强杀后回收整树，事务使用字节范围锁，删除以拒绝写入/改名共享的祖先句柄与按句柄删除并拒绝 junction 祖先。原生安全由本地 Windows 测试、中文/空格/# 路径单双分段/冷温缓存/严格 QC/解码/黑场/真峰值由本地 [E2E 运行器](../tests/runners/run_e2e.py) 的显式 `--scope capability` 及[独立验证器](../tests/runners/verify_e2e.py) 的同一 scope 验收；定时 / 手动 CI windows-install 覆盖安装安全/安装端到端及两项定向原生清理，并非 Windows 全套。**Windows CEF 与模型侧车生命周期不在该验收内**，平台专用测试必须分别报告。
-  Windows 有[受限 SVG gfx 与锁定主片 all 配置](reference/windows-svg.md)；不支持任意工程的 SVG 成片，内部验收不授生产资格。capability 只验独立 HTML/字幕/普通媒体机制，不授完整 30 秒或发布资格，也不自动 skip 主片后标完整通过。默认 `--scope full` 仍要求主片 900 帧与机制 180 帧两者全链；run/verify scope 必须一致，当前候选是否通过只以实际证据判断。
+  Windows SVG 成片与单帧的[独立原生配置](reference/windows-svg.md)覆盖普通 SVG-sequence 工程和锁定主片；内部验收不授生产资格。capability 只验独立 HTML/字幕/普通媒体机制，不授完整 30 秒或发布资格，也不自动 skip 主片后标完整通过。默认 `--scope full` 仍要求主片 900 帧与机制 180 帧两者全链；run/verify scope 必须一致，当前候选是否通过只以实际证据判断。
 
   以下为写操作（生成媒体与缓存，调用本地 FFmpeg/浏览器）。从仓根在 PowerShell 执行，替换为已有工具路径；全新 RUN 不得复用：
 
