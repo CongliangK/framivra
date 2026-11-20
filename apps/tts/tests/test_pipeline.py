@@ -115,6 +115,53 @@ class TestEdgeTTSExecutable(unittest.TestCase):
                     self.assertEqual(run.call_args.args[3], str(expected))
 
 
+class TestEdgeTTSSubprocess(unittest.TestCase):
+    def test_edge_child_failure_preserves_unicode_diagnostic(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / '声音 🎵.wav'
+            run = subprocess.run
+
+            def fake_edge(argv, **kwargs):
+                self.assertEqual(argv, ['fixture-edge', '--voice', edge_worker.VOICE_DEFAULT,
+                                        '--text', '读稿 🎵', '--write-media', str(out.with_suffix('.mp3'))])
+                return run([sys.executable, '-B', '-c',
+                            'import sys; print(sys.argv[1], file=sys.stderr); sys.exit(7)',
+                            '合成失败 🎵'], **kwargs)
+
+            with patch.dict(os.environ, {'PYTHONIOENCODING': 'ascii:strict', 'PYTHONUTF8': '0'}), \
+                 patch.object(edge_worker.subprocess, 'run', side_effect=fake_edge):
+                with self.assertRaisesRegex(RuntimeError, 'edge-tts 合成失败：合成失败 🎵'):
+                    edge_worker.synth_raw('读稿 🎵', str(out), 'fixture-edge')
+            self.assertEqual(list(out.parent.iterdir()), [])
+
+    def test_real_ffmpeg_reports_unicode_failed_input_and_transcodes_valid_media(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / '声音 🎵.wav'
+            mp3 = out.with_suffix('.mp3')
+            run = subprocess.run
+
+            def fake_edge(argv, **kwargs):
+                if argv[0] != 'fixture-edge':
+                    return run(argv, **kwargs)
+                self.assertEqual(argv[-2:], ['--write-media', str(mp3)])
+                return subprocess.CompletedProcess(argv, 0, '', '')
+
+            with patch.object(edge_worker.subprocess, 'run', side_effect=fake_edge):
+                mp3.write_bytes(b'not an MP3 file')
+                with self.assertRaisesRegex(RuntimeError, 'edge wav 转码失败：') as failed:
+                    edge_worker.synth_raw('短句', str(out), 'fixture-edge')
+                self.assertIn(mp3.name, str(failed.exception))
+                self.assertEqual(mp3.read_bytes(), b'not an MP3 file')
+                self.assertFalse(out.exists())
+                run(['ffmpeg', '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                     'sine=frequency=440:duration=0.2', str(mp3)], check=True)
+                self.assertEqual(edge_worker.synth_raw('短句', str(out), 'fixture-edge'), str(out))
+            self.assertFalse(mp3.exists())
+            self.assertEqual(ffprobe_stream(str(out)), {
+                'codec_name': 'pcm_s16le', 'channels': 1, 'sample_rate': '48000'})
+            self.assertAlmostEqual(ffprobe_duration(str(out)), 0.2, delta=0.01)
+
+
 def synth_raw(path, amp=0.2, dur=3.0, freq=440, rate=22050):
     """模拟引擎 raw（IndexTTS 出 22.05k）：KB 级正弦 wav。"""
     src = f"aevalsrc={amp}*sin(2*PI*{freq}*t):d={dur}:s={rate}"

@@ -50,13 +50,17 @@ def synth_raw(text: str, out_wav: str, edge_bin: str,
         raise ValueError("✗ 文本为空（spec 的 text 需人工回填后再 gen）")
     mp3 = os.path.splitext(out_wav)[0] + ".mp3"
     os.makedirs(os.path.dirname(os.path.abspath(mp3)), exist_ok=True)
+    # edge-tts is a Python CLI. Keep its redirected streams independent of
+    # both the host ANSI code page and any inherited PYTHONIOENCODING setting.
+    env = dict(os.environ, PYTHONIOENCODING='utf-8')
     r = subprocess.run([edge_bin, "--voice", voice, "--text", text,
-                        "--write-media", mp3], capture_output=True, text=True)
+                        "--write-media", mp3], env=env, capture_output=True,
+                       encoding='utf-8', errors='replace')
     if r.returncode or not os.path.exists(mp3) or os.path.getsize(mp3) == 0:
         raise RuntimeError(f"✗ edge-tts 合成失败：{(r.stderr or r.stdout)[:300]}")
-    r2 = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", mp3,
-                         "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le",
-                         out_wav], capture_output=True, text=True)
+    r2 = audio_processing._run_media_tool(["ffmpeg", "-y", "-v", "error", "-i", mp3,
+                                           "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le",
+                                           out_wav])
     if r2.returncode:
         raise RuntimeError(f"✗ edge wav 转码失败：{r2.stderr[:300]}")
     os.unlink(mp3)
