@@ -81,7 +81,10 @@ def _check_cancel(cancel):
 
 
 def _produce(c, page, scratch_parent, scratch_root, html, count, key, namespace, environment, render, cancel):
-    name = 'gfx-cdp-' + secrets.token_hex(16)
+    # Core mode already nests the scratch under its private cache session.
+    # Leave room for the renderer's atomic PNG temporary basename on Windows
+    # without depending on the machine's long-path policy. Creation is exclusive.
+    name = 'gfx-cdp-' + secrets.token_hex(8)
     scratch = scratch_root / name
     identity = None
     try:

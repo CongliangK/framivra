@@ -718,8 +718,10 @@ def atomic_write(path, data, *, root=None):
     p = _write_target(path, root=root)
     if _directory_guard():
         p.parent.mkdir(parents=True, exist_ok=True)
-        fd, name = tempfile.mkstemp(prefix="." + p.name + ".", suffix=".tmp",
-                                    dir=p.parent)
+        # On Windows a valid target (e.g. a media completion marker) can be
+        # close to MAX_PATH. Don't copy its basename into our random temp name.
+        prefix = '.vtx-' if os.name == 'nt' else '.' + p.name + '.'
+        fd, name = tempfile.mkstemp(prefix=prefix, suffix='.tmp', dir=p.parent)
         try:
             with os.fdopen(fd, "wb") as stream:
                 stream.write(payload)
