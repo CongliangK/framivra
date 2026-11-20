@@ -90,7 +90,9 @@ def _parent_fd(path):
 def _version(path):
     from .runtime import fstxn
     identity = fstxn.cleanup_identity(path)
-    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+    # Hash raw timeline bytes: the Windows CRT text default folds CRLF.
+    flags = (os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+             | getattr(os, 'O_BINARY', 0))
     if os.name != 'nt' and getattr(os, 'O_NOFOLLOW', 0) and os.open in os.supports_dir_fd:
         with _parent_fd(path) as parent_fd:
             fd = os.open(path.name, flags, dir_fd=parent_fd)

@@ -1,5 +1,6 @@
 """Storage wire contract, bounded reads and existing cleanup safety integration."""
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -83,6 +84,28 @@ class StorageTests(unittest.TestCase):
                     self.root.unlink()
                 if moved.exists():
                     moved.rename(self.root)
+
+    def test_inspect_and_plan_bind_exact_lf_and_crlf_timeline_bytes(self):
+        candidate = self.put('cache/old.bin', b'obsolete')
+        lf = json.dumps(json.loads(self.timeline.read_bytes()), indent=2).encode('utf-8') + b'\n'
+        plans = []
+        for raw in (lf, lf.replace(b'\n', b'\r\n')):
+            with self.subTest(newline=raw[-2:]):
+                self.timeline.write_bytes(raw)
+                version = 'sha256:' + hashlib.sha256(raw).hexdigest()
+                for op in ('inspect', 'plan'):
+                    result = self.call(op)
+                    self.assertTrue(result['ok'], result)
+                    self.assertEqual(result['content_version'], version)
+                    if op == 'plan':
+                        self.assertIn('cache/old.bin', [e['path'] for e in result['plan']['entries']])
+                        plans.append(result['plan']['id'])
+                self.assertEqual(self.timeline.read_bytes(), raw)
+                self.assertEqual(list(candidate.parent.iterdir()), [candidate])
+                self.assertEqual(candidate.read_bytes(), b'obsolete')
+                self.assertEqual(sorted(p.name for p in self.root.iterdir()), ['cache', 'timeline.json'])
+        if len(plans) == 2:
+            self.assertNotEqual(*plans, 'line-ending edits must invalidate the previous plan')
 
     def test_incomplete_scan_has_no_totals(self):
         self.put('a', b'1')
