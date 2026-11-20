@@ -51,6 +51,13 @@ class TestPngSequence(unittest.TestCase):
             self.assertEqual(source.time_base, Fraction(1001, 30000))
             self.assertEqual(source.input_args(ready=False)[3], '30000/1001')
 
+    def test_input_escapes_literal_directory_percents_only(self):
+        directory = self.path / '100% rendering' / 'sequence%2d 中文 #'
+        source = dataclasses.replace(self.source, directory=directory)
+        expected = self.path / '100%% rendering' / 'sequence%%2d 中文 #' / 'f%04d.png'
+        self.assertEqual(source.input_args(1, 2, ready=False)[-1], str(expected))
+        self.assertEqual(source.frame_path(1), directory / 'f0001.png')
+
     def test_ready_rejects_hole_corruption_and_recovers(self):
         for i in range(4):
             write_png(self.path / f'f{i:04d}.png', frame=i)
@@ -288,7 +295,8 @@ class TestPngDynamicFormatIntegration(unittest.TestCase):
         count, width, height = 10, 8, 8
         with tempfile.TemporaryDirectory(prefix='png_dynamic_format_') as td:
             root = Path(td)
-            mixed, oracle = root / 'mixed', root / 'oracle'
+            mixed, oracle = root / 'mixed%02d 中文 #' / '100% frames', root / 'oracle'
+            mixed.parent.mkdir()
             mixed.mkdir()
             oracle.mkdir()
             for i in range(count):
@@ -663,7 +671,7 @@ class TestSubtitleReadiness(unittest.TestCase):
                                     {'src': 'page.html', 'dst_in': 0, 'dur': 24}]}]})
             with mock.patch.object(subs, 'png_source', return_value=source), \
                  mock.patch.object(subs, 'seg_encoder_kind', return_value='x264'):
-                preview = root / 'preview'
+                preview = root / 'preview%d 中文 #'
                 preview.mkdir()
                 path, description = subs._bg_frame(c, 0, preview, False)
                 self.assertTrue(path.is_file())
@@ -672,6 +680,7 @@ class TestSubtitleReadiness(unittest.TestCase):
                 path, description = subs._bg_frame(c, 0, preview, False)
                 self.assertTrue(path.is_file())
                 self.assertIn('兜底', description)
-                rgba = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', str(path),
+                rgba = subprocess.check_output(['ffmpeg', '-v', 'error', '-f', 'image2',
+                                                '-pattern_type', 'none', '-i', str(path),
                                                 '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'])
                 self.assertEqual(rgba, b'\0\0\0\xff' * (16 * 16))

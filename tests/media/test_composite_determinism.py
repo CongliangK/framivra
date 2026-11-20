@@ -678,7 +678,7 @@ class TestMediaSourcePreparation(unittest.TestCase):
                                         (label, x, list(pixel), expected))
                     # Every fresh cut reference decodes the original source,
                     # not the seg under test, and preserves effects/placement.
-                    reference_dir = project / 'source-reference'
+                    reference_dir = project / 'source-reference%d 中文 #'
                     reference_dir.mkdir()
                     reference = composite.render_source_frame(c, clip, 2, reference_dir)
                     ref = run(['ffmpeg', '-v', 'error', '-i', str(reference), '-frames:v', '1',
