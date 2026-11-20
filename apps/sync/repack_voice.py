@@ -83,6 +83,10 @@ def find_valley(x, center_s, win_s=3.0):
 
 
 def main():
+    if os.name == 'nt':
+        # Keep diagnostics and take names usable through redirected streams.
+        sys.stdout.reconfigure(encoding='utf-8', errors='strict')
+        sys.stderr.reconfigure(encoding='utf-8', errors='backslashreplace')
     ap = argparse.ArgumentParser(description="真人录音替换 voice 轨 TTS 占位源")
     ap.add_argument("-t", "--timeline", default="./timeline.json")
     ap.add_argument("--takes-dir", default=None,
@@ -104,7 +108,8 @@ def main():
     BACKUP = os.path.join(FINAL + "_tts_backup")
     only = set(args.windows)
 
-    tl = json.load(open(TL))
+    with open(TL, encoding='utf-8') as stream:
+        tl = json.load(stream)
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from vtx.pipeline.constraints import parse_fps, frame_sample
     fps = float(parse_fps(tl['project']['fps']))
