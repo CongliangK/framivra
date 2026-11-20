@@ -470,6 +470,33 @@ assert "numpy" not in sys.modules
         self.assertEqual(before["configured_tools"], after["configured_tools"])
 
     @mock.patch.dict(os.environ, {"PATHEXT": ".CMD;.EXE"})
+    def test_windows_configured_fluidsynth_dll_rekeys_render_and_receipt(self):
+        if os.name != 'nt':
+            self.skipTest('native Windows DLL stat versus executable search')
+        library = self.root / '音源 FluidSynth.dll'
+        runtime = Path(os.environ['MUSIC_RUNTIME'])
+        runtime.write_text(json.dumps({'tools': {'fluidsynth_lib': str(library)}}), encoding='utf-8')
+        env = dict(os.environ)
+        def library_identity():
+            data, _ = identity.execution_identity([sys.executable], env)
+            return data['configured_tools']['fluidsynth_lib']
+
+        self.assertEqual(library_identity(), {'command': str(library), 'state': 'missing'})
+        # The identity collector never loads or executes this synthetic file.
+        library.write_bytes(b'first DLL placeholder')
+        self.assertIsNone(shutil.which(str(library)))
+        self.assertEqual(Path(library_identity()['selected']), library.absolute())
+        c = self._ctx(True)
+        before = self.state(c)
+        replacement = self.root / 'next.dll'
+        replacement.write_bytes(b'second DLL placeholder with a different size')
+        replacement.replace(library)
+        self.assertEqual(library_identity()['size'], library.stat().st_size)
+        self.assertTrue(all(old != new for old, new in zip(before, self.state(c))))
+        self.assertEqual(self._calls(), [])
+        self.assertFalse((self.root / 'cache').exists())
+
+    @mock.patch.dict(os.environ, {"PATHEXT": ".CMD;.EXE"})
     def test_windows_bare_media_identity_ignores_wrappers_and_rekeys_on_exe_replacement(self):
         if os.name != "nt":
             self.skipTest("native Windows CreateProcess lookup")
