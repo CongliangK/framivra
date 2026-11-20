@@ -95,13 +95,39 @@ def test_health_and_import_do_not_load_gpu_libraries(fresh_env, tmp_path):
     assert probe.returncode == 0, probe.stderr
 
 
+@pytest.mark.skipif(os.name != 'nt', reason='native Windows redirected CLI streams')
+@pytest.mark.parametrize('entry', [[str(APP / 'bgm.py')], ['-m', 'bgm_gen']])
+def test_windows_bgm_entry_preserves_unicode_json_and_errors(fresh_env, tmp_path, entry):
+    project = tmp_path / 'project.json'
+    data = json.loads((APP / 'examples/synth.json').read_bytes())
+    data['name'] = '音符 🎵'
+    authored = json.dumps(data, ensure_ascii=False).encode('utf-8')
+    project.write_bytes(authored)
+    env = {**fresh_env, 'PYTHONUTF8': '0', 'PYTHONIOENCODING': 'cp936:strict', 'PYTHONPATH': str(APP)}
+    command = [sys.executable, '-B', *entry, 'show', 'structure', '--json']
+
+    def show(path):
+        return subprocess.run([*command, str(path)], env=env, cwd=tmp_path,
+                              capture_output=True, timeout=30)
+
+    result = show(project)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout.decode('utf-8'))['project'] == data['name']
+    missing = show(tmp_path / '缺少 🎵.json')
+    assert missing.returncode == 1 and missing.stdout == b''
+    error = missing.stderr.decode('utf-8')
+    assert '缺少 🎵.json' in error and 'Traceback' not in error
+    assert project.read_bytes() == authored
+    assert set(tmp_path.iterdir()) == {project}
+
+
 def test_fresh_synth_project_end_to_end(fresh_env, tmp_path):
     assert shutil.which("ffmpeg"), "FFmpeg is the documented base render dependency"
-    out = tmp_path / '音 # render'
+    out = tmp_path / '音 # render 🎵'
     env = {**fresh_env, 'PYTHONIOENCODING': 'utf-8'}
     if os.name == 'nt':
-        # Native FFmpeg writes UTF-8 diagnostics even with Python UTF-8 mode off.
-        env['PYTHONUTF8'] = '0'
+        # Exercise both native FFmpeg decoding and the real CLI stdout boundary.
+        env.update(PYTHONUTF8='0', PYTHONIOENCODING='cp936:strict')
     python = sys.executable if os.name == 'nt' else 'python3'
     command = [python, str(APP / "bgm.py"), "render", str(APP / "examples/synth.json"), "-o", str(out), "-q"]
     result = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, encoding='utf-8', timeout=90)
