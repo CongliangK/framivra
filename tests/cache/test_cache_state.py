@@ -24,6 +24,26 @@ def _tl(root, **over):
 
 
 class CacheIdentity(unittest.TestCase):
+    def test_owned_svg_receipt_distinguishes_initial_bytes_from_recheck(self):
+        from types import SimpleNamespace
+        from vtx.cache import cache_state
+        from vtx.render import gfx_svg
+
+        initial = b'initial timeline bytes'
+        reader = mock.Mock(return_value=initial)
+        c = SimpleNamespace(tl={}, _svg_runtime=object(), _read_timeline_bytes=reader)
+        with mock.patch('vtx.pluginlib.hooks.active_plugins', return_value=[]), \
+                mock.patch.object(gfx_svg, 'route', return_value='svg-sequence'), \
+                mock.patch.object(cache_state, '_append_gfx_dependency_identity') as append:
+            expected = receipt_fingerprint(c, timeline_bytes=initial)
+            reader.assert_not_called()
+            append.assert_called_once_with(c, mock.ANY, [], pin_svg=True)
+            append.reset_mock()
+
+            self.assertEqual(receipt_fingerprint(c), expected)
+            reader.assert_called_once_with()
+            append.assert_called_once_with(c, mock.ANY, [], pin_svg=False)
+
     def test_content_not_timestamp_and_declared_dependencies(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

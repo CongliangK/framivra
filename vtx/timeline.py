@@ -56,6 +56,11 @@ def timeline_capabilities():
                   "inline_png": {"flag": "--include-png", "encoding": "base64",
                                  "wire_limit_bytes": 8388608}},
     }
+    from .timeline_preview_window import SCHEMA, supported
+    if supported():
+        result["capabilities"]["preview_window"] = {
+            "schema": SCHEMA, "inline_media": True, "prepare_inputs": True,
+        }
     return result
 
 
@@ -122,12 +127,15 @@ def _raw_text(payload):
     return "".join(chunks())
 
 
-def _load(path, operation, *, raw=False, max_bytes=None):
+def _load(path, operation, *, raw=False, max_bytes=None, read_payload=None):
     result = _result(operation)
     result["document"] = None
     try:
-        with Path(path).expanduser().open("rb") as stream:
-            payload = stream.read() if max_bytes is None else stream.read(max_bytes + 1)
+        if read_payload is not None:
+            payload = read_payload()  # private seam for a directory-anchored reader
+        else:
+            with Path(path).expanduser().open("rb") as stream:
+                payload = stream.read() if max_bytes is None else stream.read(max_bytes + 1)
     except (OSError, ValueError, TypeError) as error:
         _error(result, "input.read", "", str(error))
         return result

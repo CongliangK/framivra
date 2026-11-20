@@ -408,7 +408,11 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     """
     from ..render.gfx_svg import read_timeline_input
     h = hashlib.sha256()
-    h.update(read_timeline_input(c) if timeline_bytes is None else timeline_bytes)
+    if timeline_bytes is None:
+        reader = getattr(c, "_read_timeline_bytes", None)
+        h.update(reader() if reader is not None else read_timeline_input(c))
+    else:
+        h.update(timeline_bytes)
     def source_key(entry):
         index, source = entry
         origin = f'$.sources[{index}]'
@@ -419,6 +423,9 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     sources = _get(c, c.tl, 'sources', '$', [])
     visual_bgm = getattr(c, '_visual_bgm_source_ids', ())
     audio = getattr(c, '_svg_audio_digests', {})
+    # The ordinary isolated preview supervisor reads its own bound descriptors;
+    # normal receipt callers preserve pathname reads and missing-source behavior.
+    project_digest = getattr(c, '_project_input_digest', None)
     for index, s in sorted(_SourceEntries(c, sources), key=source_key):
         origin = f'$.sources[{index}]'
         name = _field(c, s, 'path', origin)
@@ -430,6 +437,8 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
         if visual_bgm and s['id'] in visual_bgm:
             # PNG scope binds the declared score bytes, not its audio runtime.
             digest = 'visual-bgm-json:' + (file_digest(p) if p.is_file() else 'MISSING')
+        elif project_digest is not None:
+            digest = project_digest(p, sample=True)
         else:
             digest = media_stat_digest(p) if p.is_file() else 'MISSING'
         h.update(_encode(c, prefix + digest + '\n', origin + '.path'))
@@ -457,8 +466,10 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     for index, item in enumerate(declared_dependencies(c)):
         origin = f'$.project.cache_dependencies[{index}]'
         prefix = item + ':'
-        digest = (_svg_receipt_digest(c, item) if windows_svg else
-                  file_digest(_path(c, item, origin)))
+        if windows_svg:
+            digest = _svg_receipt_digest(c, item)
+        else:
+            digest = (project_digest or file_digest)(_path(c, item, origin))
         h.update(_encode(c, prefix + digest + '\n', origin))
     for ti, track in _indexed(c, _get(c, c.tl, 'video_tracks', '$', []), '$.video_tracks'):
         track_origin = f'$.video_tracks[{ti}]'
@@ -477,7 +488,9 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     src = _get(c, c.tl, 'subtitles_src', '$')
     if isinstance(src, str) and src:
         p = _path(c, src, '$.subtitles_src')
-        digest = file_digest(p) if p.is_file() else 'MISSING'
+        anchored_digest = getattr(c, '_subtitles_input_digest', None)
+        digest = (anchored_digest() if anchored_digest is not None else
+                  file_digest(p) if p.is_file() else 'MISSING')
         h.update(_encode(c, 'subtitles_src:' + digest + '\n', '$.subtitles_src'))
     # 生效插件清单摘要段（迟导入避免环）；空清单只省略此段。插件装/卸/
     # 升级/改参使段出现或内容变化，不能借空段恢复历史整体指纹。

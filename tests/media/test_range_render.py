@@ -100,6 +100,21 @@ class TestConcatManifest(unittest.TestCase):
         self.assertEqual(_concat_manifest([], FPS), '')
 
 
+class TestNativeConcatClock(unittest.TestCase):
+    def test_rejects_different_time_bases_even_with_the_same_decode_delay(self):
+        from types import SimpleNamespace
+        from vtx.pipeline.range import _native_concat_clock
+
+        # Both one-frame segments are locally exact CFR with zero delay.
+        probes = [SimpleNamespace(stderr='', stdout=json.dumps({
+            'streams': [{'codec_name': 'h264', 'time_base': f'1/{den}'}],
+            'packets': [{'pts': 0, 'dts': 0, 'duration': duration}],
+        })) for den, duration in ((30000, 1001), (60000, 2002))]
+        ctx = SimpleNamespace(run=mock.Mock(side_effect=probes), frame_rate=Fraction(30000, 1001))
+        with self.assertRaisesRegex(ValueError, 'same time_base'):
+            _native_concat_clock(ctx, ('a.mp4', 'b.mp4'), [(0, 1), (1, 2)])
+
+
 class TestParseTimespec(unittest.TestCase):
     def test_seconds(self):
         self.assertEqual(parse_timespec("12", FPS), 360)
@@ -378,9 +393,20 @@ class TestRangeCachePolicy(unittest.TestCase):
         self.assertFalse(self.c.out.exists())
 
     def test_native_window_rejects_unqualified_graphics_and_nonisolated_workspace(self):
+        from tests.gfx._environment import bind_environment
+        from vtx.cache.policy import CachePolicy
         from vtx.pipeline import range as ranges
-        self.c.w, self.c.h, self.c.dry = 1920, 1080, False
-        self.c.tl['video_tracks'] = [{'kind': 'gfx', 'clips': [{'dst_in': 6, 'dur': 4}]}]
+        from vtx.pipeline.infra import Ctx
+        bind_environment(self)
+        (self.root / 'cold.html').write_text('<html><body>cold page</body></html>')
+        timeline = self.root / 'timeline.json'
+        tl = TestCliGuards._min_tl(video_tracks=[{'name': 'gfx', 'kind': 'gfx', 'clips': [
+            {'src': 'cold.html', 'dst_in': 6, 'dur': 4}]}])
+        tl['project'].update(width=1920, height=1080)
+        timeline.write_text(json.dumps(tl))
+        self.c = Ctx(timeline)
+        self.c.run = mock.Mock()
+        self.c.cache_policy = CachePolicy('core')
         workspace = self.c.cache / 'preview' / 'request'
         workspace.mkdir(parents=True)
         (workspace / 'foreign').touch()
@@ -388,8 +414,11 @@ class TestRangeCachePolicy(unittest.TestCase):
             with mock.patch.dict(os.environ, {'FFREPORT': 'file=unexpected.log'}), \
                     self.assertRaisesRegex(ValueError, 'refuses FFREPORT'):
                 ranges.render_1080p_window(self.c, 0, 6, workspace=workspace)
-            with self.assertRaisesRegex(ValueError, 'overlaps gfx'):
-                ranges.render_1080p_window(self.c, 5, 7, workspace=workspace)
+            cold = workspace.with_name('cold')
+            cold.mkdir()
+            with self.assertRaisesRegex(ValueError, 'no scoped SVG pack'):
+                ranges.render_1080p_window(self.c, 5, 7, workspace=cold)
+            self.assertEqual(list(cold.iterdir()), [])
             with self.assertRaisesRegex(ValueError, 'integer frame interval'):
                 ranges.render_1080p_window(self.c, False, 6, workspace=workspace)
             with self.assertRaisesRegex(ValueError, 'empty physical workspace'):
@@ -400,6 +429,159 @@ class TestRangeCachePolicy(unittest.TestCase):
         prepare.assert_not_called()
         self.c.run.assert_not_called()
         self.assertEqual(list(self.c.out.iterdir()), [])
+
+    @unittest.skipUnless(sys.platform in ('linux', 'darwin'), 'requires the anchored pack reader')
+    def test_native_window_stages_packed_intersections_and_rechecks_before_return(self):
+        import struct
+        import zlib
+        from tests.gfx._environment import bind_environment
+        from vtx.cache.hygiene import gfx_dir
+        from vtx.cache.policy import CachePolicy
+        from vtx.cache.session import pack_path
+        from vtx.pipeline import range as ranges
+        from vtx.pipeline.infra import Ctx
+        from vtx.pipeline.stages import validate_core
+        from vtx.render import gfx_cli, gfx_environment, gfx_pack, gfx_packed_reader
+
+        def png(red):
+            def chunk(tag, data):
+                return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
+            row = b'\0' + bytes((red, 42, 80, 128)) * 1920
+            return (gfx_cli.PNG_SIGNATURE + chunk(b'IHDR', struct.pack('>IIBBBBB', 1920, 1080, 8, 6, 0, 0, 0))
+                    + chunk(b'IDAT', zlib.compress(row * 1080)) + chunk(b'IEND', b''))
+
+        bind_environment(self)
+        environment = mock.patch.dict(os.environ, VTX_GFX='cdp', VTX_GFX_CACHE_NS='',
+                                      VTX_VIDEO_SEGMENTS='1', VTX_SEG_NVENC='0')
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in ('lower', 'upper', 'cold'):
+            (self.root / f'{name}.html').write_text(f'<body>{name}</body>')
+        tracks = [{'kind': 'gfx', 'name': 'lower', 'clips': [
+            {'src': 'lower.html', 'dur': 4, 'dst_in': 6.0, 'opacity': .7},
+            {'src': 'cold.html', 'dur': 4, 'dst_in': 10}]},
+            {'kind': 'gfx', 'name': 'upper', 'clips': [
+                {'src': 'upper.html', 'dur': 4, 'dst_in': 8, 'fade_in_frames': 2}]}]
+        tl = TestCliGuards._min_tl(video_tracks=tracks)
+        tl['project'].update(width=1920, height=1080)
+        timeline = self.root / 'timeline.json'
+        timeline.write_text(json.dumps(tl))
+        c = Ctx(timeline)
+        c.cache_policy = CachePolicy('core')
+        c.run = mock.Mock()
+        self.assertEqual(validate_core(c), [])
+        lower, upper = (t['clips'][0] for t in c.tl['video_tracks'])
+        self.assertIs(type(lower['dst_in']), float)
+        expected, packs = {}, []
+        for clip, seed in ((lower, 20), (upper, 40)):
+            directory = gfx_dir(c, clip)
+            directory.mkdir(parents=True)
+            for i in range(4):
+                expected[clip['src'], i] = data = png(seed + i)
+                (directory / f'f{i:04d}.png').write_bytes(data)
+            gfx_cli.complete_page(directory, 4, directory.name, c.w, c.h,
+                                  environment=gfx_environment.certificate(c), verify_inputs=lambda: None)
+            record = json.loads((directory / 'complete.json').read_bytes())
+            archive = pack_path(c, clip)
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            gfx_pack.pack_page(directory, archive, root=c.root, expected_record=record)
+            for member in directory.iterdir():
+                member.unlink()
+            packs.append(archive)
+
+        consumed, cancelled = [], []
+        def composite(plan, layers, _out, _subs, *, a, b, sub_file):
+            self.assertEqual((a, b), (7, 10))
+            self.assertEqual([layer['cl'] for layer in layers], [lower, upper])
+            self.assertIs(type(layers[0]['cl']['dst_in']), int)
+            for layer, (first, stop) in zip(layers, ((1, 4), (0, 2))):
+                source = layer['source']
+                self.assertEqual(layer['source_stop'], stop)
+                self.assertEqual(plan._layer_input_args(layer, a)[5], str(first))
+                self.assertEqual(sorted(p.name for p in source.directory.iterdir()),
+                                 [f'f{i:04d}.png' for i in range(first, stop)])
+                for i in range(first, stop):
+                    self.assertEqual(source.frame_path(i).read_bytes(), expected[layer['cl']['src'], i])
+            consumed.append(True)
+
+        def check_cancel():
+            if cancelled:
+                raise KeyboardInterrupt
+
+        def render(case):
+            work = c.cache / 'preview' / case
+            work.mkdir(parents=True)
+            # Legacy multi-layer fixtures exercise only the transplanted core,
+            # not the restricted SVG-only launcher or its production evidence.
+            return ranges._render_native_window(c, 7, 10, workspace=work,
+                                                check_cancel=check_cancel, expected_svg_pack=None)
+
+        def readback(*_args, **_kwargs):
+            if case == 'cancelled':
+                cancelled.append(True)
+            elif case == 'changed-pack':
+                with packs[-1].open('ab') as stream:
+                    stream.write(b'late change')
+            return mock.Mock(stdout='3\n')
+
+        c._preview_window_tasks = mock.Mock()
+        c.run.side_effect = lambda cmd, **kwargs: readback() if cmd[0] == 'ffprobe' else mock.Mock()
+        real_read = gfx_packed_reader.read_frames
+        with mock.patch.object(ranges.RenderPlan, 'composite', composite), \
+                mock.patch.object(ranges, 'mix_audio_wav'), \
+                mock.patch.object(ranges, 'pick_vcodec', return_value=([], 'mock')), \
+                mock.patch.object(ranges, 'media_cache_valid', side_effect=lambda p, **_: p.name.startswith('native_')), \
+                mock.patch.object(ranges.subprocess, 'run', side_effect=readback), \
+                mock.patch.object(gfx_packed_reader, 'read_frames', wraps=gfx_packed_reader.read_frames) as read:
+            case = 'warm'
+            self.assertEqual(render(case).parent.name, case)
+            self.assertEqual([call.args[1:] for call in read.call_args_list],
+                             [(lower, 1, 4), (upper, 0, 2)])
+            read_ctx = read.call_args.args[0]
+            self.assertIs(read.call_args_list[0].args[0], read_ctx)
+            self.assertIsNot(read_ctx, c)
+            self.assertIs(read_ctx.tl, c.tl)
+            self.assertEqual(read_ctx.input_fingerprint, c.input_fingerprint)
+            self.assertEqual(read_ctx.cache, c.cache)
+            self.assertTrue(read_ctx._core_only_preview)
+            self.assertIsNone(read_ctx._svg_consumer_sources)
+            self.assertIsNot(read_ctx.execution, c.execution)
+            self.assertEqual(consumed, [True])
+            case = 'over-budget'
+            with mock.patch.object(gfx_packed_reader, '_MAX_BYTES',
+                                   sum(len(expected['lower.html', i]) for i in range(1, 4))
+                                   + len(expected['upper.html', 0])), \
+                    self.assertRaisesRegex(ValueError, 'byte limit'):
+                render(case)
+            self.assertEqual(consumed, [True])
+            case = 'cancelled'
+            with self.assertRaises(KeyboardInterrupt):
+                render(case)
+            cancelled.clear()
+            case = 'saved-during-gfx-recheck'
+            original = timeline.read_bytes()
+
+            def read_while_saving(ctx, clip, start, stop, **kwargs):
+                if clip is upper:
+                    keep = kwargs['keep_recheck']
+                    def keep_with_save(recheck):
+                        def recheck_and_save():
+                            recheck()
+                            timeline.write_bytes(original + b'\n')
+                        keep(recheck_and_save)
+                    kwargs['keep_recheck'] = keep_with_save
+                return real_read(ctx, clip, start, stop, **kwargs)
+
+            with mock.patch.object(gfx_packed_reader, 'read_frames', side_effect=read_while_saving), \
+                    self.assertRaises(SystemExit) as stale:
+                render(case)
+            self.assertEqual(stale.exception.code, 1)
+            timeline.write_bytes(original)
+            case = 'changed-pack'
+            with self.assertRaisesRegex(ValueError, 'packed gfx changed'):
+                render(case)
+        self.assertFalse(c.out.exists())
+        self.assertTrue(all(not any(gfx_dir(c, clip).iterdir()) for clip in (lower, upper)))
 
 
 @unittest.skipUnless(os.environ.get("VTX_RANGE_INTEG") == "1",
@@ -549,9 +731,17 @@ class TestRangeIntegration(unittest.TestCase):
 
     def test_native_mp4_preserves_short_window_presentation_clock(self):
         import wave
+        from vtx.cache.recovery import completion_marker, media_cache_valid
         from vtx.pipeline.infra import Ctx
         from vtx.pipeline.range import render_1080p_window
         from vtx.pipeline.stages import validate_core
+        from vtx.timeline_preview_window import _probe_facts
+
+        def probe_packets(path):
+            probe = subprocess.run(['ffprobe', '-v', 'error', '-show_streams', '-show_packets',
+                                    '-of', 'json', str(path)], check=True, capture_output=True, timeout=60)
+            self.assertEqual(probe.stderr, b'')
+            return json.loads(probe.stdout)
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -567,34 +757,60 @@ class TestRangeIntegration(unittest.TestCase):
             # Default millisecond edit lists presented 1584 and 3216 samples.
             # NTSC must use S(61)-S(59) = 97698-94494, not round(2*1601.6).
             ntsc = '30000/1001'
-            mixed = {}
-            for fps, fa, fb, samples, name, force_extract in (
-                    (30, 60, 61, 1600, 'tone.wav', False),
-                    (ntsc, 59, 61, 3204, 'tone.wav', False),
-                    (ntsc, 59, 61, 3204, 'tone.wav', True),
-                    (ntsc, 59, 61, 3204, 'bwf.wav', False),
-                    (30, 60, 61, 1600, 'stream.wav', False)):
-                with self.subTest(fps=fps, source=name, force_extract=force_extract):
+            mixed, concat_packets = {}, {}
+            for fps, fa, fb, samples, name, force_extract, cut, mux_concat in (
+                    (30, 60, 61, 1600, 'tone.wav', False, None, False),
+                    (ntsc, 59, 61, 3204, 'tone.wav', False, None, False),
+                    (ntsc, 59, 61, 3204, 'tone.wav', True, None, False),
+                    (ntsc, 59, 61, 3204, 'bwf.wav', False, None, False),
+                    (30, 60, 61, 1600, 'stream.wav', False, None, False),
+                    (30, 13, 133, 192000, 'tone.wav', False, 131, True),
+                    (ntsc, 13, 43, 48048, 'tone.wav', False, 41, False),
+                    (ntsc, 13, 43, 48048, 'tone.wav', False, 41, True)):
+                with self.subTest(fps=fps, window=(fa, fb), source=name,
+                                  force_extract=force_extract, mux_concat=mux_concat):
                     direct = name == 'tone.wav' and not force_extract
                     timeline = root / 'timeline.json'
                     timeline.write_text(json.dumps({
                         **TestCliGuards._min_tl(),
-                        'project': {'fps': fps, 'width': 1920, 'height': 1080, 'duration_frames': 300},
+                        'project': {'fps': fps, 'width': 1920, 'height': 1080,
+                                    'duration_frames': 2 * cut if cut is not None else 300},
                         'sources': [{'id': 'tone', 'path': name}],
                         'audio_tracks': [{'name': 'voice', 'events': [
                             {'src': 'tone', 'src_in': 9, 'in': 0, 'out': 75, 'volume': 1}]}],
                     }), encoding='utf-8')
                     c = Ctx(timeline)
                     self.assertEqual(validate_core(c), [])
-                    workspace = c.cache / 'preview' / f'clock-{fa}-{name}-{force_extract}'
+                    workspace = c.cache / 'preview' / f'clock-{fa}-{fb}-{name}-{force_extract}-{mux_concat}'
                     workspace.mkdir(parents=True)
                     fallback = (mock.patch('vtx.media.preview_pcm.qualify', return_value=None)
                                 if force_extract else contextlib.nullcontext())
-                    with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}), fallback:
-                        output = render_1080p_window(c, fa, fb, workspace=workspace)
-                    with wave.open(str(workspace / 'work' / 'preview' / output.with_suffix('.wav').name)) as pcm:
+                    with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0', 'VTX_VIDEO_SEGMENTS': '2'}), fallback:
+                        output = render_1080p_window(c, fa, fb, workspace=workspace, _mux_concat=mux_concat)
+                    segment_dir = workspace / 'work' / 'preview'
+                    segments = sorted(segment_dir.glob('rseg_*.mp4'))
+                    parts = [(fa, fb)] if cut is None else [(fa, cut), (cut, fb)]
+                    self.assertEqual([p.name.split('_')[1:3] for p in segments],
+                                     [[f'{a:06d}', f'{b:06d}'] for a, b in parts])
+                    if cut is None:
+                        self.assertFalse(list(segment_dir.glob('*.list.txt')))
+                    else:
+                        # Confirm the real long+2 encode exercises differing B-frame decode delays.
+                        leading_dts = []
+                        for segment in segments:
+                            part = probe_packets(segment)
+                            stream, = part['streams']
+                            leading_dts.append(part['packets'][0]['dts'] * Fraction(stream['time_base']))
+                        self.assertNotEqual(leading_dts[0], leading_dts[1])
+                        self.assertTrue(all(media_cache_valid(p, frames=b - a)
+                                            for p, (a, b) in zip(segments, parts)))
+                        self.assertTrue(media_cache_valid(output, frames=fb - fa))
+                        # Legacy deletes its intermediate MP4 but leaves its completion marker.
+                        intermediate = segment_dir / output.with_suffix('.video.mp4').name
+                        self.assertEqual(completion_marker(intermediate).exists(), not mux_concat)
+                    with wave.open(str(segment_dir / output.with_suffix('.wav').name)) as pcm:
                         self.assertEqual((pcm.getframerate(), pcm.getnframes()), (48000, samples))
-                        if fps == ntsc and name == 'tone.wav':
+                        if fps == ntsc and name == 'tone.wav' and cut is None:
                             mixed[force_extract] = pcm.readframes(samples)
                     # Special BWF metadata and unknown-length pipe output still
                     # use ordinary extraction; direct PCM has no certificate.
@@ -602,18 +818,17 @@ class TestRangeIntegration(unittest.TestCase):
                     self.assertEqual(len(list(audio_cache.glob('*.wav'))), 0 if direct else 1)
                     self.assertEqual(len(list(audio_cache.glob('*.wav.complete.json'))), 0 if direct else 1)
 
-                    probe = subprocess.run(['ffprobe', '-v', 'error', '-show_streams', '-show_packets',
-                                            '-of', 'json', str(output)],
-                                           check=True, capture_output=True, timeout=60)
-                    info = json.loads(probe.stdout)
+                    info = probe_packets(output)
                     video, audio = info['streams']
                     rate = Fraction(fps)
                     vtb = Fraction(video['time_base'])
+                    self.assertEqual((video['codec_name'], video['width'], video['height']), ('h264', 1920, 1080))
                     self.assertEqual((video['start_pts'], video['duration_ts'] * vtb), (0, (fb - fa) / rate))
-                    self.assertEqual(sorted(p['pts'] * vtb for p in info['packets'] if p['codec_type'] == 'video'),
-                                     [i / rate for i in range(fb - fa)])
-                    self.assertEqual((audio['codec_name'], Fraction(audio['time_base']),
-                                      audio['start_pts'], audio['duration_ts']), ('aac', Fraction(1, 48000), 0, samples))
+                    video_packets = [p for p in info['packets'] if p['codec_type'] == 'video']
+                    self.assertEqual(sorted(p['pts'] * vtb for p in video_packets), [i / rate for i in range(fb - fa)])
+                    self.assertEqual([p['duration'] * vtb for p in video_packets], [1 / rate] * (fb - fa))
+                    self.assertEqual((audio['codec_name'], audio['channels'], Fraction(audio['time_base']),
+                                      audio['start_pts'], audio['duration_ts']), ('aac', 2, Fraction(1, 48000), 0, samples))
                     # Negative packets carry encoder priming, not presented audio;
                     # generic AAC decode can still return trailing padding.
                     cursor = 0
@@ -623,9 +838,109 @@ class TestRangeIntegration(unittest.TestCase):
                             self.assertGreater(packet['duration'], 0)
                             cursor += packet['duration']
                     self.assertEqual(cursor, samples)
+                    if cut is not None:
+                        _probe_facts(info, rate, fb - fa, samples, verify_dts=fps == 30)
+                        if fps == 30:
+                            # The 4s window has two different source segment decode delays;
+                            # its final interleaved audio must not advance the video DTS index.
+                            self.assertLess(video_packets[0]['dts'], 0)
+                            self.assertNotEqual([p['pts'] for p in video_packets], sorted(p['pts'] for p in video_packets))
+                            presented = [p for p in info['packets'] if p['codec_type'] == 'audio' and p['pts'] >= 0]
+                            self.assertEqual((presented[-1]['pts'], presented[-1]['duration']), (191488, 512))
+                            continue
+                        # Compare packet order and decode/presentation clocks,
+                        # not MP4 layout or file hashes across the two routes.
+                        bases = {s['index']: Fraction(s['time_base']) for s in info['streams']}
+                        concat_packets[mux_concat] = {
+                            s['codec_type']: [tuple(p[k] * bases[s['index']] for k in ('pts', 'dts', 'duration'))
+                                              for p in info['packets'] if p['stream_index'] == s['index']]
+                            for s in info['streams']}
+            self.assertEqual(concat_packets[False], concat_packets[True])
+            # Direct mux must retain the old pre-audio transaction checkpoint.
+            # Simulate a real save immediately after the segment clock probe.
+            from vtx.pipeline import range as ranges
+            seam_clock = ranges._native_concat_clock
+
+            def save_after_clock(*args):
+                clock = seam_clock(*args)
+                timeline.write_bytes(timeline.read_bytes() + b'\n')
+                return clock
+
+            stale = c.cache / 'preview' / 'changed-after-clock'
+            stale.mkdir()
+            with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0', 'VTX_VIDEO_SEGMENTS': '2'}), \
+                    mock.patch.object(ranges, '_native_concat_clock', side_effect=save_after_clock), \
+                    mock.patch.object(ranges, '_ensure_audio_wavs') as audio, self.assertRaises(SystemExit):
+                render_1080p_window(c, fa, fb, workspace=stale, _mux_concat=True)
+            audio.assert_not_called()
             self.assertEqual(mixed[False], mixed[True])
             self.assertTrue(any(mixed[False][i:i + 2] != mixed[False][i + 2:i + 4]
                                 for i in range(0, len(mixed[False]), 4)))
+
+    def test_program_pcm24_native_mp4_matches_whole_mix_at_short_ntsc_tail(self):
+        import hashlib
+        import math
+        import wave
+        from vtx.pipeline import preview_program_audio as program, range as ranges
+        from vtx.pipeline.constraints import frame_sample
+        from vtx.pipeline.infra import Ctx
+        from vtx.pipeline.stages import mix_audio_wav, source_audio_extraction, validate_core
+        from vtx.render.png_artifact import project_identity
+        from vtx.timeline_preview_window import _context, _probe_facts
+
+        rate, fa, fb = Fraction(30000, 1001), 59, 61
+        total = frame_sample(fb, rate)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            source, timeline = root / 'tone.wav', root / 'timeline.json'
+            with wave.open(str(source), 'wb') as wav:
+                wav.setparams((2, 3, 48000, 0, 'NONE', 'not compressed'))
+                pcm = bytearray()
+                for i in range(total):
+                    scale = 2300000 if i < 48000 else 25000
+                    v = round(scale * math.sin(2 * math.pi * 440 * i / 48000))
+                    pcm += v.to_bytes(3, 'little', signed=True) + (v // 2).to_bytes(3, 'little', signed=True)
+                wav.writeframes(pcm)
+            stored = {**TestCliGuards._min_tl(), 'sources': [{'id': 'tone', 'path': source.name}],
+                      'project': {'fps': str(rate), 'width': 1920, 'height': 1080, 'duration_frames': fb},
+                      'audio_tracks': [{'name': 'voice', 'events': [
+                          {'src': 'tone', 'in': 0, 'out': fb, 'volume': 1}]}]}
+            raw = json.dumps(stored).encode()
+            timeline.write_bytes(raw)
+            formal = Ctx(timeline)
+            _, cmd = source_audio_extraction(formal, 'tone')
+            formal.run(cmd)
+            reference = root / 'formal-reference.wav'
+            mix_audio_wav(formal, reference)
+            with wave.open(str(reference), 'rb') as wav:
+                wav.setpos(frame_sample(fa, rate))
+                expected = wav.readframes(3204)
+
+            payload = source.read_bytes()
+            paths = program.inputs(stored, root, rate)
+            manifest = program.manifest(paths.values(), {str(source): (len(payload), hashlib.sha256(payload).hexdigest())})
+            request = root / 'cache' / 'preview' / 'program-test'
+            workspace = request / 'render'
+            workspace.mkdir(parents=True)
+            copies, facts = program.stage(paths, manifest, root=root, root_identity=project_identity(root),
+                                          directory=request / 'program-inputs', check=lambda: None)
+            with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0', 'VTX_VIDEO_SEGMENTS': '2'}):
+                c = _context(timeline, lambda: None, os.environ.copy(), lambda: raw,
+                             epoch_sources={str(source)}, program_copies=copies)
+                program.probe(c, copies, facts)
+                self.assertEqual(validate_core(c), [])
+                c.write_root = workspace
+                output = ranges._render_native_window(
+                    c, fa, fb, workspace=workspace, check_cancel=lambda: None, expected_svg_pack=None,
+                    program_sources={'tone': (source, total)})
+            with wave.open(str(workspace / 'work' / 'preview' / output.with_suffix('.wav').name), 'rb') as actual:
+                self.assertEqual(actual.getnframes(), 3204)
+                self.assertEqual(actual.readframes(3204), expected)
+            result = subprocess.run(['ffprobe', '-v', 'error', '-show_streams', '-show_packets',
+                                     '-of', 'json', str(output)], check=True, capture_output=True, timeout=60)
+            self.assertEqual(result.stderr, b'')
+            self.assertEqual(_probe_facts(json.loads(result.stdout), rate, 2, 3204)['audio_channels'], 2)
+            self.assertFalse((root / 'out').exists())
 
     def test_1080p_window_uses_isolated_workspace_with_cold_inactive_gfx(self):
         import wave
@@ -721,6 +1036,79 @@ class TestRangeIntegration(unittest.TestCase):
                     self.assertEqual(changed, [True])
                     self.assertFalse(c.out.exists())
             self.assertEqual(observation.getvalue(), before)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'uses the Linux window worker context')
+    def test_private_native_first_frame_from_real_segment(self):
+        import hashlib
+        from vtx.cache.recovery import completion_marker
+        from vtx.pipeline.range import _measure_1080p_window
+        from vtx.pipeline.stages import validate_core
+        from vtx.timeline_preview_window import _context
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, lavfi in (
+                    ('base', "color=red:s=320x180:r=30:d=3,drawbox=c=lime:t=fill:enable='gte(n,24)'"),
+                    ('pip', 'color=blue:s=320x180:r=30:d=3')):
+                subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', lavfi,
+                                '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo:d=3',
+                                '-map', '0:v', '-map', '1:a', '-c:a', 'aac',
+                                '-c:v', 'libx264', str(root / f'{name}.mp4')],
+                               check=True, capture_output=True, timeout=60)
+            timeline = root / 'timeline.json'
+            timeline.write_text(json.dumps({
+                **TestCliGuards._min_tl(video_tracks=[
+                    {'name': name, 'kind': kind, 'clips': [
+                        {'src': name, 'src_in': 0, 'src_out': 80, 'dst_in': 105, 'dur': 80, **placement}]}
+                    for name, kind, placement in (('base', 'aroll', {}),
+                        ('pip', 'pip', {'x': 40, 'y': 40, 'scale': 1}))]),
+                'project': {'fps': 30, 'width': 1920, 'height': 1080, 'duration_frames': 300},
+                'sources': [{'id': name, 'path': f'{name}.mp4'} for name in ('base', 'pip')],
+            }), encoding='utf-8')
+            workspace = root / 'cache' / 'preview' / 'first-frame'
+            workspace.mkdir(parents=True)
+            with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0', 'VTX_VIDEO_SEGMENTS': '2'}):
+                c = _context(timeline, lambda: None, os.environ.copy(), timeline.read_bytes)
+                self.assertEqual(validate_core(c), [])
+                c.write_root = workspace
+                output, first, stages = _measure_1080p_window(c, 140, 170, workspace=workspace)
+
+            self.assertEqual(first['window'], (140, 170))
+            self.assertEqual(first['segment'], (140, 150))
+            self.assertEqual((first['frame'], first['vpts'], first['fps']), (140, 0, Fraction(30)))
+            self.assertEqual((first['width'], first['height']), (1920, 1080))
+            self.assertEqual(first['content_version'], 'sha256:' + hashlib.sha256(timeline.read_bytes()).hexdigest())
+            self.assertEqual(first['input_fingerprint'], c.input_fingerprint)
+            segments = list((workspace / 'work' / 'preview').glob('rseg_*.mp4'))
+            self.assertEqual(len(segments), 2)
+            segment = next(p for p in segments if p.name.startswith('rseg_000140_000150_'))
+            self.assertEqual(first['segment_key'], segment.stem.rsplit('_', 1)[1])
+            self.assertEqual(first['segment_sha256'], hashlib.sha256(segment.read_bytes()).hexdigest())
+            self.assertEqual(json.loads(completion_marker(output).read_bytes())['frames'], 30)
+            self.assertEqual(first['sha256'], hashlib.sha256(first['png']).hexdigest())
+            self.assertEqual(first['bytes'], len(first['png']))
+            self.assertGreater(stages['layers_ready'], 0)
+            self.assertLess(stages['layers_ready'], stages['first_segment_committed'])
+            self.assertLess(stages['first_segment_committed'], stages['first_frame_verified'])
+            self.assertLess(stages['first_frame_verified'], stages['window_verified'])
+
+            def first_rgb(source, data=None):
+                return subprocess.run(['ffmpeg', '-v', 'error', '-xerror', *source,
+                    '-map', '0:v:0', '-frames:v', '1', '-pix_fmt', 'rgb24',
+                    '-c:v', 'rawvideo', '-threads:v', '1', '-f', 'rawvideo', 'pipe:1'],
+                    input=data, check=True, capture_output=True, timeout=60).stdout
+
+            pixels = first_rgb(['-f', 'png_pipe', '-i', 'pipe:0'], first['png'])
+            self.assertEqual(len(pixels), 1920 * 1080 * 3)
+            self.assertEqual(pixels, first_rgb(['-i', str(output)]))
+            # Not the source's first (red) frame, nor a layer-only or black still.
+            pip = 3 * (64 * 1920 + 64)
+            self.assertGreater(pixels[pip + 2], 200)
+            self.assertLess(max(pixels[pip:pip + 2]), 40)
+            base = 3 * (500 * 1920 + 800)
+            self.assertGreater(pixels[base + 1], 200)
+            self.assertLess(max(pixels[base], pixels[base + 2]), 40)
+            self.assertFalse((root / 'out').exists())
 
     def test_range_render(self):
         self._assert_short_ntsc_range_keeps_all_video_frames_when_audio_rounds_down()

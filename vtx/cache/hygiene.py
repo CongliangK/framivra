@@ -298,6 +298,11 @@ def gfx_cache_ns() -> str:
     return ns
 
 
+def _svg_page_dir(root, key) -> Path:
+    from ..render.gfx_svg import NAMESPACE
+    return root / GFX_EXP / NAMESPACE / key
+
+
 def gfx_dir(c, cl) -> Path:
     # issue #103：实验态（VTX_GFX_CACHE_NS 非空）整树路由 cache/gfx_exp/<ns>/<key>/，
     # 与正式 cache/gfx/<key> 物理隔离；默认空 = 原路径逐字节不变。
@@ -305,7 +310,7 @@ def gfx_dir(c, cl) -> Path:
     from .policy import graphics_root
     root = graphics_root(c)
     if gfx_svg.is_svg(cl):
-        return root / GFX_EXP / gfx_svg.NAMESPACE / gfx_key(c, cl)
+        return _svg_page_dir(root, gfx_key(c, cl))
     ns = gfx_cache_ns()
     if ns:
         return root / GFX_EXP / ns / gfx_key(c, cl)

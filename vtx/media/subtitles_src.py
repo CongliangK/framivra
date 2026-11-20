@@ -24,6 +24,7 @@ timeline 根级可选键 `subtitles_src`（字符串，相对 timeline.json 的�
 """
 from ..runtime.diagnostics import DiagnosticMessage, DiagnosticValueError
 
+import io
 import json
 import re
 from pathlib import Path
@@ -131,16 +132,24 @@ def resolve_subtitles_src(c) -> None:
             "subtitles_src，手工微调后的内联字幕直接写 subtitles[]）", json_path="$.subtitles_src", rule_id='subtitle.source_exclusive', measured={'inline': True, 'external': True}, threshold={'max_sources': 1}))
         return
     path = Path(c.root) / src
-    if not path.is_file():
+    reader = getattr(c, '_read_subtitles_bytes', None)
+    if reader is None and not path.is_file():
         c.subtitles_errors.append(DiagnosticMessage(f"subtitles_src 文件不存在: {src}", json_path="$.subtitles_src", rule_id='subtitle.source_exists', measured={'path': src, 'exists': False}, threshold={'exists': True}))
         c.tl["subtitles"] = []
         return
+    def read_text():
+        if reader is None:
+            return path.read_text(encoding="utf-8")
+        # Match Path.read_text's UTF-8 and universal-newline behavior.
+        with io.TextIOWrapper(io.BytesIO(reader()), encoding="utf-8") as stream:
+            return stream.read()
+
     try:
         if path.suffix.lower() == ".srt":
-            parsed = parse_srt(path.read_text(encoding="utf-8"), c.fps)
+            parsed = parse_srt(read_text(), c.fps)
         elif path.suffix.lower() == ".json":
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
+                data = json.loads(read_text())
             except ValueError as e:
                 raise DiagnosticValueError(f"JSON 解析失败: {e}", line=getattr(e, "lineno", None), column=getattr(e, "colno", None)) from None
             parsed = parse_subs_json(data, c.fps)

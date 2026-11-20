@@ -15,10 +15,14 @@ from .cache_state import verify_input_identity
 from ..runtime import fstxn
 
 
+def _pack_path_for_page(c, directory):
+    relative = directory.relative_to(graphics_root(c))
+    return storage_root(c) / 'gfx_packs' / relative.with_suffix('.vtxp')
+
+
 def pack_path(c, clip):
     from .hygiene import gfx_dir
-    relative = gfx_dir(c, clip).relative_to(graphics_root(c))
-    return storage_root(c) / 'gfx_packs' / relative.with_suffix('.vtxp')
+    return _pack_path_for_page(c, gfx_dir(c, clip))
 
 
 def graphics_pages(c):
@@ -106,14 +110,15 @@ def _retire(c, paths, reason):
     plan.execute()
 
 
-def hydrate_graphics(c):
-    """Restore verified bytes, including interrupted/malformed loose pages.
+def hydrate_graphics(c, *, allow_svg_rebuild=False):
+    """Restore verified bytes; only non-SVG may retire incomplete loose pages.
 
     Existing archives are fully checked even if loose PNGs are available: a bad
     pack is an explicit error, never silent fallback, recertification or render.
     """
     if c.dry or not policy_for(c).reuse_graphics:
         return
+    from ..render import gfx_svg
     from ..render.gfx_pack import inspect_pack, restore_page, PagePack
     from ..render.gfx_cache_reader import resolve_frames
     verify_input_identity(c)
@@ -123,9 +128,29 @@ def hydrate_graphics(c):
             continue
         record = inspect_pack(archive, root=c.root)['record']
         _bound_record(c, clip, directory, record)
+        svg = gfx_svg.is_svg(clip)
+        if svg:
+            gfx_svg.verify_completion(record, gfx_svg.resolve(c, clip), clip['dur'], directory.name)
         with PagePack(archive, expected_record=record, root=c.root) as packed:
             packed.verify()
             metadata = packed.metadata_names
+            if svg and _present(directory / gfx_svg.COMPLETE_FILE):
+                try:
+                    packed.verify_svg_working_copy(directory, exact_marker=False)
+                except (OSError, ValueError):
+                    if not allow_svg_rebuild:
+                        raise
+                    # The caller is already executing gfx: leave the loose page
+                    # untouched so the original producer applies its own gate.
+                continue
+        if svg:
+            if allow_svg_rebuild and any(_present(directory / f'f{i:04d}.png') for i in range(clip['dur'])):
+                continue  # An interrupted producer left PNGs but no marker.
+            # Restore only into a new or lock-only page; never retire loose SVG.
+            fstxn.mkdir(directory.parent, root=c.root)
+            restore_page(archive, directory, expected_record=record, svg_marker=True,
+                         verify_inputs=lambda: verify_input_identity(c), root=c.root)
+            continue
         if _present(directory / 'complete.json'):
             try:
                 resolve_frames(c, clip)
@@ -142,7 +167,7 @@ def hydrate_graphics(c):
 
 
 def compact_graphics(c):
-    """Retire only currently certified, precisely archived page payloads.
+    """Archive currently certified pages; retire eligible non-SVG payloads.
 
     Same-record warm archives are fully verified but not recompressed. Metadata
     bytes must also match, including original completion formatting. Corrupt old
@@ -151,48 +176,92 @@ def compact_graphics(c):
     if c.dry:
         return
     from .hygiene import manifest_record
+    from ..render import gfx_svg
     from ..render.gfx_cache_reader import resolve_frames
-    from ..render.gfx_pack import pack_page, inspect_pack, PagePack
-    from ..render.png_artifact import read_artifact
+    from ..render.gfx_pack import GfxPackIndexLimitError, PACK_INDEX_LIMIT, pack_page, inspect_pack, PagePack
+    from ..render.png_artifact import ArtifactError, read_artifact
     verify_input_identity(c)
     for clip, directory in graphics_pages(c):
-        if not _present(directory / 'complete.json'):
+        svg = gfx_svg.is_svg(clip)
+        marker_path = directory / (gfx_svg.COMPLETE_FILE if svg else 'complete.json')
+        if not _present(marker_path):
             continue
-        resolve_frames(c, clip)  # Full authoritative backend/environment/frame gate.
-        marker = (directory / 'complete.json').read_bytes()
-        record = json.loads(marker)
+
+        def read_svg_marker():
+            return read_artifact(marker_path, root=c.root, limit=PACK_INDEX_LIMIT)
+
+        if svg:
+            inputs = gfx_svg.resolve(c, clip)
+            try:
+                marker = read_svg_marker()
+            except ArtifactError as error:
+                if error.code != 'image.limit':
+                    raise
+                # Cannot fit the archive index. Any existing archive still
+                # needs its normal gate; do not hide corruption behind this.
+                record = None
+            else:
+                record = json.loads(marker)
+                # Authenticate the record whose hashes validate every PNG.
+                gfx_svg.verify_completion(record, inputs, clip['dur'], directory.name)
+        else:
+            resolve_frames(c, clip)  # Full authoritative backend/environment/frame gate.
+            marker = marker_path.read_bytes()
+            record = json.loads(marker)
+
+        def recheck():
+            verify_input_identity(c)
+            if svg and read_svg_marker() != marker:
+                raise ValueError('SVG completion changed during compaction')
+
         archive = pack_path(c, clip)
         reuse, metadata = False, None
         if _present(archive):
             previous = inspect_pack(archive, root=c.root)['record']
             _bound_record(c, clip, directory, previous)
+            if svg:
+                gfx_svg.verify_completion(previous, inputs, clip['dur'], directory.name)
             with PagePack(archive, expected_record=previous, root=c.root) as packed:
                 packed.verify()
-                if (json.dumps(previous, sort_keys=True) == json.dumps(record, sort_keys=True)
+                if (record is not None and json.dumps(previous, sort_keys=True) == json.dumps(record, sort_keys=True)
                         and packed.read_metadata('complete.json') == marker):
                     reuse = True
+                    if svg:
+                        packed.verify_svg_working_copy(directory, exact_marker=True)
                     for name in packed.metadata_names:
+                        if svg and name == 'complete.json':
+                            continue  # The native marker bytes were compared above.
                         saved = packed.read_metadata(name)
                         if read_artifact(directory / name, root=c.root,
                                          limit=max(len(saved), 65536 + clip['dur'] * 32768)) != saved:
                             reuse = False
                             break
                     metadata = packed.metadata_names
+        if svg and record is None:
+            print('⚠ SVG graphics payload retained: completion exceeds pack index budget', file=sys.stderr)
+            continue
         if not reuse:
             fstxn.mkdir(archive.parent, root=c.root)
-            pack_page(directory, archive, expected_record=record,
-                      verify_inputs=lambda: verify_input_identity(c), root=c.root)
+            try:
+                pack_page(directory, archive, expected_record=record, svg_marker=svg,
+                          verify_inputs=recheck, root=c.root)
+            except GfxPackIndexLimitError:
+                print('⚠ SVG graphics payload retained: index exceeds pack reader budget', file=sys.stderr)
+                continue
             with PagePack(archive, expected_record=record, root=c.root) as packed:
                 packed.verify()
                 metadata = packed.metadata_names
-        try:
-            _check_working_copy(c, directory, clip['dur'], metadata)
-        except ValueError as error:
-            print(f'⚠ graphics payload retained: {error}', file=sys.stderr)
-        else:
-            # Revoke the marker FIRST; interrupted retirement is recoverable.
-            _retire(c, _payload_paths(directory, clip['dur'], metadata),
-                    'certified payload retained in fully verified graphics pack')
+        elif svg:
+            recheck()
+        if not svg:
+            try:
+                _check_working_copy(c, directory, clip['dur'], metadata)
+            except ValueError as error:
+                print(f'⚠ graphics payload retained: {error}', file=sys.stderr)
+            else:
+                # Revoke the marker FIRST; interrupted retirement is recoverable.
+                _retire(c, _payload_paths(directory, clip['dur'], metadata),
+                        'certified payload retained in fully verified graphics pack')
         if not getattr(c, 'range_window', None):
             manifest_record(c, archive, 'gfx_pack', directory.name)
 
@@ -219,9 +288,10 @@ _CONTEXT_FIELDS = ('cache_session', 'cache_store', 'gfx_cache', 'preview_cache',
 
 class CacheSession:
     """One operation; dry construction writes nothing. Nested sessions are refused."""
-    def __init__(self, c, *, retire_stage_outputs=False):
+    def __init__(self, c, *, retire_stage_outputs=False, allow_svg_rebuild=False):
         self.c, self.policy = c, policy_for(c)
         self.retire_stage_outputs = retire_stage_outputs
+        self.allow_svg_rebuild = allow_svg_rebuild
         self.stack = contextlib.ExitStack()
         self.completed, self.graphics_touched = set(), False
         self.original_cache, self.original_graphics = c.cache, graphics_root(c)
@@ -254,7 +324,7 @@ class CacheSession:
 
     def ensure_graphics(self):
         if not self.graphics_touched and not self.c.dry:
-            hydrate_graphics(self.c)
+            hydrate_graphics(self.c, allow_svg_rebuild=self.allow_svg_rebuild)
             self.graphics_touched = True
 
     def ensure_stage_inputs(self, name):

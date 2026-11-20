@@ -10,7 +10,7 @@ from unittest.mock import patch
 from vtx.cache.cache_state import InputIdentityError, verify_input_identity
 from vtx.cache.hygiene import gfx_dir
 from vtx.cache.policy import CachePolicy
-from vtx.cache.session import pack_path
+from vtx.cache.session import CacheSession, compact_graphics, hydrate_graphics, pack_path
 from vtx.pipeline.infra import Ctx
 from vtx.render import gfx_pack, gfx_packed_reader, gfx_svg, png_artifact
 from vtx.render.preview_inputs import PreviewInputs
@@ -79,6 +79,38 @@ class PreviewSvgScopeTests(unittest.TestCase):
                 gfx_packed_reader.read_frame(self.c, self.clip, 0)
                 self.assertEqual(verify.call_count, 2, 'standalone reader retains both full checks')
 
+    def test_isolated_warm_pack_resolves_once_per_producer_check_and_rechecks_live_inputs(self):
+        self.archive.parent.mkdir(parents=True)
+        gfx_pack.pack_page(self.directory, self.archive, expected_record=self.record,
+                           svg_marker=True, root=self.root)
+        rechecks = []
+        with patch.object(gfx_svg, 'resolve', wraps=gfx_svg.resolve) as resolve, \
+                patch.object(gfx_packed_reader, 'verify_input_identity', wraps=verify_input_identity) as verify:
+            frames = gfx_packed_reader.read_frames(self.c, self.clip, 0, 1,
+                                                   keep_recheck=rechecks.append, expected_svg_pack=self.archive)
+            self.assertEqual(frames, ((self.directory / 'f0000.png').read_bytes(),))
+            self.assertEqual(verify.call_count, 2)
+            self.assertEqual(resolve.call_count, 4, 'two full pins and two fresh producer checks')
+            recheck, = rechecks
+            recheck()
+            self.assertEqual(resolve.call_count, 5, 'consumption must resolve the producer anew')
+
+        off_window = self.root / 'f1.svg'
+        original = off_window.read_bytes()
+        changed = original.replace(b'width="32" height="32" fill=', b'width="31" height="32" fill=')
+        self.assertEqual(len(changed), len(original))
+        self.assertNotEqual(changed, original)
+        off_window.write_bytes(changed)
+        with self.assertRaisesRegex(ValueError, 'packed gfx inputs/backend changed'):
+            recheck()
+        off_window.write_bytes(original)
+
+        replacement = self.archive.with_suffix('.replacement')
+        replacement.write_bytes(self.archive.read_bytes())
+        replacement.replace(self.archive)
+        with self.assertRaisesRegex(ValueError, 'packed gfx changed during consumption'):
+            recheck()
+
     def test_requested_and_invisible_svg_mutations_during_anchored_read_refused(self):
         for name in ('f0.svg', 'f1.svg', 'generator.js', 'font.ttf'):
             with self.subTest(name=name):
@@ -128,8 +160,8 @@ class PreviewSvgScopeTests(unittest.TestCase):
         with gfx_svg.consumer_scope(self.c):
             sources = PreviewInputs(self.c, 0)
             self.archive.parent.mkdir(parents=True)
-            (self.directory / 'complete.json').write_text(json.dumps(self.record))
-            gfx_pack.pack_page(self.directory, self.archive, expected_record=self.record, root=self.root)
+            gfx_pack.pack_page(self.directory, self.archive, expected_record=self.record,
+                               svg_marker=True, root=self.root)
             with patch.object(gfx_packed_reader, 'read_frame', wraps=gfx_packed_reader.read_frame) as read:
                 self.current(sources)
                 read.assert_called_once()
@@ -140,6 +172,114 @@ class PreviewSvgScopeTests(unittest.TestCase):
             self.archive.symlink_to(self.root / 'missing')
             with self.assertRaises(ValueError):
                 self.current(sources)
+
+    @unittest.skipUnless(sys.platform == 'linux' and fstxn.write_capability() == 'fd-anchored',
+                         'requires Linux core persistent graphics storage')
+    def test_core_archives_native_svg_without_retiring_and_restores_only_lock_only_page(self):
+        original = json.dumps(self.record, indent=2).encode() + b'\n'
+        self.marker.write_bytes(original)
+        frames = [self.directory / f'f{i:04d}.png' for i in range(self.clip['dur'])]
+        pngs = [path.read_bytes() for path in frames]
+        with CacheSession(self.c) as session:
+            session.ensure_graphics()
+        with gfx_pack.PagePack(self.archive, expected_record=self.record, root=self.root) as page:
+            self.assertEqual(page.metadata_names, ('complete.json',))
+            self.assertEqual(page.read_metadata('complete.json'), original)
+            self.assertEqual([page.read_frame(i) for i in range(len(frames))], pngs)
+        inode = self.archive.stat().st_ino
+        with CacheSession(self.c) as session:
+            session.ensure_graphics()
+        self.assertEqual(self.archive.stat().st_ino, inode)
+        self.assertEqual(self.marker.read_bytes(), original)
+        self.assertEqual([path.read_bytes() for path in frames], pngs)
+        self.assertFalse((self.directory / 'complete.json').exists())
+
+        lock = self.marker.with_suffix('.json.lock')
+        lock.touch()
+        self.marker.unlink()
+        frames[0].unlink()
+        with self.assertRaises(gfx_pack.GfxPackError):
+            hydrate_graphics(self.c)
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(frames[1].read_bytes(), pngs[1])
+        frames[1].unlink()
+        hydrate_graphics(self.c)
+        self.assertTrue(lock.is_file())
+        self.assertEqual(self.marker.read_bytes(), original)
+        self.assertEqual([path.read_bytes() for path in frames], pngs)
+        self.assertFalse((self.directory / 'complete.json').exists())
+
+    def test_core_refuses_bad_native_marker_or_last_png_without_publishing_pack(self):
+        marker = self.marker.read_bytes()
+        wrong = {**self.record, 'input': {**self.record['input'], 'width': -1}}
+        (self.directory / 'complete.json').write_bytes(marker)  # Not native SVG authority.
+        self.marker.write_text(json.dumps(wrong))
+        with self.assertRaisesRegex(ValueError, 'completion record does not match'):
+            compact_graphics(self.c)
+        self.assertFalse(self.archive.exists())
+        self.marker.write_bytes(marker)
+        last = self.directory / 'f0001.png'
+        write_png(last, width=32, height=32, frame=9)
+        with self.assertRaisesRegex(gfx_pack.GfxPackError, 'frame 1 differs from completion'):
+            compact_graphics(self.c)
+        self.assertFalse(self.archive.exists())
+        self.assertEqual(self.marker.read_bytes(), marker)
+
+    def test_core_warm_bad_last_png_fails_and_only_explicit_producer_can_proceed(self):
+        compact_graphics(self.c)
+        archive = self.archive.read_bytes()
+        inode = self.archive.stat().st_ino
+        marker = self.marker.read_bytes()
+        last = self.directory / 'f0001.png'
+        write_png(last, width=32, height=32, frame=9)
+        damaged = last.read_bytes()
+        manifest = self.c.cache / 'manifest.json'
+        ledger = manifest.read_bytes()
+        for operation in (compact_graphics, hydrate_graphics):
+            with self.subTest(operation=operation.__name__), \
+                    self.assertRaisesRegex(gfx_pack.GfxPackError, 'frame 1 differs from completion'):
+                operation(self.c)
+        hydrate_graphics(self.c, allow_svg_rebuild=True)
+        self.assertEqual(last.read_bytes(), damaged)
+        self.assertEqual(self.marker.read_bytes(), marker)
+        # Independently valid loose output is still not this archive's output.
+        self.marker.write_text(json.dumps({**self.record, 'sha256': [self.record['sha256'][0],
+                                                                   hashlib.sha256(damaged).hexdigest()]}))
+        with self.assertRaisesRegex(gfx_pack.GfxPackError, 'working frame hashes differ'):
+            hydrate_graphics(self.c)
+        self.marker.unlink()
+        hydrate_graphics(self.c, allow_svg_rebuild=True)
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(last.read_bytes(), damaged)
+        self.assertEqual(manifest.read_bytes(), ledger)
+        self.assertEqual((self.archive.stat().st_ino, self.archive.read_bytes()), (inode, archive))
+        self.archive.write_bytes(b'bad archive')
+        with self.assertRaises(gfx_pack.GfxPackError):
+            hydrate_graphics(self.c, allow_svg_rebuild=True)
+
+    def test_core_oversized_svg_index_leaves_original_page_and_existing_pack(self):
+        record = {**self.record, 'raster_seconds': 1}
+        marker = json.dumps(record).encode()
+        self.marker.write_bytes(marker)
+        # A cap of exactly the source marker fits that marker but not the index,
+        # whose canonical encoding includes the record and the complete frame map.
+        with patch.object(gfx_pack, 'PACK_INDEX_LIMIT', len(marker)):
+            compact_graphics(self.c)
+        self.assertFalse(self.archive.exists())
+        self.assertEqual(self.marker.read_bytes(), marker)
+        compact_graphics(self.c)
+        original = (self.archive.stat().st_ino, self.archive.read_bytes())
+        marker = json.dumps({**record, 'raster_seconds': 2}).encode()
+        self.marker.write_bytes(marker)
+        for cap in (len(marker), len(marker) - 1):
+            with self.subTest(cap=cap), patch.object(gfx_pack, 'PACK_INDEX_LIMIT', cap):
+                compact_graphics(self.c)
+            self.assertEqual((self.archive.stat().st_ino, self.archive.read_bytes()), original)
+            self.assertEqual(self.marker.read_bytes(), marker)
+        self.archive.write_bytes(b'corrupt')
+        with patch.object(gfx_pack, 'PACK_INDEX_LIMIT', len(marker) - 1), \
+                self.assertRaises(gfx_pack.GfxPackError):
+            compact_graphics(self.c)
 
     def test_corrupt_pack_appearing_during_read_is_not_ignored(self):
         with gfx_svg.consumer_scope(self.c):
