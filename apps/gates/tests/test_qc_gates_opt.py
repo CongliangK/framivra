@@ -703,6 +703,29 @@ class TestOutJsonArchive(unittest.TestCase):
                     self.assertEqual(stdout.splitlines()[-1], status)
             self.assertCountEqual(root.iterdir(), (timeline, gates))
 
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('ffmpeg'), 'native Windows FFmpeg required')
+    def test_windows_decoder_failure_on_unicode_media_retains_verdict(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / 'out').mkdir()  # Keep the test media in the usual project layout.
+            media = root / 'out' / '终😀.mp4'
+            media.write_bytes(b'not a valid container')
+            report_path = root / 'gates.json'
+            result = subprocess.run([sys.executable, '-X', 'utf8=0', '-B', content_gates.__file__,
+                                     '-t', str(root / 'missing.json'), '--media', str(media),
+                                     '--skip', 'G1', '--out', str(report_path)],
+                                    cwd=root, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 1, result)
+            self.assertNotIn(b'UnicodeDecodeError', result.stderr)
+            self.assertNotIn(b'Traceback', result.stderr)
+            report = json.loads(report_path.read_text(encoding='utf-8'))
+            self.assertEqual(report['status'], 'fail')
+            self.assertFalse(report['pass'])
+            self.assertEqual({r['name'].split()[0]: r['pass'] for r in report['gates']},
+                             {'G2': False, 'G3': False, 'G7': False})
+            self.assertEqual(report['metrics'], {})
+            self.assertFalse((root / 'cache').exists())
+
     def test_default_no_out_file(self):
         # 默认（无 --out）不落任何留档件——既有行为兼容
         with tempfile.TemporaryDirectory() as d:

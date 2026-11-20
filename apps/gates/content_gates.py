@@ -98,7 +98,9 @@ def fingerprint(p: Path) -> dict:
 
 
 def run(cmd):
-    return subprocess.run(cmd, capture_output=True, text=True)
+    # FFmpeg's native Windows builds report UTF-8 paths, not the active ACP.
+    # Keep subprocess exit status and parse only recognized ASCII metrics.
+    return subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
 
 
 def level(stderr, label, unit):
