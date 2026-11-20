@@ -510,7 +510,7 @@ def _stage_exit_code(fn, c: Ctx, *, observation=None) -> int:
     return 0
 
 
-def _observed_stage(c, name, fn, *, capture_exit=False):
+def _observed_stage(c, name, fn, *, capture_exit=False, standalone_qc=False):
     stage = _stage_receipt_name(name, c.draft)
     with events.task(c, stage, kind='stage').scope() as observation:
         try:
@@ -528,7 +528,7 @@ def _observed_stage(c, name, fn, *, capture_exit=False):
             return code
         media = getattr(c, '_windows_svg_media', None)
         if name == 'qc' and media is not None:
-            with media.qc_scope(c):
+            with media.qc_scope(c, standalone=standalone_qc):
                 result = fn(c)
         else:
             result = fn(c)
@@ -1096,20 +1096,10 @@ def _main_owned(execution, ownership):
             print(f'✗ 定向回收失败，已保守停止：{error}'); sys.exit(1)
         return
     try:
-        scope = {}
-        if sys.platform == 'win32' and a.command in ('gfx', 'all') and not policy.dry:
-            portable = os.environ.get('VTX_WINDOWS_SVG_PORTABLE')
-            scratch = os.environ.get('VTX_WINDOWS_SVG_SCRATCH')
-            media_bin = os.environ.get('VTX_WINDOWS_SVG_MEDIA_BIN') if a.command == 'all' else None
-            if (a.command == 'gfx' and (portable or scratch)) or media_bin:
-                if not portable or not scratch:
-                    raise ValueError('Windows SVG requires explicit portable and private scratch roots')
-                if media_bin and (a.draft or a.frames is not None or a.gpu or a.until is not None):
-                    raise ValueError('Windows SVG all requires full-size CPU rendering without stage truncation')
-                from ..render.gfx_svg_win_runtime import owned_runtime
-                scope['_svg_all'] = bool(media_bin)
-                scope['_svg_runtime_factory'] = lambda c, fonts: ownership.enter_context(
-                    owned_runtime(c, portable, scratch, fonts, media_bin=media_bin))
+        from .windows_svg import context_options, stage_scope
+        scope = {} if policy.dry else context_options(
+            ownership, a.command, tp, strict=a.strict,
+            truncated=a.draft or a.frames is not None or a.gpu or a.until is not None)
         c = Ctx(tp, execution=execution, **scope)
     except (ValueError, KeyError, TypeError, ZeroDivisionError, OSError) as e:
         # 2026-09-11 扩捕获：timeline 结构缺键（KeyError）/类型错（TypeError）/fps=0
@@ -1203,7 +1193,11 @@ def _main_owned(execution, ownership):
         if (os.environ.get('VTX_CACHE_BUDGET_GB') or os.environ.get('VTX_GC_AUTO') == '1'
                 or os.environ.get('VTX_CACHE_BUDGET_ACTION', 'warn') != 'warn'):
             print('✗ Windows SVG gfx does not support cache budget or automatic collection overrides'); sys.exit(1)
-        return _execute_render(c, a)
+        try:
+            with stage_scope(c):
+                return _execute_render(c, a)
+        except (OSError, ValueError) as error:
+            print(f'✗ Windows SVG：{error}'); sys.exit(1)
     if (a.command in ('all', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc')
             or a.command == 'subs' and a.subs_extra[:1] == ['preview']):
         from ..cache.session import CacheSession
@@ -1268,7 +1262,7 @@ def _execute_render(c, a):
                 # 捕获退出码交 main 汇总；单阶段 `vtx qc` 仍走下方 fn(c) 冒泡退出
                 qc_exit = _observed_stage(c, name, fn, capture_exit=True)
             else:
-                _observed_stage(c, name, fn)
+                _observed_stage(c, name, fn, standalone_qc=a.command == 'qc')
             # audio --report：混音阶段（含依赖门/receipt）完成后附加一等报告（方案五阶段3）；
             # 报告判 FAIL 时以报告退出码覆盖（阶段本身成功，但报告是本次运行的结论）
             if name == "audio" and a.report:

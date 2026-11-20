@@ -853,6 +853,27 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
         self.assertEqual({path.name for path in root.iterdir()}, {'timeline.json'})
 
 
+    def test_locked_stage_dispatch_does_not_claim_unrelated_windows_projects(self):
+        from contextlib import ExitStack
+        from vtx.cli.windows_svg import context_options
+        from vtx.render import gfx_svg_win_runtime
+
+        root = temporary_root(self).resolve()
+        standard = Path(__file__).resolve().parents[2] / 'templates/demo-timeline-svg/timeline.json'
+        timeline = root / 'timeline.json'
+        env = {f'VTX_WINDOWS_SVG_{key}': str(root / value) for key, value in (
+            ('PORTABLE', 'package'), ('SCRATCH', 'scratch'), ('MEDIA_BIN', 'media'))}
+        with mock.patch.dict(os.environ, env), ExitStack() as stack, \
+                mock.patch.object(gfx_svg_win_runtime, 'owned_runtime', side_effect=AssertionError('unexpected tool launch')):
+            timeline.write_bytes(standard.read_bytes())
+            for command in ('validate', 'qc'):
+                self.assertTrue(context_options(stack, command, timeline, strict=True)['_svg_all'])
+            self.assertEqual(context_options(stack, 'qc', timeline), {})
+            self.assertEqual(context_options(stack, 'audit', timeline), {})
+            timeline.write_bytes(b'{"project":{},"video_tracks":[{"kind":"gfx","clips":[{"src":"page.html"}]}]}')
+            for command in ('validate', 'qc'):
+                self.assertEqual(context_options(stack, command, timeline, strict=True), {})
+
     def test_producer_refuses_an_unpinned_record_before_opening_cache(self):
         from vtx.render.gfx_svg_win_runtime import _WindowsRasterRuntime
 
@@ -863,6 +884,65 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'pinned receipt input'):
             runtime.render_page(ctx, {}, record)
         self.assertEqual(list(root.iterdir()), [])
+
+    def test_owned_producer_rebuilds_corrupt_frame_but_not_aliased_cache(self):
+        from vtx.render.gfx_svg_win_input import WindowsPathAlias
+        from vtx.render.gfx_svg_win_publish import anchored
+        from vtx.render.gfx_svg_win_runtime import _WindowsRasterRuntime
+        from vtx.render import gfx_svg_win_shell as shell
+
+        root = temporary_root(self).resolve()
+        private = root / 'private'
+        private.mkdir()
+        (private / 'fonts').mkdir()
+        frames = private / 'frames'
+        frames.mkdir()
+        runtime = _WindowsRasterRuntime(root, (None, None, private, None, None), ENGINE, None, None)
+        clip = dict(format='svg-sequence', src='manifest.json', dst_in=0, dur=2)
+        record = {'engine': ENGINE, 'fonts': [], 'width': 2, 'height': 2, 'frame_count': 2}
+        key = gfx_svg.record_key(record)
+        ctx = SimpleNamespace(root=root, w=2, h=2, verify_inputs=mock.Mock(),
+                              _svg_receipt_record=gfx_svg.digest(gfx_svg.canonical(record)))
+        page = root / 'cache' / 'gfx_exp' / gfx_svg.NAMESPACE / key
+        page.mkdir(parents=True)
+        names = ['f0000.png', 'f0001.png']
+        frame, other = [page / name for name in names]
+        image = png(2, 2)
+        frame.write_bytes(b'damaged')
+        other.write_bytes(image)
+        marker = page / gfx_svg.COMPLETE_FILE
+        certified = {'format': 'framivra-svg-completion/v1', 'key': key, 'input': record,
+                     'sha256': [gfx_svg.digest(image)] * 2}
+        marker.write_bytes(gfx_svg.canonical(certified))
+        alias = root / 'hardlink.png'
+        os.link(other, alias)
+
+        def export(*args, **kwargs):
+            self.assertFalse(marker.exists(), 'old proof must not survive the rebuild')
+            for name in names:
+                (frames / name).write_bytes(image)
+            return None, frames, names
+
+        with mock.patch.object(runtime, 'verify'), mock.patch.object(gfx_svg, 'resolve', return_value=record), \
+                mock.patch.object(shell, '_read_png', side_effect=lambda _, p, **kw: p.read_bytes()), \
+                mock.patch.object(shell, '_export_bound_sources', side_effect=export) as render:
+            with self.assertRaises(WindowsPathAlias):
+                runtime.render_page(ctx, clip, record)
+            self.assertEqual(frame.read_bytes(), b'damaged')
+            self.assertEqual(marker.read_bytes(), gfx_svg.canonical(certified))
+            render.assert_not_called()
+            alias.unlink()
+            with anchored(page) as directory, directory.open_read(other.name):
+                with self.assertRaises(OSError) as conflict:
+                    runtime.render_page(ctx, clip, record)
+                self.assertEqual(conflict.exception.winerror, 32)
+            self.assertEqual(marker.read_bytes(), gfx_svg.canonical(certified))
+            render.assert_not_called()
+            marker.write_bytes(b'[' * 10000 + b']' * 10000)
+            self.assertFalse(runtime.render_page(ctx, clip, record))
+            self.assertEqual(frame.read_bytes(), image)
+            self.assertTrue(runtime.render_page(ctx, clip, record))
+            render.assert_called_once()
 
     def test_composition_reads_only_locked_certified_frames(self):
         from vtx.render.gfx_svg_win_runtime import _WindowsRasterRuntime

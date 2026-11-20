@@ -1,5 +1,6 @@
 """#34: interrupted single-file media and browser cache recovery, isolated fixtures."""
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -160,6 +161,70 @@ class MediaRecovery(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'reject before rename'):
                 recovery.atomic_ffmpeg(self.c, self.cmd, self.encode, before_commit=late_abort)
             self.assertEqual((self.target.read_bytes(), record.read_bytes()), saved)
+
+    @unittest.skipUnless(sys.platform == 'win32', 'native media stage locking')
+    def test_windows_svg_stage_gate_excludes_a_concurrent_writer(self):
+        from vtx.cli.windows_svg import stage_scope
+        from vtx.render.gfx_svg_win_publish import anchored
+
+        self.c._svg_runtime = object()
+        checks = iter((None, RuntimeError('competing writer was blocked')))
+
+        def cancel_after_first_try():
+            error = next(checks)
+            if error is not None:
+                raise error
+
+        with stage_scope(self.c), anchored(self.root) as root, root.child('out', create=False) as out:
+            with self.assertRaisesRegex(RuntimeError, 'competing writer was blocked'), \
+                    out.lock('windows-svg-stage', check_cancel=cancel_after_first_try):
+                self.fail('the second writer entered the formal delivery scope')
+        with stage_scope(self.c):
+            pass  # Released even after the competing invocation failed.
+
+    @unittest.skipUnless(sys.platform == 'win32', 'native media certificate reads')
+    def test_windows_standalone_qc_pins_both_certified_movies(self):
+        from vtx.render.gfx_svg_win_media import WindowsSvgMedia
+
+        media = WindowsSvgMedia.__new__(WindowsSvgMedia)
+        media.project = self.root
+        media.identity = {'profile': 'fixture'}
+        media.published = {}
+        paths = (self.c.out / 'final.mp4', self.c.cache / 'qc_clean.mp4')
+        expected = {}
+        for path in paths:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = path.name.encode('ascii')
+            path.write_bytes(payload)
+            expected[path.name] = hashlib.sha256(payload).hexdigest()
+            recovery.completion_marker(path).write_text(json.dumps({
+                'schema': 3, 'target': path.relative_to(self.root).as_posix(),
+                'input': self.c.input_fingerprint, 'tool': media.identity,
+                'frames': self.c.dur, 'sha256': expected[path.name],
+            }), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'published in this run'), media.qc_scope(self.c):
+            self.fail('all-mode QC accepted a previous publication')
+        with media.qc_scope(self.c, standalone=True):
+            self.assertEqual(media.qc_identity, expected)
+            for path in paths:
+                with self.assertRaises(PermissionError):
+                    with path.open('r+b'):
+                        pass
+        self.assertIsNone(media.qc_identity)
+        reference = paths[1]
+        marker = recovery.completion_marker(reference)
+        record = json.loads(marker.read_bytes())
+        for key, value in {'target': 'out/final.mp4', 'input': 'wrong-input',
+                           'tool': {}, 'frames': 1}.items():
+            with self.subTest(key=key):
+                marker.write_text(json.dumps({**record, key: value}), encoding='utf-8')
+                with self.assertRaisesRegex(ValueError, 'certificate does not match'), \
+                        media.qc_scope(self.c, standalone=True):
+                    self.fail('QC accepted a mismatched certificate')
+        marker.write_text(json.dumps(record), encoding='utf-8')
+        reference.write_bytes(b'changed since publication')
+        with self.assertRaisesRegex(ValueError, 'bytes do not match'), media.qc_scope(self.c, standalone=True):
+            self.fail('QC accepted mismatched media bytes')
 
     def test_success_publishes_verified_media_and_warm_hit(self):
         recovery.atomic_ffmpeg(self.c, self.cmd, self.encode)

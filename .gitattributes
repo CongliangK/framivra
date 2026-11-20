@@ -9,6 +9,7 @@
 
 # portable-v2 锁按原始字节核验 Demo 运行时；Python 已由上方规则覆盖。
 /templates/demo-timeline-svg/.gitignore text eol=lf
+/templates/demo-timeline-svg/benchmark/*.json text eol=lf
 /templates/demo-timeline-svg/SOURCES.json text eol=lf
 /templates/demo-timeline-svg/build_demo.js text eol=lf
 /templates/demo-timeline-svg/fonts.lock.json text eol=lf

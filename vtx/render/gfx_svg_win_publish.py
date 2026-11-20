@@ -123,6 +123,15 @@ class Directory:
         except FileNotFoundError:
             pass
 
+    def require_replaceable(self, name, limit):
+        """Check a recovery destination, including current DELETE sharing."""
+        try:
+            with self._open(name, reader._GENERIC_READ | 0x10000) as (_, info):
+                if info.size > limit:
+                    raise ValueError('Windows SVG cache destination exceeds byte budget')
+        except FileNotFoundError:
+            pass
+
     @contextmanager
     def lock(self, name, *, check_cancel=None):
         lock = _windows_api('LockFileEx', W.BOOL, W.HANDLE, W.DWORD, W.DWORD, W.DWORD, W.DWORD,

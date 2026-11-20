@@ -39,6 +39,10 @@ def _publish_json(directory, name, value):
     directory.publish(name, data)
 
 
+class _CorruptCache(ValueError):
+    """Bad bytes or a missing frame in an otherwise anchored cache page."""
+
+
 class _WindowsRasterRuntime:
     def __init__(self, project, context, identity, held_images, recheck, font_records=None, staged=()):
         self.project = project
@@ -122,12 +126,22 @@ class _WindowsRasterRuntime:
 
     @staticmethod
     def _certified_frames(page, marker, record, key):
-        hashes = svg.verify_completion(json.loads(marker), record, record['frame_count'], key)
+        try:
+            hashes = svg.verify_completion(json.loads(marker), record, record['frame_count'], key)
+        except (ValueError, RecursionError) as error:
+            raise _CorruptCache('Windows SVG cache completion record is invalid') from error
         for index, expected in enumerate(hashes):
             name = f'f{index:04d}.png'
-            data = page.read(name, _PNG_LIMIT)
-            if _png_digest(data, record['width'], record['height']) != expected:
-                raise ValueError('Windows SVG cached PNG does not match its completion record')
+            try:
+                data = page.read(name, _PNG_LIMIT)
+            except FileNotFoundError as error:
+                raise _CorruptCache('Windows SVG cached PNG is missing') from error
+            try:
+                observed = _png_digest(data, record['width'], record['height'])
+            except ValueError as error:
+                raise _CorruptCache(str(error)) from error
+            if observed != expected:
+                raise _CorruptCache('Windows SVG cached PNG does not match its completion record')
             yield name, data, expected
 
     @contextmanager
@@ -174,12 +188,22 @@ class _WindowsRasterRuntime:
             except FileNotFoundError:
                 marker = None
             if marker is not None:
-                for _ in self._certified_frames(page, marker, record, key):
+                try:
+                    for _ in self._certified_frames(page, marker, record, key):
+                        pass
+                except _CorruptCache:
                     pass
-                self.verify()
-                c.verify_inputs('gfx')
-                return True
+                else:
+                    self.verify()
+                    c.verify_inputs('gfx')
+                    return True
 
+            # Refuse aliases and known sharing conflicts even when a previous
+            # attempt left no marker. No replacement precedes this precheck.
+            for index in range(count):
+                page.require_replaceable(f'f{index:04d}.png', _PNG_LIMIT)
+            if marker is not None:
+                page.remove(svg.COMPLETE_FILE)
             self._check_font_directory()
             if self.staged:
                 try:

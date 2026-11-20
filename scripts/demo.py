@@ -17,6 +17,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import sysconfig
 import time
 import wave
 
@@ -268,11 +269,41 @@ def package_version(name):
         return None
 
 
-def dependency_identity(transfer):
+def windows_dependencies(project=None):
+    """Read-only discovery, not native runtime admission; never launch these tools here."""
+    roots = {}
+    for name in ('PORTABLE', 'SCRATCH', 'MEDIA_BIN'):
+        key = 'VTX_WINDOWS_SVG_' + name
+        path = Path(os.environ.get(key, ''))
+        if not path.is_absolute() or symlink_components(path) or not path.is_dir():
+            raise DemoError(key + ' must name an existing absolute directory without links/reparse points')
+        roots[name] = path
+    scratch = roots['SCRATCH']
+    if not str(scratch).isascii() or any(ch in str(scratch) for ch in ';%'):
+        raise DemoError('VTX_WINDOWS_SVG_SCRATCH requires an ASCII path without ; or %')
+    for other in (roots['PORTABLE'] / 'inkscape', roots['MEDIA_BIN'], project):
+        if other is not None and (scratch == other or scratch in other.parents or other in scratch.parents):
+            raise DemoError('VTX_WINDOWS_SVG_SCRATCH must not overlap the package, media tools or project')
+    paths = {'inkscape': roots['PORTABLE'] / 'inkscape/bin/inkscape.com',
+             'ffmpeg': roots['MEDIA_BIN'] / 'ffmpeg.exe',
+             'ffprobe': roots['MEDIA_BIN'] / 'ffprobe.exe'}
+    return {name: {'executable': str(regular(path)), 'runtime_probe': 'UNRUN'}
+            for name, path in paths.items()}
+
+
+def dependency_identity(transfer, *, project=None):
     # Transfer is optional reuse, not a prerequisite on another OS. Both routes
     # retain the real schema/product validator; neither imports NumPy or music.
     tools, errors = {}, []
-    for name in ('python', 'node', 'ffmpeg', 'ffprobe', 'inkscape', 'fc-scan'):
+    names = ('python', 'node')
+    if sys.platform == 'win32':
+        try:
+            tools.update(windows_dependencies(project))
+        except (DemoError, OSError, ValueError) as error:
+            errors.append(str(error))
+    else:
+        names += ('ffmpeg', 'ffprobe', 'inkscape', 'fc-scan')
+    for name in names:
         try:
             tools[name] = tool_identity(name)
             if tools[name] is None:
@@ -372,12 +403,20 @@ def check_inputs(project, files, lock, logs=None):
     generated = {f'gfx/frames-svg/f{frame:04d}.svg' for frame in range(900)}
     fonts = load_json_strict(files['fonts.lock.json'][0])['fonts']
     allowed = set(files) | generated | set(AUDIO_SAMPLES) | {f['path'] for f in fonts} | {'gfx/demo.frames.json', 'realization.json'}
-    for path in project.rglob('*'):
-        rel = path.relative_to(project).as_posix()
-        if path.is_symlink() or not (path.is_file() or path.is_dir()):
-            raise DemoError('non-regular input in project: ' + rel)
-        if path.is_file() and rel not in allowed and rel.split('/')[0] not in ('.generated', 'logs', 'cache', 'out'):
-            raise DemoError('unexpected project input: ' + rel)
+    def raise_walk_error(error):
+        raise error
+
+    for directory, dirs, names in os.walk(project, onerror=raise_walk_error, followlinks=False):
+        for name in (*dirs, *names):
+            path = Path(directory) / name
+            rel = path.relative_to(project).as_posix()
+            info = path.lstat()
+            # Check child directories before os.walk can descend into a junction.
+            if (getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                    or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode))):
+                raise DemoError('non-regular input in project: ' + rel)
+            if stat.S_ISREG(info.st_mode) and rel not in allowed and rel.split('/')[0] not in ('.generated', 'logs', 'cache', 'out'):
+                raise DemoError('unexpected project input: ' + rel)
     for name, (data, _) in files.items():
         if regular(safe_relpath(project, name)).read_bytes() != data:
             raise DemoError('fixed source bytes differ: ' + name)
@@ -407,9 +446,10 @@ def check_inputs(project, files, lock, logs=None):
 def unsupported_prepare_platform():
     # Prepare ends with the actual SVG validator; generating input files alone
     # is not a successful preparation on a platform it cannot validate.
-    if sys.platform == 'linux' or (sys.platform == 'darwin' and platform.machine() == 'arm64'):
+    if (sys.platform == 'linux' or (sys.platform == 'darwin' and platform.machine() == 'arm64')
+            or (sys.platform == 'win32' and sysconfig.get_platform() == 'win-amd64')):
         return None
-    return 'portable-v2 prepare requires the SVG runtime (Linux ELF or macOS arm64)'
+    return 'portable-v2 prepare requires the SVG runtime (Linux ELF, macOS arm64 or Windows x64 Python)'
 
 
 def cmd_preflight(args):
@@ -448,7 +488,7 @@ def cmd_prepare(args):
     project = check_output_path(args.output)
     baseline = load_baseline(); lock = load_input_lock(baseline)
     files = source_files(baseline)
-    identity = dependency_identity(bool(args.audio_inputs))
+    identity = dependency_identity(bool(args.audio_inputs), project=project)
     fonts_dir = str(Path(args.fonts_dir).expanduser().resolve()) if args.fonts_dir else None
     if not args.fetch_fonts:
         check_fonts(files, fonts_dir)
