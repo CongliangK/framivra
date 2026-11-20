@@ -146,5 +146,13 @@ def main(argv=None) -> int:
     return 0
 
 
+def _configure_cli_output():
+    if sys.platform == 'win32':
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, 'reconfigure'):
+                stream.reconfigure(encoding='utf-8', errors='replace')
+
+
 if __name__ == "__main__":
+    _configure_cli_output()
     sys.exit(main())
