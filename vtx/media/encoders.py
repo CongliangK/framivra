@@ -23,13 +23,16 @@ def has_quarter_turn(stream):
                 (a, b, _), (c, d, _), _ = rows
                 sx, sy = math.hypot(a, c), math.hypot(b, d)
                 if not sx or not sy:
-                    return False
+                    return None
                 angle = math.degrees(math.atan2(b / sy, a / sx))
                 return abs(angle % 180 - 90) < 1
             except (IndexError, ValueError, OverflowError):
-                return False
+                return None
         angle = side.get('rotation')
-        return type(angle) in (int, float) and abs(angle % 180 - 90) < 1
+        if type(angle) not in (int, float) or not math.isfinite(angle):
+            return None
+        delta = abs(angle % 180 - 90)
+        return True if delta < 1 else None if delta <= 1 else False
     return False
 
 
@@ -57,8 +60,9 @@ def video_alpha_info(stream, pixel_formats):
     if declared and alpha is False:
         alpha = None
     info = {'pix_fmt': name, 'codec_name': stream.get('codec_name'), 'has_alpha': alpha}
-    if has_quarter_turn(stream):
-        info['quarter_turn'] = True
+    turn = has_quarter_turn(stream)
+    if turn is not False:
+        info['quarter_turn'] = turn
     return info
 
 

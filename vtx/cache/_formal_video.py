@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 
 from ..runtime import fstxn
 
@@ -82,6 +83,24 @@ def _read_record(path):
     return json.loads(raw)
 
 
+def _unaffected_legacy_sources(c, native):
+    """Only after a current stage receipt and a certified legacy artifact."""
+    from ..media.encoders import probe_video_alpha
+    from .cache_state import verify_input_identity
+
+    names = dict.fromkeys(clip['src'] for track in c.tl['video_tracks']
+                         if track.get('kind') != 'gfx' for clip in track['clips'])
+    probe = c.probe if native is not None else probe_video_alpha
+    try:
+        for sid in names:
+            if probe(c.src_path(sid)).get('quarter_turn', False) is not False:
+                return False
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError):
+        return False
+    verify_input_identity(c)
+    return True
+
+
 def missing_prerequisite(c, stage):
     """Return the predecessor requiring rerender, or None for a valid handoff."""
     prerequisite = {'mux': 'video', 'qc': 'mux'}.get(stage)
@@ -92,23 +111,33 @@ def missing_prerequisite(c, stage):
     target = c.out / _FILES[prerequisite]
     proof = target.with_name(target.name + _SUFFIX)
     native = getattr(c, '_windows_svg_media', None)
+    absent = object()
     try:
         if native is not None:
-            with native.target_parent(proof, create=False) as (parent, name):
-                record = json.loads(parent.read(name, _LIMIT))
+            try:
+                with native.target_parent(proof, create=False) as (parent, name):
+                    record = json.loads(parent.read(name, _LIMIT))
+            except FileNotFoundError:
+                record = absent
             with native.certified_file(c, target, c.dur) as digest:
                 valid = record == _record(c, target, digest)
         else:
             from ..pipeline.infra import ensure_inside_project
             ensure_inside_project(proof, c.root, what='formal video proof')
-            record = _read_record(proof)
+            try:
+                record = _read_record(proof)
+            except FileNotFoundError:
+                record = absent
             artifact = ensure_inside_project(target, c.root, what='formal video handoff')
             marker = completion_marker(artifact)
             ensure_inside_project(marker, c.root, what='media certificate')
             cert = _read_record(marker)
             digest = cert['sha256']
-            valid = (cert.get('schema') == 1 and cert.get('frames') == c.dur
-                     and record == _record(c, target, digest) and digest == _digest(artifact))
-        return None if valid else prerequisite
+            if (cert.get('schema') != 1 or cert.get('frames') != c.dur or digest != _digest(artifact)):
+                return prerequisite
+            valid = record == _record(c, target, digest)
+        if valid or record is absent and _unaffected_legacy_sources(c, native):
+            return None
+        return prerequisite
     except (OSError, ValueError, TypeError, KeyError):
         return prerequisite
