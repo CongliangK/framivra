@@ -63,10 +63,10 @@ def check_installed(expected_version, expected_hashes, forbidden_roots):
         if digest != expected_hash:
             raise RuntimeError(f"installed resource mismatch: {name}")
         hashes[name] = digest
-    schema = json.loads(importlib.resources.files("vtx").joinpath("timeline.schema.json").read_text())
+    schema = json.loads(importlib.resources.files("vtx").joinpath("timeline.schema.json").read_text(encoding="utf-8"))
     if schema.get("type") != "object" or "project" not in schema.get("properties", {}):
         raise RuntimeError("installed timeline schema is not the kernel contract")
-    preview = importlib.resources.files("vtx").joinpath("preview.html").read_text()
+    preview = importlib.resources.files("vtx").joinpath("preview.html").read_text(encoding="utf-8")
     if "<!doctype html>" not in preview.lower() and "<!DOCTYPE html>" not in preview:
         raise RuntimeError("installed preview is not an HTML document")
     declarations = registry.load_static_registry()["plugins"]

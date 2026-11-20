@@ -153,7 +153,7 @@ class PackageVerifierTest(unittest.TestCase):
     def test_installed_init_does_not_crash_on_unbundled_apps(self):
         proc = subprocess.run([str(self.python), "-I", "-c",
                                "import vt,sys; sys.argv=['vt','init','--json']; sys.exit(vt.main())"],
-                              cwd=self.outside, env=self.env, capture_output=True, text=True, timeout=60)
+                              cwd=self.outside, env=self.env, capture_output=True, encoding="utf-8", timeout=60)
         self.assertNotIn("Traceback", proc.stderr)
         data = json.loads(proc.stdout[proc.stdout.index('{'):])
         self.assertFalse(data["bridge_json2blend.py"]["ok"])
