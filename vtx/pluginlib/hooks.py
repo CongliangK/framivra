@@ -73,22 +73,47 @@ class _CoreOnlyPreviewError(RuntimeError):
     code = "plugins.changed"
 
 
+def _matches_builtin_declaration(plugin, name, path, key, hooks, repo_root):
+    """Check both declaration sources without importing a provider."""
+    entry = plugin.get('entry') or {}
+    if (plugin['name'] != name or entry.get('source') != 'builtin'
+            or entry.get('dir') != _registry._root(repo_root) / 'plugins' / name
+            or entry.get('manifest_errors') or not entry.get('manifest')):
+        return False
+    keys = [{'path': path, 'key': key}]
+    registered = _registry.declared_plugins(repo_root).get(name, {})
+    extends = entry['manifest'].get('extends', {})
+    return (registered.get('keys') == keys and extends.get('schema_keys') == keys
+            and set(registered.get('hooks', ())) == hooks
+            and set(extends.get('hooks', ())) == hooks)
+
+
 def _visual_bgm_token(plugin, repo_root=None):
     """Recognize the official audio-only declaration, without importing it."""
-    entry = plugin.get('entry') or {}
-    if (plugin['name'] != 'bgm-render' or entry.get('source') != 'builtin'
-            or entry.get('dir') != _registry._root(repo_root) / 'plugins' / 'bgm-render'
-            or entry.get('manifest_errors') or not entry.get('manifest')):
-        return None
-    expected_keys = [{'path': 'sources[]', 'key': 'bgm'}]
-    expected_hooks = {'validate', 'probe_source', 'prepare_source'}
-    registered = _registry.declared_plugins(repo_root).get('bgm-render', {})
-    extends = entry['manifest'].get('extends', {})
-    if (registered.get('keys') != expected_keys or extends.get('schema_keys') != expected_keys
-            or set(registered.get('hooks', ())) != expected_hooks
-            or set(extends.get('hooks', ())) != expected_hooks):
-        return None
-    return (plugin['version'], entry['manifest'].get('version'))
+    if _matches_builtin_declaration(plugin, 'bgm-render', 'sources[]', 'bgm',
+                                    {'validate', 'probe_source', 'prepare_source'}, repo_root):
+        return (plugin['version'], plugin['entry']['manifest'].get('version'))
+    return None
+
+
+def _require_windows_svg_plugins(c, plugins, repo_root):
+    generic_delivery = getattr(c, '_svg_all', False) is True and getattr(c, '_svg_standard', None) is False
+    if not generic_delivery:
+        if plugins:
+            raise ValueError('Windows SVG locked demo and raster-only mode do not support active plugins')
+        return
+    # Static ducking only transforms mix events. Source providers and finish
+    # plugins may open inputs or publish outputs beyond the owned media lane.
+    unsupported = [p['name'] for p in plugins if not _matches_builtin_declaration(
+        p, 'duck-static', 'audio_tracks[]', 'duck_strategy', {'validate', 'audio_events'}, repo_root)]
+    if unsupported:
+        raise ValueError('Windows SVG supports only the builtin duck-static plugin; unsupported: '
+                         + ', '.join(unsupported))
+    tracks = _scope_items(getattr(c, 'tl', None), 'audio_tracks[]')
+    if (not plugins and isinstance(tracks, list)
+            and any(isinstance(track, dict) and 'duck_strategy' in track for track in tracks)):
+        # Do not mix unducked events if activation disappears between checks.
+        raise ValueError('Windows SVG duck_strategy requires the installed and enabled builtin duck-static plugin')
 
 
 def active_plugins(c=None, repo_root=None) -> list:
@@ -125,8 +150,10 @@ def active_plugins(c=None, repo_root=None) -> list:
             return []
         if out or expected:
             raise _CoreOnlyPreviewError("core-only preview refuses changed or unsupported plugins")
-    if out and getattr(c, '_svg_all', False) is True:
-        raise ValueError('Windows SVG all does not support active plugins')
+    if (getattr(c, '_svg_runtime_factory', None) is not None
+            or getattr(c, '_svg_runtime', None) is not None
+            or getattr(c, '_svg_all', False) is True):
+        _require_windows_svg_plugins(c, out, repo_root)
     return out
 
 

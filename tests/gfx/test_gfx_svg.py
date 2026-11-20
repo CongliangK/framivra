@@ -849,7 +849,7 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
             Ctx(timeline, _svg_runtime_factory=runtime, _svg_all=True, _svg_standard=True)
         doc['subtitles_src'] = 'must-not-read.json'
         timeline.write_text(json.dumps(doc), encoding='utf-8')
-        with self.assertRaisesRegex(ValueError, 'does not support subtitles'):
+        with self.assertRaisesRegex(ValueError, 'cannot read subtitles_src'):
             Ctx(timeline, _svg_runtime_factory=runtime, _svg_all=True)
         runtime.assert_not_called()
         self.assertEqual({path.name for path in root.iterdir()}, {'timeline.json'})

@@ -158,8 +158,6 @@ def _validate_generic_scope(reference):
         raise _FrameError('platform.unsupported', str(error)) from error
     if route != 'svg-sequence':
         raise _FrameError('platform.unsupported', 'Windows preview requires static SVG sequence graphics; no HTML')
-    if stored['subtitles'] or 'subtitles_src' in stored:
-        raise _FrameError('platform.unsupported', 'Windows SVG preview does not support subtitles')
 
 
 class _OwnedFrameCtx(_FrameCtx):
@@ -270,7 +268,8 @@ def _render_generic(path, version, frame, limit, portable, scratch, media_bin):
             plan = RenderPlan(c=c, draft=False, f=1.0, W=c.w, H=c.h, layers=layers, png_output=True)
             # A single graph is sufficient for one frame and doesn't enter the
             # delivery pass cache/certificate flow (even for an empty canvas).
-            plan._composite_graph(layers, output, False, a=frame, b=frame + 1)
+            plan._composite_graph(layers, output, getattr(c, '_windows_subtitles', None) is not None,
+                                  a=frame, b=frame + 1)
             with media.directory.open_read(output.name) as (handle, size):
                 if size > limit:
                     raise _FrameError('image.limit', 'PNG exceeds requested byte limit')

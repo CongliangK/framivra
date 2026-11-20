@@ -491,18 +491,22 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     # v2 §1.1 条目 6：subtitles_src 文件内容并入（缺失记 MISSING——validate 侧 FAIL）
     src = _get(c, c.tl, 'subtitles_src', '$')
     if isinstance(src, str) and src:
-        p = _path(c, src, '$.subtitles_src')
         anchored_digest = getattr(c, '_subtitles_input_digest', None)
-        digest = (anchored_digest() if anchored_digest is not None else
-                  file_digest(p) if p.is_file() else 'MISSING')
+        if anchored_digest is not None:
+            digest = anchored_digest()
+        else:
+            p = _path(c, src, '$.subtitles_src')
+            digest = file_digest(p) if p.is_file() else 'MISSING'
         h.update(_encode(c, 'subtitles_src:' + digest + '\n', '$.subtitles_src'))
+    captions = getattr(c, '_windows_subtitles', None)
+    if captions is not None:
+        from ..render.gfx_svg import canonical
+        h.update(b'windows-svg-subtitles|' + canonical(captions.identity()))
     # 生效插件清单摘要段（迟导入避免环）；空清单只省略此段。插件装/卸/
     # 升级/改参使段出现或内容变化，不能借空段恢复历史整体指纹。
-    from ..pluginlib.hooks import active_plugins, active_plugins_digest
+    from ..pluginlib.hooks import active_plugins_digest
     owned_svg = getattr(c, '_svg_runtime', None) is not None
-    if owned_svg and active_plugins(c):
-        raise ValueError('Windows SVG gfx does not support active plugins')
-    _pdigest = '' if owned_svg else active_plugins_digest(c)
+    _pdigest = active_plugins_digest(c)
     if _pdigest:
         h.update(_encode(c, _pdigest, '$', status='unknown', source={
             'domain': 'provider', 'provider': 'active_plugins_digest',
