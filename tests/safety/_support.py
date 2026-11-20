@@ -195,7 +195,7 @@ class SandboxCase(unittest.TestCase):
 
 
 @contextlib.contextmanager
-def serve_fixtures(directory, log_path):
+def serve_fixtures(directory, log_path, *, paths=None):
     """本地 fixture 下载服务:真实 curl 打 127.0.0.1 下载,全链路(下载+SHA+
     解包)保真——替代 PATH 假 curl(shebang 脚本 win32 CreateProcess 无法
     执行,会回退真 curl 打外网)。每次 GET(含 404)按序追加 jsonl 到
@@ -208,7 +208,9 @@ def serve_fixtures(directory, log_path):
         def do_GET(self):  # noqa: N802 (http.server 约定)
             with open(log_path, "a", encoding="utf-8") as stream:
                 stream.write(json.dumps({"path": self.path}) + "\n")
-            if self.path == "/releases.json":
+            if paths is not None and self.path not in paths:
+                body, status = b"not found", 404
+            elif self.path == "/releases.json":
                 body = holder.get("releases_json", b'{"latest":"9.9.9"}')
                 status = 200
             else:
@@ -216,7 +218,8 @@ def serve_fixtures(directory, log_path):
                 # 文件(与原 PATH 假 curl 的文件名匹配语义一致)。
                 name = self.path.rsplit("/", 1)[-1]
                 target = Path(directory) / (name or "")
-                if name and ".." not in name and target.is_file():
+                if (name and not any(c in name for c in ('..', '\\', ':'))
+                        and target.is_file()):
                     body, status = target.read_bytes(), 200
                 else:
                     body, status = b"not found", 404

@@ -1,11 +1,11 @@
-"""Offline installer adversarial tests using local payloads and a fail-closed curl.
+"""Installer safety tests with real local downloads and temporary payloads.
 
-Entry = scripts/install.py invoked directly (install.sh has been rebuilt as the
-POSIX clone bootstrap; the release-channel installer under test here is install.py).
+The child fixture invokes scripts/install.py while fencing downloads and host integration.
 
 No network, real HOME, live mounts, or repository cache/out are used. Even malicious
 archive link/traversal destinations are explicitly inside TemporaryDirectory.
 """
+from contextlib import ExitStack
 import hashlib
 import io
 import json
@@ -16,9 +16,11 @@ import sys
 import tarfile
 
 try:
-    from ._support import REPO, SandboxCase
+    from . import _install_fixture
+    from ._support import SandboxCase, serve_fixtures
 except ImportError:
-    from _support import REPO, SandboxCase
+    import _install_fixture
+    from _support import SandboxCase, serve_fixtures
 
 
 class InstallSafety(SandboxCase):
@@ -32,34 +34,16 @@ class InstallSafety(SandboxCase):
         self.payload = self.fixtures / "video-tools-9.9.9.tar.gz"
         self.checksums = self.fixtures / "SHA256SUMS"
         self.curl_log = self.sandbox / "curl-calls.jsonl"
-        curl = self.put(self.bin / "curl", b'''#!/usr/bin/env python3
-import json, os, pathlib, sys
-args = sys.argv[1:]
-with open(os.environ["SAFETY_CURL_LOG"], "a") as stream:
-    stream.write(json.dumps(args) + "\\n")
-urls = [x for x in args if x.startswith("https://")]
-if len(urls) != 1:
-    sys.exit(91)
-name = urls[0].rsplit("/", 1)[-1]
-fixtures = pathlib.Path(os.environ["SAFETY_FIXTURES"])
-if name == "releases.json":
-    data = b'{"latest":"9.9.9"}'
-elif name in ("SHA256SUMS", "video-tools-9.9.9.tar.gz"):
-    data = (fixtures / name).read_bytes()
-else:
-    sys.exit(92)  # Never fall back to a network-enabled curl.
-if "-o" in args:
-    pathlib.Path(args[args.index("-o") + 1]).write_bytes(data)
-else:
-    sys.stdout.buffer.write(data)
-''')
-        curl.chmod(0o755)
-        ffmpeg = self.put(self.bin / "ffmpeg", b"#!/bin/sh\nprintf 'ffmpeg version 6.1 safety-fixture\\n'\n")
-        ffmpeg.chmod(0o755)
-        self.env.update({"PATH": str(self.bin) + os.pathsep + self.env["PATH"],
-                         "SAFETY_CURL_LOG": str(self.curl_log),
-                         "SAFETY_FIXTURES": str(self.fixtures),
-                         "VIDEO_TOOLS_DL_BASE": "https://safety.invalid"})
+        fixtures = ExitStack()
+        self.addCleanup(fixtures.close)
+        base_url, _ = fixtures.enter_context(serve_fixtures(
+            self.fixtures, self.curl_log,
+            paths={f'/v9.9.9/{self.payload.name}', '/v9.9.9/SHA256SUMS'}))
+        _, dependency_env = _install_fixture.dependency_fixtures(self.bin, self.home)
+        self.env.update(dependency_env)
+        for key in ("USERPROFILE", "APPDATA", "LOCALAPPDATA"):
+            self.env[key] = str(self.home)
+        self.env.update(VIDEO_TOOLS_DL_BASE=base_url, SAFETY_INSTALL_LOOPBACK=base_url)
         self.archive()
 
     def archive(self, extra=()):
@@ -83,11 +67,10 @@ with Path("calls.txt").open("a") as stream:
 
     def install(self, *args, target=None):
         target = self.checked(target or self.target)
-        # 发版通道直连 install.py(install.sh 已重构为克隆引导,见
-        # test_install_sh_bootstrap.py);安装器输出为 UTF-8,显式同口径解码。
+        entry = Path(_install_fixture.__file__).resolve()
         return subprocess.run(
-            [sys.executable, str(REPO / "scripts/install.py"), "--dir", str(target),
-             "--version", "9.9.9", "--no-provenance", *args],
+            [sys.executable, str(entry), "--dir", str(target), "--version", "9.9.9",
+             "--non-interactive", "--no-provenance", *args],
             cwd=self.root, env=self.env, capture_output=True, text=True,
             encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL, timeout=30)
@@ -96,14 +79,22 @@ with Path("calls.txt").open("a") as stream:
         self.assertEqual(list(self.work.iterdir()), [], "installer trap must remove temporary downloads")
         self.assert_outside_unchanged()
 
+    def assert_downloads(self):
+        paths = [json.loads(line)['path'] for line in self.curl_log.read_text(encoding='utf-8').splitlines()]
+        self.assertEqual(paths, [f'/v9.9.9/{self.payload.name}', '/v9.9.9/SHA256SUMS'])
+
     def test_install_and_repeated_install_do_not_overwrite_checkout(self):
-        self.assert_ok(self.install())
+        first = self.install()
+        self.assert_ok(first)
+        if os.name == 'nt':
+            self.assertIn('已跳过 shim 与用户 PATH 写入', first.stdout)
         self.assertTrue((self.target / ".vt-install.json").is_file())
         self.assertEqual((self.target / "calls.txt").read_text(), "init\ndoctor\n")
         self.put(self.target / "vt.py", b"# user-modified checkout\n")
         before = self.tree(self.target)
         self.assert_ok(self.install())
         self.assertEqual(self.tree(self.target), before)
+        self.assert_downloads()  # The second install must not re-download or rewrite the checkout.
         self.assert_work_clean()
 
     def test_dry_run_does_not_install_or_download(self):
@@ -120,6 +111,7 @@ with Path("calls.txt").open("a") as stream:
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.tree(self.target), before)
         self.assertEqual(victim.read_bytes(), b"existing data")
+        self.assertIn('非空且不是 video_tools checkout', result.stderr)
         self.assertFalse(self.curl_log.exists())
         self.assert_work_clean()
 
@@ -128,6 +120,8 @@ with Path("calls.txt").open("a") as stream:
         before = self.tree(self.outside)
         result = self.install()
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn('拒绝写穿', result.stderr)
+        self.assertFalse(self.curl_log.exists())
         self.assertEqual(self.tree(self.outside), before)
         self.assert_work_clean()
 
@@ -135,7 +129,9 @@ with Path("calls.txt").open("a") as stream:
         self.put(self.checksums, ("0" * 64 + "  " + self.payload.name + "\n").encode())
         result = self.install()
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn('SHA256 校验失败', result.stderr)
         self.assertFalse(self.target.exists())
+        self.assert_downloads()
         self.assert_work_clean()
 
     def test_corrupt_archive_cannot_mark_install_success(self):
@@ -145,6 +141,8 @@ with Path("calls.txt").open("a") as stream:
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.target / ".vt-install.json").exists())
         self.assertFalse((self.target / "calls.txt").exists())
+        self.assertIn('不是有效的 tar.gz 归档', result.stderr)
+        self.assert_downloads()
         self.assert_work_clean()
 
     def test_tar_dotdot_member_is_rejected_without_external_overwrite(self):
@@ -152,7 +150,9 @@ with Path("calls.txt").open("a") as stream:
         self.archive(extra=[("../../outside/keep.txt", b"malicious replacement")])
         result = self.install()
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn('归档成员含空/当前/父目录段', result.stderr)
         self.assertFalse((self.target / ".vt-install.json").exists())
+        self.assert_downloads()
         self.assert_work_clean()
 
     def test_tar_symlink_cannot_write_through_to_external_directory(self):
@@ -168,7 +168,9 @@ with Path("calls.txt").open("a") as stream:
         self.valid_checksum()
         result = self.install()
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn('符号链接目标越出载荷根', result.stderr)
         self.assertFalse((self.target / ".vt-install.json").exists())
+        self.assert_downloads()
         self.assert_work_clean()
 
     def test_uninstall_without_marker_refuses_deletion(self):
@@ -176,6 +178,8 @@ with Path("calls.txt").open("a") as stream:
         before = self.tree(self.target)
         result = self.install("--uninstall")
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn('无 .vt-install.json 标记', result.stderr)
+        self.assertFalse(self.curl_log.exists())
         self.assertEqual(self.tree(self.target), before)
         self.assert_work_clean()
 
