@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PreviewError, TimelineReader, validateEnvelope, prepareGfxArgs, prepareGfxCapable, hitsWarmSvgWindow, validatePreviewWindowRange, validateFormalArchiveRange, fail, HOST_IDENTITY, createRequestLogger, BAKED_BUILD_STAMP, BUILD_STAMP_MARKER, HOST_LIB_MODULES, CLIENT_MODULES, composeBuildStamp } from './protocol.mjs'
 import { mediaResponse } from './media.mjs'
-import { boundedText, CONTROL_REQUEST_LIMIT, FRAME_REQUEST_LIMIT, FRAME_WIRE_LIMIT } from './bounded.mjs'
+import { boundedText, CONTROL_REQUEST_LIMIT, FRAME_REQUEST_LIMIT, FRAME_WIRE_LIMIT, PROGRAM_RUN_MAX_WINDOWS, PROGRAM_RUN_MAX_BYTES, PROGRAM_RUN_WINDOW_BYTES, PROGRAM_RUN_TTL } from './bounded.mjs'
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
 import { createTimelineAgent } from './agent.mjs'
 import { ConfigurationError, readLogMaxPerMinute } from './configuration.mjs'
@@ -52,7 +52,7 @@ const continuationCapable = capability => capability?.input_epoch === true
 // Both bits must come from the same verified direct launcher capability as ordinary continuation.
 const programAudioContinuationCapable = capability => continuationCapable(capability) && capability.program_audio === true
 const sessionQualification = (ownerId, capability) => ({ capability: 'preview-session', version: 1, ownerId,
-  ...(continuationCapable(capability) && { continuation: { version: 1 } }),
+  ...(continuationCapable(capability) && { continuation: { version: 1 }, programRun: { version: 1 } }),
   ...(programAudioContinuationCapable(capability) && { programAudioContinuation: { version: 1 } }),
   ...(capability.first_frame?.version === 1 && { firstFrame: { version: 1 } }),
   ...(capability.formal_archive?.version === 1 && { formalArchive: { version: 1 } }) })
@@ -64,12 +64,15 @@ class WindowSessions {
     return createHmac('sha256', this.#receiptKey).update(JSON.stringify([nonce, sessionId, openGrant, ownerId])).digest('hex')
   }
   active(lease) { return !lease.revoked && this.clock() < lease.info.expiresAt }
-  activeFor(session) { return [...this.leases.values()].some(lease => lease.open.session === session && this.active(lease)) }
+  activeFor(session, programOnly = false) { return [...this.leases.values()].some(lease => lease.open.session === session && this.active(lease) && (!programOnly || lease.run)) }
+  activeProgramForProject(project) { return [...this.leases.values()].some(lease => lease.run && lease.open.project.targetKey === project.targetKey && this.active(lease)) }
 
-  authorize(open, data) {
+  authorize(open, data, programBinding) {
     if (!open.owner || !open.windowOwnerId || open.closing || !open.windowExecutable) fail('SESSION_UNSUPPORTED', 'Open a qualified owner preview first', 403)
-    if (data.scope !== 'current-project' || data.renderConsent !== 'cache/preview-only' || data.prepareInputs !== true) fail('SESSION_CONSENT', 'Separate render and cold-input permissions are required', 403)
+    if ((programBinding ? data.scope !== 'whole-timeline' : data.scope !== 'current-project') || data.renderConsent !== 'cache/preview-only' || data.prepareInputs !== true) fail('SESSION_CONSENT', 'Separate render and cold-input permissions are required', 403)
     const { capability } = open.windowExecutable
+    if (programBinding && (!continuationCapable(capability) || this.activeFor(open.session))) fail('PROGRAM_RUN_BUSY', 'Requires input identity support and no other preview session', 409)
+    if (!programBinding && this.activeFor(open.session, true)) fail('SESSION_BUSY', 'Stop the whole-timeline preview before authorizing another scope', 409)
     if (Object.hasOwn(data, 'continuation') && (data.continuation !== true || !continuationCapable(capability))) fail('CONTINUATION_DENIED', 'Continuous preview requires separate consent and input identity support', 403)
     if (Object.hasOwn(data, 'readWarmSvg') && (data.readWarmSvg !== true || capability.warm_svg_media !== true)) fail('WARM_SVG_DENIED', 'Warm SVG reads require exact owner consent and a qualified fixed-wheel capability', 403)
     if (Object.hasOwn(data, 'useProgramAudio') && (data.useProgramAudio !== true || capability.program_audio !== true ||
@@ -90,11 +93,16 @@ class WindowSessions {
     }
     const nonce = randomUUID()
     const id = `${nonce}.${this.#tag(nonce, open.session.id, open.id, open.windowOwnerId)}`
+    const programRun = programBinding && Object.freeze({ version: 1, contentVersion: data.contentVersion,
+      frame: data.frame, duration: programBinding.duration, span: programBinding.span, maxBytes: PROGRAM_RUN_MAX_BYTES })
     const info = Object.freeze({ id, ownerId: open.windowOwnerId, openGrant: open.id,
       sessionId: open.session.id, project: open.relative, ...(data.continuation === true && { continuation: true }),
       ...(data.readWarmSvg === true && { readWarmSvg: true }), ...(data.firstFrame === true && { firstFrame: true }),
-      ...(data.useProgramAudio === true && { useProgramAudio: true }), expiresAt: Math.min(open.expiresAt, this.clock() + SESSION_WINDOW_TTL), maxWindows: SESSION_WINDOW_LIMIT })
-    this.leases.set(info.id, { info, open, revoked: false, nonces: new Set() })
+      ...(data.useProgramAudio === true && { useProgramAudio: true }), ...(programRun && { programRun }),
+      expiresAt: Math.min(open.expiresAt, this.clock() + (programRun ? PROGRAM_RUN_TTL : SESSION_WINDOW_TTL)),
+      maxWindows: programRun ? PROGRAM_RUN_MAX_WINDOWS : SESSION_WINDOW_LIMIT })
+    const run = programRun && { timelineVersion: programBinding.timelineVersion, entries: new Map(), bytes: 0 }
+    this.leases.set(info.id, { info, open, revoked: false, nonces: new Set(), run })
     return info
   }
 
@@ -113,10 +121,20 @@ class WindowSessions {
   }
 
   reserve(lease, open, id) {
-    if (lease.open !== open || open.closing || !this.active(lease)) fail('SESSION_EXPIRED', 'Automatic preview authorization is no longer active', 403)
+    if (lease.run || lease.open !== open || open.closing || !this.active(lease)) fail('SESSION_EXPIRED', 'Automatic window authorization is no longer active', 403)
     if (lease.nonces.has(id)) fail('WINDOW_REPLAY', 'A window intent is single-use', 409)
     if (lease.nonces.size >= SESSION_WINDOW_LIMIT) fail('SESSION_LIMIT', 'Automatic window budget exhausted', 429)
     lease.nonces.add(id)
+  }
+
+  reserveProgram(lease, open, frame) {
+    const { run, info } = lease
+    if (!run || lease.open !== open || open.closing || !this.active(lease)) fail('PROGRAM_RUN_EXPIRED', 'Whole-timeline scope is no longer active', 403)
+    const { frame: pin, duration, span } = info.programRun
+    if (frame >= duration || frame % span || (!run.entries.size && frame !== pin - pin % span)) fail('BAD_PROGRAM_RUN', 'Use the canonical window grid, starting at the clicked playhead', 409)
+    if (run.entries.has(frame)) fail('WINDOW_REPLAY', 'A whole-timeline window may be dispatched only once', 409)
+    if (run.entries.size >= info.maxWindows || run.bytes >= info.programRun.maxBytes) fail('PROGRAM_RUN_LIMIT', 'Whole-timeline scope exhausted its window or byte budget', 429)
+    run.entries.set(frame, undefined) // Failed or interrupted work is not counted as coverage and is never retried.
   }
 
   seal(lease, id) {
@@ -126,6 +144,12 @@ class WindowSessions {
   }
 
   closeOpen(open) { for (const lease of this.leases.values()) if (lease.open === open) lease.revoked = true }
+  closePrograms(matches) {
+    for (const lease of this.leases.values()) if (lease.run && !lease.revoked && matches(lease.open)) {
+      lease.revoked = true
+      if (lease.open.windowOperation?.lease === lease) lease.open.frame?.abort()
+    }
+  }
 }
 
 export function relativeTimeline(path) {
@@ -321,6 +345,7 @@ export function createPreviewHost(ctx, config = {}) {
     return { target, info }
   }
   function revoke(grant) {
+    automatic.closePrograms(open => open === grant)
     grant.frame?.abort()
     grant.storage?.abort()
     grant.storagePlan = undefined
@@ -334,7 +359,7 @@ export function createPreviewHost(ctx, config = {}) {
     // Mark only that this exact Session/grant can never admit a window again.
     // An unsettled nonce stays reachable via frameOwners, not this bounded map.
     retiredWindowReceipts.delete(grant.id)
-    retiredWindowReceipts.set(grant.id, { sessionId: grant.session.id,
+    retiredWindowReceipts.set(grant.id, { sessionId: grant.session.id, programOwnerId: grant.windowOwnerId,
       archiveOwnerId: grant.windowExecutable?.capability.formal_archive?.version === 1 ? grant.windowOwnerId : undefined })
     if (retiredWindowReceipts.size > 32) retiredWindowReceipts.delete(retiredWindowReceipts.keys().next().value)
   }
@@ -361,6 +386,12 @@ export function createPreviewHost(ctx, config = {}) {
       reader.reap(id).then(() => storageOwners.delete(grant)).catch(() => {})
       void reapWindow(grant).catch(() => {})
     }
+    // A program may be between jobs or already fully cached when cwd/config
+    // changes. Retire that authority even if no request uses the old grant.
+    automatic.closePrograms(open => {
+      try { return ctx.sessions.get(open.session.id) !== open.session || ctx.workingDirectory.get(open.session) !== open.cwd || !configCurrent(open) }
+      catch { return true }
+    })
   }
   function grantFor(sessionId, id, allowStaleConfig = false) {
     expire()
@@ -423,6 +454,30 @@ export function createPreviewHost(ctx, config = {}) {
     if (result.target.targetKey !== grant.timeline.targetKey) fail('PATH_CHANGED', 'Timeline identity changed; reopen preview', 409)
     return result.target
   }
+  async function programTimelineVersion(grant, signal) {
+    const timeline = await validateTimeline(grant, signal)
+    const project = await localTarget(grant.projectPath, undefined, signal)
+    if (project.targetKey !== grant.project.targetKey) fail('PATH_CHANGED', 'Project identity changed; reopen preview', 409)
+    const info = await ctx.fs.stat(timeline, signal)
+    if (info?.type !== 'file' || typeof info.version !== 'string' || !info.version) fail('STALE_WINDOW', 'No current saved timeline identity', 409)
+    signal.throwIfAborted()
+    return info.version
+  }
+
+  async function validateProgram(lease, grant, signal) {
+    const { run, info } = lease
+    const live = () => run && lease.open === grant && !grant.closing && automatic.active(lease)
+    if (!live()) fail('PROGRAM_RUN_EXPIRED', 'Whole-timeline scope is no longer active', 403)
+    const current = await programTimelineVersion(grant, signal)
+    grantFor(grant.session.id, grant.id)
+    if (!live()) fail('PROGRAM_RUN_EXPIRED', 'Whole-timeline scope is no longer active', 403)
+    if (current !== run.timelineVersion || info.programRun.contentVersion !== grant.contentVersion) {
+      automatic.closePrograms(open => open === grant)
+      fail('STALE_WINDOW', 'Timeline changed; discard all whole-timeline media', 409)
+    }
+    if (grant.running || grant.plan || grant.outcomeUnknown || semanticAdmission) fail('WRITE_BUSY', 'Resolve editing before using whole-timeline media', 409)
+  }
+
   async function editViewTarget(grant, signal) {
     signal.throwIfAborted()
     grantFor(grant.session.id, grant.id)
@@ -579,6 +634,34 @@ export function createPreviewHost(ctx, config = {}) {
       const data = parseJSON(raw)
       if (!data || typeof data !== 'object' || Array.isArray(data)) fail('BAD_REQUEST', 'Expected a JSON object')
       if (typeof data.op === 'string') note.op = data.op
+      if (data.op === 'cancel-program-authorization') {
+        // A cancelled first POST may have minted a grant whose answer was lost.
+        // Seal its exact attempt before acknowledging; do not revoke a newer run.
+        if (!owner || !uuidShape(data.authorizationId) || Object.keys(data).some(key => !['op', 'sessionId', 'grant', 'ownerId', 'authorizationId'].includes(key))) {
+          fail('BAD_PROGRAM_RUN', 'Use the exact original owner and authorization attempt', 403)
+        }
+        const open = grants.get(data.grant) ?? [...frameOwners].find(item => item.id === data.grant)
+        const retired = retiredWindowReceipts.get(data.grant)
+        if (open ? !open.windowOwnerId || open.windowOwnerId !== data.ownerId || open.session.id !== data.sessionId :
+            !retired?.programOwnerId || retired.programOwnerId !== data.ownerId || retired.sessionId !== data.sessionId) {
+          fail('BAD_PROGRAM_RUN', 'Use the exact original owner and authorization attempt', 403)
+        }
+        if (open) {
+          const attempts = open.programAttempts ??= new Map()
+          let attempt = attempts.get(data.authorizationId)
+          if (!attempt) {
+            if (attempts.size >= PREVIEW_NONCE_LIMIT) fail('PROGRAM_RUN_LIMIT', 'No more authorization attempts on this open grant', 429)
+            attempts.set(data.authorizationId, attempt = {})
+          }
+          attempt.cancelled = true
+          const lease = automatic.leases.get(attempt.grantId), operation = open.windowOperation
+          if (lease) {
+            lease.revoked = true
+            if (operation?.lease === lease) { open.frame.abort(); await reapWindow(open, operation) }
+          }
+        }
+        return json({ ok: true, revoked: true, authorizationId: data.authorizationId })
+      }
       if (data.op === 'revoke-preview-session') {
         if (!owner) fail('BAD_SESSION_GRANT', 'Owner session required', 403)
         const lease = automatic.original(data, true)
@@ -655,16 +738,58 @@ export function createPreviewHost(ctx, config = {}) {
       // stale grant or write permission can always be torn down explicitly.
       const cleanup = ['close', 'storage-cancel'].includes(data.op) || ['revoke-write', 'invalidate-plan', 'cancel-write'].includes(data.op)
       const grant = grantFor(data.sessionId, data.grant, cleanup)
+      if (data.op === 'program-check') {
+        if (!owner || Object.keys(data).some(key => !['op', 'sessionId', 'grant', 'previewGrant', 'ownerId', 'frame', 'sha256'].includes(key))) fail('BAD_PROGRAM_RUN', 'Use the original owner and exact window digest', 403)
+        const lease = automatic.original(data)
+        await validateProgram(lease, grant, hold.signal)
+        if (!lease.run.entries.has(data.frame) || !lease.run.entries.get(data.frame) || lease.run.entries.get(data.frame) !== data.sha256) {
+          fail('BAD_PROGRAM_RUN', 'The window must match an accepted receipt in this scope', 409)
+        }
+        return json({ ok: true, grantId: lease.info.id, frame: data.frame, sha256: data.sha256 })
+      }
       if (data.op === 'authorize-preview-session') {
-        if (Object.keys(data).some(key => !['op', 'sessionId', 'grant', 'scope', 'renderConsent', 'prepareInputs', 'continuation', 'readWarmSvg', 'firstFrame', 'useProgramAudio'].includes(key))) fail('BAD_SESSION_GRANT', 'Unexpected automatic preview authorization field')
+        const program = data.scope === 'whole-timeline'
+        const scopeKeys = program ? ['frame', 'contentVersion', 'storageConsent', 'authorizationId'] : ['continuation', 'readWarmSvg', 'firstFrame', 'useProgramAudio']
+        if (Object.keys(data).some(key => !['op', 'sessionId', 'grant', 'scope', 'renderConsent', 'prepareInputs', ...scopeKeys].includes(key))) fail('BAD_SESSION_GRANT', 'Unexpected automatic preview authorization field')
         if (!owner || !grant.owner) fail('BAD_SESSION_GRANT', 'Explicit owner authorization is required', 403)
+        let attempt
+        if (program) {
+          const attempts = grant.programAttempts ??= new Map()
+          if (!uuidShape(data.authorizationId) || attempts.has(data.authorizationId)) fail('BAD_PROGRAM_RUN', 'An authorization attempt is single-use', 409)
+          if (attempts.size >= PREVIEW_NONCE_LIMIT) fail('PROGRAM_RUN_LIMIT', 'No more authorization attempts on this open grant', 429)
+          attempts.set(data.authorizationId, attempt = {})
+        }
         await validateTimeline(grant, hold.signal)
         grantFor(data.sessionId, data.grant)
         hold.signal.throwIfAborted()
         if ([...frameOwners].some(open => open.session === grant.session && open.windowOperation?.formalArchive)) {
           fail('ARCHIVE_BUSY', 'Settle the formal archive read before authorizing automatic preview', 409)
         }
-        return json({ ok: true, grant: automatic.authorize(grant, data) })
+        let binding
+        if (program) {
+          if (data.storageConsent !== 'temporary-browser-cache' || data.renderConsent !== 'cache/preview-only' || data.prepareInputs !== true ||
+              !continuationCapable(grant.windowExecutable?.capability)) fail('SESSION_CONSENT', 'Whole-timeline preview requires qualified input identity and explicit temporary browser-cache consent', 403)
+          const busy = () => frameOwners.size || reader.frameBusy || grant.plan || grant.running || grant.outcomeUnknown || semanticAdmission || storageOwners.size
+          if (busy()) fail('PROGRAM_RUN_BUSY', 'Settle current preview, edits or storage work first', 409)
+          const timelineVersion = await programTimelineVersion(grant, hold.signal)
+          const current = await reader.read(grant.executable, ctx.fs.processPath(grant.timeline), 'inspect', undefined, hold.signal, grant.configSnapshot, grant.id)
+          const after = await programTimelineVersion(grant, hold.signal)
+          grantFor(data.sessionId, data.grant)
+          if (busy()) fail('PROGRAM_RUN_BUSY', 'Settle current preview, edits or storage work first', 409)
+          const { duration_frames: duration, fps } = current.document.project
+          const [num, den = 1] = typeof fps === 'string' ? fps.split('/').map(Number) : [JSON.isRawJSON(fps) ? Number(fps.rawJSON) : fps]
+          const span = Math.ceil(num / den)
+          if (after !== timelineVersion || data.contentVersion !== grant.contentVersion || data.contentVersion !== current.content_version ||
+              !Number.isSafeInteger(duration) || !Number.isSafeInteger(span) || span < 1 || !Number.isSafeInteger(data.frame) || data.frame < 0 || data.frame >= duration) {
+            fail('STALE_WINDOW', 'Whole-timeline scope requires the current saved version and an in-range playhead', 409)
+          }
+          hold.signal.throwIfAborted()
+          binding = { timelineVersion, duration, span }
+        }
+        if (attempt?.cancelled) fail('PROGRAM_RUN_EXPIRED', 'Authorization attempt was cancelled', 403)
+        const info = automatic.authorize(grant, data, binding)
+        if (attempt) attempt.grantId = info.id
+        return json({ ok: true, grant: info })
       }
       if (data.op === 'close') {
         automatic.closeOpen(grant)
@@ -684,7 +809,12 @@ export function createPreviewHost(ctx, config = {}) {
       }
       if (['storage-inspect', 'storage-plan', 'storage-clean', 'storage-cancel'].includes(data.op)) return await storageControl(data, grant, hold.signal)
       if (['authorize-write', 'revoke-write', 'invalidate-plan', 'cancel-write', 'plan', 'commit', 'status', 'recover', 'adopt', 'undo', 'edit-view'].includes(data.op)) {
-        if (!['revoke-write', 'invalidate-plan'].includes(data.op) && frameOwners.size) fail('FRAME_BUSY', 'Cancel the frame and confirm actual process reaping before semantic operations', 409)
+        const bookkeeping = ['revoke-write', 'invalidate-plan'].includes(data.op)
+        const recovery = ['status', 'recover', 'cancel-write'].includes(data.op)
+        if (!bookkeeping && frameOwners.size) fail('FRAME_BUSY', 'Cancel the frame and confirm actual process reaping before semantic operations', 409)
+        if (!bookkeeping && !recovery && (automatic.activeFor(grant.session, true) || automatic.activeProgramForProject(grant.project))) {
+          fail('FRAME_BUSY', 'Stop whole-timeline preview before semantic operations', 409)
+        }
         semanticAdmission++
         try { return await editControl(data, grant, hold.signal, cleanup) }
         finally { semanticAdmission-- }
@@ -706,7 +836,10 @@ export function createPreviewHost(ctx, config = {}) {
         if (observedWindow && grant.windowOperation === observedWindow && observedWindow.version !== result.content_version) {
           grant.frame.abort(new PreviewError('STALE_WINDOW', 'Saved timeline changed; refresh before rendering a window', 409))
         }
-        if (grant.contentVersion !== result.content_version) { grant.storagePlan = undefined; grant.storageEpoch = (grant.storageEpoch ?? 0) + 1; grant.plan = undefined; grant.planEpoch = (grant.planEpoch ?? 0) + 1 }
+        if (grant.contentVersion !== result.content_version) {
+          automatic.closePrograms(open => open === grant)
+          grant.storagePlan = undefined; grant.storageEpoch = (grant.storageEpoch ?? 0) + 1; grant.plan = undefined; grant.planEpoch = (grant.planEpoch ?? 0) + 1
+        }
         grant.contentVersion = result.content_version
         grant.savedProject = result.document.project
         if (grant.recoveryObserved) { grant.outcomeUnknown = false; grant.recoveryObserved = false }
@@ -733,6 +866,7 @@ export function createPreviewHost(ctx, config = {}) {
     const operation = data.op.slice('storage-'.length)
     let frozen
     if (operation === 'clean') {
+      if (automatic.activeProgramForProject(grant.project)) fail('PROGRAM_RUN_BUSY', 'Stop whole-timeline preview before cleaning this project', 409)
       if (data.confirm !== 'stopped-writers-and-cleanup') fail('STORAGE_CONFIRMATION', 'Independently confirm stopped external writers and cleanup', 403)
       frozen = grant.storagePlan
       if (!frozen || frozen.token !== data.planToken || clock() >= frozen.expiresAt || frozen.version !== grant.contentVersion) { grant.storagePlan = undefined; fail('STORAGE_PLAN_INVALID', 'Storage plan expired or changed; explicitly request a new plan', 409) }
@@ -888,6 +1022,9 @@ export function createPreviewHost(ctx, config = {}) {
     try {
       const path = data.op === 'edit-view' ? await editViewFence() : ctx.fs.processPath(await validateTimeline(grant, combined))
       if (data.op === 'status' || data.op === 'recover') {
+        // Recovery must remain available between preview windows. Retire any
+        // captured media authority before a store command can change it.
+        automatic.closePrograms(open => open.session === grant.session || open.project.targetKey === grant.project.targetKey)
         mutating = true // Even status may initialize lock/manifest; write grant required.
         const result = await reader.store(grant.executable, path, data.op, undefined, combined, grant.configSnapshot, grant.id)
         grant.plan = undefined
@@ -1045,10 +1182,11 @@ export function createPreviewHost(ctx, config = {}) {
       try { data = parseJSON(text) }
       catch (error) { if (isWindow && error instanceof SyntaxError) fail('BAD_WINDOW', 'Expected complete window request JSON'); throw error }
       const continuation = isWindow && data?.op === 'session-continue'
+      const programRender = isWindow && data?.op === 'program-render'
       const sessionRender = isWindow && data?.op === 'session-render'
       const firstFramePoll = isWindow && data?.op === 'session-first-frame'
       const formalArchive = isWindow && ['formal-archive-read', 'formal-archive-cancel'].includes(data?.op)
-      const isAuto = continuation || sessionRender || firstFramePoll || (isWindow && data?.op === 'session-cancel')
+      const isAuto = programRender || continuation || sessionRender || firstFramePoll || (isWindow && data?.op === 'session-cancel')
       const allowed = formalArchive ? ['op', 'sessionId', 'grant', 'ownerId', 'operationId', ...(data.op === 'formal-archive-read' ? ['frame', 'contentVersion'] : [])]
         : isAuto ? ['op', 'sessionId', 'grant', 'previewGrant', 'ownerId', 'operationId',
         ...(data.op !== 'session-cancel' ? ['frame', 'contentVersion'] : []), ...(continuation ? ['inputEpoch', 'previousOperationId'] : []),
@@ -1060,7 +1198,9 @@ export function createPreviewHost(ctx, config = {}) {
         ? /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(data.operationId)
         : /^[a-f0-9-]{36}$/.test(data.operationId))
       const sessionLease = isAuto ? automatic.original(data, data.op === 'session-cancel') : undefined
+      if (sessionLease && !!sessionLease.run !== programRender && data.op !== 'session-cancel') fail('BAD_PROGRAM_RUN', 'The original preview scope does not authorize this operation', 403)
       if (isAuto && data.op === 'session-cancel') {
+        if (sessionLease.run) fail('BAD_PROGRAM_RUN', 'Stop the whole-timeline scope with its exact revocation receipt', 403)
         if (!validNonce) fail('BAD_WINDOW', 'Cancel requires the original window operationId')
         automatic.seal(sessionLease, data.operationId)
         const op = sessionLease.open?.windowOperation
@@ -1093,6 +1233,7 @@ export function createPreviewHost(ctx, config = {}) {
       } else if (!validNonce || (!isAuto && (data.op !== 'render' || data.renderConsent !== 'cache/preview-only'))) {
         fail('RENDER_DENIED', 'A fresh explicit preview-cache write consent is required', 403)
       }
+      if (!programRender && automatic.activeFor(grant.session, true)) fail('PROGRAM_RUN_BUSY', 'Stop whole-timeline preview before dispatching a separate preview worker', 409)
       if (!Number.isSafeInteger(data.frame) || data.frame < 0 || data.contentVersion !== grant.contentVersion || !/^sha256:[a-f0-9]{64}$/.test(data.contentVersion)) fail(`STALE_${errorPrefix}`, 'Use an exact saved version and pinned integer frame', 409)
       if (firstFramePoll) return await pollFirstFrame(grant, sessionLease, data, hold.signal)
       const firstFrame = Object.hasOwn(data, 'firstFrame')
@@ -1128,7 +1269,9 @@ export function createPreviewHost(ctx, config = {}) {
       }
       if (grant.frame || (!frameQueue.length && (frameOwners.size || reader.frameBusy))) fail(`${errorPrefix}_BUSY`, 'Previous process ownership has not been reaped; cancel it explicitly', 409)
       if (frameQueue.length >= 5) fail(`${errorPrefix}_QUEUE_FULL`, 'At most four explicit preview clicks may wait; no automatic retry', 429)
-      if (isAuto) {
+      if (programRender) {
+        automatic.reserveProgram(sessionLease, grant, data.frame)
+      } else if (isAuto) {
         if (continuation) {
           if (!sessionLease.info.continuation) fail('CONTINUATION_DENIED', 'Continuation was not authorized', 403)
           const last = sessionLease.last
@@ -1188,6 +1331,7 @@ export function createPreviewHost(ctx, config = {}) {
           const binding = grant.windowExecutable
           sameWindowExecutable(binding, await windowExecutableIdentity(binding.executable, grant.root, project, executable, signal))
         }
+        if (programRender) await validateProgram(sessionLease, grant, signal)
         if (isAuto && !automatic.active(sessionLease)) fail('SESSION_EXPIRED', 'Automatic window authorization ended', 403)
         if (data.contentVersion !== grant.contentVersion) fail(`STALE_${errorPrefix}`, 'Displayed version changed', 409)
         grantFor(data.sessionId, data.grant)
@@ -1257,11 +1401,25 @@ export function createPreviewHost(ctx, config = {}) {
           throw error
         }
         validatePreviewWindowRange(result, (await inspectWindow()).project)
+        if (programRender) {
+          const { run, info } = sessionLease
+          if (!result.inputEpoch || (run.inputEpoch && run.inputEpoch !== result.inputEpoch)) {
+            sessionLease.revoked = true
+            fail('WINDOW_INPUTS_CHANGED', 'Playback inputs changed; discard all whole-timeline media', 409)
+          }
+          if (result.bytes.length > PROGRAM_RUN_WINDOW_BYTES || result.bytes.length > info.programRun.maxBytes - run.bytes) {
+            fail('PROGRAM_RUN_LIMIT', 'Whole-timeline byte budget exhausted', 429)
+          }
+          run.inputEpoch = result.inputEpoch
+          run.bytes += result.bytes.length
+          run.entries.set(data.frame, result.sha256)
+        }
         if (continuation && result.inputEpoch !== data.inputEpoch) fail('WINDOW_INPUTS_CHANGED', 'Playback inputs changed across the window boundary', 409)
         if (sessionLease?.info.continuation && result.inputEpoch) sessionLease.last = { operationId: data.operationId,
           inputEpoch: result.inputEpoch, programAudio: result.programAudio, end: result.end, version: data.contentVersion, reaped: false }
         return new Response(result.bytes, { headers: {
           'Content-Type': 'video/mp4', 'Content-Length': String(result.bytes.length), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+          ...(programRender && { 'X-Framivra-Media-Kind': 'program-preview-window/v1', 'X-Framivra-Operation-Id': data.operationId }),
           ...(result.inputEpoch && { 'X-Framivra-Input-Epoch': result.inputEpoch }),
           ...(result.programAudio === true && { 'X-Framivra-Program-Audio': '1' }),
           ...(continuation && { 'X-Framivra-Continuation-From': data.previousOperationId }),
