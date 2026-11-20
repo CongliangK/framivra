@@ -338,20 +338,26 @@ raise SystemExit(asr_cli.main())
 
     def test_actual_duck_cli_skip_is_zero_write_and_stdout(self):
         script = ROOT / "plugins/duck-static/bed_static_duck.py"
-        command = [sys.executable, "-I", "-B", str(script), "-t", str(self.path)]
-        dry = subprocess.run(command + ["--dry-run"], capture_output=True, text=True)
+        mode = ['-X', 'utf8=0'] if os.name == 'nt' else []
+        command = [sys.executable, "-I", "-B", *mode, str(script), "-t", str(self.path)]
+
+        def run(*argv):
+            return subprocess.run(command + list(argv), capture_output=True, text=True,
+                                  encoding='utf-8' if os.name == 'nt' else None, timeout=30)
+
+        dry = run("--dry-run")
         self.assertEqual(dry.returncode, 0, dry.stderr)
         self.assertIn("纯计划", dry.stdout)
         self.assertEqual(list(self.root.iterdir()), [self.path])
-        done = subprocess.run(command, capture_output=True, text=True)
+        done = run()
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("✓ bed 2 事件 → 4 段", done.stdout)
         before = tree(self.root)
-        skip = subprocess.run(command, capture_output=True, text=True)
+        skip = run()
         self.assertEqual(skip.returncode, 0, skip.stderr)
         self.assertIn("跳过（幂等）", skip.stdout)
         self.assertEqual(before, tree(self.root))
-        reject = subprocess.run(command + ["--global-db", "-9"], capture_output=True, text=True)
+        reject = run("--global-db", "-9")
         self.assertEqual(reject.returncode, 1)
         self.assertIn("参数不同", reject.stderr)
         self.assertEqual(before, tree(self.root))
