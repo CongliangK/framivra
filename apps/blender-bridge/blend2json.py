@@ -29,7 +29,7 @@ sc = bpy.context.scene
 src_json = Path(sc["vtx_timeline"])
 out_path = Path(argv[1]).resolve() if len(argv) > 1 else src_json.parent / "timeline.blendback.json"
 
-tl = copy.deepcopy(json.loads(src_json.read_text()))
+tl = copy.deepcopy(json.loads(src_json.read_text(encoding="utf-8")))
 base = src_json.parent
 DUR = tl["project"]["duration_frames"]
 CH_V = 1 + len(tl["audio_tracks"])
@@ -182,7 +182,7 @@ if subs and (subs.frame_final_start != 0 or subs.frame_final_end != DUR):
     warns.append("字幕轨被移动（字幕回写需改 subtitles 数组，本次不回写）")
 
 # ---------- 输出 ----------
-out_path.write_text(json.dumps(tl, ensure_ascii=False, indent=2) + "\n")
+out_path.write_text(json.dumps(tl, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 print(f"[blend2json] 源 {src_json.name} ← {blend_path.name}")
 print(f"[blend2json] 回写 {len(changes)} 项 / 拒收 {len(rejects)} 项 / 告警 {len(warns)} 项 → {out_path.name}")
 for c in changes: print("  改", c)
