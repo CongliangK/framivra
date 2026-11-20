@@ -87,12 +87,14 @@ class WindowsPageCommit(unittest.TestCase):
         # An install root + verification project + core-session cache can put
         # the scratch parent at this depth. Leave room even for the longer
         # temporary basename used when a static-span frame is copied.
-        name = 'scratch 中文 # ' + 'x' * (206 - len(str(self.root)) - len('scratch 中文 # '))
+        prefix = self.root / 'scratch 中文 # '
+        name = prefix.name + 'x' * (206 - len(str(prefix).encode('utf-16-le')) // 2)
         scratch_root = self.root / name
 
         def renderer(_html, scratch, count):
             # Keep this a regression even where the machine allows long paths.
-            self.assertLess(len(str(scratch / '.f0000.png.12345678.tmp')), 260)
+            temp = str(scratch / '.f0000.png.12345678.tmp')
+            self.assertLess(len(temp.encode('utf-16-le')) // 2, 260)
             for i in range(count):
                 gfx_render._atomic_write_bytes(scratch / f'f{i:04d}.png', png(value=i))
             return 'fixture'

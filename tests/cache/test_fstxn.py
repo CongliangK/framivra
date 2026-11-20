@@ -151,7 +151,8 @@ class LockedWriteBasics(unittest.TestCase):
     def test_atomic_write_long_completion_marker_leaves_no_residue(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d).resolve()
-            parent = root / ('vseg_pass-' + 'x' * (223 - len(str(root)) - len('vseg_pass-')))
+            prefix = root / 'vseg_pass-'
+            parent = prefix.with_name(prefix.name + 'x' * (223 - len(str(prefix).encode('utf-16-le')) // 2))
             target = parent / 'p0_05c97f023290.mkv.complete.json'
             create = tempfile.mkstemp
 
