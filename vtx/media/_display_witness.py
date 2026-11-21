@@ -92,7 +92,10 @@ def witness_argv(path, width, height):
     return ['ffmpeg', '-v', 'error', '-nostdin', '-nostats', '-xerror',
             '-stats_period', '3600', '-progress', 'pipe:1', '-reinit_filter', '1',
             '-i', str(path), '-map', '0:v:0', '-an', '-vf', dimension_guard(width, height, shrink=True),
-            '-fps_mode', 'passthrough', '-c:v', 'wrapped_avframe', '-f', 'null', '-']
+            # FFmpeg 6's default encoder tick can round different MKV timestamps
+            # to the same frame number. The null sink needs no nominal FPS grid.
+            '-fps_mode', 'passthrough', '-enc_time_base', '1:1000000',
+            '-c:v', 'wrapped_avframe', '-f', 'null', '-']
 
 
 def verify_source(c, path, width, height, *, deadline):
