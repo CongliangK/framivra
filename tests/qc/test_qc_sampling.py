@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -32,6 +33,26 @@ def _sample(c, path, pre_crop='', frame=0):
 
 
 class SamplingCacheContract(unittest.TestCase):
+    def test_witness_capture_bounds_both_pipes_and_time(self):
+        from time import monotonic
+        from vtx.media._display_witness import capture_witness, witnessed_frames
+
+        good = types.SimpleNamespace(returncode=0, stderr=b'', stdout=b'frame=1\r\nprogress=end\r\n')
+        self.assertEqual(witnessed_frames(good), 1)
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            witnessed_frames(types.SimpleNamespace(**(vars(good) | {'stdout': good.stdout[:-1]})))
+        cli = [sys.executable, '-B', '-c']
+        ok = capture_witness([*cli, 'import sys; sys.stdout.write("ok"); sys.stderr.write("err")'],
+                             deadline=monotonic() + 5, limit=5)
+        self.assertEqual((ok.returncode, ok.stdout, ok.stderr), (0, b'ok', b'err'))
+        with self.assertRaisesRegex(ValueError, 'output budget'):
+            capture_witness([*cli, 'import sys; print("a" * 2000); print("b" * 1000, file=sys.stderr)'],
+                            deadline=monotonic() + 5, limit=2100)
+        for child in ('import time; time.sleep(20)',
+                      'import os,time; os.close(1); os.close(2); time.sleep(20)'):
+            with self.subTest(child=child), self.assertRaisesRegex(TimeoutError, 'time budget'):
+                capture_witness([*cli, child], deadline=monotonic() + 0.5)
+
     def test_schema_and_filter_changes_reprobe_current_contract_reuses(self):
         with tempfile.TemporaryDirectory() as temporary:
             c = _FakeContext(Path(temporary), enabled=True)
@@ -287,8 +308,26 @@ class SamplingMediaContract(unittest.TestCase):
             'subtitles': [], 'audio_tracks': [{'name': 'tone', 'events': [
                 {'src': 'source', 'in': 0, 'out': 60, 'volume': 1.0}]}]}))
         env = dict(os.environ, VTX_PIPELINE='0', VTX_VIDEO_SEGMENTS='1', VTX_SEG_NVENC='0')
-        self.command([sys.executable, REPO/'vtx/vtx.py', '-t', timeline, 'all', '--until', 'mux'],
-                     env=env, cwd=REPO)
+        cli = [sys.executable, '-B', '-X', 'utf8', REPO/'vtx/vtx.py', '-t', timeline]
+        self.command([*cli, 'all', '--until', 'mux'], env=env, cwd=REPO)
+        from vtx.cache._formal_video import proof_name
+        out = self.root / 'out'
+        video_proof, final_proof = (out / proof_name(leaf) for leaf in ('video_noaudio.mp4', 'final.mp4'))
+        final = out / 'final.mp4'
+        before = final.read_bytes()
+        final_proof.write_bytes(b'null')  # Malformed is not a missing legacy proof.
+        rejected = subprocess.run(list(map(str, [*cli, 'qc', '--strict'])), cwd=REPO,
+                                  env=env, capture_output=True, timeout=180)
+        self.assertEqual(rejected.returncode, 1, rejected.stdout + rejected.stderr)
+        self.assertIn('当前视频产物缺少有效几何证明', rejected.stdout.decode('utf-8'))
+        final_proof.unlink()
+        video_proof.unlink()
+        self.command([*cli, 'qc', '--strict'], env=env, cwd=REPO)
+        self.assertEqual(final.read_bytes(), before)
+        self.assertFalse(final_proof.exists(), 'do not adopt the legacy artifact')
+        self.command([*cli, 'mux'], env=env, cwd=REPO)
+        self.assertTrue(final_proof.is_file())
+        self.assertFalse(video_proof.exists(), 'mux did not rerender or adopt video')
         c = Ctx(timeline, diagnostics=[]); c.strict = True
         code, _, report = _run_qc(c)
         self.assertEqual(code, 0, report)
@@ -330,6 +369,241 @@ class SamplingMediaContract(unittest.TestCase):
         self.assertEqual(len(failed), 1, failed)
         self.assertTrue(failed[0]['name'].startswith('窗口 clip'))
         self.assert_out_of_gamut_bottom_and_real_leak(env)
+
+    def test_same_decoder_exposes_hidden_and_late_display_geometry(self):
+        from time import monotonic
+        from vtx.cache._formal_video import source_guard
+        from vtx.media._display_witness import verify_source
+
+        c = types.SimpleNamespace()
+
+        clear = self.root / 'clear.h264'
+        oriented = self.root / 'oriented.h264'
+        self.command(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=30:d=2',
+                      '-c:v', 'libx264', '-threads', '1', '-bf', '0',
+                      '-x264-params', 'keyint=30:min-keyint=30:scenecut=0', clear])
+        self.command(['ffmpeg', '-v', 'error', '-i', clear, '-c', 'copy',
+                      '-bsf:v', 'h264_metadata=display_orientation=insert:rotate=90', oriented])
+        late = self.root / 'late.h264'
+        late.write_bytes(clear.read_bytes() + oriented.read_bytes())
+        for raw, name, counts in (
+            (clear, 'normal.mkv', (60, None)),  # An ordinary container without a declared nb_frames.
+            (oriented, 'hidden.mp4', (None, 60)),
+            (late, 'late.mp4', (None, None)),
+        ):
+            with self.subTest(name=name):
+                source = self.root / name
+                self.command(['ffmpeg', '-v', 'error', '-fflags', '+genpts', '-r', '30', '-i', raw,
+                              '-map', '0:v:0', '-c', 'copy', source])
+                stream = json.loads(self.command(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                                                   '-show_streams', '-of', 'json', source]).stdout)['streams'][0]
+                self.assertEqual((stream['width'], stream['height']), (640, 360))
+                self.assertFalse(stream.get('side_data_list'))
+                if name == 'normal.mkv':
+                    self.assertNotIn('nb_frames', stream)
+                for expected, count in zip(((640, 360), (360, 640)), counts):
+                    deadline = monotonic() + 30
+                    if count is None:
+                        with self.assertRaisesRegex(ValueError, 'geometry could not be confirmed'):
+                            verify_source(c, source, *expected, deadline=deadline)
+                    else:
+                        self.assertEqual(verify_source(c, source, *expected, deadline=deadline), count)
+
+        # A scale would hide the post-seek source dimensions. Assert those
+        # dimensions before scaling exactly as the formal QC references do.
+        seek_source = self.root / 'late.mp4'
+        c.input_fingerprint = 'current'
+        command = ['ffmpeg', '-v', 'error', '-ss', '2.05', '-i', str(seek_source),
+                   '-an', '-map', '0:v:0']
+        suffix = ['-frames:v', '1', '-pix_fmt', 'gray', '-f', 'rawvideo', '-']
+        reference = self.command([*command, '-vf', 'scale=64:36', *suffix]).stdout
+        self.assertEqual(len(reference), 64 * 36)
+        c._formal_geometry = ('current', {seek_source: (360, 640)})
+        args = ','.join([*source_guard(c, seek_source), 'scale=64:36'])
+        self.assertEqual(self.command([*command, '-vf', args, *suffix]).stdout, reference)
+        c._formal_geometry = ('current', {seek_source: (640, 360)})
+        args = ','.join([*source_guard(c, seek_source), 'scale=64:36'])
+        wrong = subprocess.run([*command, '-vf', args, *suffix], capture_output=True, timeout=30)
+        self.assertNotEqual(wrong.returncode, 0)
+        self.assertEqual(wrong.stdout, b'')
+
+        timeline = self.root / 'timeline.json'
+        timeline.write_text(json.dumps({
+            'version': 2, 'project': {'fps': 30, 'width': 640, 'height': 360, 'duration_frames': 30},
+            'sources': [{'id': 's', 'path': 'hidden.mp4'}],
+            'video_tracks': [{'kind': 'aroll', 'name': 'main', 'clips': [
+                {'src': 's', 'src_in': 0, 'src_out': 30, 'dst_in': 0, 'dur': 30, 'scale': .5}]}],
+            'audio_tracks': [], 'subtitles': [],
+        }), encoding='utf-8')
+        config = self.root / 'config.json'
+        config.write_text('{"cache":{"mode":"aggressive"}}', encoding='utf-8')
+        env = dict(os.environ, VTX_CONFIG=str(config), VTX_NO_NVENC='1', VTX_SEG_NVENC='0')
+        cli = [sys.executable, '-B', '-X', 'utf8', str(REPO / 'vtx/vtx.py'), '-t', str(timeline)]
+        for stage in ('video', 'mux', 'qc'):
+            result = subprocess.run([*cli, stage], cwd=REPO, env=env, capture_output=True, timeout=30)
+            text = (result.stdout + result.stderr).decode('utf-8', 'replace')
+            self.assertEqual(result.returncode, 1, text)
+            self.assertIn('无法确认正式视频源', text)
+            self.assertNotIn('Traceback', text)
+        self.assertFalse(list((self.root / 'cache' / 'seg').glob('*')))
+        self.assertFalse(list((self.root / 'out').glob('*.formal-video.json')))
+        self.assertFalse((self.root / 'out' / 'video_noaudio.mp4').exists())
+
+        document = json.loads(timeline.read_text(encoding='utf-8'))
+        for clip in ({}, {'src': 'not-declared'}):
+            with self.subTest(clip=clip):
+                document['video_tracks'][0]['clips'] = [clip]
+                timeline.write_text(json.dumps(document), encoding='utf-8')
+                result = subprocess.run([*cli, 'mux'], cwd=REPO, env=env, capture_output=True, timeout=30)
+                text = (result.stdout + result.stderr).decode('utf-8', 'replace')
+                self.assertEqual(result.returncode, 1, text)
+                self.assertIn('视频片段须引用已声明的素材', text)
+                self.assertNotIn('Traceback', text)
+
+    def test_quarter_turn_windows_match_decoded_geometry_and_strict_qc(self):
+        for color in ('white', 'gray'):
+            self.command(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+                          f'color={color}:s=640x360:r=30:d=1', '-f', 'lavfi', '-i',
+                          'sine=440:48000:duration=1', '-c:v', 'libx264', '-threads', '1',
+                          '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', self.root / f'{color}.mp4'])
+        # Write a known 89.5° MP4 display matrix, including on older FFmpeg
+        # builds without the -display_rotation authoring option.
+        movie = bytearray((self.root / 'white.mp4').read_bytes())
+
+        def children(start, end, kind):
+            while start < end:
+                size, tag = struct.unpack_from('>I4s', movie, start)
+                self.assertTrue(8 <= size <= end - start, (size, tag))
+                if tag == kind:
+                    yield start + 8, start + size
+                start += size
+
+        moov, = children(0, len(movie), b'moov')
+        video = []
+        for track in children(*moov, b'trak'):
+            mdia, = children(*track, b'mdia')
+            (handler, _), = children(*mdia, b'hdlr')
+            if movie[handler + 8:handler + 12] == b'vide':
+                video.extend(children(*track, b'tkhd'))
+        (header, end), = video
+        self.assertIn(movie[header], (0, 1))
+        matrix = header + (40 if movie[header] == 0 else 52)
+        self.assertLessEqual(matrix + 36, end)
+        struct.pack_into('>9i', movie, matrix, 571, -65533, 0, 65533, 571, 0, 0, 0, 1 << 30)
+        rotated = self.root / 'rotated.mp4'
+        rotated.write_bytes(movie)
+        from vtx.media.encoders import display_video_size, probe_video_alpha
+        self.assertIs(probe_video_alpha(rotated).get('quarter_turn'), True)
+
+        cfg = self.root / 'config.json'
+        cfg.write_text('{"cache":{"mode":"aggressive"}}', encoding='utf-8')
+        env = dict(os.environ, VTX_CONFIG=str(cfg), VTX_PIPELINE='0', VTX_VIDEO_SEGMENTS='1',
+                   VTX_SEG_NVENC='0', VTX_NO_NVENC='1')
+        for upper, scale, visible in ((False, None, (640, 360)), (False, .5, (180, 320)),
+                                      (True, .9, (324, 360))):
+            with self.subTest(upper=upper, scale=scale):
+                project = self.root / f'{upper}-{scale}'
+                project.mkdir()
+                shutil.copyfile(rotated, project / '素材.mp4')
+                shutil.copyfile(self.root / 'gray.mp4', project / 'background.mp4')
+                clip = dict(src='turned', src_in=0, src_out=30, dst_in=0, dur=30)
+                if scale is not None:
+                    clip.update(scale=scale, x=0, y=0)
+                tracks = [{'name': 'turned', 'kind': 'aroll', 'clips': [clip]}]
+                if upper:
+                    tracks.insert(0, {'name': 'base', 'kind': 'aroll',
+                                     'clips': [dict(clip, src='background')]})
+                    for key in ('scale', 'x', 'y'):
+                        del tracks[0]['clips'][0][key]
+                timeline = project / 'timeline.json'
+                timeline.write_text(json.dumps({
+                    'version': 2, 'project': {'fps': 30, 'width': 640, 'height': 360, 'duration_frames': 30},
+                    'sources': [{'id': 'turned', 'path': '素材.mp4'},
+                                {'id': 'background', 'path': 'background.mp4'}],
+                    'video_tracks': tracks, 'subtitles': [],
+                    'audio_tracks': [{'name': 'voice', 'events': [
+                        {'src': 'background', 'in': 0, 'out': 30, 'volume': 1.0}]}],
+                }, ensure_ascii=False), encoding='utf-8')
+                cli = [sys.executable, '-B', '-X', 'utf8', REPO/'vtx/vtx.py', '-t', timeline]
+                if not upper and scale is None:
+                    out = project / 'out'
+                    redirected = project / 'real-output'
+                    redirected.mkdir()
+                    if os.name == 'nt':
+                        self.command(['cmd.exe', '/d', '/c', 'mklink', '/J', out, redirected])
+                    else:
+                        out.mkdir()
+                        (redirected / 'alternate.mp4').touch()
+                        (out / 'video_noaudio.mp4').symlink_to(redirected / 'alternate.mp4')
+                self.command([*cli, 'all', '--until', 'mux'], cwd=REPO, env=env)
+                if not upper and scale is not None:
+                    from vtx.cache._formal_video import proof_name
+                    out = project / 'out'
+                    ledger = out / 'receipt.json'
+                    published = [ledger, out / 'video_noaudio.mp4', out / 'final.mp4']
+                    before_gate = [path.read_bytes() for path in published]
+                    for stage, file, stale in (('mux', 'video_noaudio.mp4', None),
+                                                ('qc', 'final.mp4', b'{broken')):
+                        proof = out / proof_name(file)
+                        current = proof.read_bytes()
+                        if stale is None:
+                            proof.unlink()  # Simulate a complete pre-fix handoff.
+                            from vtx.api import atomic_media
+                            media = out / file
+                            payload = media.read_bytes()
+                            atomic_media(Ctx(timeline), media, lambda path: path.write_bytes(payload))
+                            self.assertFalse(proof.exists(), 'a generic publisher cannot qualify a formal handoff')
+                        else:
+                            proof.write_bytes(stale)
+                        result = subprocess.run(list(map(str, [*cli, stage])), cwd=REPO, env=env,
+                                                capture_output=True, timeout=180)
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                        self.assertIn('当前输入要求先成功完成阶段', result.stdout.decode('utf-8'))
+                        self.assertEqual([path.read_bytes() for path in published], before_gate)
+                        proof.write_bytes(current)
+                    reference = project / 'cache/qc_clean.mp4'
+                    final = project / 'out/final.mp4'
+                    before = final.read_bytes()
+                    self.assertTrue(reference.is_file())
+                    self.command([*cli, 'gc'], cwd=REPO, env=env)
+                    self.assertFalse(reference.exists())
+                    self.command([*cli, 'qc', '--strict'], cwd=REPO, env=env)
+                    self.assertEqual(final.read_bytes(), before)
+                    self.assertTrue(reference.is_file())
+                    self.command([*cli, 'gc'], cwd=REPO, env=env)
+                    self.assertFalse(reference.exists())
+                    diagnostic = self.command([sys.executable, '-B', '-X', 'utf8', '-m',
+                        'vtx.agent_diagnostics', '-t', timeline, 'qc', '--strict',
+                        '--format', 'agent-json'], cwd=REPO, env=env)
+                    self.assertEqual(json.loads(diagnostic.stdout)['exit_code'], 0)
+                    self.assertEqual(final.read_bytes(), before)
+                    self.assertTrue(reference.is_file())
+                else:
+                    self.command([*cli, 'qc', '--strict'], cwd=REPO, env=env)
+                c = Ctx(timeline)
+                self.assertEqual(display_video_size(c.probe(project / '素材.mp4')), (360, 640))
+                report = json.loads((project / 'out/qc_report.json').read_bytes())
+                self.assertEqual(report['skipped_probes'], [])
+                self.assertTrue(all(row['pass'] for row in report['checks']), report)
+                pixels = self.command(['ffmpeg', '-v', 'error', '-i', project/'out/final.mp4',
+                                       '-frames:v', '1', '-pix_fmt', 'gray', '-f', 'rawvideo', '-']).stdout
+                self.assertEqual(len(pixels), 640 * 360)
+                rows = [sum(value > 200 for value in pixels[n:n + 640]) for n in range(0, len(pixels), 640)]
+                self.assertEqual(rows, [visible[0]] * visible[1] + [0] * (360 - visible[1]))
+                if upper:
+                    # Another visible layer changes the canvas; it must not
+                    # make an entirely offscreen rotated layer pass QC.
+                    doc = json.loads(timeline.read_bytes())
+                    doc['video_tracks'].append({'name': 'offscreen', 'kind': 'aroll',
+                                               'clips': [dict(clip, x=640)]})
+                    timeline.write_text(json.dumps(doc, ensure_ascii=False), encoding='utf-8')
+                    self.command([*cli, 'all', '--until', 'mux'], cwd=REPO, env=env)
+                    result = subprocess.run(list(map(str, [*cli, 'qc', '--strict'])),
+                                            cwd=REPO, env=env, capture_output=True, timeout=180)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    report = json.loads((project / 'out/qc_report.json').read_bytes())
+                    failed = [row['name'] for row in report['checks'] if not row['pass']]
+                    self.assertEqual(failed, ['窗口 clip offscreen @frame 15 生效'], report)
 
     def assert_out_of_gamut_bottom_and_real_leak(self, env):
         project = self.root / 'gamut'; project.mkdir()

@@ -155,11 +155,13 @@ def retain_media_markers(c, plan):
     reclassified. Dangerous full cleanup deliberately does not call this helper.
     """
     from .recovery import FORMATS, completion_marker
+    from ._formal_video import proof_name
     selected = {path for items in plan.values() for path, _, _ in items}
     markers = set()
     for marker in selected:
         owner = marker.with_suffix("").with_suffix("")
-        if (completion_marker(owner) != marker or owner.suffix.lower() not in FORMATS
+        formal = owner.parent == c.out and marker.name == proof_name(owner.name)
+        if ((completion_marker(owner) != marker and not formal) or owner.suffix.lower() not in FORMATS
                 or not any(root in owner.parents for root in (c.cache, c.out))
                 or any(part in selected for part in (owner, *owner.parents))):
             continue
@@ -317,7 +319,8 @@ def gfx_dir(c, cl) -> Path:
     return root / "gfx" / gfx_key(c, cl)
 
 
-def seg_key(c, cl, ti: int, ci: int, windowed: bool, need_alpha: bool, encoder: str) -> str:
+def seg_key(c, cl, ti: int, ci: int, windowed: bool, need_alpha: bool, encoder: str,
+            *, source_info=None) -> str:
     """seg 缓存键 = sha1(源指纹 + 切片/窗口/fade 参数 + 编码路径 + 编码器 token)[:12]。
 
     ti/ci 不参与（同参数的两处 clip 复用同一 seg 是正确的）；windowed/need_alpha
@@ -343,6 +346,8 @@ def seg_key(c, cl, ti: int, ci: int, windowed: bool, need_alpha: bool, encoder: 
     # invalidate only this path, leaving explicit window geometry unchanged.
     if not windowed:
         spec.append("crop-center-v2")
+    if source_info and source_info.get('quarter_turn'):
+        spec.append('display-quarter-turn-v1')
     return _sha1("|".join(spec).encode())
 
 
@@ -573,9 +578,10 @@ def _current_keys(c):
             else:
                 if c.src_path(cl["src"]).exists() and "src_in" in cl:
                         windowed = any(k in cl for k in ("scale", "x", "y"))
-                        need_alpha = seg_needs_alpha(cl, c.probe(c.src_path(cl['src'])))
+                        source_info = c.probe(c.src_path(cl['src']))
+                        need_alpha = seg_needs_alpha(cl, source_info)
                         seg.add((seg_key(c, cl, ti, ci, windowed, need_alpha,
-                                         "prores" if need_alpha else seg_kind),
+                                         "prores" if need_alpha else seg_kind, source_info=source_info),
                                  need_alpha))
     for s in c.tl["sources"]:
         if c.src_path(s["id"]).exists():
