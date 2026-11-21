@@ -1,6 +1,7 @@
 """Offline cover browser selection and local filename transport."""
 from contextlib import redirect_stdout
 import io
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -8,7 +9,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 from urllib.request import url2pathname
 
 from apps.cover import make_cover
@@ -52,7 +53,8 @@ class CoverLocalUri(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory).resolve() / '项目 #100% 封面'
             output.mkdir()
-            (output / 'bg_1920x1200.png').touch()
+            background = output / '自带 #100% 背景.png'
+            background.touch()
             launches = []
 
             def run(argv):
@@ -66,11 +68,19 @@ class CoverLocalUri(unittest.TestCase):
                     mock.patch.object(make_cover, 'probe', return_value=(1920, 1200)), \
                     redirect_stdout(io.StringIO()), \
                     mock.patch.object(sys, 'argv', ['make_cover.py', 'render', '--out', str(output),
-                                                   '--title', 'Cover', '--sub', 'Local fixture']):
+                                                   '--bg', str(background), '--title', 'Cover',
+                                                   '--sub', 'Local fixture']):
                 make_cover.main()
             self.assertEqual(len(launches), 1)
             uri = urlsplit(launches[0][-1])
             self.assertEqual((uri.scheme, uri.netloc, uri.query, uri.fragment), ('file', '', '', ''))
             html = Path(url2pathname(uri.path))
             self.assertEqual(html, output / 'cover.html')
-            self.assertIn('Local fixture', html.read_text(encoding='utf-8'))
+            document = html.read_text(encoding='utf-8')
+            self.assertIn('Local fixture', document)
+            url = document.split('background-image: url("', 1)[1].split('");', 1)[0]
+            parsed = urlsplit(url)
+            self.assertEqual((parsed.scheme, parsed.netloc, parsed.query, parsed.fragment), ('', '', '', ''))
+            self.assertEqual(unquote(parsed.path), background.name)
+            meta = json.loads((output / 'cover.meta.json').read_bytes())
+            self.assertEqual(meta['bg'], background.name)
