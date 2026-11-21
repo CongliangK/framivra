@@ -1207,8 +1207,17 @@ def track_engine_spec(track, proj, stem_path):
 
 
 def _check_windows_stem_names(tracks):
-    """Reject case aliases of the bus filenames before any are created."""
-    if os.name != "nt" or len(tracks) < 2:
+    """Reject unusable Win32 stem names before creating any render output."""
+    if os.name != "nt":
+        return
+    names = [f"{track['name']}.bus.wav" for track in tracks]
+    for name in names:
+        # Extensions do not disambiguate DOS devices; a colon can select an ADS.
+        base = name.split(".", 1)[0].rstrip(" ").upper()
+        if (re.fullmatch(r"CON(?:IN\$|OUT\$)?|PRN|AUX|NUL|(?:COM|LPT)[1-9¹²³]", base)
+                or any(ord(char) < 32 or char in '<>:"|?*' for char in name)):
+            raise ProjectError(f"Windows stem 文件名不可用：{name!r}；请重命名该轨")
+    if len(names) < 2:
         return
     import ctypes
     from ctypes import wintypes
@@ -1226,7 +1235,7 @@ def _check_windows_stem_names(tracks):
             raise ctypes.WinError(ctypes.get_last_error())
         return order - 2  # CSTR_LESS_THAN / CSTR_EQUAL / CSTR_GREATER_THAN
 
-    names = sorted((f"{track['name']}.bus.wav" for track in tracks), key=cmp_to_key(compare))
+    names.sort(key=cmp_to_key(compare))
     for left, right in zip(names, names[1:]):
         if compare(left, right) == 0:
             raise ProjectError(f"Windows stem 文件名冲突：{left!r} 与 {right!r}；请重命名其中一轨")

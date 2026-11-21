@@ -1069,6 +1069,26 @@ class RealChainIntegration(_Base):
             project.render_project(self.proj, out, runtime={})
         self.assertFalse(out.exists())
 
+    @unittest.skipUnless(os.name == "nt", "native Windows stem names")
+    def test_windows_invalid_single_stem_is_rejected_before_output_or_engine(self):
+        from apps.bgm.bgm_gen.core import project
+
+        src = REPO / "apps/bgm/examples/synth.json"
+        score = json.loads(src.read_text(encoding="utf-8"))
+        score["tracks"] = score["tracks"][:1]
+        out = self.root / "invalid-stems"
+        for name in ("NUL", "nul.take", "NUL ", "CONIN$", "COM¹", "LPT9.take", "name:stream", "bad?name"):
+            with self.subTest(name=name):
+                score["tracks"][0]["name"] = name
+                self.proj.write_text(json.dumps(score), encoding="utf-8")
+                self.assertEqual(project.load_project(self.proj)["tracks"][0]["name"], name)
+                with mock.patch.object(project, "run_engine", side_effect=AssertionError("early engine launch")), \
+                        self.assertRaisesRegex(project.ProjectError, r"Windows stem.*请重命名"):
+                    project.render_project(self.proj, out, runtime={})
+                self.assertFalse(out.exists())
+        for name in ("COM0", "CLOCK$", "CONcert", "音轨 🎵"):
+            project._check_windows_stem_names([{"name": name}])
+
     def test_real_two_tracks_keep_distinct_plugin_stems(self):
         # Case-only names remain different on POSIX; use non-aliases on Windows.
         first, second = self._two_track_project("Keys-high" if os.name == "nt" else "Keys")
