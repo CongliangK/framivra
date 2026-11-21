@@ -344,6 +344,120 @@ class FixLinks(unittest.TestCase):
                 self.assertEqual(list(existing.iterdir()), [protected])
                 self.assertEqual(protected.read_bytes(), b'untouched')
 
+    def test_windows_symlink_privilege_denial_preserves_existing_link(self):
+        import vt as vt_mod
+
+        self.mount.mkdir()
+        link = self.mount / 'vtx'
+        link.write_bytes(b'existing link fixture')
+        denial = OSError('not held')
+        denial.winerror = 1314
+        original_link_check = type(link).is_symlink
+        with mock.patch.object(vt_mod.sys, 'platform', 'win32'), \
+                mock.patch.object(type(link), 'is_symlink', autospec=True,
+                                 side_effect=lambda path: path == link or original_link_check(path)), \
+                mock.patch.object(vt_mod.os, 'readlink', return_value=str(REPO / 'vtx')), \
+                mock.patch.object(vt_mod.os, 'symlink', side_effect=denial) as create, \
+                mock.patch.object(vt_mod, 'MOUNT_LINKS', (('vtx', 'vtx'),)), \
+                mock.patch.object(vt_mod, 'mount_root', return_value=self.mount), \
+                mock.patch.object(vt_mod, '_registry_fix_plan', return_value=([], [])), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(vt_mod.cmd_fix_links(True), 0)
+            create.assert_not_called()
+            self.assertEqual(vt_mod.cmd_fix_links(False), 1)
+            self.assertIn('WinError 1314', errors.getvalue())
+            report = vt_mod._doctor_fix(True)
+            self.assertEqual(report['mount']['status'], 'manual')
+            self.assertIn('WinError 1314', report['mount']['note'])
+            self.assertEqual(create.call_count, 2)
+            for call in create.call_args_list:
+                want, candidate = call.args
+                self.assertFalse(Path(want).is_absolute())
+                self.assertNotEqual(candidate, link)
+                self.assertEqual(call.kwargs, {'target_is_directory': True})
+        self.assertEqual(link.read_bytes(), b'existing link fixture')
+        self.assertEqual(list(self.mount.iterdir()), [link])
+
+    def test_windows_symlink_publish_and_cleanup_outcomes(self):
+        import vt as vt_mod
+
+        real_rename, real_unlink = type(self.mount).rename, type(self.mount).unlink
+        for mode in ('rollback', 'backup_retained', 'published', 'published_cleanup', 'denied_cleanup'):
+            with self.subTest(mode=mode):
+                mount = self.mount.with_name(mode)
+                mount.mkdir()
+                link = mount / 'SKILL.md'
+                link.write_bytes(b'original')
+                target = REPO / 'docs/skill/SKILL.md'
+                relative = os.path.relpath(target, mount)
+
+                def rename(path, destination):
+                    if mode in ('rollback', 'backup_retained') and path.name.endswith('-new'):
+                        if mode == 'backup_retained':
+                            destination.write_bytes(b'competing occupant')
+                        raise OSError('injected publication failure')
+                    if mode == 'backup_retained' and path.name == 'old':
+                        self.assertEqual(destination.read_bytes(), b'competing occupant')
+                        raise FileExistsError('injected rollback conflict')
+                    result = real_rename(path, destination)
+                    if mode == 'published' and path.name.endswith('-new'):
+                        path.write_bytes(b'new occupant of vacated candidate name')
+                    return result
+
+                def unlink(path, **kwargs):
+                    if mode == 'published_cleanup' and path.name == 'old':
+                        raise PermissionError('injected backup cleanup failure')
+                    return real_unlink(path, **kwargs)
+
+                def create(want, candidate, *, target_is_directory):
+                    self.assertFalse(target_is_directory)
+                    self.assertEqual((candidate.parent / want).resolve(), target)
+                    if mode == 'denied_cleanup':
+                        denial = OSError('not held')
+                        denial.winerror = 1314
+                        raise denial
+                    candidate.write_bytes(b'new')
+
+                with mock.patch.object(vt_mod.sys, 'platform', 'win32'), \
+                        mock.patch.object(type(link), 'is_symlink', autospec=True,
+                                          side_effect=lambda path: path == link and path.is_file()), \
+                        mock.patch.object(type(link), 'rename', autospec=True, side_effect=rename), \
+                        mock.patch.object(type(link), 'unlink', autospec=True, side_effect=unlink), \
+                        mock.patch.object(vt_mod.os, 'readlink', return_value=str(target)), \
+                        mock.patch.object(vt_mod.os, 'symlink', side_effect=create), \
+                        mock.patch.object(vt_mod, 'MOUNT_LINKS', (('SKILL.md', 'docs/skill/SKILL.md'),)), \
+                        mock.patch.object(vt_mod, 'mount_root', return_value=mount), \
+                        mock.patch.object(vt_mod, '_registry_fix_plan', return_value=([], [])):
+                    if mode == 'denied_cleanup':
+                        with mock.patch.object(type(link), 'rmdir', side_effect=PermissionError('injected staging cleanup failure')):
+                            report = vt_mod._doctor_fix(True)['mount']
+                    else:
+                        report = vt_mod._doctor_fix(True)['mount']
+                success = mode in ('published', 'published_cleanup')
+                self.assertEqual(report['applied'], [f'SKILL.md → {relative}'] if success else [])
+                self.assertEqual(report['status'], 'fixed' if mode == 'published' else 'manual')
+                for name, text in (('rollback', 'injected publication failure'),
+                                   ('backup_retained', 'injected rollback conflict'),
+                                   ('published_cleanup', 'injected backup cleanup failure'),
+                                   ('denied_cleanup', 'injected staging cleanup failure')):
+                    if mode == name:
+                        self.assertIn(text, report['note'])
+                if mode == 'denied_cleanup':
+                    self.assertIn('WinError 1314', report['note'])
+                elif mode in ('published_cleanup', 'backup_retained'):
+                    backup, = mount.glob('.vt-link-*/old')
+                    self.assertIn(str(backup), report['note'])
+                    self.assertEqual(backup.read_bytes(), b'original')
+                elif mode == 'published':
+                    competing, = mount.glob('.vt-link-*-new')
+                    self.assertEqual(competing.read_bytes(), b'new occupant of vacated candidate name')
+                    self.assertCountEqual(mount.iterdir(), [link, competing])
+                else:
+                    self.assertEqual(list(mount.iterdir()), [link])
+                expected = b'competing occupant' if mode == 'backup_retained' else b'new' if success else b'original'
+                self.assertEqual(link.read_bytes(), expected)
+
     def test_wrong_target_repaired(self):
         env = {"VT_MOUNT_ROOT": str(self.mount)}
         _vt("--fix-links", env_extra=env)               # 先建正确链接
