@@ -827,4 +827,7 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    if os.name == 'nt':
+        sys.stdout.reconfigure(encoding='utf-8', errors='strict')
+        sys.stderr.reconfigure(encoding='utf-8', errors='backslashreplace')
     sys.exit(main())

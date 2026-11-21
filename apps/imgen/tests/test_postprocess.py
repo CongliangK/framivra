@@ -8,6 +8,8 @@
 """
 import base64
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -128,6 +130,23 @@ class RealCropTest(unittest.TestCase):
         info = postprocess.probe_image(path)
         self.assertEqual((info["width"], info["height"]), (w, h))
         self.assertEqual(info["pix_fmt"], "rgb24")  # cv2.imread 8-bit RGB 契约
+
+    def test_offline_cli_with_redirected_unicode_paths(self):
+        src = self._src('合成源.png', 640, 480)
+        dst = self.tmpdir / '产物 🎵.png'
+        config = self.tmpdir / 'empty-config.json'
+        config.write_text('{}', encoding='utf-8')
+        cli = Path(postprocess.__file__).with_name('imgen_cli.py')
+        env = dict(os.environ, VTX_CONFIG=str(config), PYTHONUTF8='0',
+                   PYTHONIOENCODING='cp936:strict' if os.name == 'nt' else 'utf-8:strict')
+        result = subprocess.run([sys.executable, '-B', cli, 'postprocess', src, '--kind', 'bg1080p', '-o', dst],
+                                cwd=self.tmpdir, env=env, capture_output=True, timeout=45)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode('utf-8').strip(), str(dst))
+        diagnostics = result.stderr.decode('utf-8')
+        self.assertIn('将放大', diagnostics)
+        self.assertNotIn('Traceback', diagnostics)
+        self._assert_png(dst, 1920, 1080)
 
     def test_branch_upscale_2752x1536_to_bg4k(self):
         # 放大分支：nano 2K 16:9 实出尺寸 → 4K（离线补救；须有插值倍数警告）
