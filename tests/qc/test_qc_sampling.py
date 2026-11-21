@@ -350,6 +350,42 @@ class SamplingMediaContract(unittest.TestCase):
         self.assertTrue(failed[0]['name'].startswith('窗口 clip'))
         self.assert_out_of_gamut_bottom_and_real_leak(env)
 
+    def test_same_decoder_exposes_hidden_and_late_display_geometry(self):
+        from vtx.media._display_witness import witness_argv, witnessed_frames
+
+        clear = self.root / 'clear.h264'
+        oriented = self.root / 'oriented.h264'
+        self.command(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=30:d=2',
+                      '-c:v', 'libx264', '-threads', '1', '-bf', '0',
+                      '-x264-params', 'keyint=30:min-keyint=30:scenecut=0', clear])
+        self.command(['ffmpeg', '-v', 'error', '-i', clear, '-c', 'copy',
+                      '-bsf:v', 'h264_metadata=display_orientation=insert:rotate=90', oriented])
+        late = self.root / 'late.h264'
+        late.write_bytes(clear.read_bytes() + oriented.read_bytes())
+        for raw, name, counts in (
+            (clear, 'normal.mkv', (60, None)),  # An ordinary container without a declared nb_frames.
+            (oriented, 'hidden.mp4', (None, 60)),
+            (late, 'late.mp4', (None, None)),
+        ):
+            with self.subTest(name=name):
+                source = self.root / name
+                self.command(['ffmpeg', '-v', 'error', '-fflags', '+genpts', '-r', '30', '-i', raw,
+                              '-map', '0:v:0', '-c', 'copy', source])
+                stream = json.loads(self.command(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                                                   '-show_streams', '-of', 'json', source]).stdout)['streams'][0]
+                self.assertEqual((stream['width'], stream['height']), (640, 360))
+                self.assertFalse(stream.get('side_data_list'))
+                if name == 'normal.mkv':
+                    self.assertNotIn('nb_frames', stream)
+                for expected, count in zip(((640, 360), (360, 640)), counts):
+                    result = subprocess.run(witness_argv(source, *expected), capture_output=True, timeout=30)
+                    if count is None:
+                        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                        with self.assertRaisesRegex(ValueError, 'geometry could not be confirmed'):
+                            witnessed_frames(result)
+                    else:
+                        self.assertEqual(witnessed_frames(result), count)
+
     def test_quarter_turn_windows_match_decoded_geometry_and_strict_qc(self):
         for color in ('white', 'gray'):
             self.command(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
