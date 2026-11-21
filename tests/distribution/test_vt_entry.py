@@ -20,6 +20,7 @@
 fixture 用当前测试解释器的 -I -B 子进程，隔离环境注入与源码字节码写入。
 """
 import contextlib
+import io
 import json
 import os
 import shutil
@@ -303,6 +304,45 @@ class FixLinks(unittest.TestCase):
         r3 = _vt("--fix-links", env_extra=env)
         self.assertEqual(r3.returncode, 0)
         self.assertIn("0 处变更", r3.stdout)
+
+    def test_unrepresentable_windows_relative_target_refuses_mount_writes(self):
+        from ntpath import relpath as windows_relpath
+        import vt as vt_mod
+
+        checkout = Path(self._tmp.name) / 'checkout'
+        checkout.mkdir()
+        for name in ('first', 'second'):
+            (checkout / name).mkdir()
+        existing = self.mount.with_name('existing')
+        existing.mkdir()
+        protected = existing / 'first'
+        protected.write_bytes(b'untouched')
+
+        def relpath(target, _start):
+            # Use the real Windows path semantics even on a Linux test runner.
+            return windows_relpath(f'C:/checkout/{target.name}',
+                                  'C:/mount' if target.name == 'first' else 'D:/mount')
+
+        for mount in (self.mount, existing):
+            with self.subTest(mount=mount), \
+                    mock.patch.object(vt_mod, 'ROOT', checkout), \
+                    mock.patch.object(vt_mod, 'MOUNT_LINKS', (('first', 'first'), ('second', 'second'))), \
+                    mock.patch.object(vt_mod, 'mount_root', return_value=mount), \
+                    mock.patch.object(vt_mod.sys, 'platform', 'win32'), \
+                    mock.patch.object(vt_mod.os.path, 'relpath', side_effect=relpath), \
+                    mock.patch.object(vt_mod.os, 'symlink') as symlink, \
+                    mock.patch.object(vt_mod, '_registry_fix_plan', return_value=([], [])), \
+                    contextlib.redirect_stdout(io.StringIO()) as stdout, \
+                    contextlib.redirect_stderr(io.StringIO()) as stderr:
+                self.assertEqual(vt_mod.cmd_fix_links(True), 1)
+                self.assertEqual(vt_mod.cmd_fix_links(False), 1)
+                self.assertIn('VT_MOUNT_ROOT', stderr.getvalue())
+                self.assertNotIn('[dry] 将创建', stdout.getvalue())
+                self.assertEqual(vt_mod._doctor_fix(True)['mount']['status'], 'manual')
+                symlink.assert_not_called()
+                self.assertFalse(self.mount.exists())
+                self.assertEqual(list(existing.iterdir()), [protected])
+                self.assertEqual(protected.read_bytes(), b'untouched')
 
     def test_wrong_target_repaired(self):
         env = {"VT_MOUNT_ROOT": str(self.mount)}
