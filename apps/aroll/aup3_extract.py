@@ -207,7 +207,7 @@ def extract_all(aup3_path, out_dir):
             'peak': round(float(np.abs(audio).max()), 4),
             'rms': round(float(np.sqrt(np.mean(audio ** 2))), 5),
         })
-    with open(os.path.join(out_dir, 'extract_report.json'), 'w') as f:
+    with open(os.path.join(out_dir, 'extract_report.json'), 'w', encoding='utf-8') as f:
         json.dump(report, f, ensure_ascii=False, indent=1)
     return report
 
@@ -218,7 +218,7 @@ def _inspect_project(con, out_dir, dump):
     charw = dictb[1]
     events = parse_doc(docb, names, charw)
     if dump:
-        with open(os.path.join(out_dir, 'doc_events.txt'), 'w') as f:
+        with open(os.path.join(out_dir, 'doc_events.txt'), 'w', encoding='utf-8') as f:
             for ev in events:
                 f.write(repr(ev) + '\n')
     root = build_tree(events)
@@ -252,7 +252,7 @@ def _inspect_project(con, out_dir, dump):
         blocks[bid] = {'fmt': fmt, 'summin': smin, 'summax': smax, 'sumrms': srms,
                        'nbytes': len(samples), 'samples': samples}
     info['block_table'] = {k: {kk: vv for kk, vv in v.items() if kk != 'samples'} for k, v in blocks.items()}
-    with open(os.path.join(out_dir, 'structure.json'), 'w') as f:
+    with open(os.path.join(out_dir, 'structure.json'), 'w', encoding='utf-8') as f:
         json.dump(info, f, ensure_ascii=False, indent=1)
     print(json.dumps(info, ensure_ascii=False, indent=1)[:4000])
     print(f"\nblocks in table: {len(blocks)}, events: {len(events)}, wrote structure.json")
@@ -282,6 +282,9 @@ def build_arg_parser():
 
 
 if __name__ == '__main__':
+    if os.name == 'nt':
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8', errors='backslashreplace')
     _args = build_arg_parser().parse_args()
     try:
         main(_args.aup3, _args.out_dir, dump=_args.dump)

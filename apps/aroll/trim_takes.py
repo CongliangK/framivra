@@ -59,7 +59,7 @@ def main(src_dir, out_dir):
         })
         print(f"{os.path.basename(out):28s} 原{len(d)/rate:7.2f}s → 新{len(cut)/rate:7.2f}s "
               f"(掐头 {s/rate:.2f}s / 去尾 {(len(d)-e)/rate:.2f}s)")
-    with open(os.path.join(out_dir, 'takes_index.json'), 'w') as f:
+    with open(os.path.join(out_dir, 'takes_index.json'), 'w', encoding='utf-8') as f:
         json.dump(index, f, ensure_ascii=False, indent=1)
     print(f"\nwrote {len(index)} takes → {out_dir}")
 
@@ -78,5 +78,8 @@ def build_arg_parser():
 
 
 if __name__ == '__main__':
+    if os.name == 'nt':
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8', errors='backslashreplace')
     _args = build_arg_parser().parse_args()
     main(_args.src_dir, _args.out_dir)
