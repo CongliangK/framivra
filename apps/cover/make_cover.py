@@ -295,7 +295,7 @@ def cmd_render(args):
     chrome = find_chrome()
     run([chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars",
          f"--window-size={w},{h}", "--virtual-time-budget=3000",
-         f"--screenshot={png}", f"file://{html_path.resolve()}"])
+         f"--screenshot={png}", html_path.resolve().as_uri()])
     pw, ph = probe(png)
     if (pw, ph) != (w, h):
         raise SystemExit(f"截图尺寸 {pw}x{ph} ≠ {w}x{h}（查字体加载/滚动条/缩放）")
