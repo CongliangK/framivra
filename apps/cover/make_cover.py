@@ -43,6 +43,7 @@ import subprocess
 import sys
 from pathlib import Path
 from string import Template
+from urllib.parse import quote
 
 # ── 定稿默认参数（voice-ime 首期封面实测验收值，改=改配方须拍板） ──────────────
 CANVAS = (1920, 1200)          # 16:10
@@ -239,7 +240,8 @@ def build_html(p, bg_name):
         "yavg_min": p["yavg_min"], "jpg_max_mb": p["jpg_max_mb"],
     }
     t = dict(
-        W=w, H=h, FALLBACK=p["bg_fallback"], BG=bg_name, FONT=p["font"],
+        # CSS consumes a URL basename; metadata retains the literal filename for QC.
+        W=w, H=h, FALLBACK=p["bg_fallback"], BG=quote(bg_name, safe=''), FONT=p["font"],
         TITLE_TOP=p["title_top"], TITLE_BOTTOM=title_bottom,
         TITLE_V0=round(100 * p["title_top"] / h, 1), TITLE_V1=round(100 * title_bottom / h, 1),
         V0=int(SAFE["v_lo"] * 100), V1=int(SAFE["v_hi"] * 100),
