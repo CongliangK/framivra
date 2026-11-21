@@ -76,7 +76,7 @@ python3 vtx/vtx.py -t "$PROJECT/timeline.json" all
 
 完整 `all` 及 QC/插件结果成功后查看 `$PROJECT/out/final.mp4`；输出存在不是验收通过。[正式交付链](docs/skill/references/edit.md#正式交付链r1-r4-共用)说明当前回执、截断链和局部预览的边界。
 
-例行 doctor 用上述离线命令：版本检查跳过 `git fetch`，只用本地引用判断版本漂移；普通 doctor 在 Git 仓中会尝试 fetch，可能写入 `.git`。离线仍会运行依赖和组件探测，不保证零副作用。doctor 本身不渲染项目，退出 `0` 只表示体检未发现阻断项，不代表渲染验收通过。live skill 符号链接（如 `~/.agents/skills/video/`）的修复先用 `python3 vt.py --fix-links --dry` 预演，实际修复须按写操作处理。
+例行 doctor 用上述离线命令：版本检查跳过 `git fetch`，只用本地引用判断版本漂移；普通 doctor 在 Git 仓中会尝试 fetch，可能写入 `.git`。离线仍会运行依赖和组件探测，不保证零副作用。doctor 本身不渲染项目，退出 `0` 只表示体检未发现阻断项，不代表渲染验收通过。live skill 符号链接（如 `~/.agents/skills/video/`）的修复先用 `python3 vt.py --fix-links --dry` 预演，实际修复须按写操作处理。Windows 的 `VT_MOUNT_ROOT` 必须与链接目标同盘符或同 UNC 共享；跨卷不会自动改用绝对链接。
 
 <a id="installer-trust"></a>
 
