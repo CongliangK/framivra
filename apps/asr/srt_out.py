@@ -36,7 +36,10 @@ def render_srt(subs, fps=30):
     for i, sub in enumerate(subs, 1):
         t0 = frame_to_srt_time(sub["in"], fps)
         t1 = frame_to_srt_time(sub["out"], fps)
-        blocks.append("%d\n%s --> %s\n%s" % (i, t0, t1, sub["text"]))
+        # Format cue breaks as LF before each output stream translates newlines.
+        # Otherwise Windows adds a second CR to an existing CRLF inside the cue.
+        text = sub["text"].replace("\r\n", "\n")
+        blocks.append("%d\n%s --> %s\n%s" % (i, t0, t1, text))
     return "\n\n".join(blocks) + ("\n" if blocks else "")
 
 
