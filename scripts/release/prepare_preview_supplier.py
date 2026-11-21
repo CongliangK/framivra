@@ -13,6 +13,8 @@ preserved and needs a future automatic upgrade transaction.
 """
 import argparse
 import base64
+from contextlib import contextmanager
+import ctypes
 import hashlib
 import io
 import json
@@ -21,6 +23,7 @@ from pathlib import Path
 import re
 import selectors
 import signal
+import threading
 import stat
 import subprocess
 import sys
@@ -73,25 +76,88 @@ def _env(home):
             'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_TERMINAL_PROMPT': '0'}
 
 
-def _run(args, *, cwd, env, timeout=90, limit=32 * 1024):
-    # Read at most the accepted output plus one byte; deadline and ownership
-    # hold across both pipe EOF and process settlement.
+@contextmanager
+def _group_reaper():
+    # Like the core supervisor, treat child exit and descendant settlement as
+    # separate facts. The ordinary bwrap path uses --die-with-parent and no
+    # --new-session; pinning the wheel restricts this to that owned group.
+    control = ctypes.CDLL(None, use_errno=True).prctl
+    prior = ctypes.c_int()
+    _require(control(37, ctypes.byref(prior), 0, 0, 0) == 0, 'cannot read child reaper policy')  # PR_GET_CHILD_SUBREAPER
+    _require(control(36, 1, 0, 0, 0) == 0, 'cannot own qualification descendants')  # PR_SET_CHILD_SUBREAPER
+    try:
+        yield
+    finally:
+        _require(control(36, prior.value, 0, 0, 0) == 0, 'cannot restore child reaper policy')
+
+
+def _group_empty(pgid, *, wait=False):
+    while True:
+        try:
+            child, _ = os.waitpid(-pgid, 0 if wait else os.WNOHANG)
+        except ChildProcessError:
+            return True
+        if not child:
+            return False
+
+
+def _stop_owned(proc):
+    if proc.returncode is None:
+        # Give the qualified launcher the same cooperative TERM path as Host
+        # cancellation, keeping its pid unreaped until hard cleanup if needed.
+        try:
+            os.kill(proc.pid, signal.SIGTERM)
+            deadline = time.monotonic() + .5
+            while time.monotonic() < deadline:
+                if os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT):
+                    break
+                time.sleep(.02)
+        except ProcessLookupError:
+            pass
+    if proc.returncode is None or not _group_empty(proc.pid):
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    proc.wait()
+    # The installer lock is still held. Do not return and release it while
+    # an adopted group member is alive, even after a timeout or second TERM.
+    _group_empty(proc.pid, wait=True)
+
+
+def _noop():
+    pass
+
+
+def _run(args, *, cwd, env, timeout=90, limit=32 * 1024, check=_noop):
+    # Caller is the isolated qualification supervisor for installation, not
+    # the installer. Read at most the cap and poll its cancellation checkpoint.
+    check()
     deadline = time.monotonic() + timeout
-    with subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                          cwd=cwd, env=env, umask=0o077, start_new_session=True) as proc:
+    with _group_reaper(), subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL, cwd=cwd, env=env, umask=0o077, start_new_session=True) as proc:
         data = bytearray()
         try:
             with selectors.DefaultSelector() as ready:
                 ready.register(proc.stdout, selectors.EVENT_READ)
                 while True:
+                    check()
                     remaining = deadline - time.monotonic()
-                    _require(remaining > 0 and ready.select(remaining), 'qualification command timed out')
+                    _require(remaining > 0, 'qualification command timed out')
+                    if not ready.select(min(.05, remaining)):
+                        continue
                     chunk = os.read(proc.stdout.fileno(), min(65536, limit + 1 - len(data)))
                     if not chunk:
                         break
                     data.extend(chunk)
                     _require(len(data) <= limit, 'qualification command exceeded its output limit')
-            code = proc.wait(timeout=max(0, deadline - time.monotonic()))
+            while proc.poll() is None:
+                check()
+                _require(time.monotonic() < deadline, 'qualification command timed out')
+                time.sleep(.02)
+            check()
+            _require(_group_empty(proc.pid), 'qualification process group did not settle')
+            code = proc.returncode
             if code:
                 # A launched wheel may return ordinary vtx diagnostics. Keep
                 # only bounded known-shaped codes, never rendered data or log text.
@@ -106,17 +172,9 @@ def _run(args, *, cwd, env, timeout=90, limit=32 * 1024):
                         pass
                 detail = ': ' + ', '.join(codes) if codes else ''
                 raise SupplierError(f'{Path(args[0]).name} failed ({code})' + detail)
-            try:
-                os.killpg(proc.pid, 0)
-            except ProcessLookupError:
-                return bytes(data)
-            raise SupplierError('qualification process group did not settle')
+            return bytes(data)
         except BaseException:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            proc.wait()
+            _stop_owned(proc)
             raise
 
 
@@ -258,7 +316,10 @@ def _verified_profile(profile, launcher_sha256, wheel_sha256, *, staged=True):
 
 
 def _qualify_profile(root, profile, *, wheel_filename, launcher_sha256, wheel_sha256, python,
-                     fresh=None, expected_projection=None):
+                     fresh=None, expected_projection=None, check=_noop):
+    def run(args, **kw):
+        return _run(args, check=check, **kw)
+
     home, project = root / 'home', root / 'fixture'
     for directory in (home, project):
         directory.mkdir(mode=0o700)
@@ -276,34 +337,42 @@ def _qualify_profile(root, profile, *, wheel_filename, launcher_sha256, wheel_sh
         _write(profile / 'kernel.sha256', (wheel_sha256 + '\n').encode('ascii'))
         _verified_profile(profile, launcher_sha256, wheel_sha256, staged=False)
         site = root / 'site'
-        _run([python, '-IB', '-m', 'pip', '--isolated', '--disable-pip-version-check', 'install', '--no-index',
+        run([python, '-IB', '-m', 'pip', '--isolated', '--disable-pip-version-check', 'install', '--no-index',
               '--no-deps', '--no-compile', '--target', site, distribution], cwd=root, env=env)
     else:
         _verified_profile(profile, launcher_sha256, wheel_sha256)
     program = profile / 'vtx-preview'
 
+    managed = ([f'--managed-preview-pins-v1={wheel_sha256}:{expected_projection}']
+               if expected_projection is not None else [])
+    identity_key = {'managed_identity'} if managed else set()
+    identity = 'framivra.preview-window.managed-pins/v1'
+
     def call(*args, limit=32 * 1024):
-        return _json(_run([_SYSTEM_PYTHON, '-IBS', program, *args], cwd=root, env=env, limit=limit))
+        prefix = [] if args[0] == '--stage-from' else managed
+        return _json(run([_SYSTEM_PYTHON, '-IBS', program, *prefix, *args], cwd=root, env=env, limit=limit))
 
     staged = call('--stage-from', site) if site is not None else None
     verified = call('--verify')
-    _require(set(verified) == {'ok', 'wheel_sha256', 'runtime_projection_sha256'}
+    _require(set(verified) == {'ok', 'wheel_sha256', 'runtime_projection_sha256'} | identity_key
+             and (not managed or verified['managed_identity'] == identity)
              and verified['ok'] is True and verified['wheel_sha256'] == wheel_sha256
              and type(verified['runtime_projection_sha256']) is str
              and _HEX.fullmatch(verified['runtime_projection_sha256'])
              and (expected_projection is None or verified['runtime_projection_sha256'] == expected_projection)
-             and (staged is None or set(staged) == verified.keys() | {'installed_member_sha256'}
-                  and all(staged[key] == value for key, value in verified.items())),
+             and (staged is None or set(staged) == (verified.keys() - identity_key) | {'installed_member_sha256'}
+                  and all(staged[key] == verified[key] for key in verified.keys() - identity_key)),
              'staging and fixed-wheel verification did not match')
     capabilities = call('-t', 'unused', 'capabilities')
     _require(capabilities.get('schema') == 'framivra.timeline.read/v1', 'unexpected launcher capability schema')
     cap = capabilities['capabilities']['preview_window']
     _require(cap['schema'] == _WINDOW and cap['launcher'] == _LAUNCHER
              and cap['inline_media'] is cap['prepare_inputs'] is cap['input_epoch'] is True
+             and (not managed or cap.get('managed_identity') == identity)
              and all(cap[key] == verified[key] for key in ('wheel_sha256', 'runtime_projection_sha256')),
              'ordinary fixed-wheel capability identity did not match')
     source = project / 'probe.mp4'
-    _run([_SYSTEM_FFMPEG, '-v', 'error', '-nostdin', '-f', 'lavfi', '-i', 'color=c=teal:s=1920x1080:r=30:d=1',
+    run([_SYSTEM_FFMPEG, '-v', 'error', '-nostdin', '-f', 'lavfi', '-i', 'color=c=teal:s=1920x1080:r=30:d=1',
           '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=1', '-c:v', 'libx264',
           '-threads:v', '1', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-ac', '2', source], cwd=root, env=env)
     timeline = project / 'timeline.json'
@@ -315,16 +384,17 @@ def _qualify_profile(root, profile, *, wheel_filename, launcher_sha256, wheel_sh
     raw = (json.dumps(document, sort_keys=True) + '\n').encode('ascii')
     _write(timeline, raw)
     version = 'sha256:' + _sha(raw)
-    wire = _run([_SYSTEM_PYTHON, '-IBS', program, '-t', timeline, 'timeline', 'preview-window', '--frame', '0',
+    wire = run([_SYSTEM_PYTHON, '-IBS', program, *managed, '-t', timeline, 'timeline', 'preview-window', '--frame', '0',
                  '--expected-content-version=' + version, '--render', '--include-media', '--prepare-inputs'],
                 cwd=root, env=env, limit=_WIRE_LIMIT)
     media = root / 'decoded-probe.mp4'
     _write(media, _receipt(wire, verified, version))
-    _run([_SYSTEM_FFMPEG, '-v', 'error', '-xerror', '-nostdin', '-protocol_whitelist', 'file', '-f', 'mov',
+    run([_SYSTEM_FFMPEG, '-v', 'error', '-xerror', '-nostdin', '-protocol_whitelist', 'file', '-f', 'mov',
           '-i', media, '-map', '0:v:0', '-map', '0:a:0', '-f', 'null', '-'], cwd=root, env=env)
     _require(_read(timeline, 1024 * 1024) == raw and call('--verify') == verified,
              'qualification input or profile changed')
     _verified_profile(profile, launcher_sha256, wheel_sha256)
+    check()
     return {'schema': 'framivra.preview-supplier/v1', 'abi': _LAUNCHER, 'launcherSha256': launcher_sha256,
             'wheelSha256': wheel_sha256, 'runtimeProjectionSha256': verified['runtime_projection_sha256']}
 
@@ -342,6 +412,79 @@ def qualify_candidate(artifacts, *, wheel_filename, launcher_sha256, wheel_sha25
                                 python=python, fresh=(launcher, wheel))
 
 
+def _supervise(probe, check):
+    """Run the probe in an isolated single-thread supervisor; never promote there."""
+    _require(threading.active_count() == 1 and threading.current_thread() is threading.main_thread(),
+             'qualification supervisor requires the installer main thread')
+    signals = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+    parent = os.getpid()
+    read_fd, write_fd = os.pipe()
+    child = None
+    try:
+        check()
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, signals)
+        try:
+            child = os.fork()
+            if child == 0:
+                os.close(read_fd)
+                cancelled = False
+
+                def mark(_signum, _frame):
+                    nonlocal cancelled
+                    cancelled = True
+
+                def checkpoint():
+                    _require(not cancelled and os.getppid() == parent, 'qualification supervisor cancelled')
+
+                try:
+                    for signum in signals:
+                        signal.signal(signum, mark)
+                    signal.pthread_sigmask(signal.SIG_SETMASK, mask - set(signals))
+                    os.setsid()
+                    result = probe(checkpoint)
+                    checkpoint()
+                    payload = {'ok': True, 'receipt': result}
+                except BaseException as error:
+                    payload = {'ok': False, 'reason': str(error)[:1000]}
+                try:
+                    os.write(write_fd, (json.dumps(payload) + '\n').encode('ascii'))
+                finally:
+                    os._exit(0)
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+        os.close(write_fd)
+        write_fd = None
+        data = bytearray()
+        with selectors.DefaultSelector() as ready:
+            ready.register(read_fd, selectors.EVENT_READ)
+            while True:
+                check()
+                if not ready.select(.05):
+                    continue
+                chunk = os.read(read_fd, 8193 - len(data))
+                if not chunk:
+                    break
+                data.extend(chunk)
+                _require(len(data) <= 8192, 'qualification supervisor result exceeded limit')
+        _, status = os.waitpid(child, 0)
+        child = None
+        check()
+        _require(status == 0, 'qualification supervisor did not settle successfully')
+        result = _json(bytes(data))
+        _require(result.get('ok') is True, result.get('reason', 'qualification supervisor failed'))
+        return result['receipt']
+    finally:
+        os.close(read_fd)
+        if write_fd is not None:
+            os.close(write_fd)
+        if child not in (None, 0):
+            try:
+                os.kill(child, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            os.waitpid(child, 0)
+
+
 def _publish_new(staged, target):
     # Do not use rename(): on POSIX it can replace an existing empty directory.
     # The tested ordinary profile is Linux-only, and refusal is safe everywhere.
@@ -357,7 +500,7 @@ def _publish_new(staged, target):
 
 
 def enroll_profile(root, *, launcher_path, fetch_wheel, wheel_filename, launcher_sha256, wheel_sha256,
-                   projection_sha256, python):
+                   projection_sha256, python, check=_noop):
     """Installer-only operation, under the existing install lock and approved catalog.
 
     Publish exactly the staged and qualified directory; an existing directory is
@@ -381,9 +524,10 @@ def enroll_profile(root, *, launcher_path, fetch_wheel, wheel_filename, launcher
             _require(_sha(launcher) == launcher_sha256, 'candidate does not match independently approved launcher')
             wheel = _read(fetch_wheel(), _WHEEL_LIMIT)
             fresh = launcher, wheel
-        receipt = _qualify_profile(scratch, profile, wheel_filename=wheel_filename,
+        receipt = _supervise(lambda child_check: _qualify_profile(scratch, profile, wheel_filename=wheel_filename,
             launcher_sha256=launcher_sha256, wheel_sha256=wheel_sha256, python=python,
-            fresh=fresh, expected_projection=projection_sha256)
+            fresh=fresh, expected_projection=projection_sha256, check=child_check), check)
+        check()
         if not adopt:
             before = profile.stat()
             _publish_new(profile, target)

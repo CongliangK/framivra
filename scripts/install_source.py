@@ -17,6 +17,7 @@ import platform
 import re
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -110,7 +111,7 @@ def git(*args, cwd=None):
                    env=env, capture=True, timeout=None)
 
 
-def atomic_json(path, value):
+def atomic_json(path, value, *, before_replace=None):
     physical(path)
     temp = path.with_name('.' + path.name + '-' + uuid.uuid4().hex)
     try:
@@ -118,6 +119,8 @@ def atomic_json(path, value):
             json.dump(value, output, ensure_ascii=False, indent=2)
             output.write('\n')
         temp.chmod(0o600)
+        if before_replace is not None:
+            before_replace()
         os.replace(temp, path)
     finally:
         if temp.exists():
@@ -579,7 +582,46 @@ def windows_elevated():
     return bool(ctypes.windll.shell32.IsUserAnAdmin())
 
 
-def optional_preview_supplier(root, source, commit, repository, python):
+class PreviewEnrollmentInterrupted(KeyboardInterrupt):
+    pass
+
+
+@contextmanager
+def _preview_cancellation():
+    signals = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+    cancelled = None
+
+    def mark(signum, _frame):
+        nonlocal cancelled
+        cancelled = cancelled or signum
+
+    def check():
+        if cancelled is not None:
+            raise PreviewEnrollmentInterrupted(cancelled)
+
+    previous = {signum: signal.signal(signum, mark) for signum in signals}
+    try:
+        yield check
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
+def _preview_helper_bytes(path, digest):
+    limit = 256 * 1024
+    if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+        raise InstallError('Missing release-reviewed preview helper SHA-256')
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not 0 < info.st_size <= limit:
+            raise InstallError('Preview supplier helper is not a bounded physical file')
+        raw = stream.read(limit + 1)
+    if len(raw) != info.st_size or hashlib.sha256(raw).hexdigest() != digest:
+        raise InstallError('Preview supplier helper differs from release-approved bytes')
+    return raw
+
+
+def optional_preview_supplier(root, source, commit, repository, python, *, check=lambda: None):
     # This hook runs under installation_lock. Unapproved installations never
     # look at the destination or load an optional helper or download a wheel.
     if sys.platform != 'linux' or repository != REPOSITORY or not _PREVIEW_SUPPLIER_RELEASES:
@@ -595,22 +637,52 @@ def optional_preview_supplier(root, source, commit, repository, python):
         raise InstallError('Invalid release-reviewed preview catalog entry')
     helper_name = 'scripts/release/prepare_preview_supplier.py'
     helper_path = physical(source / helper_name)
-    raw = helper_path.read_bytes()
-    blob = hashlib.sha1(b'blob ' + str(len(raw)).encode('ascii') + b'\0' + raw).hexdigest()
-    if blob != git('rev-parse', f'{commit}:{helper_name}', cwd=source):
-        raise InstallError('Preview supplier helper differs from the selected source')
+    raw = _preview_helper_bytes(helper_path, approved.get('helperSha256'))
+    check()
     helper = ModuleType('_framivra_preview_supplier')
     helper.__file__ = str(helper_path)
     exec(compile(raw, str(helper_path), 'exec'), helper.__dict__)
 
     def fetch_wheel():
+        check()
         return downloads.acquire(root / 'cache' / 'downloads',
             [f'https://github.com/CongliangK/framivra/releases/download/{tag}/{filename}'],
             approved['wheelSha256'], size=approved['wheelBytes'], filename=filename)
 
     return helper.enroll_profile(root, launcher_path=physical(source / 'scripts/preview_window_wheel.py'),
         fetch_wheel=fetch_wheel, wheel_filename=filename, launcher_sha256=approved['launcherSha256'],
-        wheel_sha256=approved['wheelSha256'], projection_sha256=approved['runtimeProjectionSha256'], python=python)
+        wheel_sha256=approved['wheelSha256'], projection_sha256=approved['runtimeProjectionSha256'], python=python,
+        check=check)
+
+
+def _register_optional_preview(root, source, commit, repository, python, core):
+    if sys.platform != 'linux' or repository != REPOSITORY or not _PREVIEW_SUPPLIER_RELEASES:
+        return 0
+    registration = root / 'installation.json'
+    attempted = None
+    try:
+        with _preview_cancellation() as check:
+            supplier = optional_preview_supplier(root, source, commit, repository, python, check=check)
+            check()
+            if supplier is not None:
+                attempted = dict(core, previewSupplier=supplier)
+                atomic_json(registration, attempted, before_replace=check)
+    except (PreviewEnrollmentInterrupted, OSError, ValueError, TypeError, KeyError, RuntimeError,
+            SyntaxError, subprocess.SubprocessError) as error:
+        try:
+            observed = json_record(registration)
+        except (OSError, ValueError, RuntimeError):
+            observed = None
+        if observed == core:
+            outcome = 'Core Ready; optional ordinary preview supplier not registered'
+        elif attempted is not None and observed == attempted:
+            outcome = 'Core and supplier Ready registration observed; optional publication completion unconfirmed'
+        else:
+            outcome = 'Core was Ready before optional enrollment; registration state now unconfirmed'
+        print('[install] ' + outcome + ': ' + (str(error) or type(error).__name__), file=sys.stderr)
+        if isinstance(error, PreviewEnrollmentInterrupted):
+            return 128 + error.args[0]
+    return 0
 
 
 def install(args):
@@ -626,11 +698,14 @@ def install(args):
     print('Source deployment: official Git/HTTPS trust, NOT signed-release provenance.\n'
           'Install root: %s\nChannel: %s (resolved to an exact commit)\nNetwork: %s\n'
           'Downloads: source, PyPI packages, native packages and pinned public fonts.\n'
+          'If release-approved for this Linux source, also obtain the pinned ordinary preview wheel and run a local synthetic A/V check (separate from --verify-render).\n'
           'Verified cache/partials persist under cache/downloads. No AI models/services.\n'
           'System packages may require administrator approval; native managers display additional side effects.' % (root, args.ref, args.network), flush=True)
     if args.plan:
         print(json.dumps({'root': str(root), 'profile': 'non-ai', 'renderer': 'cdp', 'network': args.network,
                           'verifyRender': args.verify_render,
+                          'ordinaryPreviewSupplierConditional': bool(sys.platform == 'linux' and args.repo == REPOSITORY
+                                                                     and _PREVIEW_SUPPLIER_RELEASES),
                           'pythonPackages': PYTHON_PACKAGES, 'nativeCommandsConditional': True,
                           'nativeCommands': platform_packages(tools(root), needs_venv=sys.platform == 'linux' and importlib.util.find_spec('ensurepip') is None)}, indent=2))
         return 0
@@ -732,15 +807,9 @@ def install(args):
         # interruption during supplier qualification therefore leaves Ready
         # core metadata without any unverified or stale supplier assertion.
         atomic_json(root / 'installation.json', receipt)
-        try:
-            supplier = optional_preview_supplier(root, source, commit, args.repo, python)
-        except (OSError, ValueError, TypeError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
-            # Never make an unqualified optional profile part of Ready. Leave
-            # a conflicting fixed destination untouched; core remains usable.
-            print('[install] Optional ordinary preview supplier not registered: ' + str(error), file=sys.stderr)
-        else:
-            if supplier is not None:
-                atomic_json(root / 'installation.json', dict(receipt, previewSupplier=supplier))
+        preview_status = _register_optional_preview(root, source, commit, args.repo, python, receipt)
+        if preview_status:
+            return preview_status
     print('[install] CDP render verification: ' + ('passed (' + evidence + ')' if evidence is not None else 'skipped (opt in with --verify-render)'))
     print('\nREADY: non-AI CDP environment. In DSH: scan installed kernels → select registered installation → save → check connection.\nVTX: ' + str(executable))
     return 0
