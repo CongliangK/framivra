@@ -48,8 +48,10 @@ class SamplingCacheContract(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'output budget'):
             capture_witness([*cli, 'import sys; print("a" * 2000); print("b" * 1000, file=sys.stderr)'],
                             deadline=monotonic() + 5, limit=2100)
-        with self.assertRaisesRegex(TimeoutError, 'time budget'):
-            capture_witness([*cli, 'import time; time.sleep(20)'], deadline=monotonic() + 0.5)
+        for child in ('import time; time.sleep(20)',
+                      'import os,time; os.close(1); os.close(2); time.sleep(20)'):
+            with self.subTest(child=child), self.assertRaisesRegex(TimeoutError, 'time budget'):
+                capture_witness([*cli, child], deadline=monotonic() + 0.5)
 
     def test_schema_and_filter_changes_reprobe_current_contract_reuses(self):
         with tempfile.TemporaryDirectory() as temporary:

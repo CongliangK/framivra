@@ -3,7 +3,7 @@
 The caller owns the input and selects the appropriate executor. A successful
 witness describes uninterrupted decoding, not an arbitrary seek.
 """
-from subprocess import CompletedProcess, DEVNULL, PIPE, Popen
+from subprocess import CompletedProcess, DEVNULL, PIPE, Popen, TimeoutExpired
 from threading import Condition, Thread
 from time import monotonic
 
@@ -54,7 +54,15 @@ def capture_witness(argv, *, deadline, limit=_CAPTURE_LIMIT):
                 ready.wait(left)
             if failed:
                 raise failed[0]
-        child.wait(timeout=max(0, deadline - monotonic()))
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise TimeoutError('decoded video geometry exceeded its time budget')
+        try:
+            child.wait(timeout=remaining)
+        except TimeoutExpired:
+            raise TimeoutError('decoded video geometry exceeded its time budget') from None
+        if monotonic() >= deadline:
+            raise TimeoutError('decoded video geometry exceeded its time budget')
         return CompletedProcess(argv, child.returncode, *map(bytes, streams))
     finally:
         try:
