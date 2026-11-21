@@ -132,8 +132,12 @@ class RealCropTest(unittest.TestCase):
         self.assertEqual(info["pix_fmt"], "rgb24")  # cv2.imread 8-bit RGB 契约
 
     def test_offline_cli_with_redirected_unicode_paths(self):
-        src = self._src('合成源.png', 640, 480)
+        src = self.tmpdir / '合成源.png'
         dst = self.tmpdir / '产物 🎵.png'
+        fixture = subprocess.run([postprocess.FFMPEG, '-v', 'error', '-f', 'lavfi', '-i',
+                                  'color=c=0x336699:size=640x480', '-frames:v', '1', src],
+                                 capture_output=True, timeout=20)
+        self.assertEqual(fixture.returncode, 0, fixture.stderr)
         config = self.tmpdir / 'empty-config.json'
         config.write_text('{}', encoding='utf-8')
         cli = Path(postprocess.__file__).with_name('imgen_cli.py')
