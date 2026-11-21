@@ -176,7 +176,7 @@ class WindowsSvgMedia:
         finally:
             _AUDIO_GRAPH.reset(token)
 
-    def execute(self, cmd, *, text=True, capture_limit=16 * 1024 * 1024):
+    def execute(self, cmd, *, text=True, capture_limit=16 * 1024 * 1024, deadline=None):
         if not 0 < capture_limit <= 64 * 1024 * 1024:
             raise ValueError('Windows SVG media capture exceeds its byte budget')
         if self.operation.keep:
@@ -200,9 +200,13 @@ class WindowsSvgMedia:
                             raise RuntimeError('Windows SVG 混音输入参数仍超过进程命令行长度上限；'
                                                '请减少单次混音的音频事件或缩短工程路径。')
                 from .gfx_svg_win_subtitles import job_environment
+                now = time.monotonic()
+                if deadline is None:
+                    deadline = now + 600
+                elif deadline <= now + shell._SETTLE_RESERVE:
+                    raise TimeoutError('Windows SVG media exhausted its time budget before launch')
                 job, _ = shell._run_owned(state, argv, self.scratch, job_environment(self, cmd), None,
-                                          deadline=time.monotonic() + 600, capture_limit=capture_limit,
-                                          phase='media tool')
+                                          deadline=deadline, capture_limit=capture_limit, phase='media tool')
         finally:
             if state.keep:
                 self.operation.keep = True

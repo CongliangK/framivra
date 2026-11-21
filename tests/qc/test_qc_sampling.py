@@ -33,6 +33,24 @@ def _sample(c, path, pre_crop='', frame=0):
 
 
 class SamplingCacheContract(unittest.TestCase):
+    def test_witness_capture_bounds_both_pipes_and_time(self):
+        from time import monotonic
+        from vtx.media._display_witness import capture_witness, witnessed_frames
+
+        good = types.SimpleNamespace(returncode=0, stderr=b'', stdout=b'frame=1\r\nprogress=end\r\n')
+        self.assertEqual(witnessed_frames(good), 1)
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            witnessed_frames(types.SimpleNamespace(**(vars(good) | {'stdout': good.stdout[:-1]})))
+        cli = [sys.executable, '-B', '-c']
+        ok = capture_witness([*cli, 'import sys; sys.stdout.write("ok"); sys.stderr.write("err")'],
+                             deadline=monotonic() + 5, limit=5)
+        self.assertEqual((ok.returncode, ok.stdout, ok.stderr), (0, b'ok', b'err'))
+        with self.assertRaisesRegex(ValueError, 'output budget'):
+            capture_witness([*cli, 'import sys; print("a" * 2000); print("b" * 1000, file=sys.stderr)'],
+                            deadline=monotonic() + 5, limit=2100)
+        with self.assertRaisesRegex(TimeoutError, 'time budget'):
+            capture_witness([*cli, 'import time; time.sleep(20)'], deadline=monotonic() + 0.5)
+
     def test_schema_and_filter_changes_reprobe_current_contract_reuses(self):
         with tempfile.TemporaryDirectory() as temporary:
             c = _FakeContext(Path(temporary), enabled=True)
@@ -351,7 +369,10 @@ class SamplingMediaContract(unittest.TestCase):
         self.assert_out_of_gamut_bottom_and_real_leak(env)
 
     def test_same_decoder_exposes_hidden_and_late_display_geometry(self):
-        from vtx.media._display_witness import witness_argv, witnessed_frames
+        from time import monotonic
+        from vtx.media._display_witness import verify_source
+
+        c = types.SimpleNamespace()
 
         clear = self.root / 'clear.h264'
         oriented = self.root / 'oriented.h264'
@@ -378,13 +399,12 @@ class SamplingMediaContract(unittest.TestCase):
                 if name == 'normal.mkv':
                     self.assertNotIn('nb_frames', stream)
                 for expected, count in zip(((640, 360), (360, 640)), counts):
-                    result = subprocess.run(witness_argv(source, *expected), capture_output=True, timeout=30)
+                    deadline = monotonic() + 30
                     if count is None:
-                        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                         with self.assertRaisesRegex(ValueError, 'geometry could not be confirmed'):
-                            witnessed_frames(result)
+                            verify_source(c, source, *expected, deadline=deadline)
                     else:
-                        self.assertEqual(witnessed_frames(result), count)
+                        self.assertEqual(verify_source(c, source, *expected, deadline=deadline), count)
 
     def test_quarter_turn_windows_match_decoded_geometry_and_strict_qc(self):
         for color in ('white', 'gray'):
