@@ -494,7 +494,7 @@ class InferencePathArguments(unittest.TestCase):
                 with mock.patch.object(dv.tempfile, "TemporaryDirectory",
                                        return_value=contextlib.nullcontext(str(temporary))), \
                      mock.patch.dict(os.environ, {"RESEMBLE_WEIGHTS": str(weights)}), \
-                     mock.patch.object(dv, "_sh", side_effect=calls.append), \
+                     mock.patch.object(dv, "_sh", side_effect=lambda cmd, **_: calls.append(cmd)), \
                      mock.patch("subprocess.Popen", side_effect=AssertionError("unexpected child")):
                     dv.chain(root / "input.wav", root / "output.wav", stereo=True)
                 self.assertEqual(len(calls), 3)
@@ -577,6 +577,42 @@ class FailHardPropagation(unittest.TestCase):
                     self.assertEqual(dn.prepare_source(c, "v"), p)
                     self.assertEqual(run.call_count, 3)
                 self.assertTrue(dn.media_cache_valid(p))
+
+    def test_inference_child_preserves_unicode_failure_path(self):
+        import contextlib
+        import io
+
+        with tempfile.TemporaryDirectory(prefix='denoise-child-') as directory:
+            root = Path(directory)
+            # A real Python file error from a stub import; no model or weights run.
+            missing = root / '中文.ini'
+            (root / 'torch.py').write_text(
+                "from pathlib import Path\nPath(__file__).with_name('中文.ini').read_bytes()\n",
+                encoding='utf-8')
+            env = dict(PYTHONPATH=str(root), PYTHONDONTWRITEBYTECODE='1', PYTHONUTF8='0',
+                       PYTHONIOENCODING='cp936:strict' if os.name == 'nt' else 'utf-8:strict')
+            real_run = subprocess.run
+            calls = []
+
+            def launch(cmd, **kwargs):
+                calls.append(cmd[0])
+                if cmd[0] == 'ffmpeg':
+                    self.assertEqual(len(calls), 1, 'inference failure must prevent final encoding')
+                    return subprocess.CompletedProcess(cmd, 0, '', '')
+                return real_run(cmd, timeout=30, **kwargs)
+
+            out = root / 'out.wav'
+            with mock.patch.dict(os.environ, env), \
+                    mock.patch.object(dv, 'conda_python', return_value=Path(sys.executable)), \
+                    mock.patch.object(dv.subprocess, 'run', side_effect=launch), \
+                    contextlib.redirect_stderr(io.StringIO()) as diagnostics:
+                with self.assertRaises(SystemExit) as failure:
+                    dv.chain(root / 'in.wav', out)
+            self.assertEqual(failure.exception.code, 1)
+            self.assertEqual(calls, ['ffmpeg', sys.executable])
+            self.assertIn('FileNotFoundError', diagnostics.getvalue())
+            self.assertIn(missing.name, diagnostics.getvalue())
+            self.assertFalse(out.exists())
 
     def test_cli_step_failure_exits_nonzero(self):
         def failing_run(cmd, **kw):
