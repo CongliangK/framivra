@@ -14,6 +14,8 @@ const nextVersion = `sha256:${'b'.repeat(64)}`
 const bareWindowCapability = { schema: 'framivra.timeline.preview-window/v1', inline_media: true, prepare_inputs: true }
 const qualification = { launcher: 'framivra.preview-window.fixed-wheel/v1', wheel_sha256: 'c'.repeat(64), runtime_projection_sha256: 'd'.repeat(64) }
 const windowCapability = { ...bareWindowCapability, ...qualification }
+const managedCapability = { ...windowCapability, managed_identity: 'framivra.preview-window.managed-pins/v1' }
+const managedPinsArg = `--managed-preview-pins-v1=${qualification.wheel_sha256}:${qualification.runtime_projection_sha256}`
 const windowLauncher = '/opt/private-window/preview_window_wheel.py'
 const windowBytes = Buffer.from('000000186674797069736f6d0000020069736f6d69736f32', 'hex') // synthetic fixture, not playable media
 const sha256 = createHash('sha256').update(windowBytes).digest('hex')
@@ -47,8 +49,9 @@ async function bench(options = {}) {
   let now = 0
   const subprocess = { resolveExecutable: async command => command, spawn(spec) {
     calls.push(spec)
-    const optionalProbe = ['--first-frame-capabilities', '--formal-archive-capabilities'].includes(spec.argv[1])
-    const operation = optionalProbe ? spec.argv[1] : spec.argv[3] === 'timeline' ? spec.argv[4] : spec.argv[3]
+    const argv = spec.argv[1] === managedPinsArg ? [spec.argv[0], ...spec.argv.slice(2)] : spec.argv
+    const optionalProbe = ['--first-frame-capabilities', '--formal-archive-capabilities'].includes(argv[1])
+    const operation = optionalProbe ? argv[1] : argv[3] === 'timeline' ? argv[4] : argv[3]
     let value = operation === 'frame' ? { schema: 'framivra.timeline.frame/v1', operation, ok: true, diagnostics: [], content_version: version, image: { path: '/never/read.png' } }
       : { schema: 'framivra.timeline.read/v1', operation, ok: true, diagnostics: [], content_version: options.saved?.() ?? version, document: { project: { duration_frames: 36, fps: 23.976 } }, coverage: { complete: true, scope: 'unit fixture', unexpanded: [] }, capabilities: { operations: ['inspect', 'query'], preview_window: spec.argv[0] === fixed ? options.windowCapability : options.ordinaryWindowCapability, frame: options.unsupported ? {} : { schema: 'framivra.timeline.frame/v1', explicit_render_required: true, ...(options.prepareCapability ? { prepare_gfx: options.prepareCapability } : {}), inline_png: { flag: '--include-png', encoding: 'base64', wire_limit_bytes: FRAME_WIRE_LIMIT } } } }
     if (operation === 'inspect' && options.videoTracks) value.document.video_tracks = options.videoTracks
@@ -56,14 +59,14 @@ async function bench(options = {}) {
     if (operation === '--first-frame-capabilities') value = options.firstFrameCapability ?? { ok: false }
     if (operation === '--formal-archive-capabilities') value = options.archiveCapability ?? { ok: false }
     if (operation === 'preview-formal-archive') {
-      const start = Number(spec.argv[6])
+      const start = Number(argv[6])
       value = { schema: 'framivra.preview-formal-archive/v1', ...qualification, ok: true, nonce: spec.argv.at(-1).slice('--nonce='.length),
         content_version: version, start, end: 36, fps: { num: 24000, den: 1001 }, width: 1920, height: 1080, audio_sample_rate: 48000,
         audio_channels: 2, mime: 'video/mp4', sha256, byte_length: windowBytes.length, base64: windowBytes.toString('base64'), manifest_sha256: 'e'.repeat(64) }
       if (options.archiveResult) value = options.archiveResult(value)
     }
     if (['preview-window', 'preview-window-first-frame'].includes(operation)) {
-      const start = Number(spec.argv[6])
+      const start = Number(argv[6])
       value = { schema: windowCapability.schema, ...qualification, ok: true, content_version: version, start, end: Math.min(36, start + 24), fps: { num: 24000, den: 1001 }, width: 1920, height: 1080,
         mime: 'video/mp4', audio_sample_rate: 48000, audio_channels: 2, byte_length: windowBytes.length, sha256, base64: windowBytes.toString('base64'), path: '/never/read.mp4' }
       value = options.windowResult ? options.windowResult(value, spec) : value
@@ -272,11 +275,13 @@ test('frame + semantic mutual exclusion lasts through HTTP cancel until actual d
 })
 
 const linuxWindow = { skip: process.platform !== 'linux' }
-test('managed preview needs independent approval and matching live wheel and projection; no legacy fallback', linuxWindow, async t => {
+test('managed preview requires independent approval, the live managed ABI and both exact pins; no legacy fallback', linuxWindow, async t => {
   for (const options of [
-    { approved: false, windowCapability },
-    { windowCapability: { ...windowCapability, wheel_sha256: 'e'.repeat(64) } },
-    { windowCapability: { ...windowCapability, runtime_projection_sha256: 'e'.repeat(64) } },
+    { approved: false, windowCapability: managedCapability },
+    { windowCapability },
+    { windowCapability: { ...managedCapability, managed_identity: 'wrong' } },
+    { windowCapability: { ...managedCapability, wheel_sha256: 'e'.repeat(64) } },
+    { windowCapability: { ...managedCapability, runtime_projection_sha256: 'e'.repeat(64) } },
   ]) {
     const b = await bench({ managed: true, ...options }); t.after(() => b.host.dispose())
     assert.equal(b.opening.previewSession, undefined)
@@ -290,7 +295,7 @@ test('managed preview needs independent approval and matching live wheel and pro
 })
 
 test('disk-only managed pin removal retires an otherwise current cached scope and forbids remint', linuxWindow, async t => {
-  const b = await bench({ managed: true, windowCapability: { ...windowCapability, input_epoch: true }, windowResult: value => ({ ...value, input_epoch: nextVersion }) })
+  const b = await bench({ managed: true, windowCapability: { ...managedCapability, input_epoch: true }, windowResult: value => ({ ...value, input_epoch: nextVersion }) })
   t.after(() => b.host.dispose())
   const ownerId = b.opening.previewSession.ownerId
   const scope = { op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 0, contentVersion: version,
@@ -311,7 +316,10 @@ test('disk-only managed pin removal retires an otherwise current cached scope an
   assert.equal((await render(24)).status, 403, 'restoring bytes does not resurrect this lease')
   assert.equal((await b.control({ ...scope, authorizationId: randomUUID() })).status, 409)
   assert.equal(b.calls.filter(call => call.argv[0] === windowLauncher).length, 0)
-  assert.equal(b.calls.filter(call => call.argv[4] === 'preview-window').length, 1)
+  assert.equal(b.calls.filter(call => call.argv.includes('preview-window')).length, 1)
+  const managedCalls = b.calls.filter(call => call.argv[0] === b.managed).map(call => call.argv)
+  assert.deepEqual(managedCalls.map(argv => argv[1]), Array(4).fill(managedPinsArg))
+  assert.deepEqual(managedCalls.map(argv => argv[2]), ['-t', '--first-frame-capabilities', '--formal-archive-capabilities', '-t'])
 })
 
 test('active managed window detects disk-only replacement and waits for exact managed-range cleanup', { ...linuxWindow, timeout: 7000 }, async t => {
@@ -320,7 +328,7 @@ test('active managed window detects disk-only replacement and waits for exact ma
   const stopped = new Promise(resolve => { terminate = resolve })
   const settled = new Promise(resolve => { done = resolve })
   const range = new Promise(resolve => { reap = resolve })
-  const b = await bench({ managed: true, windowCapability, windowHandle() {
+  const b = await bench({ managed: true, windowCapability: managedCapability, windowHandle() {
     start()
     return { stdout: new PassThrough(), done: settled, terminate() { terminate(); done({ exitCode: 1 }) }, waitForExit: () => range,
       collected: { stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
