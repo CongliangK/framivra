@@ -28,6 +28,16 @@ export function validateVtxConfigFile(value) {
 
 export const DEFAULT_VTX_EXECUTABLE = 'vtx'
 export const DEFAULT_PREVIEW_WINDOW_EXECUTABLE = ''
+// Internal selector from the managed installation scan. It carries identity,
+// never a path or capability; the Host reads and checks the enrollment again.
+export const PREVIEW_SUPPLIER_ABI = 'framivra.preview-window.fixed-wheel/v1'
+export const MANAGED_PREVIEW_SUPPLIER_PATTERN = /^(?:|v1:[a-f0-9]{40}(?::[a-f0-9]{64}){3})$(?![\s\S])/
+export function validateManagedPreviewSupplier(value = '') {
+  if (typeof value !== 'string' || !MANAGED_PREVIEW_SUPPLIER_PATTERN.test(value)) {
+    throw new ConfigurationError('Invalid managedPreviewSupplier selection')
+  }
+  return value
+}
 // Disabled or a canonical-spelled absolute Linux launcher path. The Host also
 // checks the resolved filesystem target; spelling checks cannot rule out links.
 export const PREVIEW_WINDOW_EXECUTABLE_PATTERN = /^(?:|(?:\/(?!\.{1,2}(?:\/|$))[^/\x00-\x1f\x7f]+)+)$(?![\s\S])/
@@ -81,10 +91,11 @@ export function validateTrustedPath(value) {
 
 /* Stable identity of execution configuration; grants bind this exactly.
  * Preserve legacy fingerprints when no independent window executor is set. */
-export function configurationFingerprint({ vtxExecutable, trustedPath, vtxConfigFile = '', previewWindowExecutable = '' }) {
+export function configurationFingerprint({ vtxExecutable, trustedPath, vtxConfigFile = '', previewWindowExecutable = '', managedPreviewSupplier = '' }) {
   const fields = [vtxExecutable, trustedPath]
   if (vtxConfigFile || previewWindowExecutable) fields.push(vtxConfigFile)
   if (previewWindowExecutable) fields.push(previewWindowExecutable)
+  if (managedPreviewSupplier) fields.push({ managedPreviewSupplier })
   return JSON.stringify(fields)
 }
 
@@ -100,7 +111,7 @@ function readField(field) {
 
 /** Whether any field of this source is a live Volatile cell rather than a plain string. */
 export function isVolatileConfig(source) {
-  return ['vtxExecutable', 'trustedPath', 'vtxConfigFile', 'previewWindowExecutable'].some(key => {
+  return ['vtxExecutable', 'trustedPath', 'vtxConfigFile', 'previewWindowExecutable', 'managedPreviewSupplier'].some(key => {
     const field = source?.[key]
     return field !== undefined && field !== null && ((typeof field === 'object' || typeof field === 'function') && typeof field.get === 'function')
   })
@@ -141,6 +152,8 @@ export function readConfiguration(source) {
   if (vtxConfigFile) snapshot.vtxConfigFile = vtxConfigFile
   const previewWindowExecutable = validatePreviewWindowExecutable(readField(source?.previewWindowExecutable))
   if (previewWindowExecutable) snapshot.previewWindowExecutable = previewWindowExecutable
+  const managedPreviewSupplier = validateManagedPreviewSupplier(readField(source?.managedPreviewSupplier))
+  if (managedPreviewSupplier) snapshot.managedPreviewSupplier = managedPreviewSupplier
   snapshot.fingerprint = configurationFingerprint(snapshot)
   const epoch = source && (typeof source === 'object' || typeof source === 'function') ? configurationEpochs.get(source) ?? 0 : 0
   if (epoch) snapshot.fingerprint += `|config-save:${epoch}`

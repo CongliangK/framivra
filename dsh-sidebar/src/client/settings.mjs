@@ -1,5 +1,5 @@
 import React from 'react'
-import { validateVtxExecutable, validateTrustedPath, validateVtxConfigFile, readLogMaxPerMinute } from '../configuration.mjs'
+import { validateVtxExecutable, validateTrustedPath, validateVtxConfigFile, readLogMaxPerMinute, validateManagedPreviewSupplier } from '../configuration.mjs'
 import { KernelDiscovery, KernelConfigEditor } from './kernel-settings.mjs'
 
 const h = React.createElement
@@ -121,14 +121,14 @@ export function BundleConfigForm({ form }) {
   if (state.status === 'unavailable') return h('section', { 'aria-label': 'Framivra 插件配置' },
     h('p', { role: 'alert' }, '配置命名空间不可用：需要插件处于启用状态并由宿主提供设置服务后才能配置。'))
   const values = state.value ?? {}
-  const mirror = { vtxExecutable: values.vtxExecutable ?? '', trustedPath: values.trustedPath ?? '', vtxConfigFile: values.vtxConfigFile ?? '', logMaxPerMinute: String(values.logMaxPerMinute ?? 120) }
-  const current = draft ?? mirror
-  const editing = draft !== null && Object.keys(mirror).some(key => draft[key] !== mirror[key])
+  const mirror = { vtxExecutable: values.vtxExecutable ?? '', trustedPath: values.trustedPath ?? '', vtxConfigFile: values.vtxConfigFile ?? '', managedPreviewSupplier: values.managedPreviewSupplier ?? '', logMaxPerMinute: String(values.logMaxPerMinute ?? 120) }
+  const current = draft ? { ...draft, managedPreviewSupplier: draft.previewSupplierIntent ? draft.managedPreviewSupplier : mirror.managedPreviewSupplier } : mirror
+  const editing = draft !== null && Object.keys(mirror).some(key => current[key] !== mirror[key])
   const stale = draft !== null && state.revision !== draft.revision
   let invalid
   try { validateVtxExecutable(current.vtxExecutable === '' ? undefined : current.vtxExecutable) } catch (error) { invalid = error }
   if (!invalid) { try { validateTrustedPath(current.trustedPath === '' ? undefined : current.trustedPath) } catch (error) { invalid = error } }
-  if (!invalid) { try { validateVtxConfigFile(current.vtxConfigFile) } catch (error) { invalid = error } }
+  if (!invalid) { try { validateVtxConfigFile(current.vtxConfigFile); validateManagedPreviewSupplier(current.managedPreviewSupplier) } catch (error) { invalid = error } }
   if (!invalid) {
     try {
       if (!/^\d+$/.test(current.logMaxPerMinute)) throw new Error('日志上限须为 0–1000 的整数')
@@ -141,6 +141,8 @@ export function BundleConfigForm({ form }) {
     setDraft(previous => ({
       ...(previous ?? { ...mirror, revision: state.revision }), // capture expectedRevision once, at first edit
       [key]: value,
+      ...((key === 'vtxExecutable' || key === 'vtxConfigFile' || key === 'managedPreviewSupplier') &&
+        { managedPreviewSupplier: key === 'managedPreviewSupplier' ? value : '', previewSupplierIntent: true }),
     }))
   }
   async function save(event) {
@@ -161,6 +163,7 @@ export function BundleConfigForm({ form }) {
         { op: 'set', path: ['trustedPath'], value: value.trustedPath },
       ]
       if (current.vtxConfigFile !== mirror.vtxConfigFile) operations.push({ op: 'set', path: ['vtxConfigFile'], value: validateVtxConfigFile(current.vtxConfigFile) })
+      if (current.managedPreviewSupplier !== mirror.managedPreviewSupplier) operations.push({ op: 'set', path: ['managedPreviewSupplier'], value: validateManagedPreviewSupplier(current.managedPreviewSupplier) })
       if (current.logMaxPerMinute !== mirror.logMaxPerMinute) operations.push({ op: 'set', path: ['logMaxPerMinute'], value: Number(current.logMaxPerMinute) })
       accepted = await form.mutate(operations, draft.revision)
     } catch (error) {
@@ -185,7 +188,9 @@ export function BundleConfigForm({ form }) {
       const response = await fetch('/api/framivra/diagnostics', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(35000)]) })
       const value = await response.json().catch(() => null)
       if (!response.ok || !value?.ok) outcome = { status: 'failed', error: value?.error ?? `HTTP_${response.status}`, message: value?.message ?? '宿主诊断接口返回异常。', revision: state.revision }
-      else outcome = { status: 'ok', path: value.executable?.path ?? '（未上报）', semantic: value.storeCapabilities?.ok === true, frame: value.capabilities?.capabilities?.frame?.inline_png?.flag === '--include-png', revision: state.revision }
+      else outcome = { status: 'ok', path: value.executable?.path ?? '（未上报）', semantic: value.storeCapabilities?.ok === true,
+        frame: value.capabilities?.capabilities?.frame?.inline_png?.flag === '--include-png',
+        ...(mirror.managedPreviewSupplier && { managedPreviewOk: value.previewSupplier?.ok === true }), revision: state.revision }
     } catch (error) {
       outcome = { status: 'failed', error: 'NETWORK', message: `无法连接宿主诊断接口：${error?.message ?? error}`, revision: state.revision }
     }
@@ -202,10 +207,18 @@ export function BundleConfigForm({ form }) {
       h('div', { id: 'fv-settings-kernel', hidden: tab !== 'kernel' },
         h(KernelDiscovery, { disabled, onSelect: (path, installation) => {
           setMessage(null)
-          setDraft(previous => ({ ...(previous ?? { ...mirror, revision: state.revision }), vtxExecutable: path, ...(installation ? { vtxConfigFile: installation.configFile } : {}) }))
+          setDraft(previous => ({ ...(previous ?? { ...mirror, revision: state.revision }), vtxExecutable: path,
+            ...(installation?.previewSupplier || path !== mirror.vtxExecutable ? {
+              managedPreviewSupplier: installation?.previewSupplier ?? '', previewSupplierIntent: true,
+            } : {}), ...(installation ? { vtxConfigFile: installation.configFile } : {}) }))
         }, onConfigPath: path => { edit('vtxConfigFile', path); setTab('config') } }),
         h('section', { className: 'fv-settings-connection', 'aria-label': '内核连接' },
           h('h3', null, '当前连接'),
+          current.managedPreviewSupplier ? h('div', null,
+            h('p', null, `${current.managedPreviewSupplier !== mirror.managedPreviewSupplier ? '草稿' : '已保存'}：选定受管预览供应器。使用前重新核验；变更或失效时不自动回退。`),
+            h('button', { type: 'button', disabled, onClick: () => edit('managedPreviewSupplier', '') },
+              values.previewWindowExecutable ? '恢复原独立启动器（保存后生效）' : '取消受管预览选择（保存后生效）'))
+            : values.previewWindowExecutable ? h('p', null, '预览沿用原独立启动器；未选择受管供应器。') : null,
           field('framivra-config-executable', 'VTX 可执行文件', '填写内核绝对路径（Windows 请选 venv\\Scripts\\vtx.exe）；留空从受信目录查找 vtx。选用即表示信任该程序，不能位于会话工作区内。', current.vtxExecutable, value => edit('vtxExecutable', value), disabled, invalid && invalid.message.includes('vtxExecutable')),
           h('details', null, h('summary', null, '高级连接设置'),
             field('framivra-config-trustedpath', '受信搜索目录（trustedPath）', '宿主契约固定用冒号分隔 POSIX 绝对目录，例如 /usr/local/bin:/usr/bin:/bin；不接受 Windows 分号 PATH，Windows 请指定绝对可执行文件。', current.trustedPath, value => edit('trustedPath', value), disabled, invalid && invalid.message.includes('trustedPath')),
@@ -226,7 +239,8 @@ export function BundleConfigForm({ form }) {
       checking ? h('p', { role: 'status' }, '正在检查保存的配置…') : null,
       !checking && check && state.revision !== check.revision ? h('p', { role: 'alert' }, '检查结果已过期：宿主配置已变更，请重新检查。') : null,
       !checking && !editing && check && state.revision === check.revision && check.status === 'ok' ? h('p', { role: 'status', className: 'fv-check-ok' },
-        '检查通过：已保存配置可用。',
+        check.managedPreviewOk === false ? '普通内核检查通过；已选受管预览不可用。请重新扫描、选择并保存。' : '检查通过：已保存配置可用。',
+        check.managedPreviewOk === true ? h(React.Fragment, null, h('br', null), '受管预览已通过现场能力核对；此检查不执行渲染或授予权限。') : null,
         h('br', null), `可执行文件：${check.path}`,
         h('br', null), '时间线读取（read/v1）可用。',
          h('br', null), check.frame ? '内核声明支持完整合成帧；尚未实测渲染。' : '当前宿主或内核不支持生成完整合成帧。',
@@ -238,7 +252,9 @@ export function BundleConfigForm({ form }) {
       stale ? h('details', null,
         h('summary', null, '宿主配置已被其他修改更新：最新值为'),
         h('p', null, h('code', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-all' } }, `vtxExecutable = ${mirror.vtxExecutable || '（空）'}\ntrustedPath = ${mirror.trustedPath || '（空）'}\nrevision = ${String(state.revision)}`)),
-        h('button', { type: 'button', disabled: busy, onClick: () => setDraft(previous => previous && { ...previous, revision: state.revision }) }, '以最新版本重新校验草稿（不提交）')) : null,
+        h('button', { type: 'button', disabled: busy, onClick: () => setDraft(previous => previous && { ...previous,
+          ...(!previous.previewSupplierIntent && { vtxExecutable: mirror.vtxExecutable, vtxConfigFile: mirror.vtxConfigFile,
+            managedPreviewSupplier: mirror.managedPreviewSupplier }), revision: state.revision }) }, '以最新版本重新校验草稿（不提交）')) : null,
       !state.writable ? h('p', { role: 'status' }, '当前宿主配置只读（如由 profile 锁定）；无法在此保存。') : null,
       h('div', { className: 'fv-settings-footer' },
         h('p', { className: 'fv-settings-muted' }, '仅宿主管理员可修改。切换内核或配置文件后，已打开的预览与写授权失效，需重新打开工程。'),

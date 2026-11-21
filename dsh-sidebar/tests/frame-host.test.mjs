@@ -4,7 +4,9 @@ import assert from 'node:assert/strict'
 import { PassThrough, Readable } from 'node:stream'
 import { createHash, randomUUID } from 'node:crypto'
 import { crc32, deflateSync } from 'node:zlib'
+import { join } from 'node:path'
 import { createPreviewHost } from '../src/host.mjs'
+import { managedInstallationPaths } from '../src/kernel-management.mjs'
 import { MemoryFs } from './helpers.mjs'
 import { FRAME_WIRE_LIMIT, FRAME_REQUEST_LIMIT } from '../src/bounded.mjs'
 const version = `sha256:${'a'.repeat(64)}`
@@ -17,6 +19,28 @@ const windowBytes = Buffer.from('000000186674797069736f6d0000020069736f6d69736f3
 const sha256 = createHash('sha256').update(windowBytes).digest('hex')
 async function bench(options = {}) {
   const fs = new MemoryFs(), sessions = new Map([['one', { id: 'one' }]]), cwd = { value: '/workspace' }, calls = []
+  const installation = options.managed && managedInstallationPaths()
+  const managed = installation && join(installation.previewRoot, 'vtx-preview')
+  const fixed = managed || windowLauncher
+  let selection
+  if (managed) {
+    const set = (path, data) => fs.files.set(path, { type: 'file', version: `${path}:${data}`, size: Buffer.byteLength(data), data })
+    const launcher = '# synthetic approved launcher'
+    const supplier = { schema: 'framivra.preview-supplier/v1', abi: qualification.launcher, launcherSha256: createHash('sha256').update(launcher).digest('hex'),
+      wheelSha256: qualification.wheel_sha256, runtimeProjectionSha256: qualification.runtime_projection_sha256 }
+    const commit = '1'.repeat(40)
+    selection = ['v1', commit, supplier.launcherSha256, supplier.wheelSha256, supplier.runtimeProjectionSha256].join(':')
+    set(managed, launcher)
+    set(join(installation.previewRoot, 'kernel.sha256'), `${supplier.wheelSha256}\n`)
+    set(join(installation.previewRoot, 'kernel.whl'), 'mock wheel')
+    set(installation.vtxExecutable, 'ordinary')
+    set(installation.pythonExecutable, 'python')
+    set(installation.configFile, '{}')
+    set(installation.manifest, JSON.stringify({ ...installation, schema: 'framivra.installation/v1', commit, version: 'v1', installedAt: 'now', status: 'ready', profile: 'non-ai', renderer: 'cdp', previewSupplier: supplier }))
+    for (const p of [installation.previewRoot, join(installation.previewRoot, 'runtime'), installation.sourceRoot]) fs.files.set(p, { type: 'directory', version: p })
+    fs.lstat = async p => fs.files.get(p) ?? { type: 'directory' }
+    fs.readBytes = async ({ targetKey }) => Buffer.from(fs.files.get(targetKey).data)
+  }
   sessions.list = () => [...sessions.values()]
   fs.files.set(windowLauncher, { type: 'file', version: 'wheel-launcher' })
   options.setup?.(fs, sessions)
@@ -26,7 +50,7 @@ async function bench(options = {}) {
     const optionalProbe = ['--first-frame-capabilities', '--formal-archive-capabilities'].includes(spec.argv[1])
     const operation = optionalProbe ? spec.argv[1] : spec.argv[3] === 'timeline' ? spec.argv[4] : spec.argv[3]
     let value = operation === 'frame' ? { schema: 'framivra.timeline.frame/v1', operation, ok: true, diagnostics: [], content_version: version, image: { path: '/never/read.png' } }
-      : { schema: 'framivra.timeline.read/v1', operation, ok: true, diagnostics: [], content_version: options.saved?.() ?? version, document: { project: { duration_frames: 36, fps: 23.976 } }, coverage: { complete: true, scope: 'unit fixture', unexpanded: [] }, capabilities: { operations: ['inspect', 'query'], preview_window: spec.argv[0] === windowLauncher ? options.windowCapability : options.ordinaryWindowCapability, frame: options.unsupported ? {} : { schema: 'framivra.timeline.frame/v1', explicit_render_required: true, ...(options.prepareCapability ? { prepare_gfx: options.prepareCapability } : {}), inline_png: { flag: '--include-png', encoding: 'base64', wire_limit_bytes: FRAME_WIRE_LIMIT } } } }
+      : { schema: 'framivra.timeline.read/v1', operation, ok: true, diagnostics: [], content_version: options.saved?.() ?? version, document: { project: { duration_frames: 36, fps: 23.976 } }, coverage: { complete: true, scope: 'unit fixture', unexpanded: [] }, capabilities: { operations: ['inspect', 'query'], preview_window: spec.argv[0] === fixed ? options.windowCapability : options.ordinaryWindowCapability, frame: options.unsupported ? {} : { schema: 'framivra.timeline.frame/v1', explicit_render_required: true, ...(options.prepareCapability ? { prepare_gfx: options.prepareCapability } : {}), inline_png: { flag: '--include-png', encoding: 'base64', wire_limit_bytes: FRAME_WIRE_LIMIT } } } }
     if (operation === 'inspect' && options.videoTracks) value.document.video_tracks = options.videoTracks
     if (operation === 'capabilities' && options.storageCapability) value.capabilities.storage = options.storageCapability
     if (operation === '--first-frame-capabilities') value = options.firstFrameCapability ?? { ok: false }
@@ -56,13 +80,15 @@ async function bench(options = {}) {
     return { stdout: Readable.from([Buffer.from(text)]), done: Promise.resolve({ exitCode: optionalProbe || value.ok ? 0 : 1, signal: null }), terminate() {}, waitForExit: async () => true, collected: { stdout: { readFrom: () => ({ text, lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
   } }
   const config = { vtxExecutable: '/opt/trusted/vtx', previewWindowExecutable: options.windowExecutable ?? (options.windowCapability ? windowLauncher : ''), clock: () => now }
+  if (managed) Object.assign(config, { vtxExecutable: installation.vtxExecutable, vtxConfigFile: installation.configFile, managedPreviewSupplier: selection })
   if (options.ordinaryConfig) {
     config.vtxConfigFile = '/opt/settings/config.json'
     fs.files.set(config.vtxConfigFile, { type: 'file', version: 'ordinary-config' })
     fs.lstat = async path => fs.files.get(path) ?? { type: 'directory' }
   }
   const getCwd = session => session.cwd ?? cwd.value
-  const host = createPreviewHost({ fs, sessions, workingDirectory: { get: getCwd, ensure: async agent => getCwd(agent.session) }, subprocess }, config)
+  const host = createPreviewHost({ fs, sessions, workingDirectory: { get: getCwd, ensure: async agent => getCwd(agent.session) }, subprocess }, config,
+    managed && options.approved !== false ? { approvedPreviewSuppliers: [selection] } : undefined)
   const control = data => host.control(new Request('http://unit/api/framivra/control', { method: 'POST', body: JSON.stringify({ sessionId: 'one', ...data }) }))
   const opened = await control({ op: 'open', timeline: 'timeline.json' }); assert.equal(opened.status, 200, await opened.clone().text())
   const opening = await opened.json()
@@ -72,7 +98,7 @@ async function bench(options = {}) {
   const window = (data = {}) => host.window(new Request('http://unit/api/framivra/window', { method: 'POST', body: JSON.stringify(data.op === 'cancel'
     ? { sessionId: 'one', grant, ...data }
     : { ...request, prepareInputs: true, operationId: randomUUID(), ...data }) }))
-  return { host, config, fs, cwd, sessions, calls, frame, window, control, grant, opening, request, expire: () => { now = 30 * 60 * 1000 } }
+  return { host, config, fs, cwd, sessions, calls, frame, window, control, grant, opening, request, installation, managed, expire: () => { now = 30 * 60 * 1000 } }
 }
 const prepareCapability = { flag: '--prepare-gfx', trust_flag: '--trust-html', kind: 'current-composite', preview_only: true }
 test('Host prepare requires exact capability and consent, HTML trust remains independent and additive', async () => {
@@ -246,6 +272,74 @@ test('frame + semantic mutual exclusion lasts through HTTP cancel until actual d
 })
 
 const linuxWindow = { skip: process.platform !== 'linux' }
+test('managed preview needs independent approval and matching live wheel and projection; no legacy fallback', linuxWindow, async t => {
+  for (const options of [
+    { approved: false, windowCapability },
+    { windowCapability: { ...windowCapability, wheel_sha256: 'e'.repeat(64) } },
+    { windowCapability: { ...windowCapability, runtime_projection_sha256: 'e'.repeat(64) } },
+  ]) {
+    const b = await bench({ managed: true, ...options }); t.after(() => b.host.dispose())
+    assert.equal(b.opening.previewSession, undefined)
+    assert.equal((await b.window()).status, 422)
+    assert.equal(b.calls.filter(call => call.argv[0] === windowLauncher).length, 0)
+    assert.equal(b.calls.filter(call => call.argv[0] === b.managed).length, options.approved === false ? 0 : 1)
+    const check = await b.host.diagnostics(new Request('http://unit/api/framivra/diagnostics', { method: 'POST', body: '{}' }))
+    assert.equal(check.status, 200)
+    assert.equal((await check.json()).previewSupplier.ok, false)
+  }
+})
+
+test('disk-only managed pin removal retires an otherwise current cached scope and forbids remint', linuxWindow, async t => {
+  const b = await bench({ managed: true, windowCapability: { ...windowCapability, input_epoch: true }, windowResult: value => ({ ...value, input_epoch: nextVersion }) })
+  t.after(() => b.host.dispose())
+  const ownerId = b.opening.previewSession.ownerId
+  const scope = { op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 0, contentVersion: version,
+    authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' }
+  const auth = await b.control(scope); assert.equal(auth.status, 200, await auth.clone().text())
+  const { grant } = await auth.json()
+  const render = (frame = 0) => b.window({ op: 'program-render', frame, ownerId, previewGrant: grant.id, renderConsent: undefined, prepareInputs: undefined })
+  const first = await render(); assert.equal(first.status, 200, await first.clone().text())
+  const check = { op: 'program-check', grant: b.grant, previewGrant: grant.id, ownerId, frame: 0, sha256 }
+  assert.equal((await b.control(check)).status, 200)
+  const pin = join(b.installation.previewRoot, 'kernel.sha256')
+  const saved = b.fs.files.get(pin)
+  b.fs.files.delete(pin)
+  const refusal = await b.control(check)
+  assert.equal(refusal.status, 409)
+  assert.equal((await refusal.json()).error, 'EXECUTABLE_CHANGED')
+  b.fs.files.set(pin, saved)
+  assert.equal((await render(24)).status, 403, 'restoring bytes does not resurrect this lease')
+  assert.equal((await b.control({ ...scope, authorizationId: randomUUID() })).status, 409)
+  assert.equal(b.calls.filter(call => call.argv[0] === windowLauncher).length, 0)
+  assert.equal(b.calls.filter(call => call.argv[4] === 'preview-window').length, 1)
+})
+
+test('active managed window detects disk-only replacement and waits for exact managed-range cleanup', { ...linuxWindow, timeout: 7000 }, async t => {
+  let start, terminate, done, reap
+  const started = new Promise(resolve => { start = resolve })
+  const stopped = new Promise(resolve => { terminate = resolve })
+  const settled = new Promise(resolve => { done = resolve })
+  const range = new Promise(resolve => { reap = resolve })
+  const b = await bench({ managed: true, windowCapability, windowHandle() {
+    start()
+    return { stdout: new PassThrough(), done: settled, terminate() { terminate(); done({ exitCode: 1 }) }, waitForExit: () => range,
+      collected: { stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
+  } })
+  t.after(async () => { done({ exitCode: 1 }); reap(true); await b.host.dispose() })
+  let finished = false
+  const operationId = randomUUID(), pending = b.window({ operationId }).then(response => { finished = true; return response })
+  await started
+  b.fs.files.get(b.managed).data = '# changed content'
+  await stopped
+  assert.equal(finished, false)
+  reap(true)
+  const result = await pending
+  assert.notEqual(result.status, 200)
+  assert.equal((await b.window({ op: 'cancel', operationId })).status, 200)
+  assert.equal((await b.window()).status, 409)
+  assert.equal(b.calls.filter(call => call.argv[0] === windowLauncher).length, 0)
+})
+
 test('whole-timeline Host lease is separate, canonical, and freshness-fenced on cache reads', linuxWindow, async t => {
   const b = await bench({ windowCapability: { ...windowCapability, input_epoch: true },
     storageCapability: { schema: 'framivra.storage/v1', request_stdin: true, operations: ['inspect', 'plan', 'clean'] },
