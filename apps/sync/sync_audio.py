@@ -5,8 +5,8 @@
 → 稳健线性漂移拟合 → soxr 微重采样，conform 出与相机时钟对齐的话筒 WAV。
 视频永远是不动的一方（帧不能重采样），所以 conform 的总是音频。
 
-用法:
-  ~/miniconda3/envs/denoise/bin/python sync_audio.py <camera.(wav|mp4|mov)> <mic.wav> <out.wav> \
+用法（在已激活的 conda denoise 环境中）:
+  python sync_audio.py <camera.(wav|mp4|mov)> <mic.wav> <out.wav> \
       [--max-offset 30] [--win 20] [--hop 10] [--search 2] [--report report.json]
 
 判定: conform 后复验残差 max < 1.5ms 达标（目标 <1ms，对应 vtx 1ms 音频网格）；
@@ -29,10 +29,13 @@ CONF_MIN = 3.0      # 峰旁比置信度门限（峰/相关序列中位绝对值
 ENERGY_FRAC = 0.15  # 语音窗能量门限（占最高窗 RMS 的比例）
 
 
+def _denoise_default_hint():
+    executable = "python.exe" if os.name == "nt" else "bin/python"
+    return f"~/miniconda3/envs/denoise/{executable}"
+
+
 def _denoise_interpreter():
-    """缺依赖时的解释器指引（A4）：config.local.json denoise.python（如有）优先，
-    其次本机默认约定路径 ~/miniconda3/envs/denoise/bin/python；均不存在则回退通用文案。
-    返回 (路径或 None, 来源标签)——路径存在性由调用方判断，绝不硬编码只在某机可用的路径。"""
+    """缺依赖时优先报告已配置的解释器，其次探测当前平台的约定路径。"""
     cfg_py = None
     cfg_path = os.environ.get("VTX_CONFIG") or (
         Path(__file__).resolve().parents[2] / "config.local.json")
@@ -45,7 +48,7 @@ def _denoise_interpreter():
             cfg_py = os.path.expanduser(p.strip())
     except (OSError, ValueError):
         pass  # 无 config.local.json / 坏 JSON：按空配置继续（与仓内 config 加载策略一致）
-    default_py = os.path.expanduser("~/miniconda3/envs/denoise/bin/python")
+    default_py = os.path.expanduser(_denoise_default_hint())
     for p, src in ((cfg_py, "config"), (default_py, "default")):
         if p and os.path.isfile(p):
             return p, src
@@ -63,7 +66,7 @@ def _dep_guidance(missing):
     elif src == "default":
         lines.append(f"  {py} {example}   # 本机已安装 denoise 环境")
     else:
-        lines.append(f"  ~/miniconda3/envs/denoise/bin/python {example}   "
+        lines.append(f"  {_denoise_default_hint()} {example}   "
                      "# 默认约定路径（本机未检测到，需先创建 denoise 环境）")
     lines.append(f"或给当前解释器补装：{sys.executable or 'python3'} -m pip install {' '.join(missing)}")
     return "\n".join(lines)

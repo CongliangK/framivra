@@ -116,7 +116,9 @@ class RootConfigGuidanceTests(unittest.TestCase):
         self.write_config(self.config, self.python)
         self.env = {"VTX_CONFIG": None, "HOME": self.home, "USERPROFILE": self.home}
         # expanduser substitutes the home prefix but keeps the suffix spelling.
-        self.default_hint = f"{self.home}/miniconda3/envs/denoise/bin/python"
+        suffix = "python.exe" if os.name == "nt" else "bin/python"
+        self.default_hint = f"{self.home}/miniconda3/envs/denoise/{suffix}"
+        self.absent_hint = f"~/miniconda3/envs/denoise/{suffix}"
 
     @staticmethod
     def write_config(config, python):
@@ -163,11 +165,23 @@ class RootConfigGuidanceTests(unittest.TestCase):
         self.assertIn("本机已安装 denoise 环境", r.stderr)
         self.assertNotIn("config.local.json denoise.python 已配置", r.stderr)
 
+    def test_other_platform_layout_is_not_reported_as_installed(self):
+        suffix = "bin/python" if os.name == "nt" else "python.exe"
+        other = self.home / "miniconda3" / "envs" / "denoise" / suffix
+        other.parent.mkdir(parents=True)
+        other.touch()
+        self.config.unlink()
+        r = self.run_sync()
+        self.assert_missing(r)
+        self.assertIn(self.absent_hint, r.stderr)
+        self.assertIn("本机未检测到", r.stderr)
+        self.assertNotIn("本机已安装", r.stderr)
+
     def test_nonexistent_interpreters_keep_generic_fallback(self):
         self.write_config(self.config, self.repo / "nonexistent-python")
         r = self.run_sync()
         self.assert_missing(r)
-        self.assertIn("~/miniconda3/envs/denoise/bin/python", r.stderr)
+        self.assertIn(self.absent_hint, r.stderr)
         self.assertIn("需先创建 denoise 环境", r.stderr)
         self.assertNotIn("config.local.json denoise.python 已配置", r.stderr)
 
@@ -220,7 +234,7 @@ class RootConfigGuidanceTests(unittest.TestCase):
                     elif installed_default:
                         hint = f"  {self.default_hint} {example}   # 本机已安装 denoise 环境"
                     else:
-                        hint = (f"  ~/miniconda3/envs/denoise/bin/python {example}   "
+                        hint = (f"  {self.absent_hint} {example}   "
                                 "# 默认约定路径（本机未检测到，需先创建 denoise 环境）")
                     self.assertEqual(r.stderr.splitlines(), [
                         "sync_audio: 缺少第三方依赖：numpy, scipy, soundfile, soxr",
