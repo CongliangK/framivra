@@ -1213,8 +1213,10 @@ def _check_windows_stem_names(tracks):
     names = [f"{track['name']}.bus.wav" for track in tracks]
     for name in names:
         # Extensions do not disambiguate DOS devices; a colon can select an ADS.
-        base = name.split(".", 1)[0].rstrip(" ").upper()
-        if (re.fullmatch(r"CON(?:IN\$|OUT\$)?|PRN|AUX|NUL|(?:COM|LPT)[1-9¹²³]", base)
+        base = name.split(".", 1)[0].rstrip(" ")
+        # DOS names use ASCII case matching; do not fold e.g. dotless i to I.
+        if (re.fullmatch(r"CON(?:IN\$|OUT\$)?|PRN|AUX|NUL|(?:COM|LPT)[1-9¹²³]",
+                         base, re.IGNORECASE | re.ASCII)
                 or any(ord(char) < 32 or char in '<>:"|?*' for char in name)):
             raise ProjectError(f"Windows stem 文件名不可用：{name!r}；请重命名该轨")
     if len(names) < 2:

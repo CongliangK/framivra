@@ -1086,7 +1086,7 @@ class RealChainIntegration(_Base):
                         self.assertRaisesRegex(project.ProjectError, r"Windows stem.*请重命名"):
                     project.render_project(self.proj, out, runtime={})
                 self.assertFalse(out.exists())
-        for name in ("COM0", "CLOCK$", "CONcert", "音轨 🎵"):
+        for name in ("COM0", "CLOCK$", "CONcert", "CONıN$", "音轨 🎵"):
             project._check_windows_stem_names([{"name": name}])
 
     def test_real_two_tracks_keep_distinct_plugin_stems(self):
