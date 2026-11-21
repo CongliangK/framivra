@@ -163,6 +163,17 @@ def parse_size(text):
 
 
 def find_chrome():
+    if sys.platform == 'win32':
+        # Direct script invocation puts apps/cover, not the repository, on sys.path.
+        if not __package__:
+            sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from vtx.render.browser_paths import find_chrome_candidate
+
+        candidate = find_chrome_candidate(sys.platform)
+        if candidate:
+            return candidate
+        raise SystemExit('未找到可用的 Windows Chrome/Chromium/Edge 原生 .exe；'
+                         '请检查 VTX_CHROME（如已设置）或安装路径。')
     for name in ("google-chrome", "google-chrome-stable", "chromium-browser", "chromium"):
         p = shutil.which(name)
         if p:
