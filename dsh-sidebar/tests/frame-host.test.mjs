@@ -3,6 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { PassThrough, Readable } from 'node:stream'
 import { createHash, randomUUID } from 'node:crypto'
+import { once } from 'node:events'
 import { crc32, deflateSync } from 'node:zlib'
 import { join } from 'node:path'
 import { createPreviewHost } from '../src/host.mjs'
@@ -90,7 +91,8 @@ async function bench(options = {}) {
     fs.lstat = async path => fs.files.get(path) ?? { type: 'directory' }
   }
   const getCwd = session => session.cwd ?? cwd.value
-  const host = createPreviewHost({ fs, sessions, workingDirectory: { get: getCwd, ensure: async agent => getCwd(agent.session) }, subprocess }, config,
+  const services = { fs, sessions, workingDirectory: { get: getCwd, ensure: async agent => getCwd(agent.session) }, subprocess }
+  const host = options.mountRegisteredHost ? await options.mountRegisteredHost(services, config) : createPreviewHost(services, config,
     managed && options.approved !== false ? { approvedPreviewSuppliers: [selection] } : undefined)
   const control = data => host.control(new Request('http://unit/api/framivra/control', { method: 'POST', body: JSON.stringify({ sessionId: 'one', ...data }) }))
   const opened = await control({ op: 'open', timeline: 'timeline.json' }); assert.equal(opened.status, 200, await opened.clone().text())
@@ -515,7 +517,7 @@ const warmEpoch = `sha256:${'f'.repeat(64)}`
 const warmWindowCapability = { ...windowCapability, input_epoch: true, warm_svg_media: true }
 const svgTracks = [{ kind: 'gfx', name: 'Titles', clips: [{ format: 'svg-sequence', src: 'gfx/sequence.json', dst_in: 24, dur: 12 }] }]
 const sessionConsent = grant => ({ op: 'authorize-preview-session', scope: 'current-project', grant, renderConsent: 'cache/preview-only', prepareInputs: true })
-const sessionWindow = (b, grant, data = {}) => b.host.window(new Request('http://unit/api/framivra/window', { method: 'POST', body: JSON.stringify({
+const sessionWindow = (b, grant, data = {}, signal) => b.host.window(new Request('http://unit/api/framivra/window', { method: 'POST', signal, body: JSON.stringify({
   op: 'session-render', sessionId: 'one', grant: b.grant, previewGrant: grant.id, ownerId: grant.ownerId,
   operationId: randomUUID(), frame: 1, contentVersion: version, ...data,
 }) }))
@@ -775,24 +777,108 @@ function pack(kind, nonce, result) {
   return Buffer.concat([header, body])
 }
 function firstFrameChild(bytes) {
-  let start, finish, reaped, settling
+  let start, finish, reaped, settling, terminated = 0
   const started = new Promise(resolve => { start = resolve }), done = new Promise(resolve => { finish = resolve })
   const range = new Promise(resolve => { reaped = resolve }), settled = new Promise(resolve => { settling = resolve })
   const stdout = new PassThrough()
-  return { stdout, started, settled, finish, reaped, handle(spec, value) {
+  return { stdout, started, settled, finish, reaped, terminated: () => terminated, handle(spec, value) {
     const nonce = spec.argv.at(-1).slice('--nonce='.length)
     const first = { schema: firstFrameSchema, ...qualification, provisional: true, mime: 'image/png', frame: value.start, window: [value.start, value.end],
       segment: [value.start, value.end], fps: value.fps, width: 1920, height: 1080, content_version: version,
       byte_length: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), base64: bytes.toString('base64') }
     const { path, ...window } = value
-    start({ first, final: { ...window, input_epoch: warmEpoch }, nonce })
-    return { stdout, done, terminate() {}, waitForExit() { settling(); return range }, collected: {
+    start({ first, final: { ...window, input_epoch: warmEpoch }, nonce, signal: spec.signal })
+    return { stdout, done, terminate() { terminated++ }, waitForExit(signal) { settling(signal); return range }, collected: {
       stderr: { readFrom: () => { throw new Error('never read provisional stderr') } },
     } }
   } }
 }
 const poll = (b, grant, operationId, fields = {}) => sessionWindow(b, grant, { op: 'session-first-frame', operationId, project: grant.project, end: 25, ...fields })
 const firstFrameRenders = b => b.calls.filter(call => call.argv[4] === 'preview-window-first-frame')
+
+test('abort of the registered window request discards staged output and only reaps its own lease', { ...linuxWindow, timeout: 3500 }, async t => {
+  const bytes = rgbPng(), firstChild = firstFrameChild(bytes), secondChild = firstFrameChild(bytes)
+  const original = new AbortController(), other = new AbortController()
+  const { apply } = await import('../src/index.mjs')
+  const b = await bench({ windowCapability: warmWindowCapability, firstFrameCapability,
+    setup(_fs, sessions) { sessions.set('two', { id: 'two' }) },
+    mountRegisteredHost(services, config) {
+      const routes = new Map(), cleanup = []
+      apply({ ...services, effect: fn => cleanup.push(fn()), tools: { register: () => () => {} },
+        connection: { fetch: { register(route) { routes.set(route.path, route); return () => routes.delete(route.path) } } },
+      }, config)
+      const control = routes.get('/api/framivra/control'), window = routes.get('/api/framivra/window')
+      assert.deepEqual(window.methods, ['POST']); assert.equal(window.requestBody, 'streaming')
+      // Real registered functions; this fixture starts at owner admission.
+      return { control: control.fetch, window: window.fetch, async dispose() {
+        for (const dispose of cleanup.reverse()) await dispose()
+      } }
+    },
+    firstFrameHandle(spec, value) {
+      const count = firstFrameRenders(b).length
+      assert(count === 1 || count === 2)
+      return (count === 1 ? firstChild : secondChild).handle(spec, value)
+    },
+  })
+  t.after(async () => {
+    original.abort(); other.abort()
+    for (const child of [firstChild, secondChild]) {
+      child.stdout.destroy(); child.finish({ exitCode: 1 }); child.reaped(true)
+    }
+    await b.host.dispose()
+  })
+  const opened = await b.control({ op: 'open', sessionId: 'two', timeline: 'timeline.json' })
+  assert.equal(opened.status, 200)
+  const { grant: secondOpen } = await opened.json()
+  const authorize = async (sessionId, open) => {
+    const response = await b.control({ ...sessionConsent(open), sessionId, firstFrame: true })
+    assert.equal(response.status, 200, await response.clone().text())
+    return (await response.json()).grant
+  }
+  const first = await authorize('one', b.grant), second = await authorize('two', secondOpen)
+  assert.notEqual(first.ownerId, second.ownerId)
+  const firstId = randomUUID(), secondId = randomUUID(), secondScope = { sessionId: 'two', grant: secondOpen }
+  let returned = false
+  const terminal = sessionWindow(b, first, { firstFrame: true, operationId: firstId }, original.signal)
+    .then(response => { returned = true; return response })
+  const firstResult = await firstChild.started
+  firstChild.stdout.write(pack('F', firstResult.nonce, firstResult.first)); await turn()
+  assert.equal((await poll(b, first, firstId)).status, 200, 'the original provisional result is staged')
+  const firstEof = once(firstChild.stdout, 'end')
+  firstChild.stdout.end(pack('W', firstResult.nonce, firstResult.final)); await firstEof
+  const next = sessionWindow(b, second, { ...secondScope, firstFrame: true, operationId: secondId }, other.signal)
+  await turn()
+  assert.equal(firstFrameRenders(b).length, 1, 'the unrelated lease waits behind the held range')
+  assert.equal(firstChild.terminated(), 0, 'the original is still waiting for its direct outcome')
+
+  original.abort()
+  const cleanupSignal = await firstChild.settled
+  assert.equal(firstResult.signal.aborted, true)
+  assert.equal(cleanupSignal.aborted, false, 'reaping uses its own live signal')
+  assert.equal(firstChild.terminated(), 1)
+  assert.equal((await poll(b, first, firstId)).status, 204, 'abort withdraws staged bytes before reaping')
+  firstChild.finish({ exitCode: 0, signal: null }); await turn()
+  assert.equal(returned, false, 'direct success does not settle an aborted request or release the range')
+  assert.equal(firstFrameRenders(b).length, 1)
+  firstChild.reaped(true)
+  const cancelled = await terminal
+  assert.equal(cancelled.status, 499)
+  assert.equal(cancelled.headers.get('x-framivra-sha256'), null)
+
+  const secondResult = await secondChild.started
+  const cancel = (scope, lease, operationId, ownerId = lease.ownerId) => b.host.window(new Request('http://unit/api/framivra/window', {
+    method: 'POST', body: JSON.stringify({ ...scope, op: 'session-cancel', previewGrant: lease.id, operationId, ownerId }),
+  }))
+  assert.equal((await cancel(secondScope, second, secondId, first.ownerId)).status, 403)
+  assert.equal((await cancel({ sessionId: 'one', grant: b.grant }, first, firstId)).status, 200)
+  assert.equal(secondResult.signal.aborted, false)
+  assert.equal(secondChild.terminated(), 0)
+  secondChild.stdout.end(Buffer.concat([pack('F', secondResult.nonce, secondResult.first), pack('W', secondResult.nonce, secondResult.final)]))
+  secondChild.finish({ exitCode: 0, signal: null }); secondChild.reaped(true)
+  const completed = await next
+  assert.equal(completed.status, 200)
+  assert.deepEqual(Buffer.from(await completed.arrayBuffer()), windowBytes)
+})
 
 test('provisional visual qualifies only by the exact separate probe and mutually exclusive owner consent', linuxWindow, async t => {
   const legacy = await bench({ windowCapability: { ...warmWindowCapability, first_frame: { version: 1 } },
