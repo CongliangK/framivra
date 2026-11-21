@@ -7,8 +7,12 @@
 
 用法: python3 subs_alpha.py <timeline.json>
 """
-import json, subprocess, sys
+import json, os, subprocess, sys
 from pathlib import Path
+
+# The bridge captures this helper's stderr as UTF-8, including under Windows ACP.
+if __name__ == '__main__' and os.name == 'nt':
+    sys.stderr.reconfigure(encoding='utf-8', errors='backslashreplace')
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from vtx.pipeline.composite import RenderPlan
