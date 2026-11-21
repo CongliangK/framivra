@@ -1,7 +1,7 @@
 /** Host-only orchestration through public DSH filesystem/process capabilities. */
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { dirname, isAbsolute, join } from 'node:path'
+import { dirname, isAbsolute, join, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PreviewError, TimelineReader, validateEnvelope, prepareGfxArgs, prepareGfxCapable, hitsWarmSvgWindow, validatePreviewWindowRange, validateFormalArchiveRange, fail, HOST_IDENTITY, createRequestLogger, BAKED_BUILD_STAMP, BUILD_STAMP_MARKER, HOST_LIB_MODULES, CLIENT_MODULES, composeBuildStamp } from './protocol.mjs'
 import { mediaResponse } from './media.mjs'
@@ -145,7 +145,9 @@ export function relativeBrowsePath(path) {
 }
 const json = (value, status = 200) => new Response(stringifyJSON(value), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } })
 const inlineCapable = value => value?.capabilities?.frame?.schema === 'framivra.timeline.frame/v1' && value.capabilities.frame.explicit_render_required === true && value.capabilities.frame.inline_png?.flag === '--include-png' && value.capabilities.frame.inline_png.encoding === 'base64' && value.capabilities.frame.inline_png.wire_limit_bytes === FRAME_WIRE_LIMIT
-const platformAllowsWrites = () => ['linux', 'darwin'].includes(process.platform)
+const nativeWindows = () => process.platform === 'win32'
+const platformAllowsWrites = () => ['linux', 'darwin', 'win32'].includes(process.platform)
+const windowsStoreOperations = ['edit', 'adopt', 'undo', 'status', 'recover']
 // The kernel validates its own macOS Python/FFmpeg architecture and closure;
 // the architecture of the DSH Node process is not a proxy for either.
 const platformAllowsFrame = () => ['linux', 'darwin'].includes(process.platform)
@@ -182,6 +184,7 @@ function previewCapabilities(value) {
 function writeCapabilityRefusal(capabilities) {
   if (process.platform === 'darwin' && capabilities.platform_support?.darwin !== true) return 'Installed vtx lacks macOS-safe timeline locking and path identity; update the core before authorizing writes.'
   if (!capabilities.ok || !Array.isArray(capabilities.operations) || !capabilities.operations.includes('edit') || !Array.isArray(capabilities.edit?.operations) || !capabilities.edit.operations.length) return 'Installed vtx does not advertise semantic edit/plan'
+  if (nativeWindows() && (capabilities.platform_support?.win32 !== true || !windowsStoreOperations.every(op => capabilities.operations.includes(op)))) return 'Installed vtx lacks the native Windows NTFS edit and recovery store; update the core before authorizing writes.'
   const transport = capabilities.request_transport?.stdin
   if (transport?.flag !== '--request-stdin' || transport.max_bytes !== 8388608) return 'Installed vtx lacks the official bounded --request-stdin transport; read/copy remain available. Reopening /dev/stdin is not a supported fallback.'
 }
@@ -201,6 +204,10 @@ export function createPreviewHost(ctx, config = {}) {
   const frameOwners = new Set()
   const retiredWindowReceipts = new Map()
   const storageOwners = new Set()
+  // Keep Windows store reservations and uncertain outcomes on the physical
+  // timeline, not the tab. Closing or opening a second tab must not bypass it.
+  const windowsStoreActive = new Set()
+  const windowsRecovery = new Map()
   // Explicit FIFO: one running frame plus at most four waiting clicks. Each
   // entry owns its grant/controller/deadline from admission through cleanup.
   const frameQueue = []
@@ -321,6 +328,8 @@ export function createPreviewHost(ctx, config = {}) {
     return { target, info }
   }
   function revoke(grant) {
+    grant.authorization?.abort()
+    grant.authorization = undefined
     grant.frame?.abort()
     grant.storage?.abort()
     grant.storagePlan = undefined
@@ -432,9 +441,17 @@ export function createPreviewHost(ctx, config = {}) {
     const executable = await localTarget(grant.executable, undefined, signal)
     const info = await ctx.fs.stat(executable, signal)
     if (executable.targetKey !== grant.executableTarget.targetKey || info?.type !== 'file' || info.version !== grant.executableVersion || ctx.fs.contains(grant.root, executable)) fail('EXECUTABLE_CHANGED', 'Installed executable identity changed; reopen', 409)
+    const path = ctx.fs.processPath(timeline)
+    if (nativeWindows()) {
+      // Do not discard a path alias while resolving the timeline, or use an
+      // alias for argv[0] after checking the physical executable target.
+      if (win32.normalize(path) !== win32.join(grant.cwd, grant.relative)) fail('PATH_CHANGED', 'Windows edits require the exact physical workspace and timeline path', 409)
+      if (typeof info.version !== 'string' || !info.version || win32.normalize(grant.executable) !== win32.normalize(ctx.fs.processPath(executable))) fail('EXECUTABLE_CHANGED', 'Windows edits require a verifiable physical installed executable', 409)
+      if (grant.closing) fail('BAD_GRANT', 'Preview is closing', 403)
+    }
     grantFor(grant.session.id, grant.id)
     signal.throwIfAborted()
-    return ctx.fs.processPath(timeline)
+    return path
   }
   function primeEditView(grant) {
     if (!editViewCapable(grant.writeCapabilities) || grant.writeCapabilities.edit_view.preload_stdin !== true) return
@@ -684,6 +701,7 @@ export function createPreviewHost(ctx, config = {}) {
       }
       if (['storage-inspect', 'storage-plan', 'storage-clean', 'storage-cancel'].includes(data.op)) return await storageControl(data, grant, hold.signal)
       if (['authorize-write', 'revoke-write', 'invalidate-plan', 'cancel-write', 'plan', 'commit', 'status', 'recover', 'adopt', 'undo', 'edit-view'].includes(data.op)) {
+        if (!owner || !grant.owner) fail('WRITE_DENIED', 'Semantic operations require an owner-opened preview', 403)
         if (!['revoke-write', 'invalidate-plan'].includes(data.op) && frameOwners.size) fail('FRAME_BUSY', 'Cancel the frame and confirm actual process reaping before semantic operations', 409)
         semanticAdmission++
         try { return await editControl(data, grant, hold.signal, cleanup) }
@@ -693,6 +711,7 @@ export function createPreviewHost(ctx, config = {}) {
       if (data.op === 'reference' && data.query?.expected_content_version !== grant.contentVersion) fail('STALE_REFERENCE', 'Reference version must match this opened preview; refresh first', 409)
       if (data.op === 'inspect' && grant.editViewing) fail('WRITE_BUSY', 'Wait for the edit view before refreshing', 409)
       const readEpoch = grant.editViewEpoch ?? 0
+      const recoveryObserved = nativeWindows() ? windowsRecovery.get(grant.timeline.targetKey) : grant.recoveryObserved
       // Only an inspect begun during this exact owner operation can observe a
       // version change for it. A delayed read (possibly model-only) of another
       // grant is not evidence about this worker's current saved document.
@@ -709,7 +728,15 @@ export function createPreviewHost(ctx, config = {}) {
         if (grant.contentVersion !== result.content_version) { grant.storagePlan = undefined; grant.storageEpoch = (grant.storageEpoch ?? 0) + 1; grant.plan = undefined; grant.planEpoch = (grant.planEpoch ?? 0) + 1 }
         grant.contentVersion = result.content_version
         grant.savedProject = result.document.project
-        if (grant.recoveryObserved) { grant.outcomeUnknown = false; grant.recoveryObserved = false }
+        if (nativeWindows()) {
+          // A read already in flight at the time of status/recover is not
+          // evidence of the settled bytes. Never unlock on a different revision.
+          const key = grant.timeline.targetKey
+          if (owner && grant.owner && recoveryObserved?.grant === grant.id && windowsRecovery.get(key) === recoveryObserved && !windowsStoreActive.has(key)) {
+            if (result.content_version === recoveryObserved.revision) windowsRecovery.delete(key)
+            else windowsRecovery.set(key, {})
+          }
+        } else if (grant.recoveryObserved) { grant.outcomeUnknown = false; grant.recoveryObserved = false }
       }
       return json(result)
     } finally { hold.release() }
@@ -729,7 +756,7 @@ export function createPreviewHost(ctx, config = {}) {
     const capability = grant.capabilities?.capabilities?.storage
     if (capability?.schema !== 'framivra.storage/v1' || capability.request_stdin !== true || !['inspect', 'plan', 'clean'].every(op => capability.operations?.includes(op))) fail('STORAGE_UNSUPPORTED', 'Installed core lacks storage/v1; ordinary timeline reads remain available', 422)
     if (grant.storage || storageOwners.has(grant)) fail('STORAGE_BUSY', 'Wait for this project storage scan and managed cleanup', 409)
-    if (semanticAdmission || frameOwners.size || reader.semanticBusy || grant.running || grant.plan || grant.outcomeUnknown) fail('WRITE_BUSY', 'Resolve local rendering, semantic writes before storage operations. External writers must be manually stopped.', 409)
+    if (semanticAdmission || frameOwners.size || reader.semanticBusy || grant.running || grant.plan || grant.outcomeUnknown || (nativeWindows() && windowsRecovery.has(grant.timeline.targetKey))) fail('WRITE_BUSY', 'Resolve local rendering, semantic writes before storage operations. External writers must be manually stopped.', 409)
     const operation = data.op.slice('storage-'.length)
     let frozen
     if (operation === 'clean') {
@@ -802,10 +829,10 @@ export function createPreviewHost(ctx, config = {}) {
       settled()
     }
   }
-  async function probeStore(executable, timeline, signal, config, owner) {
+  async function probeStore(executable, timeline, signal, config, owner, beforeSpawn) {
     if (!platformAllowsWrites()) return writeUnavailable(writePlatformMessage)
     try {
-      const capabilities = await reader.store(executable, timeline, 'capabilities', undefined, signal, config, owner)
+      const capabilities = await reader.store(executable, timeline, 'capabilities', undefined, signal, config, owner, undefined, beforeSpawn)
       const refusal = writeCapabilityRefusal(capabilities)
       return refusal ? writeUnavailable(refusal) : capabilities
     } catch (error) {
@@ -818,8 +845,13 @@ export function createPreviewHost(ctx, config = {}) {
     }
   }
   async function writeCapabilities(grant, signal) {
-    const capabilities = await probeStore(grant.executable, ctx.fs.processPath(grant.timeline), signal, grant.configSnapshot, grant.id)
+    const path = ctx.fs.processPath(grant.timeline)
+    const fence = nativeWindows() ? async signal => {
+      if (await editViewTarget(grant, signal) !== path) fail('PATH_CHANGED', 'Timeline process path changed before authorization', 409)
+    } : undefined
+    const capabilities = await probeStore(grant.executable, path, signal, grant.configSnapshot, grant.id, fence)
     if (!capabilities.ok) fail('WRITE_UNSUPPORTED', capabilities.message, 422)
+    if (fence) await fence(signal)
     return capabilities
   }
   async function editControl(data, grant, signal, cleanup = false) {
@@ -830,27 +862,40 @@ export function createPreviewHost(ctx, config = {}) {
     }
     if (['plan', 'commit', 'adopt', 'undo', 'recover', 'edit-view'].includes(data.op)) grant.storagePlan = undefined
     if (storageOwners.size && !['revoke-write', 'invalidate-plan', 'cancel-write'].includes(data.op)) fail('STORAGE_BUSY', 'Wait for storage process cleanup before semantic operations', 409)
-    await validateTimeline(grant, signal, cleanup)
-    grantFor(data.sessionId, data.grant, cleanup)
-    if (data.op === 'revoke-write') { revoke(grant); await Promise.all([grant.runningDone, grant.frameDone, grant.storageDone]); await reader.reapIdle(grant.id); return json({ ok: true }) }
+    const windows = nativeWindows()
+    if (data.op === 'revoke-write') {
+      revoke(grant) // End pending authorization synchronously as well as existing writes.
+      await Promise.all([grant.runningDone, grant.frameDone, grant.storageDone]); await reader.reapIdle(grant.id)
+      return json({ ok: true })
+    }
     // Revoking a frozen plan is host bookkeeping, not permission to spawn or write.
     // cancel-write IS the explicit store-child cancel: it must never be gated
     // by a stuck semanticBusy (a failed cleanup), or the retry path wedges.
     if (!['invalidate-plan', 'cancel-write'].includes(data.op) && (grant.frame || (reader.semanticBusy && !grant.running))) fail('FRAME_BUSY', 'Explicitly cancel the frame and wait for process reaping before semantic operations', 409)
     if (data.op === 'authorize-write') {
       revoke(grant)
-      await grant.runningDone
-      await reader.reapIdle(grant.id)
-      const capabilities = await writeCapabilities(grant, signal)
-      grantFor(data.sessionId, data.grant)
-      await validateTimeline(grant, signal)
-      revoke(grant)
-      grant.write = new AbortController()
-      grant.writeKey = randomUUID()
-      grant.writeCapabilities = capabilities
-      primeEditView(grant)
-      return json({ ok: true, writeGrant: grant.writeKey, capabilities, ...(editViewCapable(capabilities) ? { editView: true } : {}) })
+      const authorization = grant.authorization = new AbortController()
+      const authorizedSignal = AbortSignal.any([signal, authorization.signal])
+      try {
+        await grant.runningDone
+        await reader.reapIdle(grant.id)
+        await validateTimeline(grant, authorizedSignal)
+        const capabilities = await writeCapabilities(grant, authorizedSignal)
+        await validateTimeline(grant, authorizedSignal)
+        grantFor(data.sessionId, data.grant)
+        authorizedSignal.throwIfAborted()
+        if (grant.authorization !== authorization || grant.closing) fail('BAD_GRANT', 'Write authorization is no longer current', 403)
+        grant.write = new AbortController()
+        grant.writeKey = randomUUID()
+        grant.writeCapabilities = capabilities
+        // Windows uses the qualified one-shot stdin carrier, not an idle worker.
+        const fast = !windows && editViewCapable(capabilities)
+        if (fast) primeEditView(grant)
+        return json({ ok: true, writeGrant: grant.writeKey, capabilities, ...(fast ? { editView: true } : {}) })
+      } finally { if (grant.authorization === authorization) grant.authorization = undefined }
     }
+    await validateTimeline(grant, signal, cleanup)
+    grantFor(data.sessionId, data.grant, cleanup)
     if (!grant.write || grant.write.signal.aborted || data.writeGrant !== grant.writeKey) fail('WRITE_DENIED', 'Read access is not write permission; explicitly authorize this Session/project first', 403)
     if (data.op === 'cancel-write') {
       grant.running?.abort()
@@ -862,12 +907,13 @@ export function createPreviewHost(ctx, config = {}) {
     }
     if (data.op === 'invalidate-plan') { grant.plan = undefined; grant.planEpoch = (grant.planEpoch ?? 0) + 1; return json({ ok: true }) }
     if (grant.running) fail('WRITE_BUSY', 'Wait for managed process cleanup before another command', 409)
-    if (grant.outcomeUnknown && !['status', 'recover'].includes(data.op)) fail('OUTCOME_UNKNOWN', 'Use explicit core status/recover and refresh before any new plan or transaction', 409)
+    const targetKey = grant.timeline.targetKey
+    if ((windows ? windowsRecovery.has(targetKey) : grant.outcomeUnknown) && !['status', 'recover'].includes(data.op)) fail('OUTCOME_UNKNOWN', 'Use explicit core status/recover and refresh before any new plan or transaction', 409)
     if (grant.editViewNeedsRefresh && ['edit-view', 'plan', 'commit', 'adopt', 'undo'].includes(data.op)) fail('STALE_BASE', 'Explicitly refresh after an applied edit whose view was unavailable', 409)
-    if (data.op === 'edit-view') {
-      if (!editViewCapable(grant.writeCapabilities)) fail('EDIT_VIEW_UNSUPPORTED', 'Installed core did not advertise the exact edit-view capability during write authorization', 422)
-    }
+    if (data.op === 'edit-view' && (windows || !editViewCapable(grant.writeCapabilities))) fail('EDIT_VIEW_UNSUPPORTED', 'Edit-view is not qualified for this write authorization', 422)
+    if (windows && windowsStoreActive.has(targetKey)) fail('WRITE_BUSY', 'Wait for the store operation on this timeline to settle', 409)
     const controller = new AbortController()
+    if (windows) windowsStoreActive.add(targetKey)
     grant.running = controller
     if (data.op === 'edit-view') { grant.editViewing = true; grant.editViewEpoch = (grant.editViewEpoch ?? 0) + 1 }
     let settled
@@ -878,32 +924,89 @@ export function createPreviewHost(ctx, config = {}) {
       // A throwing provider inside a timer would kill the whole Host process;
       // treat any probe failure as "world unverifiable" and abort fail-closed.
       try {
-        if ((data.op === 'edit-view' && clock() >= grant.expiresAt) || ctx.sessions.get(data.sessionId) !== grant.session || ctx.workingDirectory.get(grant.session) !== grant.cwd || !configCurrent(grant)) controller.abort()
+        if (((windows || data.op === 'edit-view') && clock() >= grant.expiresAt) || ctx.sessions.get(data.sessionId) !== grant.session || ctx.workingDirectory.get(grant.session) !== grant.cwd || !configCurrent(grant)) controller.abort()
       } catch { controller.abort() }
     }, 50)
     monitor.unref?.()
     const epoch = grant.planEpoch ?? 0
-    let mutating = false, request, appliedReceipt
+    let mutating = false, dispatchAttempted = false, request, appliedReceipt, plannedDigest
     const editViewFence = () => editViewTarget(grant, combined)
+    function lockForRecovery() {
+      if (windows) {
+        windowsRecovery.set(targetKey, {})
+        for (const open of grants.values()) if (open.timeline.targetKey === targetKey) {
+          open.plan = undefined
+          open.planEpoch = (open.planEpoch ?? 0) + 1
+          open.storagePlan = undefined
+          open.storageEpoch = (open.storageEpoch ?? 0) + 1
+        }
+      } else {
+        grant.outcomeUnknown = true
+        grant.recoveryObserved = undefined
+        grant.plan = undefined
+      }
+    }
     try {
-      const path = data.op === 'edit-view' ? await editViewFence() : ctx.fs.processPath(await validateTimeline(grant, combined))
+      const path = windows || data.op === 'edit-view' ? await editViewFence() : ctx.fs.processPath(await validateTimeline(grant, combined))
+      const runStore = async (operation, request) => {
+        const fence = async signal => {
+          if (await editViewTarget(grant, signal) !== path) fail('PATH_CHANGED', 'Timeline process path changed before dispatch', 409)
+        }
+        const result = await reader.store(grant.executable, path, operation, request, combined, grant.configSnapshot, grant.id, undefined, windows ? async signal => {
+          await fence(signal)
+          return () => {
+            grantFor(data.sessionId, data.grant)
+            if (grant.closing || grant.running !== controller) fail('BAD_GRANT', 'Write is no longer current', 403)
+            if (data.op === 'commit' && ((grant.planEpoch ?? 0) !== epoch || request.base_revision !== grant.contentVersion)) fail('PLAN_INVALID', 'Plan was invalidated before dispatch', 409)
+            dispatchAttempted = true
+          }
+        } : undefined)
+        if (windows) {
+          await fence(combined)
+          const unsettled = result.code === 'recovery_required' || result.code === 'outcome_unknown' || result.outcome_unknown === true
+          if (unsettled) lockForRecovery()
+          const expected = operation === 'commit' ? request.operation : operation
+          if (result.ok && (unsettled || result.operation !== expected || (request && (
+            result.op_id !== request.op_id || result.base_revision !== request.base_revision || result.replayed !== false ||
+            !revisionShape(result.request_digest) || (plannedDigest && result.request_digest !== plannedDigest) ||
+            (operation === 'commit' && (!revisionShape(result.revision) || result.current_revision !== result.revision)))))) {
+            fail('PROTOCOL_MISMATCH', 'Exact Windows store operation receipt required', 502)
+          }
+          if (!result.ok) {
+            if (result.operation !== expected || typeof result.code !== 'string' || !result.code.trim() ||
+                (request && result.op_id != null && result.op_id !== request.op_id)) fail('PROTOCOL_MISMATCH', 'Exact Windows store failure receipt required', 502)
+            // Native publication writes an intent before staging. Some errors
+            // before replacement can therefore still leave pending history.
+            if (operation === 'commit' && (result.code === 'input.error' || result.code.startsWith('path.'))) {
+              fail(result.code, result.message ?? 'Windows commit left history unverified', 502)
+            }
+          }
+        }
+        return result
+      }
       if (data.op === 'status' || data.op === 'recover') {
         mutating = true // Even status may initialize lock/manifest; write grant required.
-        const result = await reader.store(grant.executable, path, data.op, undefined, combined, grant.configSnapshot, grant.id)
+        if (windows && windowsRecovery.has(targetKey)) windowsRecovery.set(targetKey, {})
+        const result = await runStore(data.op)
         grant.plan = undefined
         // A successful status can still report unresolved intents. Only an explicit
         // settled core result plus a later authoritative read may release unknown state.
-        grant.recoveryObserved = result.ok === true && result.pending === false
+        if (windows) {
+          if (result.ok && (result.operation !== data.op || typeof result.pending !== 'boolean' || !revisionShape(result.current_revision))) fail('PROTOCOL_MISMATCH', 'Exact Windows recovery status and revision required', 502)
+          if (result.pending === true) lockForRecovery()
+          if (windowsRecovery.has(targetKey) && result.ok && result.pending === false) windowsRecovery.set(targetKey, { grant: grant.id, revision: result.current_revision })
+        } else grant.recoveryObserved = result.ok === true && result.pending === false
         return json(result)
       }
       if (data.op === 'commit') {
         const plan = grant.plan
         if (!plan || plan.token !== data.planToken) fail('PLAN_INVALID', 'Plan expired or changed; request a new plan', 409)
         request = plan.request
+        plannedDigest = plan.requestDigest
         // No body replacement, fresh ID, auto-rebase or automatically repeated commit.
         grant.plan = undefined
         mutating = true
-        const result = await reader.store(grant.executable, path, 'commit', request, combined, grant.configSnapshot, grant.id)
+        const result = await runStore('commit', request)
         return json({ ...result, submitted_request: request })
       }
       if (data.base_revision !== grant.contentVersion) fail('STALE_BASE', 'Refresh the authoritative timeline before planning', 409)
@@ -951,17 +1054,17 @@ export function createPreviewHost(ctx, config = {}) {
       if (data.op !== 'plan') {
         mutating = true
         grant.plan = undefined
-        return json({ ...await reader.store(grant.executable, path, 'commit', request, combined, grant.configSnapshot, grant.id), submitted_request: request })
+        return json({ ...await runStore('commit', request), submitted_request: request })
       }
       grant.plan = undefined
-      const result = await reader.store(grant.executable, path, 'plan', request, combined, grant.configSnapshot, grant.id)
+      const result = await runStore('plan', request)
       grantFor(data.sessionId, data.grant)
       await validateTimeline(grant, combined)
       if (!result.ok) return json({ ...result, submitted_request: request })
       combined.throwIfAborted()
       if ((grant.planEpoch ?? 0) !== epoch) fail('PLAN_INVALID', 'Selection or intent changed while planning', 409)
       const token = randomUUID()
-      grant.plan = { token, request }
+      grant.plan = { token, request, ...(windows && { requestDigest: result.request_digest }) }
       return json({ ...result, planToken: token, submitted_request: request })
     } catch (error) {
       if (appliedReceipt) {
@@ -972,11 +1075,17 @@ export function createPreviewHost(ctx, config = {}) {
           message: 'The edit was applied, but its view could not be published. Do not retry; refresh explicitly or reopen.',
           diagnostics: { error: error.code ?? error.name, message: error.message } })
       }
-      if (mutating) { grant.outcomeUnknown = true; return json({ ok: false, schema: 'framivra.timeline.store/v1', code: 'outcome_unknown', op_id: request?.op_id ?? null,
+      if (mutating && (!windows || dispatchAttempted)) { lockForRecovery(); return json({ ok: false, schema: 'framivra.timeline.store/v1', code: 'outcome_unknown', op_id: request?.op_id ?? null,
         ...(data.op === 'edit-view' ? { outcome_unknown: true } : { submitted_request: request }), message: 'Command interrupted or result unavailable. It may have committed; use explicit core status/recover. Never generate a replacement operation to retry.',
         diagnostics: { error: error.code ?? error.name, message: error.message } }) }
       throw error
-    } finally { clearInterval(monitor); grant.running = undefined; if (data.op === 'edit-view') grant.editViewing = false; settled() }
+    } finally {
+      clearInterval(monitor)
+      if (windows) windowsStoreActive.delete(targetKey)
+      grant.running = undefined
+      if (data.op === 'edit-view') grant.editViewing = false
+      settled()
+    }
   }
   function clearWindowFirstFrame(operation) {
     const provisional = operation?.provisional
@@ -1373,6 +1482,7 @@ export function createPreviewHost(ctx, config = {}) {
       body: stringifyJSON({ ...data, sessionId: session.id }) }), {}, false))
   }
   async function readEditCapabilities(grant, signal) {
+    if (nativeWindows()) return writeUnavailable('Windows semantic store is available only through explicit owner editing; model tools remain read-only.')
     const hold = lease({ signal })
     try {
       await validateTimeline(grant, hold.signal)
