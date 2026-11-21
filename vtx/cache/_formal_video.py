@@ -57,8 +57,14 @@ def require_geometry(c):
 
     verify_input_identity(c)
     deadline = monotonic() + _GEOMETRY_BUDGET
-    paths = dict.fromkeys(c.src_path(clip['src']) for track in c.tl['video_tracks']
-                          if track.get('kind') != 'gfx' for clip in track['clips'])
+    paths = {}
+    try:
+        for track in c.tl['video_tracks']:
+            if track.get('kind') != 'gfx':
+                for clip in track['clips']:
+                    paths[c.src_path(clip['src'])] = None
+    except (KeyError, TypeError, AttributeError, StopIteration) as error:
+        raise RuntimeError('无法确认正式视频源：视频片段须引用已声明的素材，请先运行 vtx validate') from error
     for path in paths:
         try:
             info = c.probe(path)

@@ -430,6 +430,17 @@ class SamplingMediaContract(unittest.TestCase):
         self.assertFalse(list((self.root / 'out').glob('*.formal-video.json')))
         self.assertFalse((self.root / 'out' / 'video_noaudio.mp4').exists())
 
+        document = json.loads(timeline.read_text(encoding='utf-8'))
+        for clip in ({}, {'src': 'not-declared'}):
+            with self.subTest(clip=clip):
+                document['video_tracks'][0]['clips'] = [clip]
+                timeline.write_text(json.dumps(document), encoding='utf-8')
+                result = subprocess.run([*cli, 'mux'], cwd=REPO, env=env, capture_output=True, timeout=30)
+                text = (result.stdout + result.stderr).decode('utf-8', 'replace')
+                self.assertEqual(result.returncode, 1, text)
+                self.assertIn('视频片段须引用已声明的素材', text)
+                self.assertNotIn('Traceback', text)
+
     def test_quarter_turn_windows_match_decoded_geometry_and_strict_qc(self):
         for color in ('white', 'gray'):
             self.command(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
