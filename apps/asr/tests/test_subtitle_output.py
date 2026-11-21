@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # local vtx for direct test runs
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import srt_out  # noqa: E402
 
