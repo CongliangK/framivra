@@ -4,6 +4,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Readable, Writable } from 'node:stream'
+import { posix } from 'node:path'
 import { createPreviewHost } from '../src/host.mjs'
 import { MemoryFs } from './helpers.mjs'
 import * as bounded from '../src/bounded.mjs'
@@ -26,6 +27,13 @@ const storeEnvelope = operation => ({ schema: 'framivra.timeline.store/v1', oper
  *  a provider whose managed-range confirmation can fail and later recover. */
 function makeBench({ storeCapabilities = storeEnvelope('store:capabilities'), reply = (_op, value) => value, config = { vtxExecutable: '/opt/trusted/vtx' } } = {}) {
   const fs = new MemoryFs()
+  // The in-memory filesystem has intentionally POSIX-shaped keys even on a
+  // native Windows test runner. This does not stand in for real Win32 paths.
+  fs.resolve = async (path, { cwd = '/' } = {}) => {
+    const absolute = posix.resolve(cwd, path)
+    const targetKey = fs.aliases.get(absolute) ?? absolute
+    return { targetKey, displayPath: targetKey }
+  }
   const sessions = new Map([['one', { id: 'one' }], ['two', { id: 'two' }]])
   sessions.list = () => [...sessions.values()]
   const cwds = { one: '/workspace', two: '/workspace' }
@@ -46,7 +54,7 @@ function makeBench({ storeCapabilities = storeEnvelope('store:capabilities'), re
       done,
       terminate() { terminated++; doneResolve({ exitCode: null, signal: 'SIGTERM' }) },
       async waitForExit() { await done; return rangeOutcomes.shift() ?? true },
-      settle(exitCode = op === 'store:edit-view' && JSON.parse(text).ok === false ? 1 : 0) { doneResolve({ exitCode }) },
+      settle(exitCode = op.startsWith('store:') && JSON.parse(text).ok === false ? 1 : 0) { doneResolve({ exitCode }) },
       failRange(times = 1) { for (let i = 0; i < times; i++) rangeOutcomes.push(false) },
       collected: { stdout: { readFrom: () => ({ text, lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) } },
     }
@@ -81,7 +89,10 @@ function makeBench({ storeCapabilities = storeEnvelope('store:capabilities'), re
   return { host, fs, sessions, cwds, workingDirectory, config, ...bench, control, frame, open }
 }
 
-test('write platform capability: Darwin requires an explicit new-core certificate; old core stays read-only', async t => {
+const windowsStore = { ...storeEnvelope('store:capabilities'), platform_support: { win32: true },
+  operations: ['edit', 'adopt', 'undo', 'status', 'recover'] }
+
+test('write platform capability: Darwin and Windows require explicit native support; old core stays read-only', async t => {
   const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
   const supported = storeEnvelope('store:capabilities')
   const oldCore = { ...supported }; delete oldCore.platform_support
@@ -95,7 +106,11 @@ test('write platform capability: Darwin requires an explicit new-core certificat
     ['darwin', 'new core still needs semantic edit', { ...supported, edit: { operations: [] } }, false],
     ['linux', 'old core remains supported', oldCore, true],
     ['linux', 'stdin refusal remains enforced', { ...oldCore, request_transport: undefined }, false],
-    ['win32', 'certificate cannot override unsupported host', supported, false],
+    ['win32', 'POSIX certificate is not a Windows certificate', supported, false],
+    ['win32', 'truthy string is not a Windows certificate', { ...windowsStore, platform_support: { win32: 'true' } }, false],
+    ['win32', 'missing recovery capability prevents authorization', { ...windowsStore, operations: ['edit', 'adopt', 'undo', 'status'] }, false],
+    ['win32', 'bounded NTFS store', windowsStore, true],
+    ['freebsd', 'certificate cannot override unsupported host', windowsStore, false],
   ]
   try {
     for (const [platform, label, storeCapabilities, allowed] of cases) await t.test(`${platform}: ${label}`, async () => {
@@ -124,6 +139,119 @@ test('write platform capability: Darwin requires an explicit new-core certificat
       } finally { await b.host.dispose() }
     })
   } finally { Object.defineProperty(process, 'platform', platformDescriptor) }
+})
+
+test('Windows semantic store fences owner, path, executable and matching recovery readback', async t => {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { ...original, value: 'win32' })
+  const different = `sha256:${'b'.repeat(64)}`
+  let revision = version, pending = false
+  const bench = makeBench({ storeCapabilities: { ...windowsStore, edit_view: { command: 'edit-view', read_schema: 'framivra.timeline.read/v1', wire_limit_bytes: 8388608, preload_stdin: true } },
+    reply(op, value, spec) {
+      if (op === 'store:--request-stdin') return { ...value, operation: 'edit', ok: false, code: 'input.error', op_id: JSON.parse(spec.stdio.stdin.data).op_id }
+      if (op === 'store:plan') {
+        const { op_id, base_revision } = JSON.parse(spec.stdio.stdin.data)
+        return { ...value, op_id, base_revision, request_digest: version, replayed: false }
+      }
+      if (op === 'store:status') return { ...value, pending, current_revision: version }
+      if (op === 'inspect') return { ...value, content_version: revision }
+      return value
+    } })
+  try {
+    bench.fs.aliases.set('/workspace/alias.json', '/workspace/timeline.json')
+    const alias = (await (await bench.control({ op: 'open', timeline: 'alias.json' })).json()).grant
+    assert.equal((await bench.control({ op: 'authorize-write', grant: alias })).status, 409)
+    assert.equal(bench.spawned.some(child => child.op.startsWith('store:')), false)
+    const grant = await bench.open('one')
+    assert.equal((await bench.control({ op: 'status', grant })).status, 403)
+    const authorized = await bench.control({ op: 'authorize-write', grant })
+    assert.equal(authorized.status, 200, await authorized.clone().text())
+    const { writeGrant, editView } = await authorized.json()
+    assert.equal(editView, undefined)
+    assert.equal(bench.spawned.some(child => child.spec.stdio.stdin === 'pipe'), false)
+    const call = (op, rest) => bench.control({ op, grant, writeGrant, ...rest })
+    const plan = () => call('plan', { base_revision: revision, operations: [{ op: 'project.resize', duration_frames: 130 }] })
+    assert.equal((await call('edit-view', { base_revision: version, op_id: crypto.randomUUID(), operations: [{}] })).status, 422)
+    const exe = bench.fs.files.get('/opt/trusted/vtx')
+    bench.fs.files.set('/opt/trusted/vtx', { ...exe, version: 'replacement' })
+    const spawnCount = bench.spawned.length
+    const changed = await call('status')
+    assert.equal((await changed.json()).error, 'EXECUTABLE_CHANGED')
+    assert.equal(bench.spawned.length, spawnCount)
+    bench.fs.files.set('/opt/trusted/vtx', exe)
+    const planned = await (await plan()).json()
+    const result = await (await call('commit', { planToken: planned.planToken })).json()
+    assert.equal(result.code, 'outcome_unknown', 'a staging error may already have published an intent')
+    assert.equal(result.diagnostics.error, 'input.error')
+    assert.equal(result.op_id, planned.submitted_request.op_id)
+    assert.equal((await plan()).status, 409)
+    const reopened = await bench.open('two')
+    const other = await (await bench.control({ op: 'authorize-write', grant: reopened }, 'two')).json()
+    const blocked = await bench.control({ op: 'plan', grant: reopened, writeGrant: other.writeGrant, base_revision: version, operations: [{}] }, 'two')
+    assert.equal((await blocked.json()).error, 'OUTCOME_UNKNOWN', 'another grant cannot bypass the physical timeline recovery fence')
+    assert.equal((await (await call('status')).json()).pending, false)
+    pending = true
+    assert.equal((await (await call('status')).json()).pending, true)
+    await call('inspect')
+    assert.equal((await plan()).status, 409)
+    pending = false
+    await call('status')
+    revision = different
+    await call('inspect')
+    assert.equal((await plan()).status, 409, 'settled receipt for other bytes cannot unlock')
+    revision = version
+    await call('status')
+    await call('inspect')
+    assert.equal((await plan()).status, 200)
+  } finally {
+    await bench.host.dispose()
+    Object.defineProperty(process, 'platform', original)
+  }
+})
+
+test('Windows revocation cancels pending authorization and invalidation fences pre-spawn commit', async () => {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { ...original, value: 'win32' })
+  const bench = makeBench({ storeCapabilities: windowsStore, reply(op, value, spec) {
+    if (op !== 'store:plan') return value
+    const { op_id, base_revision } = JSON.parse(spec.stdio.stdin.data)
+    return { ...value, op_id, base_revision, request_digest: version, replayed: false }
+  } })
+  try {
+    const grant = await bench.open('one')
+    const call = (op, extra) => bench.control({ op, grant, ...extra })
+    bench.manual.add('store:capabilities')
+    const spawned = bench.onSpawned('store:capabilities')
+    const authorizing = call('authorize-write')
+    const child = await spawned
+    assert.equal((await call('revoke-write')).status, 200)
+    child.settle()
+    const denied = await authorizing
+    assert.equal(denied.status, 499)
+    assert.equal((await denied.json()).writeGrant, undefined)
+    bench.manual.delete('store:capabilities')
+    const { writeGrant } = await (await call('authorize-write')).json()
+    const prepared = await (await call('plan', { writeGrant, base_revision: version, operations: [{ op: 'project.resize', duration_frames: 130 }] })).json()
+    assert.equal(prepared.ok, true)
+    const stat = bench.fs.stat.bind(bench.fs)
+    const entered = Promise.withResolvers(), release = Promise.withResolvers()
+    let probes = 0
+    bench.fs.stat = async (target, ...rest) => {
+      if (target.targetKey === '/opt/trusted/vtx' && ++probes === 2) { entered.resolve(); await release.promise }
+      return stat(target, ...rest)
+    }
+    const committing = call('commit', { writeGrant, planToken: prepared.planToken })
+    await entered.promise
+    try { assert.equal((await call('invalidate-plan', { writeGrant })).status, 200) }
+    finally { release.resolve() }
+    const refused = await committing
+    assert.equal(refused.status, 409)
+    assert.equal((await refused.json()).error, 'PLAN_INVALID')
+    assert.equal(bench.spawned.some(h => h.op === 'store:--request-stdin'), false)
+  } finally {
+    await bench.host.dispose()
+    Object.defineProperty(process, 'platform', original)
+  }
 })
 
 test('F1: frame cancel must not terminate another Session\'s in-flight read', async () => {
