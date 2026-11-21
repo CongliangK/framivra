@@ -121,6 +121,24 @@ class FloatWavPipelineTests(unittest.TestCase):
                 self.assertEqual(index["orig_s"], 1.0)
                 self.assertEqual(index["new_s"], 1.0)
 
+    def test_trim_uses_literal_directory_not_glob_matching_sibling(self):
+        np, rate = trim_takes.np, 48000
+        tone = (.2 * np.sin(2 * np.pi * 1000 * np.arange(rate) / rate)).astype('<f4')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, sibling = root / '录音 [12]', root / '录音 1'
+            source.mkdir()
+            sibling.mkdir()
+            aup3_extract.write_wav_float32(source / 'track01_voice.wav', tone, rate)
+            aup3_extract.write_wav_float32(sibling / 'track01_voice.wav', -tone, rate)
+            output = root / 'out'
+            r = run_cli(['trim_takes.py', str(source), str(output)])
+            self.assertEqual(r.returncode, 0, r.stderr)
+            take, = json.loads((output / 'takes_index.json').read_text(encoding='utf-8'))
+            self.assertEqual(take['file'], 'take01_voice.wav')
+            self.assertTrue((output / take['file']).read_bytes()[44:] == tone.tobytes(),
+                            'trim did not preserve PCM from the literal source directory')
+
     def test_padding_remains_in_seconds_at_48000(self):
         np, rate = trim_takes.np, 48000
         samples = np.zeros(rate, dtype="<f4")
