@@ -5,8 +5,8 @@
 → 稳健线性漂移拟合 → soxr 微重采样，conform 出与相机时钟对齐的话筒 WAV。
 视频永远是不动的一方（帧不能重采样），所以 conform 的总是音频。
 
-用法:
-  ~/miniconda3/envs/denoise/bin/python sync_audio.py <camera.(wav|mp4|mov)> <mic.wav> <out.wav> \
+用法（在已激活的 conda denoise 环境中）:
+  python sync_audio.py <camera.(wav|mp4|mov)> <mic.wav> <out.wav> \
       [--max-offset 30] [--win 20] [--hop 10] [--search 2] [--report report.json]
 
 判定: conform 后复验残差 max < 1.5ms 达标（目标 <1ms，对应 vtx 1ms 音频网格）；

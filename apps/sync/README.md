@@ -14,8 +14,8 @@
 ## 依赖
 
 - 硬依赖（app 级，manifest requires）：ffmpeg + numpy（repack_voice 系统 python3 即可跑）
-- `sync_audio.py` 须在 **conda `denoise` 环境**运行（numpy/scipy/soundfile/soxr；scipy 仅该环境提供，doctor 的系统解释器探不到，故不进 app 级 requires）：解释器用 `denoise.python` 指定；默认约定为 Linux/macOS 的 `~/miniconda3/envs/denoise/bin/python` 或 Windows 的 `~/miniconda3/envs/denoise/python.exe`
-- 缺第三方依赖时（如系统 python3 无 scipy）不抛裸 traceback：脚本给中文指引（denoise 解释器优先读 `config.local.json` `denoise.python`，无则默认约定路径；附 pip 备选）并以专用退出码 **3** 结束；`--help` 零第三方依赖即可用
+- `sync_audio.py` 须在 **conda `denoise` 环境**运行（numpy/scipy/soundfile/soxr；scipy 仅该环境提供，doctor 的系统解释器探不到，故不进 app 级 requires）。默认解释器路径为 Linux/macOS 的 `~/miniconda3/envs/denoise/bin/python` 或 Windows 的 `~/miniconda3/envs/denoise/python.exe`。
+- 缺第三方依赖时，脚本用中文提示解释器路径和 pip 备选，退出码为 **3**。若 `VTX_CONFIG` 指定的配置（未设置时读 `config.local.json`）中 `denoise.python` 指向现有文件，优先提示该路径；否则提示本平台默认路径。脚本不会自动切换解释器；`--help` 不需要第三方依赖。
 - 全链依赖探测：`bash plugins/denoise/denoise_init.sh`（ffmpeg / denoise 环境 / Resemble 权重三探）
 
 ## 健康检查
@@ -32,7 +32,7 @@
 
 ```bash
 cd "<video_tools>"
-# 双系统同步（conda denoise 环境）
+# 双系统同步（Linux/macOS，conda denoise 环境）
 ~/miniconda3/envs/denoise/bin/python apps/sync/sync_audio.py "<camera.mp4>" "<mic.wav>" "<新输出.wav>" --report "<项目>/新报告.json"
 # 实录替换（路径指向同一视频项目）
 env python3 apps/sync/repack_voice.py -t "<项目>/timeline.json" [--takes-dir "<项目>/assets/voice_takes"] [窗口ID ...]
