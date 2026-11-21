@@ -159,7 +159,6 @@ export class PreviewProgramRun {
           !Number.isSafeInteger(scope.maxBytes) || scope.maxBytes < 1 || scope.maxBytes > PROGRAM_RUN_MAX_BYTES) throw fault('PROGRAM_GRANT_INVALID')
       run.expiry = setTimeout(() => { void this.retire(run, 'error', 'PROGRAM_RUN_EXPIRED') }, remaining)
       run.status = 'running'
-      this.changed(run)
       let cursor = grid(binding, frame), first = true
       const advance = start => start + span < duration ? start + span : 0
       while (run.completedFrames < duration) {
@@ -169,11 +168,16 @@ export class PreviewProgramRun {
         const start = !first && run.wanted !== undefined && !run.entries.has(run.wanted) ? run.wanted : cursor
         first = false
         const id = crypto.randomUUID()
+        // This is the requested interval, not evidence of rendered or cached frames.
+        run.pendingWindow = { start, end: Math.min(duration, start + span) }
+        this.changed(run)
+        signal.throwIfAborted()
         const response = await this.render(grant, id, start, signal)
         const { blob, entry } = await accept(response, run, start, id, signal)
         signal.throwIfAborted()
         await run.cache.put(start, blob)
         signal.throwIfAborted()
+        run.pendingWindow = undefined
         run.inputEpoch = entry.inputEpoch
         run.entries.set(start, entry)
         run.bytes += entry.size
@@ -183,6 +187,7 @@ export class PreviewProgramRun {
       run.status = 'complete'
       this.changed(run)
     } catch (error) {
+      run.pendingWindow = undefined
       if (signal.aborted) return
       if (isLimit(error) && run.completedFrames > 0) {
         run.status = 'partial'; run.code = 'PROGRAM_RUN_LIMIT'
@@ -268,6 +273,7 @@ export class PreviewProgramRun {
     clearTimeout(run.expiry)
     run.entries.clear()
     run.completedFrames = 0
+    run.pendingWindow = undefined
     run.status = status
     run.code = code
     run.cleanup = (async () => {
@@ -320,5 +326,5 @@ export function usePreviewProgramRun({ opened, sessionId, project, tabSignal, ca
     read: (frame, signal) => controller.read(binding, frame, signal),
     recheck: (media, signal) => controller.recheck(binding, media, signal), signal: run?.controller.signal,
     status: run?.status ?? 'idle', completedFrames: run?.completedFrames ?? 0, totalFrames: duration, code: run?.code,
-    frame: run?.frame, cleanupPending: !!current?.cleanup, cleanupFailed: !!current && !current.cleaned && current.code === 'PROGRAM_CLEANUP_UNCONFIRMED' }
+    frame: run?.frame, pendingWindow: run?.pendingWindow, cleanupPending: !!current?.cleanup, cleanupFailed: !!current && !current.cleaned && current.code === 'PROGRAM_CLEANUP_UNCONFIRMED' }
 }

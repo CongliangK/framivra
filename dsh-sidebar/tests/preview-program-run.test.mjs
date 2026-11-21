@@ -76,6 +76,24 @@ test('foreground joins the first in-flight request, prioritizes the next grid en
   assert.equal(b.stored.size, 0)
 })
 
+test('a cold canonical window is pending, not cached; cancelling clears its progress before settlement', async () => {
+  const first = Promise.withResolvers(), started = Promise.withResolvers()
+  const b = bench({ duration: 16_746, first })
+  b.controller.notify = () => { if (b.controller.run.pendingWindow) started.resolve() }
+  assert(b.controller.start(b.binding, 515))
+  try {
+    await started.promise
+    assert.deepEqual(b.controller.run.pendingWindow, { start: 510, end: 540 })
+    assert.equal(b.controller.run.completedFrames, 0)
+    assert.deepEqual(b.order, [510])
+    const cancelled = b.controller.cancel()
+    assert.equal(b.controller.run.pendingWindow, undefined)
+    first.resolve()
+    assert.equal(await cancelled, true)
+    assert.equal(b.stored.size, 0)
+  } finally { first.resolve(); await b.controller.cancel() }
+})
+
 test('cancel waits for a late grant and never reuses an unconfirmed cleanup', async () => {
   const issued = Promise.withResolvers(), acknowledge = Promise.withResolvers()
   let revokes = 0
