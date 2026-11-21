@@ -48,6 +48,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from urllib.parse import urlparse
 from pathlib import Path
@@ -953,13 +954,92 @@ def _mount_fix_safe(items: list) -> tuple:
     return True, ""
 
 
+class _MountLinkWriteError(OSError):
+    def __init__(self, message, *, published=False):
+        super().__init__(message)
+        self.published = published
+        self.applied = []
+
+
+def _write_mount_symlink(link, target, want):
+    if sys.platform != 'win32':
+        if link.is_symlink():
+            link.unlink()
+        os.symlink(want, link)
+        return
+
+    def create(path):
+        try:
+            os.symlink(want, path, target_is_directory=target.is_dir())
+        except OSError as error:
+            if getattr(error, 'winerror', None) != 1314:
+                raise
+            raise _MountLinkWriteError(
+                f"无法创建挂载链接 {link}：Windows 当前进程没有创建符号链接的权限"
+                "（WinError 1314）。请由维护者检查系统策略或开发人员模式后重试。"
+            ) from error
+
+    if not link.is_symlink():
+        create(link)
+        return
+
+    # Stage in the final parent: Windows probes the referenced target to choose
+    # the link type. Keep the backup separately; os.replace cannot replace an
+    # existing directory symlink on Windows.
+    expected = os.readlink(link)
+    stage = Path(tempfile.mkdtemp(prefix='.vt-link-', dir=link.parent))
+    new, old = stage.with_name(stage.name + '-new'), stage / 'old'
+    created = backed_up = published = False
+    failure = None
+    notes = []
+    try:
+        create(new)
+        created = True
+        if not link.is_symlink() or os.readlink(link) != expected:
+            raise FileExistsError(f'挂载链接在修复期间变化：{link}')
+        link.rename(old)
+        backed_up = True
+        new.rename(link)
+        published = True
+        created = False  # The former staging name is no longer ours.
+    except OSError as error:
+        failure = error
+        if backed_up:
+            try:
+                old.rename(link)  # Windows rename will not replace a competing entry.
+                backed_up = False
+            except OSError as rollback:
+                notes.append(f'无法恢复挂载链接 {link}；原链接保留于 {old}：{rollback}')
+
+    if published:
+        try:
+            old.unlink()
+            backed_up = False
+        except OSError as error:
+            notes.append(f'链接已更新，原链接备份未能清理 {old}：{error}')
+    if created:
+        try:
+            new.unlink(missing_ok=True)
+        except OSError as error:
+            notes.append(f'未能清理候选链接 {new}：{error}')
+    if not backed_up:
+        try:
+            stage.rmdir()
+        except OSError as error:
+            notes.append(f'未能清理暂存目录 {stage}：{error}')
+    if failure is not None or notes:
+        if failure is not None:
+            notes.insert(0, str(failure))
+        raise _MountLinkWriteError('；'.join(notes), published=published) from failure
+
+
 def _apply_mount_link_fixes(items: list) -> list:
     """执行挂载链接修复（missing/wrong_target/absolute_form → 重建相对链接）；
     retired 仅重核本仓归属后摘除；occupied/foreign 退役项保留。返回实际修复项。"""
     mroot = mount_root()
     mroot.mkdir(parents=True, exist_ok=True)
     applied = []
-    for link, _target, problem, want in items:
+    for link, target, problem, want in items:
         if problem in ("occupied", "retired_foreign", "retired_occupied"):
             continue
         if problem == "retired":
@@ -969,9 +1049,13 @@ def _apply_mount_link_fixes(items: list) -> list:
                 link.unlink()
                 applied.append(f"{link.name}（已移除本仓退役链接）")
             continue
-        if link.is_symlink():
-            link.unlink()
-        os.symlink(want, link)
+        try:
+            _write_mount_symlink(link, target, want)
+        except _MountLinkWriteError as error:
+            if error.published:
+                applied.append(f"{link.name} → {want}")
+            error.applied = applied
+            raise
         applied.append(f"{link.name} → {want}")
     return applied
 
@@ -1058,10 +1142,15 @@ def _doctor_fix(json_out: bool) -> dict:
     else:
         safe, reason = _mount_fix_safe(items)
         if safe:
-            applied = _apply_mount_link_fixes(items)
-            report["mount"] = {"status": "fixed" if applied else "manual", "applied": applied}
-            if not applied:
-                report["mount"]["note"] = "挂载项需人工处理"
+            try:
+                applied = _apply_mount_link_fixes(items)
+            except _MountLinkWriteError as error:
+                report["mount"] = {"status": "manual", "note": str(error), "applied": error.applied}
+                report["manual"].append(f"挂载链接：{error}")
+            else:
+                report["mount"] = {"status": "fixed" if applied else "manual", "applied": applied}
+                if not applied:
+                    report["mount"]["note"] = "挂载项需人工处理"
         else:
             report["mount"] = {"status": "manual", "note": reason +
                                "——确认目标仓后跑 vt.py --fix-links"}
@@ -1079,11 +1168,10 @@ def _doctor_fix(json_out: bool) -> dict:
         m = report["mount"]
         if m.get("status") == "ok":
             print("  ✓ 挂载链接全部健康")
-        elif m.get("status") == "fixed":
-            for a in m["applied"]:
-                print(f"  · 已修复挂载链接 {a}")
-        else:
+        elif m.get("status") != "fixed":
             print(f"  ℹ 挂载链接：{m['note']}")
+        for action in m.get("applied", []):
+            print(f"  · 已修复挂载链接 {action}")
         r = report["registry"]
         if r["status"] == "ok":
             print("  ✓ registry.json 无缺字段")
@@ -1222,6 +1310,14 @@ def _mount_link_targets(mroot):
 
 
 def cmd_fix_links(dry: bool) -> int:
+    try:
+        return _fix_links(dry)
+    except _MountLinkWriteError as error:
+        print(f"✗ {error}", file=sys.stderr)
+        return 1
+
+
+def _fix_links(dry: bool) -> int:
     mroot = mount_root()
     print(f"挂载根：{mroot}（目标仓：{ROOT}）")
     try:
@@ -1244,7 +1340,7 @@ def cmd_fix_links(dry: bool) -> int:
                 mark = "绝对" if current.is_absolute() else "相对"
                 print(f"  ✓ {link_name}：已指向本仓目标（{mark}链接）")
                 if current.is_absolute() and not dry:
-                    link.unlink(); os.symlink(want, link)
+                    _write_mount_symlink(link, target, want)
                     print(f"    · 已规范化为相对链接 → {want}")
                     changed += 1
                 continue
@@ -1257,9 +1353,7 @@ def cmd_fix_links(dry: bool) -> int:
         if dry:
             print(f"    [dry] 将创建相对链接 {link_name} → {want}")
         else:
-            if link.is_symlink():
-                link.unlink()       # 指向错误目标的旧链接先摘除再重建
-            os.symlink(want, link)
+            _write_mount_symlink(link, target, want)
             print(f"    · 已创建相对链接 → {want}")
         changed += 1
     retired = _retired_skills_mount()
