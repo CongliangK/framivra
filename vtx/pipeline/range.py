@@ -427,6 +427,19 @@ def _render_native_window(c, fa, fb, *, workspace, check_cancel, expected_svg_pa
                          program_part_seconds=program_part_seconds, observe=observe)
 
 
+class _NativeWindowPlan(RenderPlan):
+    """Read a private alpha segment at its own origin; keep the original layer clock."""
+
+    def _layer_input_args(self, layer, a, topts=()):
+        span = layer.get('native_seg_span')
+        if span is not None:
+            origin = layer['cl']['dst_in']
+            if not span[0] <= max(a, origin) < span[1]:
+                raise ValueError('native alpha segment does not cover the composite start')
+            a -= span[0] - origin  # Only the media input seek, never the overlay clock.
+        return super()._layer_input_args(layer, a, topts)
+
+
 def _program_composite_args(plan, layer, out, a, b, sub_file, wav):
     """Collect exactly the original single graph command, with no real Ctx methods.
 
@@ -497,8 +510,9 @@ def _render_range(c, fa, fb, *, draft, staged_gfx=None, gfx_rechecks=(), check_c
             print(f"  - {error}")
         sys.exit(1)
 
-    plan = RenderPlan(c=c, draft=draft, f=f, W=W, H=H, layers=layers,
-                      nseg=int(os.environ.get('VTX_VIDEO_SEGMENTS', str(DEFAULT_SEGMENTS))))
+    plan_type = RenderPlan if draft else _NativeWindowPlan
+    plan = plan_type(c=c, draft=draft, f=f, W=W, H=H, layers=layers,
+                     nseg=int(os.environ.get('VTX_VIDEO_SEGMENTS', str(DEFAULT_SEGMENTS))))
     # B03（issue #27 / F-05）：布局延迟创建——cli 不再无条件 mkdir cache/，
     # preview 目录自建（parents 兜底零音频事件、prepare_layers 未先建 cache 的边角）。
     vdir = c.cache / "preview"; fstxn.mkdir(vdir, root=c.root)
@@ -525,6 +539,12 @@ def _render_range(c, fa, fb, *, draft, staged_gfx=None, gfx_rechecks=(), check_c
         sfile = vdir / f"subs_{a:06d}_{b:06d}.ass"
         plan.write_seg_ass(sfile, a, b)             # 段级字幕（段内相对时间，同整片机制）
         sl = [L for L in layers if _intersects(L['cl'], a, b)]
+        for layer in sl:
+            span = layer.get('native_seg_span')
+            clip = layer['cl']
+            if span is not None and (span[0] > max(a, clip['dst_in']) or
+                                     min(b, clip['dst_in'] + clip['dur']) > span[1]):
+                raise ValueError('native alpha segment does not cover the composite range')
         if (program_sources is not None and type(program_pcm) is preview_program_audio._RunPCM
                 and not draft and not c.gpu and getattr(c, '_program_audio_verified', False) is True
                 and len(parts) == len(sl) == 1 and c.frame_rate == 30 and b - a == program_frames):
