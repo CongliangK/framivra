@@ -46,14 +46,20 @@ class TestSrtOut(unittest.TestCase):
         self.assertEqual(content, "1\n00:00:00,000 --> 00:00:01,000\n单行\n")
         self.assertTrue(content.endswith("\n"))
 
+    def test_crlf_inside_cue_has_same_rendering_as_lf(self):
+        subs = [{"in": 0, "out": 30, "text": "第一行\r\n第二行"}]
+        self.assertEqual(srt_out.render_srt(subs), "1\n00:00:00,000 --> 00:00:01,000\n第一行\n第二行\n")
+
     def test_empty_subs(self):
         self.assertEqual(srt_out.render_srt([]), "")
 
     @unittest.skipUnless(os.name == 'nt', 'native Windows redirected streams')
     def test_cli_utf8_stdin_and_both_output_modes(self):
-        text = '你好 🎵'
-        subs = [{'in': 24, 'out': 42, 'text': text}]
-        srt = f'1\n00:00:00,800 --> 00:00:01,400\n{text}\n'.replace('\n', os.linesep).encode('utf-8')
+        from vtx.media.subtitles_src import parse_srt
+
+        subs = [{'in': 24, 'out': 42, 'text': '你好 🎵\r\n第二行'}]
+        expected = [{'in': 24, 'out': 42, 'text': '你好 🎵\\N第二行'}]
+        srt = '1\n00:00:00,800 --> 00:00:01,400\n你好 🎵\n第二行\n'.replace('\n', os.linesep).encode('utf-8')
         env = dict(os.environ, PYTHONUTF8='0', PYTHONIOENCODING='cp936:strict')
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -74,6 +80,7 @@ class TestSrtOut(unittest.TestCase):
                     self.assertIn(f'✓ SRT 已写出：{out}'.encode('utf-8'), result.stdout)
                     self.assertEqual(result.stderr, b'')
                     self.assertEqual(out.read_bytes(), srt)
+                    self.assertEqual(parse_srt(out.read_text(encoding='utf-8'), 30), expected)
             result = subprocess.run([*cmd, '-o', out], input=b'[{"in":0,"out":30,"text":"\xff"}]',
                                     cwd=root, env=env, capture_output=True, timeout=30)
             self.assertNotEqual(result.returncode, 0)
