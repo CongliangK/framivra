@@ -89,13 +89,21 @@ const WINDOW_DIAGNOSTICS = new Map([
   ['output.limit', 'The generated window exceeds the inline response limit.'],
 ])
 const WINDOW_LAUNCHER = PREVIEW_SUPPLIER_ABI
+const MANAGED_WINDOW_IDENTITY = 'framivra.preview-window.managed-pins/v1'
 const windowDigest = value => typeof value === 'string' && value.length === 64 && /^[a-f0-9]{64}$/.test(value)
 
-function decodePreviewWindowCapabilities(text) {
+function decodePreviewWindowCapabilities(text, managedSelection) {
   const capability = decodeEnvelope(text, 'capabilities').capabilities.preview_window
   if (capability?.schema !== WINDOW_SCHEMA || capability.inline_media !== true || capability.prepare_inputs !== true ||
       capability.launcher !== WINDOW_LAUNCHER || !windowDigest(capability.wheel_sha256) || !windowDigest(capability.runtime_projection_sha256)) {
     fail('WINDOW_UNSUPPORTED', 'The independent window launcher must advertise the fixed-wheel profile', 422)
+  }
+  if (managedSelection) {
+    const [, , , wheel, projection] = managedSelection.split(':')
+    if (capability.managed_identity !== MANAGED_WINDOW_IDENTITY || capability.wheel_sha256 !== wheel ||
+        capability.runtime_projection_sha256 !== projection) {
+      fail('WINDOW_UNSUPPORTED', 'Live fixed-wheel capability did not confirm the owner-selected managed supplier and pre-import pins', 422)
+    }
   }
   // Bind only the known capability and pin fields, never arbitrary launcher output.
   return Object.freeze({ schema: WINDOW_SCHEMA, inline_media: true, prepare_inputs: true, launcher: WINDOW_LAUNCHER,
@@ -589,16 +597,9 @@ export class TimelineReader {
     }, undefined, true, true, snapshot, owner)
   }
   async windowCapabilities(executable, timeline, signal, snapshot, owner) {
-    return this.command(executable, timeline, ['capabilities'], signal, text => {
-      const capability = decodePreviewWindowCapabilities(text)
-      if (snapshot.managedPreviewSupplier) {
-        const [, , , wheel, projection] = snapshot.managedPreviewSupplier.split(':')
-        if (capability.wheel_sha256 !== wheel || capability.runtime_projection_sha256 !== projection) {
-          fail('WINDOW_UNSUPPORTED', 'Live fixed-wheel capability differs from the owner-selected managed supplier', 422)
-        }
-      }
-      return capability
-    }, undefined, false, false, snapshot, owner, { isolatedWindow: true })
+    return this.command(executable, timeline, ['capabilities'], signal,
+      text => decodePreviewWindowCapabilities(text, snapshot.managedPreviewSupplier),
+      undefined, false, false, snapshot, owner, { isolatedWindow: true })
   }
   async firstFrameCapabilities(executable, capability, signal, snapshot, owner) {
     // The ordinary capabilities receipt cannot claim this transport. Probe
@@ -724,10 +725,20 @@ export class TimelineReader {
       if (config.fingerprint !== snapshot.fingerprint) fail('CONFIG_CHANGED', 'Host plugin configuration changed; reopen this preview and re-authorize', 409)
       config = snapshot
     } else config = this.snapshotConfig()
+    let managedArg = []
     if (isolatedWindow) {
-      const selected = config.managedPreviewSupplier ? (await this.managedWindow(config, signal)).executable : config.previewWindowExecutable
+      const supplier = config.managedPreviewSupplier ? await this.managedWindow(config, signal) : undefined
+      const selected = supplier ? supplier.executable : config.previewWindowExecutable
       if (executable !== selected || this.snapshotConfig().fingerprint !== config.fingerprint) {
         fail('CONFIG_CHANGED', 'The configured independent window launcher changed; reopen preview', 409)
+      }
+      if (config.managedPreviewSupplier) {
+        const [, , , wheel, projection] = config.managedPreviewSupplier.split(':')
+        if (!supplier || supplier.selection !== config.managedPreviewSupplier || supplier.wheelSha256 !== wheel ||
+            supplier.runtimeProjectionSha256 !== projection) {
+          fail('WINDOW_UNSUPPORTED', 'Managed preview requires the confirmed release and the owner-selected pins', 422)
+        }
+        managedArg = [`--managed-preview-pins-v1=${wheel}:${projection}`]
       }
     }
     if (!isolatedWindow && config.vtxConfigFile) {
@@ -758,7 +769,7 @@ export class TimelineReader {
     // throwing end() is ambiguous: use the SAME done/cleanup path, never spawn a fallback.
     if (take) { this.idleEditView = undefined; slot.state = 'taken'; this.detachIdle(slot) }
     const handle = take ? slot.handle : this.subprocess.spawn({
-      argv: [executable, ...(timeline === undefined ? [] : ['-t', timeline]), ...args],
+      argv: [executable, ...managedArg, ...(timeline === undefined ? [] : ['-t', timeline]), ...args],
       cwd: dirname(executable), // Never execute Python/imports from an untrusted project cwd.
       stdio: { stdin: prime ? 'pipe' : input === undefined ? 'ignore' : { data: input }, stdout: streaming ? 'pipe' : { maxBytes: 8 * 1024 * 1024 }, stderr: { maxBytes: 16 * 1024 } },
       graceMs: 1000, signal,
