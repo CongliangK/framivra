@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from scripts import install_source
 from scripts.release import prepare_preview_supplier as supplier
 
 
@@ -29,6 +30,76 @@ class PreparePreviewSupplierTest(unittest.TestCase):
                     supplier.qualify_candidate(candidate, wheel_filename='framivra-2.3.0-py3-none-any.whl',
                         launcher_sha256=launcher_pin, wheel_sha256=wheel_pin, work_parent=candidate, python=sys.executable)
                 run.assert_not_called()
+
+    def test_enroll_publishes_same_probe_directory_and_recovers_exact_match(self):
+        approved = {'launcher_sha256': supplier._sha(b'fixture launcher'),
+                    'wheel_sha256': supplier._sha(b'fixture wheel'), 'projection_sha256': 'a' * 64,
+                    'wheel_filename': 'framivra-2.3.0-py3-none-any.whl', 'python': sys.executable}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            old = root / 'installation.json'
+            old.write_bytes(b'{"status":"ready"}\n')
+            launch, wheel = root / 'test-launch', root / 'test-wheel'
+            launch.write_bytes(b'fixture launcher')
+            wheel.write_bytes(b'fixture wheel')
+            seen = []
+
+            def probe(scratch, profile, *, fresh, expected_projection, **pins):
+                self.assertEqual(expected_projection, 'a' * 64)
+                seen.append(fresh is not None)
+                if fresh is not None:
+                    profile.mkdir(mode=0o700)
+                    supplier._write(profile / 'vtx-preview', fresh[0], 0o500)
+                    supplier._write(profile / 'kernel.whl', fresh[1])
+                    supplier._write(profile / 'kernel.sha256', (pins['wheel_sha256'] + '\n').encode())
+                    (profile / 'runtime').mkdir(mode=0o700)
+                    self.assertFalse((root / 'preview').exists())
+                    seen.append(profile.stat().st_ino)
+                supplier._verified_profile(profile, pins['launcher_sha256'], pins['wheel_sha256'])
+                return {'runtimeProjectionSha256': expected_projection}
+
+            with patch.object(supplier, '_qualify_profile', side_effect=probe) as verify:
+                result = supplier.enroll_profile(root, launcher_path=launch, fetch_wheel=lambda: wheel, **approved)
+                self.assertEqual((root / 'preview').stat().st_ino, seen[1])
+                self.assertEqual(old.read_bytes(), b'{"status":"ready"}\n')  # interruption before receipt
+                again = supplier.enroll_profile(root, launcher_path=launch,
+                    fetch_wheel=lambda: self.fail('adoption must not fetch'), **approved)
+                self.assertEqual(again, result)
+                self.assertEqual(seen[::2], [True, False])
+                self.assertEqual(verify.call_count, 2)
+
+    def test_mismatch_and_failed_probe_never_change_active_bytes(self):
+        approved = {'launcher_sha256': supplier._sha(b'fixture launcher'),
+                    'wheel_sha256': supplier._sha(b'fixture wheel'), 'projection_sha256': 'a' * 64,
+                    'wheel_filename': 'framivra-2.3.0-py3-none-any.whl', 'python': sys.executable}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            launcher, wheel, profile = root / 'test-launch', root / 'test-wheel', root / 'preview'
+            launcher.write_bytes(b'fixture launcher')
+            wheel.write_bytes(b'fixture wheel')
+            active = root / 'installation.json'
+            active.write_bytes(b'{"status":"ready"}\n')
+            with patch.object(supplier, '_qualify_profile', side_effect=supplier.SupplierError('fixture failed')):
+                with self.assertRaisesRegex(supplier.SupplierError, 'fixture failed'):
+                    supplier.enroll_profile(root, launcher_path=launcher, fetch_wheel=lambda: wheel, **approved)
+            self.assertFalse(profile.exists())
+            profile.mkdir(mode=0o700)
+            foreign = profile / 'owner-data'
+            foreign.write_bytes(b'unrelated')
+            with self.assertRaisesRegex(supplier.SupplierError, 'unexpected entries'):
+                supplier.enroll_profile(root, launcher_path=launcher,
+                    fetch_wheel=lambda: self.fail('conflict must not fetch'), **approved)
+            self.assertEqual(foreign.read_bytes(), b'unrelated')
+            self.assertEqual(active.read_bytes(), b'{"status":"ready"}\n')
+
+    def test_empty_public_catalog_is_nonprobing(self):
+        root = Path('/not-a-real-installation')
+        with patch.object(install_source, '_PREVIEW_SUPPLIER_RELEASES', {}), \
+                patch.object(install_source, 'git') as git, patch.object(install_source.downloads, 'acquire') as acquire:
+            self.assertIsNone(install_source.optional_preview_supplier(root, root, '0' * 40, install_source.REPOSITORY,
+                                                                     sys.executable))
+            git.assert_not_called()
+            acquire.assert_not_called()
 
     def test_real_output_limit_stops_child_before_accepting_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:

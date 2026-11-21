@@ -4,6 +4,12 @@
 A candidate statement records observations, not release approval. Qualification
 requires independent expected wheel/launcher hashes from the reviewing caller;
 this tool never reads approval from the statement, a project or an install.
+
+The normal installer can enable this only after a maintainer has approved and
+published the exact artifact and updated the separately shipped installer
+catalog. No user steps are added. The first installer transaction supports
+fresh install and exact-match retry only; a different existing profile is
+preserved and needs a future automatic upgrade transaction.
 """
 import argparse
 import base64
@@ -196,7 +202,9 @@ def build_candidate(source, commit, output, *, python):
         filename, wheel = _build(python, root / 'one', members, env)
         _require(_build(python, root / 'two', members, env) == (filename, wheel), 'offline wheel build was not reproducible')
         launcher = members['scripts/preview_window_wheel.py']
-        proposal = {'schema': 'framivra.preview-supplier-candidate/v1', 'commit': commit, 'wheelFilename': filename,
+        identity = _run(['/usr/bin/git', 'ls-tree', '-r', commit, '--', *_INPUTS], cwd=source, env=env, limit=1024**2)
+        proposal = {'schema': 'framivra.preview-supplier-candidate/v1', 'commit': commit,
+                    'sourceTreeSha256': _sha(identity), 'wheelFilename': filename,
                     'launcherSha256': _sha(launcher), 'wheelSha256': _sha(wheel), 'buildTools': tools}
         output.mkdir(mode=0o700)  # Exclusive: no existing distribution or install is replaced.
         _write(output / 'vtx-preview', launcher, 0o500)
@@ -225,79 +233,163 @@ def _receipt(wire, pins, version):
     return media
 
 
-def qualify_candidate(artifacts, *, wheel_filename, launcher_sha256, wheel_sha256, work_parent, python):
-    """Return observed enrollment metadata after a clean real ordinary probe.
-
-    Inputs here are maintainer/release-verifier facts, never read from the
-    candidate statement. A normal end-user installer must source these facts
-    from its separately approved release catalog; none is bundled here.
-    """
+def _verify_pins(launcher_sha256, wheel_sha256, wheel_filename):
     _require(sys.platform == 'linux' and os.geteuid() != 0, 'ordinary fixed wheel requires unprivileged Linux')
-    _require(all(_HEX.fullmatch(digest) for digest in (launcher_sha256, wheel_sha256))
+    _require(all(type(digest) is str and _HEX.fullmatch(digest) for digest in (launcher_sha256, wheel_sha256))
+             and type(wheel_filename) is str
              and re.fullmatch(r'framivra-[A-Za-z0-9_.+]+-py3-none-any\.whl', wheel_filename),
              'expected independently approved launcher/wheel identities')
+
+
+def _verified_profile(profile, launcher_sha256, wheel_sha256, *, staged=True):
+    info = profile.lstat()
+    _require(profile.resolve(strict=True) == profile and stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid()
+             and not info.st_mode & 0o077, 'preview profile conflicts with an unowned or nonprivate directory')
+    exact = {'vtx-preview', 'kernel.whl', 'kernel.sha256', 'runtime'}
+    if not staged:
+        exact.remove('runtime')
+    _require({item.name for item in profile.iterdir()} == exact, 'preview profile conflicts with unexpected entries')
+    launcher = profile / 'vtx-preview'
+    _require(stat.S_IMODE(launcher.lstat().st_mode) == 0o500
+             and _sha(_read(launcher, 256 * 1024)) == launcher_sha256
+             and _sha(_read(profile / 'kernel.whl', _WHEEL_LIMIT)) == wheel_sha256
+             and _read(profile / 'kernel.sha256', 65) == (wheel_sha256 + '\n').encode('ascii'),
+             'preview profile conflicts with approved artifact bytes')
+
+
+def _qualify_profile(root, profile, *, wheel_filename, launcher_sha256, wheel_sha256, python,
+                     fresh=None, expected_projection=None):
+    home, project = root / 'home', root / 'fixture'
+    for directory in (home, project):
+        directory.mkdir(mode=0o700)
+    env = _env(home)
+    site = None
+    if fresh is not None:
+        launcher, wheel = fresh
+        _require((_sha(launcher), _sha(wheel)) == (launcher_sha256, wheel_sha256),
+                 'candidate does not match independently approved launcher and wheel')
+        profile.mkdir(mode=0o700)
+        distribution = root / wheel_filename
+        _write(distribution, wheel)
+        _write(profile / 'vtx-preview', launcher, 0o500)
+        _write(profile / 'kernel.whl', wheel)
+        _write(profile / 'kernel.sha256', (wheel_sha256 + '\n').encode('ascii'))
+        _verified_profile(profile, launcher_sha256, wheel_sha256, staged=False)
+        site = root / 'site'
+        _run([python, '-IB', '-m', 'pip', '--isolated', '--disable-pip-version-check', 'install', '--no-index',
+              '--no-deps', '--no-compile', '--target', site, distribution], cwd=root, env=env)
+    else:
+        _verified_profile(profile, launcher_sha256, wheel_sha256)
+    program = profile / 'vtx-preview'
+
+    def call(*args, limit=32 * 1024):
+        return _json(_run([_SYSTEM_PYTHON, '-IBS', program, *args], cwd=root, env=env, limit=limit))
+
+    staged = call('--stage-from', site) if site is not None else None
+    verified = call('--verify')
+    _require(set(verified) == {'ok', 'wheel_sha256', 'runtime_projection_sha256'}
+             and verified['ok'] is True and verified['wheel_sha256'] == wheel_sha256
+             and type(verified['runtime_projection_sha256']) is str
+             and _HEX.fullmatch(verified['runtime_projection_sha256'])
+             and (expected_projection is None or verified['runtime_projection_sha256'] == expected_projection)
+             and (staged is None or set(staged) == verified.keys() | {'installed_member_sha256'}
+                  and all(staged[key] == value for key, value in verified.items())),
+             'staging and fixed-wheel verification did not match')
+    capabilities = call('-t', 'unused', 'capabilities')
+    _require(capabilities.get('schema') == 'framivra.timeline.read/v1', 'unexpected launcher capability schema')
+    cap = capabilities['capabilities']['preview_window']
+    _require(cap['schema'] == _WINDOW and cap['launcher'] == _LAUNCHER
+             and cap['inline_media'] is cap['prepare_inputs'] is cap['input_epoch'] is True
+             and all(cap[key] == verified[key] for key in ('wheel_sha256', 'runtime_projection_sha256')),
+             'ordinary fixed-wheel capability identity did not match')
+    source = project / 'probe.mp4'
+    _run([_SYSTEM_FFMPEG, '-v', 'error', '-nostdin', '-f', 'lavfi', '-i', 'color=c=teal:s=1920x1080:r=30:d=1',
+          '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=1', '-c:v', 'libx264',
+          '-threads:v', '1', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-ac', '2', source], cwd=root, env=env)
+    timeline = project / 'timeline.json'
+    document = {'version': 2, 'project': {'fps': 30, 'width': 1920, 'height': 1080, 'duration_frames': 30},
+                'sources': [{'id': 'fixture', 'path': source.name}], 'subtitles': [],
+                'video_tracks': [{'name': 'picture', 'kind': 'aroll', 'clips': [
+                    {'src': 'fixture', 'dst_in': 0, 'dur': 30, 'src_in': 0, 'src_out': 30}]}],
+                'audio_tracks': [{'name': 'voice', 'events': [{'src': 'fixture', 'in': 0, 'out': 30, 'volume': 1}]}]}
+    raw = (json.dumps(document, sort_keys=True) + '\n').encode('ascii')
+    _write(timeline, raw)
+    version = 'sha256:' + _sha(raw)
+    wire = _run([_SYSTEM_PYTHON, '-IBS', program, '-t', timeline, 'timeline', 'preview-window', '--frame', '0',
+                 '--expected-content-version=' + version, '--render', '--include-media', '--prepare-inputs'],
+                cwd=root, env=env, limit=_WIRE_LIMIT)
+    media = root / 'decoded-probe.mp4'
+    _write(media, _receipt(wire, verified, version))
+    _run([_SYSTEM_FFMPEG, '-v', 'error', '-xerror', '-nostdin', '-protocol_whitelist', 'file', '-f', 'mov',
+          '-i', media, '-map', '0:v:0', '-map', '0:a:0', '-f', 'null', '-'], cwd=root, env=env)
+    _require(_read(timeline, 1024 * 1024) == raw and call('--verify') == verified,
+             'qualification input or profile changed')
+    _verified_profile(profile, launcher_sha256, wheel_sha256)
+    return {'schema': 'framivra.preview-supplier/v1', 'abi': _LAUNCHER, 'launcherSha256': launcher_sha256,
+            'wheelSha256': wheel_sha256, 'runtimeProjectionSha256': verified['runtime_projection_sha256']}
+
+
+def qualify_candidate(artifacts, *, wheel_filename, launcher_sha256, wheel_sha256, work_parent, python):
+    """Observe a qualification; do not publish the disposable profile."""
+    _verify_pins(launcher_sha256, wheel_sha256, wheel_filename)
     launcher, wheel = _read(artifacts / 'vtx-preview', 256 * 1024), _read(artifacts / 'kernel.whl', _WHEEL_LIMIT)
     _require((_sha(launcher), _sha(wheel)) == (launcher_sha256, wheel_sha256),
              'candidate does not match independently approved launcher and wheel')
     with tempfile.TemporaryDirectory(prefix='framivra-ordinary-', dir=work_parent) as tmp:
         root = Path(tmp)
-        home, profile, project = (root / name for name in ('home', 'preview', 'fixture'))
-        for directory in (home, profile, project):
-            directory.mkdir(mode=0o700)
-        env = _env(home)
-        distribution = root / wheel_filename
-        _write(distribution, wheel)
-        program = profile / 'vtx-preview'
-        _write(program, launcher, 0o500)
-        _write(profile / 'kernel.whl', wheel)
-        _write(profile / 'kernel.sha256', (wheel_sha256 + '\n').encode('ascii'))
-        site = root / 'site'
-        _run([python, '-IB', '-m', 'pip', '--isolated', '--disable-pip-version-check', 'install', '--no-index',
-              '--no-deps', '--no-compile', '--target', site, distribution], cwd=root, env=env)
+        return _qualify_profile(root, root / 'preview', wheel_filename=wheel_filename,
+                                launcher_sha256=launcher_sha256, wheel_sha256=wheel_sha256,
+                                python=python, fresh=(launcher, wheel))
 
-        def call(*args, limit=32 * 1024):
-            return _json(_run([_SYSTEM_PYTHON, '-IBS', program, *args], cwd=root, env=env, limit=limit))
 
-        staged = call('--stage-from', site)
-        verified = call('--verify')
-        _require(set(verified) == {'ok', 'wheel_sha256', 'runtime_projection_sha256'}
-                 and verified['ok'] is True and verified['wheel_sha256'] == wheel_sha256
-                 and type(verified['runtime_projection_sha256']) is str
-                 and _HEX.fullmatch(verified['runtime_projection_sha256'])
-                 and set(staged) == verified.keys() | {'installed_member_sha256'}
-                 and all(staged[key] == value for key, value in verified.items()),
-                 'staging and fixed-wheel verification did not match')
-        capabilities = call('-t', 'unused', 'capabilities')
-        _require(capabilities.get('schema') == 'framivra.timeline.read/v1', 'unexpected launcher capability schema')
-        cap = capabilities['capabilities']['preview_window']
-        _require(cap['schema'] == _WINDOW and cap['launcher'] == _LAUNCHER
-                 and cap['inline_media'] is cap['prepare_inputs'] is cap['input_epoch'] is True
-                 and all(cap[key] == verified[key] for key in ('wheel_sha256', 'runtime_projection_sha256')),
-                 'ordinary fixed-wheel capability identity did not match')
-        source = project / 'probe.mp4'
-        _run([_SYSTEM_FFMPEG, '-v', 'error', '-nostdin', '-f', 'lavfi', '-i', 'color=c=teal:s=1920x1080:r=30:d=1',
-              '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=1', '-c:v', 'libx264',
-              '-threads:v', '1', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-ac', '2', source], cwd=root, env=env)
-        timeline = project / 'timeline.json'
-        document = {'version': 2, 'project': {'fps': 30, 'width': 1920, 'height': 1080, 'duration_frames': 30},
-                    'sources': [{'id': 'fixture', 'path': source.name}], 'subtitles': [],
-                    'video_tracks': [{'name': 'picture', 'kind': 'aroll', 'clips': [
-                        {'src': 'fixture', 'dst_in': 0, 'dur': 30, 'src_in': 0, 'src_out': 30}]}],
-                    'audio_tracks': [{'name': 'voice', 'events': [{'src': 'fixture', 'in': 0, 'out': 30, 'volume': 1}]}]}
-        raw = (json.dumps(document, sort_keys=True) + '\n').encode('ascii')
-        _write(timeline, raw)
-        version = 'sha256:' + _sha(raw)
-        wire = _run([_SYSTEM_PYTHON, '-IBS', program, '-t', timeline, 'timeline', 'preview-window', '--frame', '0',
-                     '--expected-content-version=' + version, '--render', '--include-media', '--prepare-inputs'],
-                    cwd=root, env=env, limit=_WIRE_LIMIT)
-        media = root / 'decoded-probe.mp4'
-        _write(media, _receipt(wire, verified, version))
-        _run([_SYSTEM_FFMPEG, '-v', 'error', '-xerror', '-nostdin', '-protocol_whitelist', 'file', '-f', 'mov',
-              '-i', media, '-map', '0:v:0', '-map', '0:a:0', '-f', 'null', '-'], cwd=root, env=env)
-        _require(_read(timeline, 1024 * 1024) == raw and _read(program, 256 * 1024) == launcher
-                 and call('--verify') == verified, 'qualification input or profile changed')
-        return {'schema': 'framivra.preview-supplier/v1', 'abi': _LAUNCHER, 'launcherSha256': launcher_sha256,
-                'wheelSha256': wheel_sha256, 'runtimeProjectionSha256': verified['runtime_projection_sha256']}
+def _publish_new(staged, target):
+    # Do not use rename(): on POSIX it can replace an existing empty directory.
+    # The tested ordinary profile is Linux-only, and refusal is safe everywhere.
+    import ctypes
+
+    rename = getattr(ctypes.CDLL(None, use_errno=True), 'renameat2', None)
+    _require(rename is not None, 'cannot atomically publish a new preview profile')
+    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    rename.restype = ctypes.c_int
+    if rename(-100, os.fsencode(staged), -100, os.fsencode(target), 1):  # AT_FDCWD, RENAME_NOREPLACE
+        error = ctypes.get_errno()
+        raise OSError(error, 'cannot publish preview profile without replacement')
+
+
+def enroll_profile(root, *, launcher_path, fetch_wheel, wheel_filename, launcher_sha256, wheel_sha256,
+                   projection_sha256, python):
+    """Installer-only operation, under the existing install lock and approved catalog.
+
+    Publish exactly the staged and qualified directory; an existing directory is
+    accepted only after independent exact-pin and ordinary render requalification.
+    The caller must publish the Ready registration only on successful return.
+    This is not an updater and touches neither an old profile nor old receipt.
+    """
+    _verify_pins(launcher_sha256, wheel_sha256, wheel_filename)
+    _require(type(projection_sha256) is str and _HEX.fullmatch(projection_sha256), 'expected approved projection identity')
+    info = root.lstat()
+    _require(root.resolve(strict=True) == root and stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid()
+             and not info.st_mode & 0o022, 'preview managed root is not private-owner controlled')
+    target = root / 'preview'
+    adopt = os.path.lexists(target)
+    with tempfile.TemporaryDirectory(prefix='.preview-enrollment-', dir=root) as tmp:
+        scratch = Path(tmp)
+        profile = target if adopt else scratch / 'preview'
+        fresh = None
+        if not adopt:
+            launcher = _read(launcher_path, 256 * 1024)
+            _require(_sha(launcher) == launcher_sha256, 'candidate does not match independently approved launcher')
+            wheel = _read(fetch_wheel(), _WHEEL_LIMIT)
+            fresh = launcher, wheel
+        receipt = _qualify_profile(scratch, profile, wheel_filename=wheel_filename,
+            launcher_sha256=launcher_sha256, wheel_sha256=wheel_sha256, python=python,
+            fresh=fresh, expected_projection=projection_sha256)
+        if not adopt:
+            before = profile.stat()
+            _publish_new(profile, target)
+            after = target.lstat()
+            _require((before.st_dev, before.st_ino) == (after.st_dev, after.st_ino), 'qualified preview profile was replaced')
+        return receipt
 
 
 def main(argv=None):

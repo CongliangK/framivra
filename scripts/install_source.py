@@ -8,6 +8,7 @@ No model, service, credential, project, or existing developer checkout is change
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import hashlib
 import json
 import importlib.util
 import os
@@ -19,6 +20,7 @@ import shutil
 import stat
 import subprocess
 import sys
+from types import ModuleType
 import uuid
 import venv
 from urllib.parse import urlsplit
@@ -42,6 +44,12 @@ BUNDLE = ('install_source.py', 'install_downloads.py', 'install_native_windows.p
 
 SCHEMA = 'framivra.installation/v1'
 REPOSITORY = 'https://github.com/CongliangK/framivra.git'
+# Release-reviewed records only, keyed by wheel-source Git object identity.
+# Empty until independently signed/approved distribution exists. Nothing in
+# a project, install receipt, environment variable or downloaded wheel adds pins.
+_PREVIEW_SUPPLIER_RELEASES = {}
+_PREVIEW_SOURCE = ('vt.py', 'vtx', 'pyproject.toml', 'setup.py', 'VERSION', 'MANIFEST.in', 'README.md',
+                   'LICENSE', 'plugins/registry.json', 'scripts/preview_window_wheel.py')
 PYTHON_PACKAGES = ('setuptools>=68,<81', 'wheel>=0.42,<1', 'numpy>=1.26,<3',
                    'scipy>=1.11,<2', 'soundfile>=0.12,<1', 'soxr>=0.3,<1',
                    'Pillow>=10,<13')
@@ -571,6 +579,40 @@ def windows_elevated():
     return bool(ctypes.windll.shell32.IsUserAnAdmin())
 
 
+def optional_preview_supplier(root, source, commit, repository, python):
+    # This hook runs under installation_lock. Unapproved installations never
+    # look at the destination or load an optional helper or download a wheel.
+    if sys.platform != 'linux' or repository != REPOSITORY or not _PREVIEW_SUPPLIER_RELEASES:
+        return None
+    tree = git('ls-tree', '-r', commit, '--', *_PREVIEW_SOURCE, cwd=source)
+    key = hashlib.sha256((tree + '\n').encode('ascii')).hexdigest()
+    approved = _PREVIEW_SUPPLIER_RELEASES.get(key)
+    if approved is None:
+        return None
+    tag, filename = approved['releaseTag'], approved['wheelFilename']
+    if (not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[1-9][0-9]*)?', tag)
+            or not re.fullmatch(r'framivra-[A-Za-z0-9_.+]+-py3-none-any\.whl', filename)):
+        raise InstallError('Invalid release-reviewed preview catalog entry')
+    helper_name = 'scripts/release/prepare_preview_supplier.py'
+    helper_path = physical(source / helper_name)
+    raw = helper_path.read_bytes()
+    blob = hashlib.sha1(b'blob ' + str(len(raw)).encode('ascii') + b'\0' + raw).hexdigest()
+    if blob != git('rev-parse', f'{commit}:{helper_name}', cwd=source):
+        raise InstallError('Preview supplier helper differs from the selected source')
+    helper = ModuleType('_framivra_preview_supplier')
+    helper.__file__ = str(helper_path)
+    exec(compile(raw, str(helper_path), 'exec'), helper.__dict__)
+
+    def fetch_wheel():
+        return downloads.acquire(root / 'cache' / 'downloads',
+            [f'https://github.com/CongliangK/framivra/releases/download/{tag}/{filename}'],
+            approved['wheelSha256'], size=approved['wheelBytes'], filename=filename)
+
+    return helper.enroll_profile(root, launcher_path=physical(source / 'scripts/preview_window_wheel.py'),
+        fetch_wheel=fetch_wheel, wheel_filename=filename, launcher_sha256=approved['launcherSha256'],
+        wheel_sha256=approved['wheelSha256'], projection_sha256=approved['runtimeProjectionSha256'], python=python)
+
+
 def install(args):
     if sys.platform not in ('linux', 'darwin', 'win32'):
         raise InstallError('Supported systems: Linux, macOS, Windows')
@@ -633,6 +675,7 @@ def install(args):
         ownership = dict(previous or dict(schema=SCHEMA, repository=args.repo,
                                           sourceRoot=str(root / 'source'), ref=args.ref))
         ownership.pop('verification', None)
+        ownership.pop('previewSupplier', None)
         atomic_json(root / 'installation.json', dict(ownership, status='preparing', sourceApproved=bool(resuming),
                     updateRequested=args.update, requestedRef=args.ref,
                     pythonDependenciesPrepared=bool(resuming and previous.get('pythonDependenciesPrepared'))))
@@ -685,7 +728,19 @@ def install(args):
                        installedAt=datetime.now(timezone.utc).isoformat())
         if evidence is not None:
             receipt['verification'] = evidence
+        # The ordinary core is usable before optional enrollment begins. An
+        # interruption during supplier qualification therefore leaves Ready
+        # core metadata without any unverified or stale supplier assertion.
         atomic_json(root / 'installation.json', receipt)
+        try:
+            supplier = optional_preview_supplier(root, source, commit, args.repo, python)
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
+            # Never make an unqualified optional profile part of Ready. Leave
+            # a conflicting fixed destination untouched; core remains usable.
+            print('[install] Optional ordinary preview supplier not registered: ' + str(error), file=sys.stderr)
+        else:
+            if supplier is not None:
+                atomic_json(root / 'installation.json', dict(receipt, previewSupplier=supplier))
     print('[install] CDP render verification: ' + ('passed (' + evidence + ')' if evidence is not None else 'skipped (opt in with --verify-render)'))
     print('\nREADY: non-AI CDP environment. In DSH: scan installed kernels → select registered installation → save → check connection.\nVTX: ' + str(executable))
     return 0
