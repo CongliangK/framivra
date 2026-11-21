@@ -510,4 +510,8 @@ def main():
 
 
 if __name__ == "__main__":
+    if sys.platform == 'win32':
+        # Status lines also need to survive the Windows redirected code page.
+        sys.stdout.reconfigure(encoding='utf-8', errors='strict')
+        sys.stderr.reconfigure(encoding='utf-8', errors='backslashreplace')
     main()

@@ -1,6 +1,9 @@
 """Offline cover browser selection and local filename transport."""
+from contextlib import redirect_stdout
+import io
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -13,6 +16,16 @@ from vtx.render import browser_paths
 
 
 class CoverWindowsBrowser(unittest.TestCase):
+    def test_direct_help_with_redirected_ascii_parent(self):
+        env = dict(os.environ, PYTHONIOENCODING='ascii:strict' if os.name == 'nt' else 'utf-8:strict',
+                   PYTHONUTF8='0')
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([sys.executable, '-B', make_cover.__file__, '--help'],
+                                    cwd=directory, env=env, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('四端裁切预览', result.stdout.decode('utf-8'))
+        self.assertEqual(result.stderr, b'')
+
     def test_installed_edge_and_explicit_windows_override(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -51,6 +64,7 @@ class CoverLocalUri(unittest.TestCase):
             with mock.patch.object(make_cover, 'find_chrome', return_value='fixture-chromium'), \
                     mock.patch.object(make_cover, 'run', side_effect=run), \
                     mock.patch.object(make_cover, 'probe', return_value=(1920, 1200)), \
+                    redirect_stdout(io.StringIO()), \
                     mock.patch.object(sys, 'argv', ['make_cover.py', 'render', '--out', str(output),
                                                    '--title', 'Cover', '--sub', 'Local fixture']):
                 make_cover.main()
