@@ -41,7 +41,8 @@ def trim_points(d, rate):
 def main(src_dir, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     index = []
-    for i, f in enumerate(sorted(glob.glob(os.path.join(src_dir, 'track*.wav'))), 1):
+    pattern = os.path.join(glob.escape(src_dir), 'track*.wav')
+    for i, f in enumerate(sorted(glob.glob(pattern)), 1):
         d, rate = read_wav_float32(f)
         s, e = trim_points(bandpass(d, rate), rate)
         cut = d[s:e]
