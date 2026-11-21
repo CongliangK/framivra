@@ -20,6 +20,8 @@ import os
 import sqlite3
 import struct
 import sys
+from contextlib import closing
+from urllib.parse import quote_from_bytes
 
 from wav_float32 import write_wav_float32
 
@@ -147,15 +149,26 @@ def findall(node, tag, out=None):
     return out
 
 
+def _open_readonly(aup3_path):
+    # Encode the whole filename component before adding our only URI option.
+    # In particular, don't let a leading // be interpreted as a URI authority.
+    filename = os.fsencode(aup3_path)
+    if not filename or b'\0' in filename:
+        raise sqlite3.OperationalError('invalid project filename')
+    if filename == b':memory:':
+        filename = b'./:memory:'  # SQLite recognizes the bare name even after URI decoding.
+    return sqlite3.connect(f'file:{quote_from_bytes(filename, safe="")}?mode=ro', uri=True)
+
+
 def extract_all(aup3_path, out_dir):
     """轨道 → WAV；未被引用的 sampleblocks → orphans/ WAV。返回报告 dict。"""
     import numpy as np
-    con = sqlite3.connect(f'file:{aup3_path}?mode=ro', uri=True)
-    dictb, docb = con.execute('SELECT dict, doc FROM project WHERE id=1').fetchone()
-    names = parse_dict(dictb)
-    root = build_tree(parse_doc(docb, names, dictb[1]))
-    blobs = {bid: samples for bid, samples in
-             con.execute('SELECT blockid, samples FROM sampleblocks')}
+    with closing(_open_readonly(aup3_path)) as con:
+        dictb, docb = con.execute('SELECT dict, doc FROM project WHERE id=1').fetchone()
+        names = parse_dict(dictb)
+        root = build_tree(parse_doc(docb, names, dictb[1]))
+        blobs = {bid: samples for bid, samples in
+                 con.execute('SELECT blockid, samples FROM sampleblocks')}
     report = {'tracks': [], 'orphans': []}
     used = set()
     for ti, wt in enumerate(findall(root, 'wavetrack'), 1):
@@ -199,9 +212,7 @@ def extract_all(aup3_path, out_dir):
     return report
 
 
-def main(aup3_path, out_dir, dump=False):
-    os.makedirs(out_dir, exist_ok=True)
-    con = sqlite3.connect(f'file:{aup3_path}?mode=ro', uri=True)
+def _inspect_project(con, out_dir, dump):
     dictb, docb = con.execute('SELECT dict, doc FROM project WHERE id=1').fetchone()
     names = parse_dict(dictb)
     charw = dictb[1]
@@ -247,6 +258,12 @@ def main(aup3_path, out_dir, dump=False):
     print(f"\nblocks in table: {len(blocks)}, events: {len(events)}, wrote structure.json")
     if dump:
         print('wrote doc_events.txt')
+
+
+def main(aup3_path, out_dir, dump=False):
+    os.makedirs(out_dir, exist_ok=True)
+    with closing(_open_readonly(aup3_path)) as con:
+        _inspect_project(con, out_dir, dump)
     print('\n===== EXTRACT =====')
     print(json.dumps(extract_all(aup3_path, out_dir), ensure_ascii=False, indent=1))
 

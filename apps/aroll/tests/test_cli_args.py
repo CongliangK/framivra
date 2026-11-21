@@ -122,6 +122,40 @@ class FloatWavPipelineTests(unittest.TestCase):
 
 
 class Aup3BadInputTests(unittest.TestCase):
+    def test_sqlite_path_treats_fragment_and_escape_as_literal(self):
+        def make_project(path, samples):
+            with contextlib.closing(sqlite3.connect(path)) as con, con:
+                con.execute('CREATE TABLE project (id INTEGER, dict BLOB, doc BLOB)')
+                con.execute('INSERT INTO project VALUES (1, ?, ?)', (b'\0\1', b''))
+                con.execute('CREATE TABLE sampleblocks (blockid INTEGER, sampleformat INTEGER, '
+                            'summin REAL, summax REAL, sumrms REAL, summary256 BLOB, summary64k BLOB, samples BLOB)')
+                con.execute('INSERT INTO sampleblocks (blockid, samples) VALUES (1, ?)', (samples,))
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            prefix = root / 'Recording'
+            source = root / 'Recording#第二段 %20.aup3'
+            expected = struct.pack('<3f', .125, -.5, .25)
+            make_project(prefix, struct.pack('<f', .75))
+            make_project(source, expected)
+            before = {path: path.read_bytes() for path in (prefix, source)}
+            out = root / 'out'
+            with contextlib.redirect_stdout(io.StringIO()):
+                aup3_extract.main(source, out)
+            info = json.loads((out / 'structure.json').read_text())
+            self.assertEqual(info['block_table']['1']['nbytes'], len(expected))
+            self.assertEqual((out / 'orphans' / 'orphan_block01.wav').read_bytes()[44:], expected)
+            self.assertEqual({path: path.read_bytes() for path in before}, before)
+            with contextlib.closing(aup3_extract._open_readonly(source)) as con:
+                with self.assertRaisesRegex(sqlite3.OperationalError, 'readonly'):
+                    con.execute('CREATE TABLE should_not_write (id INTEGER)')
+            missing = root / 'absent#take.aup3'
+            with self.assertRaises(sqlite3.OperationalError):
+                with contextlib.closing(aup3_extract._open_readonly(missing)):
+                    self.fail('read-only open accepted a missing project')
+            self.assertFalse(missing.exists())
+            self.assertFalse((root / 'absent').exists())
+
     def test_serialized_reads_reject_invalid_lengths_without_advancing(self):
         for length in (-5, -1, 2, 2**31 - 1):
             with self.subTest(length=length):
@@ -159,7 +193,7 @@ class Aup3BadInputTests(unittest.TestCase):
     def test_malformed_serialized_project_reports_clean_error(self):
         with tempfile.TemporaryDirectory() as td:
             project = Path(td) / 'malformed.aup3'
-            with sqlite3.connect(project) as con:
+            with contextlib.closing(sqlite3.connect(project)) as con, con:
                 con.execute('CREATE TABLE project (id INTEGER, dict BLOB, doc BLOB)')
                 con.execute('INSERT INTO project VALUES (1, ?, ?)',
                             (b'\0\1', bytes.fromhex('0bfbffffff')))
