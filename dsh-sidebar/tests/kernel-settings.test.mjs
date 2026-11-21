@@ -99,6 +99,55 @@ test('managed selection drafts executable/config together, preserves callbacks a
   assert(/语义编辑不可用/.test(text()), "Body text must match /语义编辑不可用/")
 })
 
+test('ordinary Save atomically selects a scanned managed preview identity; a different kernel clears it', async t => {
+  const configFile = '/home/owner/.local/share/framivra/config.json'
+  const path = '/home/owner/.local/share/framivra/bin/vtx'
+  const commit = 'a'.repeat(40)
+  const pin = ['v1', commit, ...['b', 'c', 'd'].map(ch => ch.repeat(64))].join(':')
+  let candidates = [{ path, source: 'managed-git', installation: { configFile, commit, version: '2.2', renderer: 'cdp', profile: 'non-ai', previewSupplier: pin } }]
+  const { root, calls } = await setup(t, () => ({ ok: true, candidates, warnings: [] }))
+  const form = store()
+  await act(async () => root.render(h(BundleConfigForm, { form })))
+  await click(button('扫描已安装内核'))
+  assert.match(text(), /使用前仍须检查能力并单独授权/)
+  await click(button('填入路径'))
+  assert.equal(form.calls.length, 0)
+  await click(button('保存配置'))
+  assert.deepEqual(form.calls[0], { revision: 7, ops: [
+    { op: 'set', path: ['vtxExecutable'], value: path },
+    { op: 'set', path: ['trustedPath'], value: '/usr/bin:/bin' },
+    { op: 'set', path: ['vtxConfigFile'], value: configFile },
+    { op: 'set', path: ['managedPreviewSupplier'], value: pin },
+  ] })
+  candidates = [{ path: '/other/bin/vtx', source: 'common-venv' }]
+  await click(button('扫描已安装内核'))
+  await click(button('填入路径'))
+  await click(button('保存配置'))
+  assert.equal(form.calls[1].revision, 8)
+  assert(form.calls[1].ops.some(op => op.path[0] === 'managedPreviewSupplier' && op.value === ''))
+  assert.deepEqual(calls.map(call => call.payload), [{ op: 'scan' }, { op: 'scan' }])
+})
+
+test('rebasing an unrelated settings draft does not resurrect a stale managed supplier', async t => {
+  const pin = ['v1', 'a'.repeat(40), ...['b', 'c', 'd'].map(ch => ch.repeat(64))].join(':')
+  const replacement = pin.replace('a'.repeat(40), 'f'.repeat(40))
+  const { root } = await setup(t)
+  const form = store()
+  form.snapshot.value.managedPreviewSupplier = pin
+  await act(async () => root.render(h(BundleConfigForm, { form })))
+  await act(async () => button('高级连接设置')?.click())
+  type(document.querySelector('#framivra-config-logmax'), '3')
+  // Simulate a concurrent owner selection and the documented revision rebase.
+  await act(async () => form.mutate([{ op: 'set', path: ['managedPreviewSupplier'], value: replacement }], 7))
+  form.calls.length = 0
+  await click(button('以最新版本重新校验草稿（不提交）'))
+  await click(button('保存配置'))
+  assert.equal(form.calls[0].revision, 8)
+  assert(form.calls[0].ops.some(op => op.path[0] === 'logMaxPerMinute' && op.value === 3))
+  assert(form.calls[0].ops.every(op => op.path[0] !== 'managedPreviewSupplier'))
+  assert.equal(form.snapshot.value.managedPreviewSupplier, replacement)
+})
+
 test('source discovery is labeled unverified and empty scans explain their scope', async t => {
   let candidates = [{ path: '/home/owner/.agents/skills/video/vtx/vtx.py', source: 'video-skill-source' }]
   const { root, calls } = await setup(t, () => ({ ok: true, candidates, warnings: [] }))

@@ -9,7 +9,7 @@ import { boundedText, CONTROL_REQUEST_LIMIT, FRAME_REQUEST_LIMIT, FRAME_WIRE_LIM
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
 import { createTimelineAgent } from './agent.mjs'
 import { ConfigurationError, readLogMaxPerMinute } from './configuration.mjs'
-import { validateKernelConfigSelection } from './kernel-management.mjs'
+import { validateKernelConfigSelection, validateManagedPreviewSelection } from './kernel-management.mjs'
 
 /**
  * Deterministic build stamp over the module list in protocol.mjs: per-file
@@ -210,14 +210,15 @@ function writeCapabilityRefusal(capabilities) {
   if (transport?.flag !== '--request-stdin' || transport.max_bytes !== 8388608) return 'Installed vtx lacks the official bounded --request-stdin transport; read/copy remain available. Reopening /dev/stdin is not a supported fallback.'
 }
 
-export function createPreviewHost(ctx, config = {}) {
+export function createPreviewHost(ctx, config = {}, { approvedPreviewSuppliers } = {}) {
+  const previewApprovals = approvedPreviewSuppliers && Object.freeze([...approvedPreviewSuppliers])
   const reader = new TimelineReader(ctx.subprocess, config, async (snapshot, signal) => {
     try { return await validateKernelConfigSelection(ctx, snapshot, signal) }
     catch (error) {
       if (typeof error?.code === 'string' && Number.isInteger(error?.status)) fail('CONFIG_INVALID', error.message, error.status)
       throw error
     }
-  })
+  }, (snapshot, signal) => validateManagedPreviewSelection(ctx, snapshot, signal, previewApprovals))
   const lifecycle = new AbortController()
   const grants = new Map()
   const operations = new Set()
@@ -271,7 +272,10 @@ export function createPreviewHost(ctx, config = {}) {
     }
     return target
   }
-  async function windowExecutableIdentity(executable, root, project, ordinaryExecutable, signal) {
+  async function windowExecutableIdentity(executable, root, project, ordinaryExecutable, signal, config) {
+    if (config?.managedPreviewSupplier && (await reader.managedWindow(config, signal)).executable !== executable) {
+      fail('EXECUTABLE_CHANGED', 'Managed preview launcher no longer matches the owner selection', 409)
+    }
     const target = await localTarget(executable, undefined, signal)
     const profilePath = dirname(executable)
     const profile = await localTarget(profilePath, undefined, signal)
@@ -299,10 +303,10 @@ export function createPreviewHost(ctx, config = {}) {
     if (a.targetKey !== b.targetKey || a.profileKey !== b.profileKey || a.version !== b.version) fail('EXECUTABLE_CHANGED', 'Independent window launcher identity changed; reopen preview', 409)
   }
   async function probeWindow(config, root, project, timeline, ordinaryExecutable, signal, owner, deadlineAt) {
-    if (!platformAllowsWindow() || !config.previewWindowExecutable) return
+    if (!platformAllowsWindow() || (!config.previewWindowExecutable && !config.managedPreviewSupplier)) return
     try {
       const executable = await reader.windowExecutable(signal, config)
-      const identify = () => windowExecutableIdentity(executable, root, project, ordinaryExecutable, signal)
+      const identify = () => windowExecutableIdentity(executable, root, project, ordinaryExecutable, signal, config)
       const binding = await identify()
       let capability = await reader.windowCapabilities(executable, ctx.fs.processPath(timeline), signal, config, owner)
       sameWindowExecutable(binding, await identify())
@@ -454,7 +458,33 @@ export function createPreviewHost(ctx, config = {}) {
     if (result.target.targetKey !== grant.timeline.targetKey) fail('PATH_CHANGED', 'Timeline identity changed; reopen preview', 409)
     return result.target
   }
+  async function validateManagedOwner(grant, signal) {
+    if (!grant.configSnapshot.managedPreviewSupplier || !grant.windowExecutable) return
+    if (grant.managedWindowRetired) fail('EXECUTABLE_CHANGED', 'The selected managed preview was retired; reopen and re-authorize', 409)
+    const binding = grant.windowExecutable
+    try {
+      sameWindowExecutable(binding, await windowExecutableIdentity(binding.executable, grant.root, grant.project,
+        grant.executableTarget, signal, grant.configSnapshot))
+    } catch (error) {
+      signal.throwIfAborted()
+      if (['EXECUTABLE_CHANGED', 'WINDOW_EXECUTABLE_UNTRUSTED'].includes(error?.code)) {
+        grant.managedWindowRetired = true
+        automatic.closeOpen(grant)
+        const operation = grant.windowOperation
+        if (operation) {
+          clearWindowFirstFrame(operation)
+          grant.frame?.abort()
+          // May be running inside this very operation. Retain its owner until
+          // settlement instead of awaiting its own done promise here.
+          void reapWindow(grant, operation).catch(() => {})
+        }
+      }
+      throw error
+    }
+    if (grant.managedWindowRetired) fail('EXECUTABLE_CHANGED', 'The selected managed preview was retired; reopen and re-authorize', 409)
+  }
   async function programTimelineVersion(grant, signal) {
+    await validateManagedOwner(grant, signal)
     const timeline = await validateTimeline(grant, signal)
     const project = await localTarget(grant.projectPath, undefined, signal)
     if (project.targetKey !== grant.project.targetKey) fail('PATH_CHANGED', 'Project identity changed; reopen preview', 409)
@@ -616,12 +646,25 @@ export function createPreviewHost(ctx, config = {}) {
       const placeholder = 'framivra-diagnostics-no-timeline.json'
       const capabilities = previewCapabilities(await reader.read(executable, placeholder, 'capabilities', undefined, hold.signal, config, 'diagnostics'))
       const storeCapabilities = await probeStore(executable, placeholder, hold.signal, config, 'diagnostics')
+      let previewSupplier
+      if (config.managedPreviewSupplier) {
+        try {
+          const launcher = await reader.windowExecutable(hold.signal, config)
+          await reader.windowCapabilities(launcher, placeholder, hold.signal, config, 'diagnostics')
+          await reader.managedWindow(config, hold.signal)
+          previewSupplier = { ok: true }
+        } catch (error) {
+          hold.signal.throwIfAborted()
+          if (error?.code === 'PROCESS_CLEANUP_FAILED') throw error
+          previewSupplier = { ok: false, error: error?.code === 'EXECUTABLE_CHANGED' ? 'EXECUTABLE_CHANGED' : 'WINDOW_UNSUPPORTED' }
+        }
+      }
       hold.signal.throwIfAborted()
       if (snapshotConfig().fingerprint !== config.fingerprint) fail('CONFIG_CHANGED', 'Host plugin configuration changed during the check; run the check again', 409)
       return json({ ok: true, schema: 'framivra.diagnostics/v1',
         config: { vtxExecutable: config.vtxExecutable, trustedPath: config.trustedPath },
         executable: { path: ctx.fs.processPath(executableTarget), regularFile: true },
-        capabilities, storeCapabilities })
+        capabilities, storeCapabilities, ...(previewSupplier && { previewSupplier }) })
     } finally { hold.release() }
   }
   async function control(request, note = {}, owner = true) {
@@ -786,6 +829,8 @@ export function createPreviewHost(ctx, config = {}) {
           hold.signal.throwIfAborted()
           binding = { timelineVersion, duration, span }
         }
+        await validateManagedOwner(grant, hold.signal)
+        grantFor(data.sessionId, data.grant)
         if (attempt?.cancelled) fail('PROGRAM_RUN_EXPIRED', 'Authorization attempt was cancelled', 403)
         const info = automatic.authorize(grant, data, binding)
         if (attempt) attempt.grantId = info.id
@@ -1138,7 +1183,8 @@ export function createPreviewHost(ctx, config = {}) {
       const project = await localTarget(grant.projectPath, undefined, checkSignal)
       if (project.targetKey !== grant.project.targetKey) fail('PATH_CHANGED', 'Project identity changed; reopen preview', 409)
       const binding = grant.windowExecutable
-      sameWindowExecutable(binding, await windowExecutableIdentity(binding.executable, grant.root, project, grant.executableTarget, checkSignal))
+      if (grant.configSnapshot.managedPreviewSupplier) await validateManagedOwner(grant, checkSignal)
+      else sameWindowExecutable(binding, await windowExecutableIdentity(binding.executable, grant.root, project, grant.executableTarget, checkSignal))
       const timeline = await validateTimeline(grant, checkSignal)
       const info = await ctx.fs.stat(timeline, checkSignal)
       if (info?.type !== 'file' || info.version !== operation.provisional.timelineVersion) fail('STALE_WINDOW', 'Saved timeline changed; refresh before rendering a window', 409)
@@ -1307,11 +1353,19 @@ export function createPreviewHost(ctx, config = {}) {
       queued = { start, grant }
       frameQueue.push(queued)
       if (frameQueue.length === 1) start()
+      let checkingManaged = false, nextManagedCheck = performance.now() + 1000
       monitor = setInterval(() => {
         // Same fail-closed rule as the edit monitor: a throwing provider must
         // abort this frame, never escape as an uncaught timer exception.
         try {
           if (clock() >= grant.expiresAt || ctx.sessions.get(data.sessionId) !== grant.session || ctx.workingDirectory.get(grant.session) !== grant.cwd || !configCurrent(grant)) controller.abort()
+          if (windowOperation && grant.configSnapshot.managedPreviewSupplier && !signal.aborted &&
+              !checkingManaged && performance.now() >= nextManagedCheck) {
+            checkingManaged = true
+            void validateManagedOwner(grant, signal).catch(() => controller.abort()).finally(() => {
+              checkingManaged = false; nextManagedCheck = performance.now() + 1000
+            })
+          }
         } catch { controller.abort() }
       }, 50)
       monitor.unref?.()
@@ -1329,7 +1383,8 @@ export function createPreviewHost(ctx, config = {}) {
           const project = await localTarget(grant.projectPath, undefined, signal)
           if (project.targetKey !== grant.project.targetKey) fail('PATH_CHANGED', 'Project identity changed; reopen preview', 409)
           const binding = grant.windowExecutable
-          sameWindowExecutable(binding, await windowExecutableIdentity(binding.executable, grant.root, project, executable, signal))
+          if (grant.configSnapshot.managedPreviewSupplier) await validateManagedOwner(grant, signal)
+          else sameWindowExecutable(binding, await windowExecutableIdentity(binding.executable, grant.root, project, executable, signal))
         }
         if (programRender) await validateProgram(sessionLease, grant, signal)
         if (isAuto && !automatic.active(sessionLease)) fail('SESSION_EXPIRED', 'Automatic window authorization ended', 403)

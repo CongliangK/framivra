@@ -5,7 +5,7 @@ import { addAbortSignal, Readable } from 'node:stream'
 import { crc32, inflateSync } from 'node:zlib'
 import { boundedText, FRAME_WIRE_LIMIT } from './bounded.mjs'
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
-import { readConfiguration, isVolatileConfig, ConfigurationError } from './configuration.mjs'
+import { readConfiguration, isVolatileConfig, ConfigurationError, PREVIEW_SUPPLIER_ABI } from './configuration.mjs'
 
 export class PreviewError extends Error {
   constructor(code, message, status = 400) {
@@ -88,7 +88,7 @@ const WINDOW_DIAGNOSTICS = new Map([
   ['render.process', 'An audio/video render or verification tool failed.'],
   ['output.limit', 'The generated window exceeds the inline response limit.'],
 ])
-const WINDOW_LAUNCHER = 'framivra.preview-window.fixed-wheel/v1'
+const WINDOW_LAUNCHER = PREVIEW_SUPPLIER_ABI
 const windowDigest = value => typeof value === 'string' && value.length === 64 && /^[a-f0-9]{64}$/.test(value)
 
 function decodePreviewWindowCapabilities(text) {
@@ -448,10 +448,11 @@ export function validateEnvelope(value, operation) {
 }
 
 export class TimelineReader {
-  constructor(subprocess, config = {}, validateConfigSelection) {
+  constructor(subprocess, config = {}, validateConfigSelection, validatePreviewSelection) {
     this.subprocess = subprocess
     this.configSource = config
     this.validateConfigSelection = validateConfigSelection
+    this.validatePreviewSelection = validatePreviewSelection
     // Plain (test/debug) sources keep fail-fast constructor validation; live
     // Volatile sources are validated on EVERY snapshot instead, because their
     // values can change at any time without a remount.
@@ -549,8 +550,20 @@ export class TimelineReader {
     if (!isAbsolute(path)) fail('BAD_EXECUTABLE', 'Resolver returned a nonabsolute executable', 502)
     return path
   }
+  async managedWindow(snapshot, signal) {
+    if (typeof this.validatePreviewSelection !== 'function') fail('WINDOW_UNSUPPORTED', 'Managed preview requires Host enrollment validation', 422)
+    try { return await this.validatePreviewSelection(snapshot, signal) }
+    catch (error) {
+      signal.throwIfAborted()
+      const mismatch = error instanceof SyntaxError || ['PREVIEW_SUPPLIER_UNAPPROVED', 'PREVIEW_SUPPLIER_CHANGED',
+        'BAD_PREVIEW_SUPPLIER', 'BAD_INSTALLATION', 'INSTALLATION_CHANGED', 'NOT_FOUND', 'FS_NOT_FOUND',
+        'UNSAFE_PATH', 'WORKSPACE_PATH', 'NOT_REGULAR', 'FILE_TOO_LARGE'].includes(error?.code)
+      if (mismatch) fail('EXECUTABLE_CHANGED', 'Managed preview enrollment changed; scan and save it again', 409)
+      fail('WINDOW_UNSUPPORTED', 'Managed preview enrollment could not be verified', 422)
+    }
+  }
   async windowExecutable(signal, snapshot) {
-    const selected = snapshot.previewWindowExecutable
+    const selected = snapshot.managedPreviewSupplier ? (await this.managedWindow(snapshot, signal)).executable : snapshot.previewWindowExecutable
     if (!selected) fail('WINDOW_UNSUPPORTED', 'No independent window launcher is configured', 422)
     try {
       const executable = await this.subprocess.resolveExecutable(selected, { PATH: snapshot.trustedPath }, signal)
@@ -576,7 +589,16 @@ export class TimelineReader {
     }, undefined, true, true, snapshot, owner)
   }
   async windowCapabilities(executable, timeline, signal, snapshot, owner) {
-    return this.command(executable, timeline, ['capabilities'], signal, decodePreviewWindowCapabilities, undefined, false, false, snapshot, owner, { isolatedWindow: true })
+    return this.command(executable, timeline, ['capabilities'], signal, text => {
+      const capability = decodePreviewWindowCapabilities(text)
+      if (snapshot.managedPreviewSupplier) {
+        const [, , , wheel, projection] = snapshot.managedPreviewSupplier.split(':')
+        if (capability.wheel_sha256 !== wheel || capability.runtime_projection_sha256 !== projection) {
+          fail('WINDOW_UNSUPPORTED', 'Live fixed-wheel capability differs from the owner-selected managed supplier', 422)
+        }
+      }
+      return capability
+    }, undefined, false, false, snapshot, owner, { isolatedWindow: true })
   }
   async firstFrameCapabilities(executable, capability, signal, snapshot, owner) {
     // The ordinary capabilities receipt cannot claim this transport. Probe
@@ -702,7 +724,12 @@ export class TimelineReader {
       if (config.fingerprint !== snapshot.fingerprint) fail('CONFIG_CHANGED', 'Host plugin configuration changed; reopen this preview and re-authorize', 409)
       config = snapshot
     } else config = this.snapshotConfig()
-    if (isolatedWindow && executable !== config.previewWindowExecutable) fail('CONFIG_CHANGED', 'The configured independent window launcher changed; reopen preview', 409)
+    if (isolatedWindow) {
+      const selected = config.managedPreviewSupplier ? (await this.managedWindow(config, signal)).executable : config.previewWindowExecutable
+      if (executable !== selected || this.snapshotConfig().fingerprint !== config.fingerprint) {
+        fail('CONFIG_CHANGED', 'The configured independent window launcher changed; reopen preview', 409)
+      }
+    }
     if (!isolatedWindow && config.vtxConfigFile) {
       if (typeof this.validateConfigSelection !== 'function') fail('CONFIG_TRUST_REQUIRED', 'Explicit VTX_CONFIG requires Host path trust validation', 403)
       try { await this.validateConfigSelection(config, signal) }
