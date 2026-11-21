@@ -19,6 +19,7 @@ from ..runtime.diagnostics import (emit, producer_exit, required_field, operatio
                           key_path, subtitle_location)
 from ..pipeline.composite import _gfx_scaled_size, needs_qc_clean, render_source_frame
 from ..cache.hygiene import gfx_dir   # R-05 探针口径对齐：gfx 内容域 bbox 需定位 png 序列目录
+from ..cache._formal_video import source_guard
 
 # ---- QC 阈值命名常量（值不变，仅命名；2026-09-10 收拢）----
 QC_CUT_MEAN_MAX = 6.0        # 底轨切点帧比对：平均像素差上限
@@ -361,8 +362,11 @@ def qc(c):
     # 丢弃到目标时刻）。seek 语义 = 输出 pts ≥ 目标的首帧，故目标须落在
     # (pts[n-1], pts[n]] = ((n-1)/fps, n/fps]：取 (n-0.2)/fps（n=0 用 0）。
     # 已对 final/qc_clean/4 个源 × 多帧位验证与旧 select=eq(n,N) 提帧逐字节一致。
-    def gray_frame(path: Path, n: int, pre_crop: str = "", tag: str = "", *, origin="$") -> bytes:
-        vf = (f"{pre_crop}," if pre_crop else "") + _QC_GRAY_FILTER
+    def gray_frame(path: Path, n: int, pre_crop: str = "", tag: str = "", *, origin="$", original=False) -> bytes:
+        filters = source_guard(c, path) if original else []
+        if pre_crop:
+            filters.append(pre_crop)
+        vf = ','.join([*filters, _QC_GRAY_FILTER])
         if n:
             offset = native("subtract", n, 0.2, path=origin)
             seconds = native("divide", offset, c.fps, path=origin,
@@ -444,7 +448,7 @@ def qc(c):
                 pre = (f"{c.crop169(field(cl, 'src', path))},scale={c.w}:{c.h}:flags=lanczos"
                        + (f",crop={post_crop}" if post_crop else ""))
                 return gray_frame(c.src_path(field(cl, "src", path)), sf,
-                                  pre_crop=pre, tag=tag, origin=path)
+                                  pre_crop=pre, tag=tag, origin=path, original=True)
         return _BLACK
 
     def mean_difference(a, b, origin, frame):
@@ -625,7 +629,7 @@ def qc(c):
         else:
             b = gray_frame(c.src_path(field(cl, "src", path)), sf,
                            pre_crop=f"{c.crop169(field(cl, 'src', path))},scale={c.w}:{c.h}:flags=lanczos",
-                           tag=f"c{df}_", origin=path)
+                           tag=f"c{df}_", origin=path, original=True)
         mean = mean_difference(a, b, path, df)
         # 检查名仍显示 clip 起点；工作索引绝不取代原 timeline 索引。
         cut_frames[key] = df

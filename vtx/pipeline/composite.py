@@ -14,6 +14,7 @@ from .constraints import fps_expression, parse_fps
 from ..media.encoders import (pick_vcodec, nvenc_budget, nvenc_concurrency, seg_encoder_kind,
                               seg_needs_alpha, display_video_size)
 from ..cache.hygiene import budget_gate, manifest_record, seg_key
+from ..cache._formal_video import source_guard
 from ..runtime import events
 from .infra import Ctx, run_parallel, filter_filename, filter_threads
 from ..runtime import fstxn
@@ -1006,9 +1007,11 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None, staged_gfx=Non
                 layers.append(layer)
                 continue
             windowed, x, y, w2, h2, geometry = _media_geometry(c, cl)
-            source_info = c.probe(c.src_path(cl['src']))
+            input_path = c.src_path(cl['src'])
+            source_info = c.probe(input_path)
             need_alpha = seg_needs_alpha(cl, source_info)
-            vf = [f"trim=start_frame={cl['src_in']}:end_frame={cl['src_out']}", "setpts=PTS-STARTPTS",
+            vf = [*source_guard(c, input_path),
+                  f"trim=start_frame={cl['src_in']}:end_frame={cl['src_out']}", "setpts=PTS-STARTPTS",
                   f"fps={fps_expression(c.fps)}"]
             vf += geometry
             # seg 内容寻址键（2026-09-11 治理升级）：键 = sha1(源指纹+切片/窗口/fade/编码
@@ -1034,7 +1037,7 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None, staged_gfx=Non
                     vcodec_seg = ["-c:v", "libx264", "-crf", "14", "-preset", "veryfast",
                                   "-pix_fmt", "yuv420p"]
             label = f"seg t{ti:02d}c{ci:02d}（{cl['dur']} 帧）"
-            cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(cl["src"])),
+            cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(input_path),
                    "-map", "0:v:0", "-vf", ",".join(vf), "-frames:v", str(cl["dur"]), "-an",
                    *vcodec_seg, str(seg)]
             nvenc = not need_alpha and seg_kind == "nvenc"
@@ -1116,10 +1119,11 @@ def render_source_frame(c, clip, frame, directory):
     _, x, y, width, height, geometry = _media_geometry(c, clip)
     source_frame = clip['src_in'] + frame
     seek = max(0, (source_frame - .2) / c.fps)
-    filters = [f'setpts=PTS-STARTPTS+{frame}/({fps_expression(c.fps)})/TB', *geometry,
-               'format=yuva420p', *_clip_alpha_filters(clip, c.spf)]
+    input_path = c.src_path(clip['src'])
+    filters = [*source_guard(c, input_path), f'setpts=PTS-STARTPTS+{frame}/({fps_expression(c.fps)})/TB',
+               *geometry, 'format=yuva420p', *_clip_alpha_filters(clip, c.spf)]
     command = ['ffmpeg', '-v', 'error', '-y', '-ss', f'{seek:.6f}',
-               '-i', str(c.src_path(clip['src'])), '-map', '0:v:0', '-an',
+               '-i', str(input_path), '-map', '0:v:0', '-an',
                '-vf', ','.join(filters), '-pix_fmt', 'rgba']
     source = frame_source.PngSequence(directory, 'qc-source-frame', 1, c.fps,
                                       width or c.w, height or c.h)

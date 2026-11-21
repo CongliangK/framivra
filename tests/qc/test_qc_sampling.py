@@ -372,6 +372,7 @@ class SamplingMediaContract(unittest.TestCase):
 
     def test_same_decoder_exposes_hidden_and_late_display_geometry(self):
         from time import monotonic
+        from vtx.cache._formal_video import source_guard
         from vtx.media._display_witness import verify_source
 
         c = types.SimpleNamespace()
@@ -407,6 +408,24 @@ class SamplingMediaContract(unittest.TestCase):
                             verify_source(c, source, *expected, deadline=deadline)
                     else:
                         self.assertEqual(verify_source(c, source, *expected, deadline=deadline), count)
+
+        # A scale would hide the post-seek source dimensions. Assert those
+        # dimensions before scaling exactly as the formal QC references do.
+        seek_source = self.root / 'late.mp4'
+        c.input_fingerprint = 'current'
+        command = ['ffmpeg', '-v', 'error', '-ss', '2.05', '-i', str(seek_source),
+                   '-an', '-map', '0:v:0']
+        suffix = ['-frames:v', '1', '-pix_fmt', 'gray', '-f', 'rawvideo', '-']
+        reference = self.command([*command, '-vf', 'scale=64:36', *suffix]).stdout
+        self.assertEqual(len(reference), 64 * 36)
+        c._formal_geometry = ('current', {seek_source: (360, 640)})
+        args = ','.join([*source_guard(c, seek_source), 'scale=64:36'])
+        self.assertEqual(self.command([*command, '-vf', args, *suffix]).stdout, reference)
+        c._formal_geometry = ('current', {seek_source: (640, 360)})
+        args = ','.join([*source_guard(c, seek_source), 'scale=64:36'])
+        wrong = subprocess.run([*command, '-vf', args, *suffix], capture_output=True, timeout=30)
+        self.assertNotEqual(wrong.returncode, 0)
+        self.assertEqual(wrong.stdout, b'')
 
         timeline = self.root / 'timeline.json'
         timeline.write_text(json.dumps({

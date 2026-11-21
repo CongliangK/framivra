@@ -11,6 +11,7 @@ from pathlib import Path
 import stat
 import subprocess
 from time import monotonic
+from types import MappingProxyType
 
 from ..runtime import fstxn
 
@@ -44,7 +45,17 @@ def _enabled(c):
 
 
 def _geometry_ready(c):
-    return getattr(c, '_formal_geometry_input', None) == c.input_fingerprint
+    evidence = getattr(c, '_formal_geometry', None)
+    return evidence is not None and evidence[0] == c.input_fingerprint
+
+
+def source_guard(c, path):
+    """Protect an actual source decode, including a new input-seek context."""
+    if not _geometry_ready(c):
+        return []
+    from ..media._display_witness import dimension_guard
+
+    return [dimension_guard(*c._formal_geometry[1][path])]
 
 
 def require_geometry(c):
@@ -70,12 +81,14 @@ def require_geometry(c):
             info = c.probe(path)
             if info.get('has_video') is not True:
                 raise ValueError('video track source has no video stream')
-            verify_source(c, path, *display_video_size(info), deadline=deadline)
+            size = display_video_size(info)
+            verify_source(c, path, *size, deadline=deadline)
+            paths[path] = size
         except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
             raise RuntimeError(f'无法确认正式视频源 {path.name!r} 的解码几何；'
                                '请检查流内旋转、尺寸变化或解码超时') from error
     verify_input_identity(c)
-    c._formal_geometry_input = c.input_fingerprint
+    c._formal_geometry = (c.input_fingerprint, MappingProxyType(paths))
 
 
 def proof_name(name):
