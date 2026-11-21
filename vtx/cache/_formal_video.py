@@ -10,13 +10,15 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+from time import monotonic
 
 from ..runtime import fstxn
 
 _FILES = {'video': 'video_noaudio.mp4', 'mux': 'final.mp4'}
 _SUFFIX = '.formal-video.json'
-_EPOCH = 'display-geometry-v1'
+_EPOCH = 'display-geometry-v2'
 _LIMIT = 1024
+_GEOMETRY_BUDGET = 300
 _PRODUCER = ContextVar('formal_video_producer', default=None)
 
 
@@ -25,6 +27,8 @@ def producer_scope(c, stage):
     if stage not in _FILES or not _enabled(c):
         yield
         return
+    if not getattr(c, 'dry', False) and not _geometry_ready(c):
+        raise RuntimeError('当前视频源缺少有效几何证明，不能发布正式视频')
     token = _PRODUCER.set((c, stage))
     try:
         yield
@@ -37,6 +41,35 @@ def _enabled(c):
     return (isinstance(tl, dict) and any(isinstance(track, dict) and
             track.get('kind') != 'gfx' and track.get('clips')
             for track in tl.get('video_tracks', ())))
+
+
+def _geometry_ready(c):
+    return getattr(c, '_formal_geometry_input', None) == c.input_fingerprint
+
+
+def require_geometry(c):
+    """Witness the geometry used by the formal compositor, once per operation."""
+    if getattr(c, 'dry', False) or not _enabled(c) or _geometry_ready(c):
+        return
+    from ..media._display_witness import verify_source
+    from ..media.encoders import display_video_size
+    from .cache_state import verify_input_identity
+
+    verify_input_identity(c)
+    deadline = monotonic() + _GEOMETRY_BUDGET
+    paths = dict.fromkeys(c.src_path(clip['src']) for track in c.tl['video_tracks']
+                          if track.get('kind') != 'gfx' for clip in track['clips'])
+    for path in paths:
+        try:
+            info = c.probe(path)
+            if info.get('has_video') is not True:
+                raise ValueError('video track source has no video stream')
+            verify_source(c, path, *display_video_size(info), deadline=deadline)
+        except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
+            raise RuntimeError(f'无法确认正式视频源 {path.name!r} 的解码几何；'
+                               '请检查流内旋转、尺寸变化或解码超时') from error
+    verify_input_identity(c)
+    c._formal_geometry_input = c.input_fingerprint
 
 
 def proof_name(name):
@@ -87,18 +120,16 @@ def _read_record(path):
     return json.loads(raw)
 
 
-def _unaffected_legacy_sources(c, native):
-    """Only after a current stage receipt and a certified legacy artifact."""
-    from ..media.encoders import probe_video_alpha
+def _unaffected_legacy_sources(c):
+    """Only after current geometry, receipt and certified legacy bytes."""
     from .cache_state import verify_input_identity
 
     names = dict.fromkeys(clip['src'] for track in c.tl['video_tracks']
                          if track.get('kind') != 'gfx' for clip in track['clips'])
-    probe = c.probe if native is not None else probe_video_alpha
     try:
         for sid in names:
-            info = probe(c.src_path(sid))
-            if native is not None and info.get('has_video') is not True:
+            info = c.probe(c.src_path(sid))
+            if info.get('has_video') is not True:
                 return False
             if info.get('quarter_turn', False) is not False:
                 return False
@@ -113,6 +144,8 @@ def missing_prerequisite(c, stage):
     prerequisite = {'mux': 'video', 'qc': 'mux'}.get(stage)
     if prerequisite is None or not _enabled(c):
         return None
+    if not _geometry_ready(c):
+        return prerequisite
     from .recovery import _digest, completion_marker
 
     target = c.out / _FILES[prerequisite]
@@ -143,7 +176,7 @@ def missing_prerequisite(c, stage):
             if (cert.get('schema') != 1 or cert.get('frames') != c.dur or digest != _digest(artifact)):
                 return prerequisite
             valid = record == _record(c, target, digest)
-        if valid or record is absent and _unaffected_legacy_sources(c, native):
+        if valid or record is absent and _unaffected_legacy_sources(c):
             return None
         return prerequisite
     except (OSError, ValueError, TypeError, KeyError):

@@ -455,6 +455,10 @@ class Ctx:
         """PR#1：拒绝过期前置 + 运行前撤销下游旧成功回执（失败重跑不留旧 QC PASS）。"""
         if self.dry:
             return
+        if stage in ('video', 'mux', 'qc'):
+            from ..cache._formal_video import require_geometry
+            # Never decode sources under the receipt transaction lock.
+            require_geometry(self)
         f = self.out / 'receipt.json'
 
         def _mutate(rec):

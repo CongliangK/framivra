@@ -408,6 +408,28 @@ class SamplingMediaContract(unittest.TestCase):
                     else:
                         self.assertEqual(verify_source(c, source, *expected, deadline=deadline), count)
 
+        timeline = self.root / 'timeline.json'
+        timeline.write_text(json.dumps({
+            'version': 2, 'project': {'fps': 30, 'width': 640, 'height': 360, 'duration_frames': 30},
+            'sources': [{'id': 's', 'path': 'hidden.mp4'}],
+            'video_tracks': [{'kind': 'aroll', 'name': 'main', 'clips': [
+                {'src': 's', 'src_in': 0, 'src_out': 30, 'dst_in': 0, 'dur': 30, 'scale': .5}]}],
+            'audio_tracks': [], 'subtitles': [],
+        }), encoding='utf-8')
+        config = self.root / 'config.json'
+        config.write_text('{"cache":{"mode":"aggressive"}}', encoding='utf-8')
+        env = dict(os.environ, VTX_CONFIG=str(config), VTX_NO_NVENC='1', VTX_SEG_NVENC='0')
+        cli = [sys.executable, '-B', '-X', 'utf8', str(REPO / 'vtx/vtx.py'), '-t', str(timeline)]
+        for stage in ('video', 'mux', 'qc'):
+            result = subprocess.run([*cli, stage], cwd=REPO, env=env, capture_output=True, timeout=30)
+            text = (result.stdout + result.stderr).decode('utf-8', 'replace')
+            self.assertEqual(result.returncode, 1, text)
+            self.assertIn('无法确认正式视频源', text)
+            self.assertNotIn('Traceback', text)
+        self.assertFalse(list((self.root / 'cache' / 'seg').glob('*')))
+        self.assertFalse(list((self.root / 'out').glob('*.formal-video.json')))
+        self.assertFalse((self.root / 'out' / 'video_noaudio.mp4').exists())
+
     def test_quarter_turn_windows_match_decoded_geometry_and_strict_qc(self):
         for color in ('white', 'gray'):
             self.command(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',

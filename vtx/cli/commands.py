@@ -638,7 +638,9 @@ def _run_all_pipeline(c: Ctx, until=None):
             _observed_stage(c, name, fn)
         return run
 
-    def _pre_layers():                               # —— 波内预编码路：无门无回执 ——
+    def _pre_layers():                               # —— 波内预编码路：无回执 ——
+        from ..cache._formal_video import require_geometry
+        require_geometry(c)
         c._pre_layers = events.task(c, "video", kind="preencode").call(prepare_layers, c)
 
     jobs = [("gfx", _stage_job("gfx", by_name["gfx"])),
