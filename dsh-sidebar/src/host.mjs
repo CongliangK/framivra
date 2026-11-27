@@ -80,6 +80,7 @@ class WindowSessions {
     if ((programBinding ? data.scope !== 'whole-timeline' : data.scope !== 'current-project') || data.renderConsent !== 'cache/preview-only' || data.prepareInputs !== true) fail('SESSION_CONSENT', 'Separate render and cold-input permissions are required', 403)
     const { capability } = open.windowExecutable
     if (programBinding && !programCapable(open.windowExecutable)) fail('PROGRAM_RUN_UNSUPPORTED', 'Whole-timeline preview requires a separately approved ordinary A/V provider', 422)
+    if (programBinding && open.programProfileRetired) fail('PROGRAM_PROVIDER_CHANGED', 'Approved ordinary A/V profile was retired; reopen preview', 409)
     if (programBinding && this.activeFor(open.session)) fail('PROGRAM_RUN_BUSY', 'Requires no other preview session', 409)
     if (!programBinding && this.activeFor(open.session, true)) fail('SESSION_BUSY', 'Stop the whole-timeline preview before authorizing another scope', 409)
     if (Object.hasOwn(data, 'continuation') && (data.continuation !== true || !continuationCapable(capability))) fail('CONTINUATION_DENIED', 'Continuous preview requires separate consent and input identity support', 403)
@@ -319,7 +320,7 @@ export function createPreviewHost(ctx, config = {}, { approvedProgramProviders =
   function sameWindowExecutable(a, b) {
     if (a.targetKey !== b.targetKey || a.profileKey !== b.profileKey || a.version !== b.version) fail('EXECUTABLE_CHANGED', 'Independent window launcher identity changed; reopen preview', 409)
   }
-  async function qualifyOrdinaryProgram(binding, capability, identify, signal) {
+  async function qualifyOrdinaryProgram(binding, capability, identify, signal, distinguishUnknown = false) {
     if (!continuationCapable(capability) || capability.ordinary_long_run !== ORDINARY_PROGRAM_CAPABILITY ||
         !programProviders.length || typeof observeProgramProfile !== 'function' || typeof ctx.fs.readBytes !== 'function') return false
     const candidates = programProviders.filter(pin => pin.wheelSha256 === capability.wheel_sha256 &&
@@ -339,8 +340,9 @@ export function createPreviewHost(ctx, config = {}, { approvedProgramProviders =
       sameWindowExecutable(binding, await identify())
       signal.throwIfAborted()
       return observed?.wheelSha256 === approved.wheelSha256 && observed?.runtimeProjectionSha256 === approved.runtimeProjectionSha256 ? digest : false
-    } catch {
+    } catch (error) {
       signal.throwIfAborted()
+      if (distinguishUnknown && !['EXECUTABLE_CHANGED', 'WINDOW_EXECUTABLE_UNTRUSTED'].includes(error?.code)) throw error
       return false // Independent long-run refusal does not disable ordinary windows.
     }
   }
@@ -1591,7 +1593,22 @@ export function createPreviewHost(ctx, config = {}, { approvedProgramProviders =
               validatePreviewWindowRange(image, provisional.project)
               if (!provisional.closed && !signal.aborted && automatic.active(sessionLease) && grant.contentVersion === data.contentVersion) provisional.image = image
             }, clear: clearFirstFrame,
-          }) : await reader.previewWindow(grant.windowExecutable, path, data.frame, data.contentVersion, signal, grant.configSnapshot, windowOperation.owner, readWarmSvg, useProgramAudio)
+          }) : await reader.previewWindow(grant.windowExecutable, path, data.frame, data.contentVersion, signal, grant.configSnapshot, windowOperation.owner, readWarmSvg, useProgramAudio).catch(async error => {
+            // IPC/decode failure may bypass the final identity check. Keep the
+            // primary error, and never probe or retry on this failure path.
+            const current = () => programRender && !signal.aborted && !grant.closing && !grant.programProfileRetired &&
+              grants.get(grant.id) === grant && grant.windowOperation === windowOperation && automatic.active(sessionLease)
+            if (current() && !['AbortError', 'TimeoutError'].includes(error?.name)) {
+              const check = AbortSignal.any([signal, AbortSignal.timeout(1000)])
+              const supplier = grant.windowExecutable
+              const identify = () => windowExecutableIdentity(supplier.executable, grant.root, grant.project, grant.executableTarget, check)
+              try {
+                const observed = await qualifyOrdinaryProgram(supplier, supplier.capability, identify, check, true)
+                if (current() && !check.aborted && observed !== supplier.programLauncherSha256) retireProgramProfile(grant)
+              } catch { /* Unknown recheck cannot mask the original render error. */ }
+            }
+            throw error
+          })
         await validate()
         if (!result.ok) {
           const error = new PreviewError('WINDOW_REJECTED', 'The installed core refused this audio/video window', 422)

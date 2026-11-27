@@ -192,6 +192,62 @@ test('program mint does not reuse the open capability claim', linuxWindow, async
   assert(!b.calls.some(({ argv }) => argv.includes('preview-window')))
 })
 
+test('a concurrent profile retirement wins over the final synchronous mint', { ...linuxWindow, timeout: 2500 }, async t => {
+  const waiting = Promise.withResolvers(), unblock = Promise.withResolvers()
+  let live = programFixture.windowCapability, probes = 0, intercept = false
+  const b = await bench({ ...programFixture, liveCapability() {
+    if (++probes === 2) intercept = true // first mint's fresh capability probe
+    return live
+  }, setup(fs) {
+    const stat = fs.stat.bind(fs)
+    fs.stat = async (target, signal) => {
+      if (intercept && target.targetKey === '/workspace/timeline.json') {
+        intercept = false
+        waiting.resolve()
+        await unblock.promise
+      }
+      return stat(target, signal)
+    }
+  } })
+  t.after(async () => { unblock.resolve(); await b.host.dispose() })
+  const authorize = () => b.control({ op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 0, contentVersion: version,
+    authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' })
+  const first = authorize()
+  const early = await Promise.race([first, waiting.promise])
+  assert.equal(early, undefined, 'first mint must reach its final timeline observation')
+  live = { ...windowCapability, input_epoch: true }
+  assert.equal((await (await authorize()).json()).error, 'PROGRAM_PROVIDER_CHANGED')
+  unblock.resolve()
+  assert.equal((await (await first).json()).error, 'PROGRAM_PROVIDER_CHANGED')
+  assert(!b.calls.some(({ argv }) => argv.includes('preview-window')))
+})
+
+test('a render decode failure preserves its error and retires only a confirmed changed provider', linuxWindow, async t => {
+  for (const change of ['confirmed', 'unknown']) await t.test(change, async t => {
+    const observedProfile = { ...approvedProgramProvider }
+    const b = await bench({ ...programFixture, observedProfile, windowHandle(spec) {
+      if (change === 'confirmed') observedProfile.wheelSha256 = 'f'.repeat(64)
+      else Object.defineProperty(observedProfile, 'wheelSha256', { configurable: true, get() { throw new Error('unavailable fixture observation') } })
+      const text = 'not JSON\n'
+      return { stdout: Readable.from([Buffer.from(text)]), done: Promise.resolve({ exitCode: 0 }), terminate() {},
+        waitForExit: async () => true, collected: { stdout: { readFrom: () => ({ text, lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
+    } })
+    t.after(() => b.host.dispose())
+    const auth = await b.control({ op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 0, contentVersion: version,
+      authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' })
+    assert.equal(auth.status, 200, await auth.clone().text())
+    const { grant } = await auth.json(), original = { previewGrant: grant.id, ownerId: b.opening.previewSession.ownerId }
+    const result = await b.window({ op: 'program-render', ...original, renderConsent: undefined, prepareInputs: undefined })
+    assert.equal(result.status, 502)
+    assert.equal((await result.json()).error, 'INVALID_JSON')
+    Object.defineProperty(observedProfile, 'wheelSha256', { value: approvedProgramProvider.wheelSha256 })
+    const check = await b.control({ op: 'program-check', grant: b.grant, ...original, frame: 0, sha256 })
+    assert.equal((await check.json()).error, change === 'confirmed' ? 'PROGRAM_RUN_EXPIRED' : 'BAD_PROGRAM_RUN')
+    assert.equal(b.calls.filter(({ argv }) => argv.includes('preview-window')).length, 1)
+    assert.equal(b.calls.filter(({ argv }) => argv[0] === windowLauncher && argv.includes('capabilities')).length, 2, 'no error-path subprocess or retry')
+  })
+})
+
 test('launcher, wheel and projection rotation revoke the exact long-run grant on cache or render admission', linuxWindow, async t => {
   for (const changed of ['launcher', 'wheelSha256', 'runtimeProjectionSha256']) for (const entry of ['cache/hand-off', 'render']) {
     await t.test(`${changed} at ${entry}`, async t => {
