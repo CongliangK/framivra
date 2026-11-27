@@ -314,8 +314,12 @@ def _receipt(wire, pins, version):
     return media
 
 
-def _verify_pins(launcher_sha256, wheel_sha256, wheel_filename):
+def _require_unprivileged_linux():
     _require(sys.platform == 'linux' and os.geteuid() != 0, 'ordinary fixed wheel requires unprivileged Linux')
+
+
+def _verify_pins(launcher_sha256, wheel_sha256, wheel_filename):
+    _require_unprivileged_linux()
     _require(all(type(digest) is str and _HEX.fullmatch(digest) for digest in (launcher_sha256, wheel_sha256))
              and type(wheel_filename) is str
              and re.fullmatch(r'framivra-[A-Za-z0-9_.+]+-py3-none-any\.whl', wheel_filename),
@@ -531,8 +535,40 @@ def enroll_profile(root, *, launcher_path, prepare_wheel, wheel_filename, launch
     The caller must publish the Ready registration only on successful return.
     This is not an updater and touches neither an old profile nor old receipt.
     """
+    _verify_enrollment_pins(wheel_filename, launcher_sha256, wheel_sha256, projection_sha256)
+    pins = (wheel_filename, launcher_sha256, wheel_sha256, projection_sha256)
+    return _enroll_profile(root, launcher_path=launcher_path, python=python, check=check,
+                           select=lambda _scratch, _check: (pins, prepare_wheel))
+
+
+def enroll_approved_variants(root, *, launcher_path, source, commit, source_tree_sha256, variants, python, check=_noop):
+    """Choose one complete catalog record inside the existing qualification supervisor."""
+    _require_unprivileged_linux()
+
+    def select(scratch, child_check):
+        tools = _build_tools(python, scratch, _env(scratch), check=child_check)
+        matches = [row for row in variants if row['buildTools'] == tools]
+        _require(len(matches) == 1, 'no unique release-reviewed preview build tool match')
+        row, = matches
+        pins = tuple(row[key] for key in ('wheelFilename', 'launcherSha256', 'wheelSha256', 'runtimeProjectionSha256'))
+        _verify_enrollment_pins(*pins)
+
+        def prepare_wheel(scratch, child_check):
+            return build_approved_wheel(python, scratch, source, commit,
+                source_tree_sha256=source_tree_sha256, build_tools=row['buildTools'], wheel_filename=row['wheelFilename'],
+                wheel_bytes=row['wheelBytes'], wheel_sha256=row['wheelSha256'], check=child_check)
+
+        return pins, prepare_wheel
+
+    return _enroll_profile(root, launcher_path=launcher_path, python=python, check=check, select=select)
+
+
+def _verify_enrollment_pins(wheel_filename, launcher_sha256, wheel_sha256, projection_sha256):
     _verify_pins(launcher_sha256, wheel_sha256, wheel_filename)
     _require(type(projection_sha256) is str and _HEX.fullmatch(projection_sha256), 'expected approved projection identity')
+
+
+def _enroll_profile(root, *, launcher_path, python, check, select):
     info = root.lstat()
     _require(root.resolve(strict=True) == root and stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid()
              and not info.st_mode & 0o022, 'preview managed root is not private-owner controlled')
@@ -542,6 +578,8 @@ def enroll_profile(root, *, launcher_path, prepare_wheel, wheel_filename, launch
         scratch = Path(tmp)
         profile = target if adopt else scratch / 'preview'
         def qualify(child_check):
+            pins, prepare_wheel = select(scratch, child_check)
+            wheel_filename, launcher_sha256, wheel_sha256, projection_sha256 = pins
             fresh = None
             if not adopt:
                 launcher = _read(launcher_path, 256 * 1024)

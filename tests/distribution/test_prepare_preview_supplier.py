@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import os
 import signal
 import subprocess
 import sys
@@ -116,7 +117,9 @@ class PreparePreviewSupplierTest(unittest.TestCase):
             key = hashlib.sha256((listing + '\n').encode()).hexdigest()
             approved = {key: {'wheelFilename': 'framivra-2.3.0-py3-none-any.whl', 'wheelBytes': 13,
                               'buildTools': {k: '1.2.3' for k in ('python','pip','setuptools','wheel')},
-                              'helperSha256': hashlib.sha256(b'# approved helper\n').hexdigest()}}
+                              'helperSha256': hashlib.sha256(b'# approved helper\n').hexdigest(),
+                              'launcherSha256': 'a' * 64, 'wheelSha256': 'b' * 64,
+                              'runtimeProjectionSha256': 'c' * 64}}
             with patch.object(install_source, '_PREVIEW_SUPPLIER_RELEASES', approved), \
                     patch.object(install_source, 'git', return_value=listing), \
                     patch.object(install_source.downloads, 'acquire') as acquire:
@@ -152,6 +155,129 @@ def enroll_profile(root, *, prepare_wheel, **pins):
                 self.assertEqual(enrollment, {'sourceTreeSha256': key, 'commit': '1' * 40,
                                               'scratch': '.private-build', 'wheelSha256': 'b' * 64})
                 acquire.assert_not_called()
+
+    def test_variant_catalog_checks_every_row_before_loading_helper(self):
+        listing = 'reviewed inputs'
+        key = supplier._sha((listing + '\n').encode())
+        one = dict(buildTools=dict(python='3.13.0', pip='25.0', setuptools='80.0', wheel='0.48.0'),
+                   wheelFilename='framivra-2.3.0-py3-none-any.whl', wheelBytes=11,
+                   launcherSha256='a' * 64, wheelSha256='b' * 64, runtimeProjectionSha256='c' * 64)
+        two = dict(one, buildTools=dict(one['buildTools'], python='3.14.0'), wheelSha256='d' * 64)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            for variants in ((), (one, dict(one, wheelSha256='e' * 64)), (one, dict(two, wheelBytes=True)),
+                             (one, dict(two, runtimeProjectionSha256='missing')), (one, None)):
+                with self.subTest(variants=variants), \
+                        patch.object(install_source, '_PREVIEW_SUPPLIER_RELEASES',
+                                     {key: {'helperSha256': 'f' * 64, 'variants': variants}}), \
+                        patch.object(install_source, 'git', return_value=listing), \
+                        patch.object(install_source, '_preview_helper_bytes') as helper:
+                    with self.assertRaisesRegex(install_source.InstallError, 'release-reviewed preview build'):
+                        install_source.optional_preview_supplier(root, root, '1' * 40, install_source.REPOSITORY,
+                                                                 sys.executable)
+                    helper.assert_not_called()
+            raw = b'def enroll_approved_variants(root, **kw): return kw\n'
+            with patch.object(install_source, '_PREVIEW_SUPPLIER_RELEASES',
+                              {key: {'helperSha256': supplier._sha(raw), 'variants': (one, two)}}), \
+                    patch.object(install_source, 'git', return_value=listing), \
+                    patch.object(install_source, '_preview_helper_bytes', return_value=raw) as helper:
+                result = install_source.optional_preview_supplier(root, root, '1' * 40, install_source.REPOSITORY,
+                                                                    sys.executable)
+                helper.assert_called_once_with(root/'scripts/release/prepare_preview_supplier.py', supplier._sha(raw))
+                self.assertEqual(result['variants'], (one, two))
+                self.assertEqual(result['source_tree_sha256'], key)
+            with patch.object(install_source, '_PREVIEW_SUPPLIER_RELEASES',
+                              {key: {'helperSha256': supplier._sha(b''), 'variants': (one, two)}}), \
+                    patch.object(install_source, 'git', return_value=listing), \
+                    patch.object(install_source, '_preview_helper_bytes', return_value=b''):
+                with self.assertRaisesRegex(install_source.InstallError, 'does not support build variants'):
+                    install_source.optional_preview_supplier(root, root, '1' * 40, install_source.REPOSITORY,
+                                                             sys.executable)
+
+    def test_variants_select_full_row_only_inside_supervision_and_never_replace(self):
+        launch_bytes = b'reviewed launcher'
+        one = dict(buildTools=dict(python='3.13.0', pip='25.0', setuptools='80.0', wheel='0.48.0'),
+                   wheelFilename='framivra-2.3.0-py3-none-any.whl', wheelBytes=1,
+                   launcherSha256=supplier._sha(launch_bytes), wheelSha256=supplier._sha(b'A'),
+                   runtimeProjectionSha256='a' * 64)
+        two = dict(one, buildTools=dict(one['buildTools'], python='3.14.0', pip='26.0'),
+                   wheelBytes=2, wheelSha256=supplier._sha(b'BB'), runtimeProjectionSha256='b' * 64)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            launcher = root/'launcher'; launcher.write_bytes(launch_bytes)
+            receipt = root/'installation.json'; core = b'{"status":"ready"}\n'; receipt.write_bytes(core)
+            current = [dict(one['buildTools'], python='3.13')]
+            actions = []
+
+            def supervised(op, parent_check):
+                parent_check()
+                return op(child_check)
+
+            def child_check():
+                pass
+
+            def probe(python, scratch, env, *, check):
+                self.assertIs(check, child_check)
+                self.assertEqual(env, supplier._env(scratch))
+                self.assertEqual(Path(env['HOME']), scratch)
+                return current[0]
+
+            def build(python, scratch, source, commit, **pins):
+                self.assertIs(pins['check'], child_check)
+                self.assertEqual(pins['source_tree_sha256'], 'c' * 64)
+                row = one if current[0] == one['buildTools'] else two
+                self.assertEqual(pins['build_tools'], row['buildTools'])
+                self.assertEqual(pins['wheel_bytes'], row['wheelBytes'])
+                self.assertEqual(pins['wheel_sha256'], row['wheelSha256'])
+                actions.append('build')
+                return b'A' if row is one else b'BB'
+
+            def qualify(scratch, profile, *, fresh, expected_projection, **pins):
+                row = one if current[0] == one['buildTools'] else two
+                self.assertEqual(expected_projection, row['runtimeProjectionSha256'])
+                self.assertEqual(pins['wheel_sha256'], row['wheelSha256'])
+                if fresh is not None:
+                    profile.mkdir(mode=0o700)
+                    supplier._write(profile/'vtx-preview', fresh[0], 0o500)
+                    supplier._write(profile/'kernel.whl', fresh[1])
+                    supplier._write(profile/'kernel.sha256', (pins['wheel_sha256'] + '\n').encode())
+                    (profile/'runtime').mkdir(mode=0o700)
+                supplier._verified_profile(profile, pins['launcher_sha256'], pins['wheel_sha256'])
+                actions.append('qualify')
+                return {'wheel': row['wheelSha256']}
+
+            def enroll(where=root):
+                return supplier.enroll_approved_variants(where, launcher_path=launcher, source=root, commit='d'*40,
+                    source_tree_sha256='c'*64, variants=(one, two), python=sys.executable)
+
+            with patch.object(supplier.os, 'geteuid', return_value=0), \
+                    patch.object(supplier, '_supervise') as supervisor:
+                with self.assertRaisesRegex(supplier.SupplierError, 'unprivileged Linux'):
+                    enroll()
+                supervisor.assert_not_called()
+            with patch.object(supplier, '_supervise', side_effect=supervised), \
+                    patch.object(supplier, '_build_tools', side_effect=probe), \
+                    patch.object(supplier, 'build_approved_wheel', side_effect=build), \
+                    patch.object(supplier, '_qualify_profile', side_effect=qualify), \
+                    patch.dict(os.environ, {'PYTHON_VERSION': one['buildTools']['python']}):
+                with self.assertRaisesRegex(supplier.SupplierError, 'no unique'):
+                    enroll()
+                self.assertEqual(actions, [])
+                self.assertFalse((root/'preview').exists())
+                current[0] = one['buildTools']
+                self.assertEqual(enroll(), {'wheel': one['wheelSha256']})
+                profile = root/'preview'; inode = profile.stat().st_ino
+                self.assertEqual(enroll(), {'wheel': one['wheelSha256']})
+                current[0] = two['buildTools']
+                with self.assertRaisesRegex(supplier.SupplierError, 'conflicts'):
+                    enroll()
+                self.assertEqual(actions, ['build', 'qualify', 'qualify'])
+                self.assertEqual(profile.stat().st_ino, inode)
+                self.assertEqual((profile/'kernel.whl').read_bytes(), b'A')
+                self.assertEqual(receipt.read_bytes(), core)
+                other = root/'other'; other.mkdir(mode=0o700)
+                self.assertEqual(enroll(other), {'wheel': two['wheelSha256']})
+                self.assertEqual((other/'preview/kernel.whl').read_bytes(), b'BB')
 
     def test_approved_offline_build_checks_toolset_and_wheel_before_qualification(self):
         versions = dict(python='3.12.0', pip='24.0', setuptools='75.0', wheel='0.44.0')
