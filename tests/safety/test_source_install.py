@@ -426,6 +426,39 @@ class SourceInstall(unittest.TestCase):
                 self.assertEqual((self.root / 'installation.json').read_text(), encoded)
                 self.assertFalse((self.root / 'source').exists())
 
+    def test_ref_change_without_update_preserves_ready_installation(self):
+        commit = self.deploy()
+        self.run_git('tag', 'v1.2.3')  # A real channel; only the missing --update is wrong.
+        source = self.root / 'source'
+        receipt = self.root / 'installation.json'
+        ready = dict(install.json_record(receipt), status='ready', profile='non-ai', renderer='cdp',
+                     previewSupplier={'schema': 'framivra.preview-supplier/v1',
+                                      'abi': 'framivra.preview-window.fixed-wheel/v1',
+                                      'launcherSha256': 'a' * 64, 'wheelSha256': 'b' * 64,
+                                      'runtimeProjectionSha256': 'c' * 64})
+        ready_bytes = (json.dumps(ready, indent=2) + '\n').encode()
+        receipt.write_bytes(ready_bytes)
+        self.assertFalse((self.root / '.source-progress.json').exists())
+        source_identity = (source.stat().st_dev, source.stat().st_ino)
+        tracked = {name: (source / name).read_bytes() for name in install.REQUIRED_SOURCE}
+        with mock.patch.dict(os.environ), \
+                mock.patch.object(install, 'prepare_tools', return_value={'git': self.git_executable}) as prepare, \
+                mock.patch.object(install, 'verify_native_tools') as verify_native, \
+                mock.patch.object(install, 'atomic_json', wraps=install.atomic_json) as write, \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(install.main(['--root', str(self.root), '--repo', str(self.upstream), '--yes',
+                                           '--no-system', '--ref', 'v1.2.3']), 1)
+        self.assertIn('Changing source ref requires explicit --update', errors.getvalue())
+        self.assertEqual(receipt.read_bytes(), ready_bytes)
+        prepare.assert_not_called()
+        verify_native.assert_not_called()
+        write.assert_not_called()
+        self.assertEqual((source.stat().st_dev, source.stat().st_ino), source_identity)
+        self.assertEqual(self.run_git('rev-parse', 'HEAD', cwd=source), commit)
+        self.assertEqual(self.run_git('status', '--porcelain', cwd=source), '')
+        self.assertEqual({name: (source / name).read_bytes() for name in tracked}, tracked)
+        self.assertFalse((self.root / '.source-progress.json').exists())
+
     def test_unowned_clone_is_never_adopted(self):
         self.run_git('clone', str(self.upstream), str(self.root / 'source'))
         with self.assertRaisesRegex(install.InstallError, 'ownership'):
