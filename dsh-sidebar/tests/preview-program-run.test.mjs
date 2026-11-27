@@ -88,10 +88,40 @@ test('a cold canonical window is pending, not cached; cancelling clears its prog
     assert.deepEqual(b.order, [510])
     const cancelled = b.controller.cancel()
     assert.equal(b.controller.run.pendingWindow, undefined)
+    await new Promise(resolve => setImmediate(resolve)) // The cancelled window response is still held.
+    assert.deepEqual(b.calls.map(item => item.op), ['authorize-preview-session', 'revoke-preview-session'])
+    assert.equal(b.calls[1].previewGrant, 'run')
+    assert.notEqual(b.controller.run.cleaned, true)
+    assert.equal(b.controller.start(b.binding, 515), false)
     first.resolve()
     assert.equal(await cancelled, true)
     assert.equal(b.stored.size, 0)
   } finally { first.resolve(); await b.controller.cancel() }
+})
+
+test('stop revokes the known grant without releasing a cache still receiving a write', async () => {
+  const b = bench(), writing = Promise.withResolvers(), finish = Promise.withResolvers()
+  const open = b.controller.open
+  let closed = false
+  b.controller.open = async (...args) => {
+    const cache = await open(...args)
+    return { ...cache, async put(...values) { writing.resolve(); await finish.promise; await cache.put(...values) },
+      async close() { closed = true; await cache.close() } }
+  }
+  assert(b.controller.start(b.binding, 0))
+  try {
+    await writing.promise
+    const cancelled = b.controller.cancel()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(b.calls.at(-1).op, 'revoke-preview-session')
+    assert.equal(closed, false)
+    assert.equal(b.controller.start(b.binding, 0), false)
+    finish.resolve()
+    assert.equal(await cancelled, true)
+    assert.equal(closed, true)
+    assert.equal(b.stored.size, 0)
+    assert.deepEqual(b.order, [0])
+  } finally { finish.resolve(); await b.controller.cancel() }
 })
 
 for (const expiresDuring of ['request', 'cache write']) {
