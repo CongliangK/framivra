@@ -252,6 +252,7 @@ function retireWindowCallback(media) {
   const callback = media.callback
   media.callback = undefined
   if (callback !== undefined) media.node?.cancelVideoFrameCallback?.(callback)
+  if (media.originPaint !== undefined) { cancelAnimationFrame(media.originPaint); media.originPaint = undefined }
 }
 
 function stopProgramPlay(media) {
@@ -443,6 +444,37 @@ export class WindowMonitor {
       typeof globalThis.cancelAnimationFrame === 'function'
   }
 
+  attach(media, node) {
+    if (!node || media.node === node) return
+    if (media.node && media.program && media.initialPin) {
+      // rVFC handles and decoded/seek proofs belong to the element, not its URL.
+      retireWindowCallback(media)
+      media.initialPin = { frame: media.initialPin.frame }
+    }
+    media.node = node
+    const pin = media.initialPin
+    if (!media.program || !pin || !this.canObservePin(node)) return
+    // A fresh element may already have queued its first picture when canplay
+    // fires. Observe that presentation before seeking, so its stale callback
+    // cannot hide the only paused notification for the requested picture.
+    pin.waitForOrigin = true
+    const owns = () => this.ownsMedia(media) && media.initialPin === pin && attachedWindowNode(media, node)
+    const id = node.requestVideoFrameCallback((_now, metadata) => {
+      if (media.callback !== id || !owns()) return
+      media.callback = undefined
+      if (!node.paused || node.seeking || metadata.mediaTime !== 0) return
+      const paint = requestAnimationFrame(() => {
+        if (media.originPaint !== paint) return
+        media.originPaint = undefined
+        if (!owns()) return
+        pin.waitForOrigin = false
+        this.ready(media, node)
+      })
+      media.originPaint = paint
+    })
+    media.callback = id
+  }
+
   seek(media, frame) {
     const node = media.node
     if (!node) return
@@ -475,7 +507,7 @@ export class WindowMonitor {
     // A Blob URL may be selected and emit progress before its metadata or
     // first frame exists. This is not evidence of a bad size or duration.
     const pin = media.initialPin
-    if (pin && (node.error || (!media.ready && node.ended) || node.readyState < HAVE_CURRENT_DATA ||
+    if (pin && (pin.waitForOrigin || node.error || (!media.ready && node.ended) || node.readyState < HAVE_CURRENT_DATA ||
         (media.program && !this.canObservePin(node)))) return
     const step = media.clock.den / media.clock.num
     const expected = (media.end - media.frame) * step
@@ -488,7 +520,9 @@ export class WindowMonitor {
     if (pin) {
       const offset = pin.frame - media.frame
       if (!pin.started) {
-        const time = (offset + 0.5) * step
+        // Program audio is 48 kHz: aim just inside the frame rather than
+        // discarding half a video frame of audio on an interior start.
+        const time = media.program ? (offset ? offset * step + 0.5 / 48_000 : 0) : (offset + 0.5) * step
         const seekable = node.seekable
         let reachable = false
         for (let i = 0; i < seekable.length; i++) {
@@ -501,9 +535,8 @@ export class WindowMonitor {
         if (pin.needsPresentation) {
           const observePin = () => {
             const id = node.requestVideoFrameCallback((_now, metadata) => {
-              if (media.callback !== id) return
+              if (media.callback !== id || media.initialPin !== pin || !this.ownsMedia(media) || !attachedWindowNode(media, node)) return
               media.callback = undefined
-              if (!this.ownsMedia(media) || !attachedWindowNode(media, node) || media.initialPin !== pin) return
               // mediaTime is a browser-quantized PTS. The half-frame allowance
               // maps it to the nearest frame, not the midpoint seek position.
               if (frameFromSeconds(metadata.mediaTime + step / 2, media.fps) === offset) {
@@ -1001,7 +1034,7 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
     h('div', { className: 'fv-program-stage', 'data-mode': 'window' },
       current ? [media, state.spare].filter(Boolean).map(item => {
         const active = item === media, visible = active && ready && !item.initialPin && !showFirstFrame
-        return h('video', { key: item.url, ref: node => { if (node) item.node = node }, src: item.url,
+        return h('video', { key: item.url, ref: node => monitor.attach(item, node), src: item.url,
           controls: !item.program && !!visible && !waiting && !item.pinPaint,
            muted: !active || !!item.initialPin || !!item.pinPaint || !!(item.program && (!item.programAudible || item.program.muted)), preload: 'auto', playsInline: true, disablePictureInPicture: true, disableRemotePlayback: true,
           'aria-label': active ? (archive ? `已核归档 A/V [${item.frame}, ${item.end})` : '仅当前窗口的原生音画') : undefined, 'aria-hidden': !visible,
