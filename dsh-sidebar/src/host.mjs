@@ -589,9 +589,14 @@ export function createPreviewHost(ctx, config = {}, { approvedPreviewSuppliers, 
     if (!live()) fail('PROGRAM_RUN_EXPIRED', 'Whole-timeline scope is no longer active', 403)
     const current = await programTimelineVersion(grant, signal)
     await verifyProgramProfile(grant, signal)
+    // The provider check is asynchronous: a save during it invalidates even a
+    // previously decoded window. Recheck the bound target without a subprocess.
+    const target = await localTarget(grant.relative, grant.cwd, signal)
+    const latest = target.targetKey === grant.timeline.targetKey ? await ctx.fs.stat(target, signal) : undefined
+    signal.throwIfAborted()
     grantFor(grant.session.id, grant.id)
     if (!live()) fail('PROGRAM_RUN_EXPIRED', 'Whole-timeline scope is no longer active', 403)
-    if (current !== run.timelineVersion || info.programRun.contentVersion !== grant.contentVersion) {
+    if (current !== run.timelineVersion || latest?.type !== 'file' || latest.version !== current || info.programRun.contentVersion !== grant.contentVersion) {
       automatic.closePrograms(open => open === grant)
       fail('STALE_WINDOW', 'Timeline changed; discard all whole-timeline media', 409)
     }
