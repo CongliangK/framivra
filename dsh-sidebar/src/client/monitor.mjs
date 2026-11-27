@@ -390,10 +390,13 @@ export class WindowMonitor {
   }
   invalidate(origin, pin) {
     if (this.owns(origin)) return // The owning video is reporting playback, not requesting a seek.
-    const hadPendingPlayback = this.playOperation !== undefined
     this.playOperation = undefined
     if (pin && !origin && this.automatic.pin(pin.frame)) {
-      if (hadPendingPlayback) this.refresh()
+      // Ruler release can repeat the move's frame. FrameEpoch still advances
+      // to retire earlier intent, but React can skip the same setFrame value.
+      // Publish the accepted pin so the next Space sees the new epoch even
+      // when the owned window has no new seek or pending play to report.
+      this.refresh()
       return
     }
     this.automatic.discardIntent()
