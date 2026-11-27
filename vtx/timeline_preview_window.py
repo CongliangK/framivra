@@ -795,7 +795,8 @@ def _render(path, reference, root_identity, start, result, check_cancelled, expe
 
             def environment():
                 from .runtime.preview_window_epoch import EnvironmentWitness
-                witness = EnvironmentWitness(check_cancelled, _WORK_MEDIA_LIMIT) if epoch else None
+                witness = EnvironmentWitness(check_cancelled, _WORK_MEDIA_LIMIT,
+                    font_config=os.environ.get('FONTCONFIG_FILE')) if epoch else None
 
                 def environment_command(argv):
                     probe = _process(argv, check_cancelled, timeout=30)

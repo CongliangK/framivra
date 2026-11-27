@@ -34,6 +34,7 @@ _MANAGED_FONT_PINS = {
     'JetBrainsMono-Bold.ttf': 'd22c4f3821d725eb01210d278d95dfcfcaadc34699a06658d47c8a5cc5830ada',
 }
 _MANAGED_FONTS = Path('/run/framivra-preview-fonts')
+_DISTRIBUTION_FONTS = Path('/usr/share/fonts')
 _MANAGED_FONT_CONFIG = b'''<?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
 <fontconfig>
@@ -130,14 +131,16 @@ def binding_read(fd, guard, limit, check):
 def _managed_font_projection(stack, profile, check):
     import fcntl
 
-    if profile.name != 'preview' or profile.resolve(strict=True) != profile:
+    if profile.name not in ('preview', 'staged-preview') or profile.resolve(strict=True) != profile:
         raise IsolationError('managed fonts require the fixed preview layout')
     root = profile.parent
-    # The existing installer qualifies root/.preview-enrollment-*/preview
-    # before publishing it as root/preview. Both use the same installed leaves.
-    if re.fullmatch(r'\.preview-enrollment-[a-z0-9_]{1,32}', root.name):
+    # Only the explicit staging leaf changes the lookup base. A legitimate
+    # installed root can itself be named .preview-enrollment-*.
+    if profile.name == 'staged-preview':
         staging = root.stat()
-        if staging.st_uid != os.geteuid() or stat.S_IMODE(staging.st_mode) != 0o700:
+        if (not re.fullmatch(r'\.preview-enrollment-[a-z0-9_]{1,32}', root.name)
+                or not stat.S_ISDIR(staging.st_mode) or staging.st_uid != os.geteuid()
+                or stat.S_IMODE(staging.st_mode) != 0o700):
             raise IsolationError('managed font qualification directory is not private')
         root = root.parent
     fonts = root / 'fonts'
@@ -261,6 +264,10 @@ def _project_mounts(files):
     return found
 
 
+def _local_font_roots(home, data_home):
+    return (Path('/usr/local/share/fonts'), home / '.fonts', data_home / 'fonts')
+
+
 def _profile(check, *, svg=False, managed_fonts=False):
     from ..pluginlib.config import config_path
 
@@ -314,8 +321,8 @@ def _profile(check, *, svg=False, managed_fonts=False):
         profile_files.append((original_config, original_config))
     # System roots here are trusted distribution providers, not a scan of the
     # host package database. Refuse runtime submounts under these fixed roots.
-    system = [Path(p) for p in ('/usr/lib', '/usr/lib64', '/etc/fonts',
-                               '/usr/share/fonts', '/usr/share/fontconfig') if Path(p).exists()]
+    system = [p for p in (Path('/usr/lib'), Path('/usr/lib64'), Path('/etc/fonts'),
+                          _DISTRIBUTION_FONTS, Path('/usr/share/fontconfig')) if p.exists()]
     mounted = _mount_view()
     for path in system:
         info = path.lstat()
@@ -344,7 +351,7 @@ def _profile(check, *, svg=False, managed_fonts=False):
     # Managed fonts add only the approved leaves to the distribution profile.
     # Do not scan or expose local/user font trees on this new path.
     if not svg and not managed_fonts:
-        extra_trees += (Path('/usr/local/share/fonts'), home / '.fonts', xdg['XDG_DATA_HOME'] / 'fonts')
+        extra_trees += _local_font_roots(home, xdg['XDG_DATA_HOME'])
     for path in extra_trees:
         if path.exists() or path.is_symlink():
             trees.append((path, False))
@@ -447,15 +454,18 @@ def execute(stack, path, files, start, version, prepare_fingerprint, bytes_limit
             or any(dest == source / 'config.local.json' for _, dest in profile_files)):
         raise IsolationError('input proof requires the fixed wheel profile without independent configuration')
     root = path.parent
-    mount_paths = (*files, root) if frame_paths else files
-    project_mounts = _project_mounts(mount_paths) if qualification is not None else None
     scratch = root / 'cache' / 'preview'
     planned = [p for p, _ in trees] + [dest for _, dest in profile_files] + [Path('/proc'), Path('/dev')]
     if managed_font_profile is not None:
-        planned.append(_MANAGED_FONTS)
-        env['FONTCONFIG_FILE'] = str(_MANAGED_FONTS / 'fonts.conf')
+        # Disallow the omitted lookup roots too: project mounts cannot supply
+        # their content instead of the original font providers.
+        planned.extend((_MANAGED_FONTS, *_local_font_roots(Path(env['HOME']), Path(env['XDG_DATA_HOME']))))
     if any(p == root or root in p.parents or p in root.parents for p in planned):
         raise IsolationError('project overlaps a fixed runtime mount')
+    if managed_font_profile is not None:
+        env['FONTCONFIG_FILE'] = str(_MANAGED_FONTS / 'fonts.conf')
+    mount_paths = (*files, root) if frame_paths else files
+    project_mounts = _project_mounts(mount_paths) if qualification is not None else None
     if any(p == scratch or scratch in p.parents or p in scratch.parents for p in files):
         raise IsolationError('project input overlaps the isolated scratch mount')
     argv = [str(_BWRAP), '--unshare-user', '--unshare-pid', '--unshare-net', '--unshare-ipc',

@@ -5,7 +5,10 @@ from pathlib import Path
 import re
 import sys
 
-from .preview_window_isolation import IsolationError, _pin_binding, _token, binding_digest, identity_digest
+from .preview_window_isolation import (
+    _DISTRIBUTION_FONTS, _MANAGED_FONTS, _MANAGED_FONT_PINS, IsolationError, _pin_binding, _token,
+    binding_digest, identity_digest,
+)
 
 
 # ldd emits process-random mapped addresses. Keep the ordered loader names and
@@ -19,11 +22,13 @@ _PROVIDER_FILES = ('/usr/bin/ffmpeg', '/usr/bin/ffprobe', '/usr/bin/fc-list', '/
 
 
 class EnvironmentWitness:
-    def __init__(self, check, limit):
+    def __init__(self, check, limit, *, font_config=None):
         self.check = check
         self.limit = limit
         self.paths = set()
         self.inventories = {}
+        managed_config = str(_MANAGED_FONTS / 'fonts.conf')
+        self.managed_config = managed_config if font_config == managed_config else None
 
     def observe(self, argv, stdout):
         tool = argv[0]
@@ -44,6 +49,20 @@ class EnvironmentWitness:
             self.inventories['ldd:' + str(argv[1])] = entries
         elif tool == 'fc-list':
             names = sorted(set(stdout.splitlines()))
+            if self.managed_config is not None:
+                # Only the fixed worker's own fc-list can show which mounted
+                # leaves Fontconfig actually recognized. Check before the
+                # certificate collector opens the reported font paths.
+                expected = {str(_MANAGED_FONTS / leaf) for leaf in _MANAGED_FONT_PINS}
+                listed = set(names)
+                if not expected <= listed:
+                    raise IsolationError('managed preview font inventory is missing an approved font')
+                for name in listed - expected:
+                    path = Path(name)
+                    if _DISTRIBUTION_FONTS not in path.parents or '..' in path.parts:
+                        raise IsolationError('managed preview font inventory contains a non-distribution font')
+                    if _DISTRIBUTION_FONTS not in path.resolve(strict=True).parents:
+                        raise IsolationError('managed preview distribution font resolves outside its provider')
             self.paths.update(names)
             self.inventories[tool] = names
         elif tool == 'fc-conflist':
@@ -58,6 +77,10 @@ class EnvironmentWitness:
                 or len(self.paths) > 8192):
             raise IsolationError('unknown host or provider inventory')
         paths = self.paths | set(map(str, implementation)) | set(_PROVIDER_FILES) | {sys.executable}
+        if self.managed_config is not None:
+            if 'fc-list' not in self.inventories or environment.get('FONTCONFIG_FILE') != self.managed_config:
+                raise IsolationError('managed preview lacks its observed font configuration')
+            paths.add(self.managed_config)
         observed, tokens, total = [], [], 0
         for name in sorted(paths):
             self.check()

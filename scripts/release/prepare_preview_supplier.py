@@ -576,7 +576,9 @@ def _enroll_profile(root, *, launcher_path, python, check, select):
     adopt = os.path.lexists(target)
     with tempfile.TemporaryDirectory(prefix='.preview-enrollment-', dir=root) as tmp:
         scratch = Path(tmp)
-        profile = target if adopt else scratch / 'preview'
+        # A distinct staging leaf lets the approved launcher locate the same
+        # installed fonts before and after the no-replace publication.
+        profile = target if adopt else scratch / 'staged-preview'
         def qualify(child_check):
             pins, prepare_wheel = select(scratch, child_check)
             wheel_filename, launcher_sha256, wheel_sha256, projection_sha256 = pins
