@@ -2,11 +2,13 @@
 
 ## 普通 SVG-sequence 工程
 
-Windows x64 原生支持多轨、多剪辑的静态 SVG-sequence；允许配合普通本地音视频，不支持同一时间线混用 HTML 与 SVG 图形轨，也不支持字幕、激活插件、GPU、草稿/区间合成或打包缓存。保持 `core` 模式。未配置或身份校验失败时拒绝，不查 PATH，也不回退内部验收。
+Windows x64 原生支持多轨、多剪辑的静态 SVG-sequence，可配普通本地音视频、纯文本字幕和下述混音插件。不支持 HTML 与 SVG 混轨、GPU、草稿/区间合成或打包缓存。保持 `core` 模式。未配置或身份校验失败时拒绝，不查 PATH，也不回退内部验收。
 
 - `VTX_WINDOWS_SVG_PORTABLE` 指向官方 Inkscape 1.4.4 x64 便携解包根（含 `inkscape`）；`VTX_WINDOWS_SVG_SCRATCH` 指向已存在、仅可信账户可写的短 ASCII 暂存根，不能含 `;` 或 `%`（媒体阶段）。
 - 时间线交付、严格 QC 和单帧预览另需 `VTX_WINDOWS_SVG_MEDIA_BIN`，指向字节锁定的 Gyan FFmpeg 9.0.2 full 静态版 `bin`。工程、工具、暂存根必须位于可信的固定 NTFS 且互不重叠。普通源须为工程内精确相对名的单文件 WAV、MP4、MOV 等[支持格式](<../../vtx/render/gfx_svg_win_media.py>)；不接收外部路径、播放列表或网络源。
-- 字体可为空，或声明工程内可信的 TTF/OTF/TTC/OTC 文件。每组字体独立暂存和查询，使用已绑定的字体字节和私有 Fontconfig，不回退系统字体。相同输入可以复用认证帧；使用不同字体或更换字节会改变缓存身份。
+- SVG 字体可为空，或声明工程内可信的 TTF/OTF/TTC/OTC 文件。每组字体独立暂存和查询，使用已绑定的字体字节和私有 Fontconfig，不回退系统字体。相同输入可以复用认证帧；使用不同字体或更换字节会改变缓存身份。
+- 字幕可内联，或通过 `subtitles_src` 引用工程内精确相对名的 UTF-8 SRT/JSON（≤512 KiB，不得在 `cache/`、`out/` 下）。单轨至多 256 条不重叠的纯文本字幕，每条 1–4 行，按 `[in,out)` 烧录固定样式。`\N` 可换行，不支持其他 ASS 控制码或 `vtx subs` 子命令。字幕使用经绑定的 Windows Arial Bold 或 Microsoft YaHei Bold，缺字即拒绝，不回退其他字体；不要求与 POSIX 的 ASS 排版相同。
+- 正式链只支持内置 [duck-static](../../plugins/duck-static/README.md)：在音轨声明 `duck_strategy` 即对当前工程生效，插件须已安装并启用；参数校验、混音和回执身份沿用内核插件机制。需要媒体工具配置，单帧预览仍拒绝生效插件。其他插件不在此配置的支持范围。
 
 `python -m vtx -t <timeline.json> gfx` 写 `cache/` 和 `out/receipt.json`；若计划随后单独运行 `video`，请从 `gfx` 起保持同一媒体工具配置。`all` 写缓存、回执和成片，执行原有严格 QC；只栅格化可用 `gfx`，没有可测音频的工程不会因此自动满足成片 QC。`qc --strict` 重新验证当前已认证成片及需要的参考画面，不重新合成。[单帧预览](timeline-api.md#windows-svg-单帧预览)只在私有暂存中准备当前帧并内联返回 PNG，不写工程缓存或正式回执；它不表示连续预览或压缩成片逐像素一致。
 

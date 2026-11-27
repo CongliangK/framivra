@@ -11,8 +11,10 @@ from fractions import Fraction
 
 from .constraints import fps_expression, parse_fps
 
-from ..media.encoders import pick_vcodec, nvenc_budget, nvenc_concurrency, seg_encoder_kind, seg_needs_alpha
+from ..media.encoders import (pick_vcodec, nvenc_budget, nvenc_concurrency, seg_encoder_kind,
+                              seg_needs_alpha, display_video_size)
 from ..cache.hygiene import budget_gate, manifest_record, seg_key
+from ..cache._formal_video import source_guard
 from ..runtime import events
 from .infra import Ctx, run_parallel, filter_filename, filter_threads
 from ..runtime import fstxn
@@ -348,6 +350,12 @@ class RenderPlan:
             return self._composite_graph(layers_subset, out_path, with_subs, a, b, sub_file)
         return self._composite_passes(layers_subset, out_path, with_subs, a, b, sub_file)
 
+    def _run_composite_graph(self, argv, *, with_subs, a, b, label):
+        if with_subs and getattr(self.c, '_windows_subtitles', None) is not None:
+            from ..render.gfx_svg_win_subtitles import run
+            return run(self.c, argv, a=a, b=b, label=label)
+        return self.c.run(argv)
+
     def _composite_graph(self, layers_subset, out_path, with_subs, a=0, b=None, sub_file=None):
         # 阶段二（2026-09-10）：a/b = 本段帧区间 [a,b)，段内时间从 0 起。默认
         # a=0/b=dur 供 VTX_VIDEO_SEGMENTS=1 与 --draft --frames 回落路径共用。
@@ -378,7 +386,7 @@ class RenderPlan:
         for k, L in enumerate(layers_subset):
             slave, ov, cur = self._layer_chain(L, k, cur, a, seglen, idx=k + 1)
             parts += [slave, ov]
-        if with_subs:
+        if with_subs and getattr(c, '_windows_svg_media', None) is None:
             parts.append(f"[{cur}]{self._subtitle_filter(sub_file)}[vout]")
         else:
             parts.append(f"[{cur}]null[vout]")
@@ -408,11 +416,11 @@ class RenderPlan:
         # 丢帧、cfr 成零操作」，其前提（EOF 裁决=非确定性主因）已被复渲证伪（见
         # 上方 pad 注释），cfr 对本 graph 仍是兜底而非可宣告零操作。帧数/时基
         # 安全网与拼接自检（总帧数 ffprobe 硬门）保留。
-        c.run(cmd + ["-filter_complex_threads", str(filter_threads()),
-                     "-filter_complex", ";".join(parts), "-map", "[vout]",
-                     "-frames:v", str(nframes if (draft and nframes) else seglen),
-                     "-fps_mode", "cfr", "-r", fps_expression(c.fps),
-                     *vcodec, str(out_path)])
+        self._run_composite_graph(cmd + ["-filter_complex_threads", str(filter_threads()),
+                    "-filter_complex", ";".join(parts), "-map", "[vout]",
+                    "-frames:v", str(nframes if (draft and nframes) else seglen),
+                    "-fps_mode", "cfr", "-r", fps_expression(c.fps), *vcodec, str(out_path)],
+                    with_subs=with_subs, a=a, b=b, label=cur)
         return enc
 
     # ---- 层级滤镜构件（单 graph 与逐层 pass 两路共用，防双实现漂移）----
@@ -666,11 +674,14 @@ class RenderPlan:
                     # 把旗标抹回链式内存帧口径（E-C3 实测链式 rgba 帧 cl:unspecified）。
                     parts = ["[0:v]format=rgba,setparams=range=unspecified:colorspace=unknown[base]",
                              slave, ov]
-                if last and with_subs:
+                if last and with_subs and media is None:
                     parts.append(f"[{cur}]{self._subtitle_filter(sub_file)}[vout]")
+                elif last and with_subs:
+                    parts.append(f"[{cur}]format=yuv420p[captionbase];[captionbase]null[vout]")
+                    cur = 'captionbase'
                 elif last:
                     parts.append(f"[{cur}]format=yuv420p[vout]")
-                elif with_subs:
+                elif with_subs and media is None:
                     # 域钉定 rgba（域同构核心步骤，R4-E1-v2 2026-09-14）：链式
                     # graph 里 subtitles(libass) 只接受 RGB 输入，该约束经 filtergraph
                     # 协商反向传播，把主链自 L0 overlay 起全程钉在 rgba（E-C3 实测：
@@ -709,8 +720,9 @@ class RenderPlan:
                                   if media is not None and prev is not None and not c.dry
                                   else contextlib.nullcontext())
                 with previous_input:
-                    c.run(cmd + ["-filter_complex_threads", "1",
-                                 "-filter_complex", ";".join(parts), "-map", "[vout]", *tail])
+                    self._run_composite_graph(cmd + ["-filter_complex_threads", "1",
+                                              "-filter_complex", ";".join(parts), "-map", "[vout]", *tail],
+                                              with_subs=last and with_subs, a=a, b=b, label=cur)
                 if c.dry:
                     # dry-run：命令已由 Ctx.run 打印（[dry-run] 前缀），不执行不落盘
                     # ——跳过原子替换/帧数校验/旁车，继续打印余下 pass 命令。dry 口径
@@ -777,8 +789,12 @@ class RenderPlan:
         """
         layers = [(L["source"].identity if L["gfx"] else L["seg"].name,
                    L["cl"], L["x"], L["y"], L["w2"], L["h2"]) for L in sl]
-        subtitles = (sfile.read_bytes() if with_subs and sfile is not None
-                     and sfile.exists() else b"")
+        captions = getattr(self.c, '_windows_subtitles', None)
+        if with_subs and captions is not None:
+            subtitles = json.dumps(captions.window(a, b), ensure_ascii=False).encode('utf-8')
+        else:
+            subtitles = (sfile.read_bytes() if with_subs and sfile is not None
+                         and sfile.exists() else b"")
         return segment_content_key(a, b, self.W, self.H, self.draft,
                                    getattr(self.c, "gpu", False), layers, subtitles,
                                    _graph_code_digest(), self.c.fps)
@@ -790,8 +806,6 @@ class RenderPlan:
         # 段目录自建（parents 兜底 fresh 项目直渲本目录的首个落笔点）。
         vdir = c.cache / tag
         media = getattr(c, "_windows_svg_media", None)
-        if media is not None and with_subs:
-            raise ValueError("Windows SVG all does not support subtitle compositing")
         if media is None:
             fstxn.mkdir(vdir, root=self.c.root)
         else:
@@ -810,7 +824,7 @@ class RenderPlan:
         def render_segment(si):
             a, b = edges[si], edges[si + 1]
             sfile = None
-            if with_subs:
+            if with_subs and media is None:
                 # dry-run 豁免（有意）：段字幕 ass/清单（list.txt）属 cache 侧再生物，且
                 # 段内容键哈希其字节——不写会导致 dry 预览的段文件名与真实运行不一致。
                 sfile = vdir / f"subs_{a:06d}.ass"; self.write_seg_ass(sfile, a, b)
@@ -946,10 +960,10 @@ def _media_geometry(c, cl):
     """Share the original clip transform with fresh-source QC references."""
     windowed = any(k in cl for k in ('scale', 'x', 'y'))
     if windowed:
-        info = c.probe(c.src_path(cl['src']))
+        width, height = display_video_size(c.probe(c.src_path(cl['src'])))
         scale = cl.get('scale', 1.0)
-        width = int(info['w'] * scale) // 2 * 2
-        height = int(info['h'] * scale) // 2 * 2
+        width = int(width * scale) // 2 * 2
+        height = int(height * scale) // 2 * 2
         return windowed, cl.get('x', 0), cl.get('y', 0), width, height, [f'scale={width}:{height}:flags=lanczos']
     return windowed, 0, 0, None, None, [c.crop169(cl['src']), f'scale={c.w}:{c.h}:flags=lanczos']
 
@@ -994,16 +1008,18 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None, staged_gfx=Non
                 layers.append(layer)
                 continue
             windowed, x, y, w2, h2, geometry = _media_geometry(c, cl)
-            source_info = c.probe(c.src_path(cl['src']))
+            input_path = c.src_path(cl['src'])
+            source_info = c.probe(input_path)
             need_alpha = seg_needs_alpha(cl, source_info)
-            vf = [f"trim=start_frame={cl['src_in']}:end_frame={cl['src_out']}", "setpts=PTS-STARTPTS",
+            vf = [*source_guard(c, input_path),
+                  f"trim=start_frame={cl['src_in']}:end_frame={cl['src_out']}", "setpts=PTS-STARTPTS",
                   f"fps={fps_expression(c.fps)}"]
             vf += geometry
             # seg 内容寻址键（2026-09-11 治理升级）：键 = sha1(源指纹+切片/窗口/fade/编码
             # 参数)[:12]。源或 clip 参数变了键就变，旧 seg 由 gc 回收——不再依赖
             # 「源/clip 变更后须手工 rm cache/seg」（旧 D29 注释）。
             skey = seg_key(c, cl, ti, ci, windowed, need_alpha,
-                           "prores" if need_alpha else seg_kind)
+                           "prores" if need_alpha else seg_kind, source_info=source_info)
             if need_alpha:
                 vf.append("format=yuva420p")
                 vf += _clip_alpha_filters(cl, c.spf)
@@ -1038,7 +1054,7 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None, staged_gfx=Non
                     seg = seg.with_name(f'native-alpha-v1-{skey}-{first}-{stop}.mov')
                     native_alpha_slices[seg] = frames
             label = f"seg t{ti:02d}c{ci:02d}（{frames} 帧）"
-            cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(cl["src"])),
+            cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(input_path),
                    "-map", "0:v:0", "-vf", ",".join(vf), "-frames:v", str(frames), "-an",
                    *vcodec_seg, str(seg)]
             nvenc = not need_alpha and seg_kind == "nvenc"
@@ -1100,7 +1116,11 @@ def needs_qc_clean(c):
     # short-circuit after the first alpha source and race cold metadata probes.
     clips = tracks[0]['clips']
     sources = dict.fromkeys(cl['src'] for cl in clips)
-    alpha = [seg_needs_alpha({}, c.probe(c.src_path(sid))) for sid in sources]
+    facts = {sid: c.probe(c.src_path(sid)) for sid in sources}
+    alpha = [seg_needs_alpha({}, info) for info in facts.values()]
+    if any(facts[cl['src']].get('quarter_turn') and any(key in cl for key in ('scale', 'x', 'y'))
+           for cl in clips):
+        return True  # The fresh reference must reproduce placement on the canvas.
     if getattr(c, '_windows_svg_media', None) is not None:
         # Raw original pixels are only equivalent for normalized opaque clips.
         return any(alpha) or any(
@@ -1119,11 +1139,12 @@ def render_source_frame(c, clip, frame, directory):
     _, x, y, width, height, geometry = _media_geometry(c, clip)
     source_frame = clip['src_in'] + frame
     seek = max(0, (source_frame - .2) / c.fps)
-    filters = [f'setpts=PTS-STARTPTS+{frame}/({fps_expression(c.fps)})/TB', *geometry,
-               'format=yuva420p', *_clip_alpha_filters(clip, c.spf)]
+    input_path = c.src_path(clip['src'])
+    filters = [*source_guard(c, input_path), f'setpts=PTS-STARTPTS+{frame}/({fps_expression(c.fps)})/TB',
+               *geometry, 'format=yuva420p', *_clip_alpha_filters(clip, c.spf)]
     command = ['ffmpeg', '-v', 'error', '-y', '-ss', f'{seek:.6f}',
-               '-i', str(c.src_path(clip['src'])), '-map', '0:v:0', '-an',
-               '-vf', ','.join(filters), '-frames:v', '1', '-pix_fmt', 'rgba']
+               '-i', str(input_path), '-map', '0:v:0', '-an',
+               '-vf', ','.join(filters), '-pix_fmt', 'rgba']
     source = frame_source.PngSequence(directory, 'qc-source-frame', 1, c.fps,
                                       width or c.w, height or c.h)
     layer = dict(cl={'dst_in': 0, 'dur': 1}, source=source, gfx=True,
@@ -1132,7 +1153,7 @@ def render_source_frame(c, clip, frame, directory):
     plan = RenderPlan(c, False, 1, c.w, c.h)
     media = getattr(c, '_windows_svg_media', None)
     if media is None:
-        c.run(command + [str(directory / 'f0000.png')])
+        c.run(command + frame_source.single_png_output(directory / 'f0000.png'))
         plan.composite([layer], output, False, a=0, b=1)
     else:
         from ..render.gfx_svg_win_publish import anchored
@@ -1143,7 +1164,7 @@ def render_source_frame(c, clip, frame, directory):
         if directory.parent != media.scratch:
             raise ValueError('Windows SVG QC reference requires its private work directory')
         with anchored(directory) as parent:
-            result = media.execute(command + ['-c:v', 'png', '-f', 'image2pipe', '-'], text=False)
+            result = media.execute(command + ['-frames:v', '1', '-c:v', 'png', '-f', 'image2pipe', '-'], text=False)
             if result.returncode or result.stderr.strip() or not result.stdout:
                 raise RuntimeError('Windows SVG QC could not decode the fresh source frame')
             parent.write_new('f0000.png', result.stdout)
@@ -1172,11 +1193,10 @@ def build_video(c: Ctx, layers=None):
     （seg 内容寻址键与渲染时机无关，波内先行写入的段文件 video 阶段直接命中）。
     """
     draft = getattr(c, "draft", False); nframes = getattr(c, "frames", None)
-    with_subs = getattr(c, '_windows_svg_media', None) is None
-    if not with_subs and (c.tl.get('subtitles') or c.tl.get('subtitles_src')):
-        # A private ASS file alone does not bind libass's font inputs. Fail
-        # explicitly rather than silently publishing an unsubtitled movie.
-        raise ValueError("Windows SVG all does not support subtitle compositing")
+    media = getattr(c, '_windows_svg_media', None)
+    with_subs = media is None or getattr(c, '_windows_subtitles', None) is not None
+    if media is not None and not with_subs and c.tl.get('subtitles'):
+        raise ValueError('Windows SVG subtitle compositing requires a qualified caption profile')
     # budget_gate 仍在 video 阶段开头执行（流水线下为提示性门）：seg 预编码已在波内
     # 先行落盘，但 gc 只回收「键集外」条目——先行写入的当前键 seg 不在回收集，
     # 无冲突；超预算提示/自动回收语义与线性路径一致。
@@ -1193,7 +1213,7 @@ def build_video(c: Ctx, layers=None):
         plan = RenderPlan(c=c, draft=draft, f=f, W=W, H=H, nframes=nframes,
                           nseg=int(os.environ.get("VTX_VIDEO_SEGMENTS", str(DEFAULT_SEGMENTS))),
                           layers=layers)
-        if with_subs:
+        if media is None:
             plan.write_global_ass(c.cache / ("subs_draft.ass" if draft else "subs.ass"))
         # 默认 8（阶段三 2026-09-10 调优：voice-ime 实测 N=8 89.8s vs N=6 112.9s，-20%；
         # 20 帧含段边界灰度差均值 0.135/最大帧均值 1.195，与 N=6 相对单 graph golden 同级——

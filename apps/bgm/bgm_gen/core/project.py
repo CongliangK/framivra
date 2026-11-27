@@ -27,6 +27,7 @@ from ..engines import run_engine
 from ..engines.base import EngineError, default_out, get_descriptor, \
     synth_program_param_keys, validate_param_value
 from ..engines.midi_util import NOTE_EVENT_TYPES
+from ..sf2_shorthand import parse_instrument_shorthand
 
 PROJECT_SPEC_VERSION = "1"
 SUPPORTED_SPEC_VERSIONS = ("1", "2")   # v3："2" 本期增 $ref 槽位 + master.qc.duration_min_s
@@ -1134,24 +1135,23 @@ def _projection_source(value):
 
 def _hook_sf2_instrument_shorthand(payload, track):
     """钩子①（四类封闭钩子，PLAN_v3 §3.1）：sf2 instrument "名:bank:program"
-    速记解析；显式 bank/program 字段优先（显式优先与 v1 if/elif 同惯例）。
-    行为逐语义一致于 v1 原实现（重组装深比较锁 tests/test_events.py）。"""
+    速记解析；显式 bank/program 字段优先（显式优先与 v1 if/elif 同惯例）。"""
     sf2_name = payload.get("sf2")
-    if not isinstance(sf2_name, str) or sf2_name.count(":") != 2:
+    if not isinstance(sf2_name, str):
         return
-    name_part, b_s, p_s = sf2_name.rsplit(":", 2)
     try:
-        b_i, p_i = int(b_s), int(p_s)
+        parsed = parse_instrument_shorthand(sf2_name)
     except ValueError:
         raise ProjectError(
             f"轨 {track.get('name')}：instrument 速记 {sf2_name!r} 的 bank/program "
             f"段不是整数") from None
-    if 0 <= b_i <= 128 and 0 <= p_i <= 127:
+    if parsed is not None:
+        name_part, bank, program = parsed
         payload["sf2"] = name_part
         if not track.get("bank_explicit"):
-            payload["bank"] = b_i
+            payload["bank"] = bank
         if not track.get("program_explicit"):
-            payload["program"] = p_i
+            payload["program"] = program
 
 
 def track_engine_spec(track, proj, stem_path):
@@ -1206,6 +1206,43 @@ def track_engine_spec(track, proj, stem_path):
             "channels": m["channels"], "out": stem_path, "payload": payload}
 
 
+def _check_windows_stem_names(tracks):
+    """Reject unusable Win32 stem names before creating any render output."""
+    if os.name != "nt":
+        return
+    names = [f"{track['name']}.bus.wav" for track in tracks]
+    for name in names:
+        # Extensions do not disambiguate DOS devices; a colon can select an ADS.
+        base = name.split(".", 1)[0].rstrip(" ")
+        # DOS names use ASCII case matching; do not fold e.g. dotless i to I.
+        if (re.fullmatch(r"CON(?:IN\$|OUT\$)?|PRN|AUX|NUL|(?:COM|LPT)[1-9¹²³]",
+                         base, re.IGNORECASE | re.ASCII)
+                or any(ord(char) < 32 or char in '<>:"|?*' for char in name)):
+            raise ProjectError(f"Windows stem 文件名不可用：{name!r}；请重命名该轨")
+    if len(names) < 2:
+        return
+    import ctypes
+    from ctypes import wintypes
+    from functools import cmp_to_key
+
+    compare_ordinal = ctypes.WinDLL("kernel32", use_last_error=True).CompareStringOrdinal
+    compare_ordinal.argtypes = (wintypes.LPCWSTR, ctypes.c_int,
+                                wintypes.LPCWSTR, ctypes.c_int, wintypes.BOOL)
+    compare_ordinal.restype = ctypes.c_int
+
+    def compare(left, right):
+        # Ordinal case comparison avoids Python casefold expansions (e.g. ß → ss).
+        order = compare_ordinal(left, -1, right, -1, True)
+        if not order:
+            raise ctypes.WinError(ctypes.get_last_error())
+        return order - 2  # CSTR_LESS_THAN / CSTR_EQUAL / CSTR_GREATER_THAN
+
+    names.sort(key=cmp_to_key(compare))
+    for left, right in zip(names, names[1:]):
+        if compare(left, right) == 0:
+            raise ProjectError(f"Windows stem 文件名冲突：{left!r} 与 {right!r}；请重命名其中一轨")
+
+
 def _same_path(a, b):
     try:
         return os.path.abspath(a) == os.path.abspath(b) or (
@@ -1251,6 +1288,7 @@ def render_project(project_path, out_dir=None, quiet=False, incremental=False, r
     runtime = load_runtime() if runtime is None else effective_runtime(runtime)
 
     proj = load_project(project_path)
+    _check_windows_stem_names(proj["tracks"])
     name = proj["name"] or "project"
     out_dir = os.path.abspath(out_dir or default_out(name))
     stems_dir = os.path.join(out_dir, "stems")

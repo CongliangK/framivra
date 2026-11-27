@@ -4,12 +4,15 @@
 
 # srt contracts
 # srt_out 单测（方案 §9.1：时间码毫秒格式、序号连续、空行分隔——golden 文本比对）。
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # local vtx for direct test runs
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import srt_out  # noqa: E402
 
@@ -44,14 +47,54 @@ class TestSrtOut(unittest.TestCase):
         self.assertEqual(content, "1\n00:00:00,000 --> 00:00:01,000\n单行\n")
         self.assertTrue(content.endswith("\n"))
 
+    def test_crlf_inside_cue_has_same_rendering_as_lf(self):
+        subs = [{"in": 0, "out": 30, "text": "第一行\r\n第二行"}]
+        self.assertEqual(srt_out.render_srt(subs), "1\n00:00:00,000 --> 00:00:01,000\n第一行\n第二行\n")
+
     def test_empty_subs(self):
         self.assertEqual(srt_out.render_srt([]), "")
+
+    @unittest.skipUnless(os.name == 'nt', 'native Windows redirected streams')
+    def test_cli_utf8_stdin_and_both_output_modes(self):
+        from vtx.media.subtitles_src import parse_srt
+
+        subs = [{'in': 24, 'out': 42, 'text': '你好 🎵\r\n第二行'}]
+        expected = [{'in': 24, 'out': 42, 'text': '你好 🎵\\N第二行'}]
+        srt = '1\n00:00:00,800 --> 00:00:01,400\n你好 🎵\n第二行\n'.replace('\n', os.linesep).encode('utf-8')
+        env = dict(os.environ, PYTHONUTF8='0', PYTHONIOENCODING='cp936:strict')
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            cmd = [sys.executable, '-B', srt_out.__file__]
+            for ensure_ascii in (False, True):
+                with self.subTest(ensure_ascii=ensure_ascii):
+                    out = root / f'字幕 🎵 {ensure_ascii}.srt'
+                    payload = json.dumps(subs, ensure_ascii=ensure_ascii).encode('utf-8')
+                    result = subprocess.run(cmd, input=payload, cwd=root, env=env,
+                                            capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, srt)
+                    self.assertEqual(result.stderr, b'')
+                    self.assertFalse(out.exists())
+                    result = subprocess.run([*cmd, '-o', out], input=payload, cwd=root, env=env,
+                                            capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(f'✓ SRT 已写出：{out}'.encode('utf-8'), result.stdout)
+                    self.assertEqual(result.stderr, b'')
+                    self.assertEqual(out.read_bytes(), srt)
+                    self.assertEqual(parse_srt(out.read_text(encoding='utf-8'), 30), expected)
+            result = subprocess.run([*cmd, '-o', out], input=b'[{"in":0,"out":30,"text":"\xff"}]',
+                                    cwd=root, env=env, capture_output=True, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(out.read_bytes(), srt)
+            result = subprocess.run(cmd, input=br'[{"in":0,"out":30,"text":"\ud800"}]',
+                                    cwd=root, env=env, capture_output=True, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, b'')
 
 
 # tl merge contracts
 # tl_merge 单测（方案 §9.1：合并后除 subtitles 外逐键相等、备份落 cache/reports/、
 # --dry-run 不写、损坏 JSON 拒绝并保原文件）。
-import json
 import shutil
 
 import tl_merge  # noqa: E402
@@ -111,7 +154,7 @@ class TestTlMerge(unittest.TestCase):
         bad = [{"in": 100, "out": 50, "text": "in>=out"}]     # 违反 0<=in<out
         with self.assertRaises(ValueError):
             tl_merge.merge_subtitles(str(self.tl), bad)
-        self.assertEqual(json.loads(self.tl.read_text())["subtitles"],
+        self.assertEqual(json.loads(self.tl.read_text(encoding="utf-8"))["subtitles"],
                          self.before["subtitles"], "非法条目必须拒绝且保护现状")
         bad2 = [{"in": 0, "out": 30}]                          # 缺 text
         with self.assertRaises(ValueError):

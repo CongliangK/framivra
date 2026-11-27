@@ -706,9 +706,9 @@ export class TimelineReader {
       const result = parseJSON(text)
       if (result?.schema !== 'framivra.timeline.store/v1' || typeof result.ok !== 'boolean') fail('PROTOCOL_MISMATCH', 'Installed vtx store/v1 required', 502)
       return result
-    }, input, true, undefined, snapshot, owner, operation === 'edit-view' ? { warm: { writeGrant, beforeSpawn } } : undefined)
+    }, input, true, undefined, snapshot, owner, { beforeSpawn, ...(operation === 'edit-view' && { warm: { writeGrant } }) })
   }
-  async command(executable, timeline, args, signal, decode, input, business = false, streaming = false, snapshot, owner, { warm, isolatedWindow = false } = {}) {
+  async command(executable, timeline, args, signal, decode, input, business = false, streaming = false, snapshot, owner, { warm, beforeSpawn = warm?.beforeSpawn, isolatedWindow = false } = {}) {
     signal = AbortSignal.any([signal, this.lifecycle.signal])
     signal.throwIfAborted()
     // One snapshot per command: a caller-supplied snapshot is compared against
@@ -752,9 +752,11 @@ export class TimelineReader {
       // Never spawn against a newer selection than the async path check used.
       if (this.snapshotConfig().fingerprint !== config.fingerprint) fail('CONFIG_CHANGED', 'Host configuration changed during VTX_CONFIG validation', 409)
     }
-    if (warm?.beforeSpawn) {
-      await warm.beforeSpawn(signal)
+    if (beforeSpawn) {
+      const admit = await beforeSpawn(signal)
       if (this.snapshotConfig().fingerprint !== config.fingerprint) fail('CONFIG_CHANGED', 'Host configuration changed during identity validation', 409)
+      signal.throwIfAborted()
+      if (typeof admit === 'function') admit()
     }
     signal.throwIfAborted()
     const framed = typeof streaming === 'object' ? streaming : undefined

@@ -10,7 +10,7 @@ from bundle_session import require_modern_vse
 
 require_modern_vse(bpy)
 argv = sys.argv[sys.argv.index("--") + 1:]
-tl = json.loads(Path(argv[0]).read_text())
+tl = json.loads(Path(argv[0]).read_text(encoding="utf-8"))
 P = tl["project"]
 CH_V = 1 + len(tl["audio_tracks"])
 SUB_CH = CH_V + len(tl["video_tracks"])

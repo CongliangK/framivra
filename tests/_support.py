@@ -12,6 +12,11 @@ import wave
 _SCRIPTS_DIR = Path(__file__).resolve().parents[1] / 'scripts'
 
 
+def cli_python():
+    """Native Windows Python, preserving the POSIX AppImage escape hatch."""
+    return [sys.executable] if os.name == 'nt' else ['env', 'python3']
+
+
 def temporary_root(test):
     temporary = tempfile.TemporaryDirectory()
     test.addCleanup(temporary.cleanup)
@@ -99,6 +104,9 @@ def _owned_init_child():
     from unittest import mock
 
     root, log = map(Path, sys.argv[1:3])
+    # platform.system() may ask Winsock for the local hostname even though
+    # init only prints the OS name. Keep the fixture's socket ban intact.
+    local_system = {'win32': 'Windows', 'darwin': 'Darwin', 'linux': 'Linux'}.get(sys.platform, sys.platform)
     allowed = [[sys.executable, str(root / name), "--help"] for name in
                ("vtx/vtx.py", "apps/blender-bridge/audit_bundle.py")]
     record = {"requests": [], "help_commands": [], "help_results": []}
@@ -107,8 +115,14 @@ def _owned_init_child():
         # Popen may use posix_spawn internally; both audit events must satisfy
         # the same exact executable/argv boundary for the two owned programs.
         if event in ("subprocess.Popen", "os.posix_spawn"):
-            if args[0] != sys.executable or list(args[1]) not in allowed:
-                raise AssertionError("init fixture blocked process: " + repr(args[1]))
+            exe, command = args[:2]
+            if sys.platform == 'win32' and event == 'subprocess.Popen' and isinstance(command, str):
+                # CPython audits the serialized CreateProcess argv on Windows.
+                valid = exe in (None, sys.executable) and command in map(subprocess.list2cmdline, allowed)
+            else:
+                valid = exe == sys.executable and list(command) in allowed
+            if not valid:
+                raise AssertionError("init fixture blocked process: " + repr(command))
         elif event.startswith("socket.") or event in (
                 "os.system", "os.fork", "os.forkpty",
                 "os.exec", "os.kill", "os.killpg"):
@@ -140,6 +154,7 @@ def _owned_init_child():
         # availability. Only the two copied Python --help programs really run.
         with mock.patch.object(vt, "find_binary", side_effect=lambda names:
                                "fixture:" + names[0] if names[0] in ("ffmpeg", "ffprobe") else None), \
+             mock.patch.object(vt.platform, "system", return_value=local_system), \
              mock.patch.object(vt, "find_chrome", return_value="fixture:chrome"), \
              mock.patch.object(vt, "tool_version", return_value="fixture:ffmpeg version"), \
              mock.patch.object(vt, "ffmpeg_encoders", return_value=""), \

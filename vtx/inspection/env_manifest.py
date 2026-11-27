@@ -18,8 +18,8 @@ manifest 顶层 schema（"vtx.env_manifest/1"，字段名=issue #102 工单口�
                         （基线 70b6853=v2.0.1 偏离状态；git 不可得 → git_sha=None +
                         git_error 显形，fail-open 不编造）
   os_kernel             platform.uname() 五字段 dict
-  cpu_model             /proc/cpuinfo "model name"（回退 platform）
-  ram_total_mib         /proc/meminfo MemTotal（回退 sysconf；再不可得 → None）
+  cpu_model             /proc/cpuinfo "model name" 或 Windows 处理器注册表（回退 platform）
+  ram_total_mib         /proc/meminfo MemTotal、sysconf 或 Windows GlobalMemoryStatusEx；不可得 → None
   display_server        {session_type, env, xdpyinfo, x_servers, xvfb:{...}}——
                         DISPLAY/WAYLAND_DISPLAY/XDG_SESSION_TYPE 探测 + /proc 进程表
                         与 xdpyinfo 精确识别当前是否运行在 Xvfb 虚拟帧缓冲下
@@ -204,18 +204,60 @@ def _collect_os_kernel() -> dict:
             "version": u.version, "machine": u.machine, "processor": u.processor}
 
 
+def _windows_cpu_model():
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as key:
+            value, kind = winreg.QueryValueEx(key, "ProcessorNameString")
+    except OSError:
+        return None
+    return (value.strip() or None) if kind == winreg.REG_SZ else None
+
+
 def _collect_cpu_model() -> str:
-    text = _read_text("/proc/cpuinfo")
-    if text:
-        for line in text.splitlines():
-            if line.startswith("model name"):
-                value = line.partition(":")[2].strip()
-                if value:
-                    return value
+    if sys.platform == "win32":
+        value = _windows_cpu_model()
+        if value:
+            return value
+    else:
+        text = _read_text("/proc/cpuinfo")
+        if text:
+            for line in text.splitlines():
+                if line.startswith("model name"):
+                    value = line.partition(":")[2].strip()
+                    if value:
+                        return value
     return platform.processor() or platform.uname().machine or "unknown"
 
 
+def _windows_ram_total_mib():
+    import ctypes
+    from ctypes import wintypes
+
+    class MemoryStatus(ctypes.Structure):
+        _fields_ = [("length", wintypes.DWORD), ("load", wintypes.DWORD)] + [
+            (name, ctypes.c_uint64) for name in
+            ("total_phys", "avail_phys", "total_page", "avail_page",
+             "total_virtual", "avail_virtual", "avail_extended_virtual")]
+
+    status = MemoryStatus()
+    status.length = ctypes.sizeof(status)
+    try:
+        query = ctypes.WinDLL("kernel32").GlobalMemoryStatusEx
+        query.argtypes = [ctypes.POINTER(MemoryStatus)]
+        query.restype = wintypes.BOOL
+        if query(ctypes.byref(status)) and status.total_phys:
+            return round(status.total_phys / (1024 * 1024))
+    except OSError:
+        pass
+    return None
+
+
 def _collect_ram_total_mib():
+    if sys.platform == "win32":
+        return _windows_ram_total_mib()
     text = _read_text("/proc/meminfo")
     if text:
         for line in text.splitlines():

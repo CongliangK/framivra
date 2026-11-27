@@ -380,20 +380,27 @@ s.timeline_transaction(p,dict(operation='adopt',op_id='killed',base_revision=s._
         self.assertFalse(other.exists())
 
     def test_real_syscall_disk_failures_leave_only_before_or_after(self):
-        # Inject EIO at every invocation of the real fsync/rename/replace/write paths.
-        # No claim of testing a physical power loss: this checks process-visible failures.
-        for helper in ("_write_new", "_sync_dir", "os.replace", "os.rename", "os.fsync"):
-            obj, attr = (store.os, helper[3:]) if helper.startswith("os.") else (store, helper)
-            original = getattr(obj, attr)
+        # Inject EIO at each invocation of the active backend's write and publication
+        # operations. This checks process-visible failure, not physical power loss.
+        if sys.platform == 'win32':
+            from vtx.render.gfx_svg_win_publish import Directory
+            hooks = [(Directory, attr) for attr in ('write_new', '_rename')]
+        else:
+            hooks = [(store, '_write_new'), (store, '_sync_dir'),
+                     (store.os, 'replace'), (store.os, 'rename'), (store.os, 'fsync')]
+        for obj, helper in hooks:
+            original = getattr(obj, helper)
             calls = []
             with tempfile.TemporaryDirectory(prefix="framivra-count-") as tmp:
                 target = Path(tmp) / "timeline.json"; target.write_bytes(json.dumps(document()).encode())
                 def count(*args, **kw):
                     calls.append(args)
                     return original(*args, **kw)
-                with patch.object(obj, attr, count):
+                with patch.object(obj, helper, count):
                     result = timeline_transaction(target, dict(operation="adopt", op_id="count", base_revision=sha(target.read_bytes())))
                 self.assertTrue(result["ok"], result)
+            if sys.platform == 'win32':
+                self.assertTrue(calls, f'native backend did not exercise {helper}')
             for fail_at in range(len(calls)):
                 with self.subTest(helper=helper, index=fail_at), tempfile.TemporaryDirectory(prefix="framivra-eio-") as tmp:
                     target = Path(tmp) / "timeline.json"; target.write_bytes(json.dumps(document()).encode())
@@ -403,7 +410,7 @@ s.timeline_transaction(p,dict(operation='adopt',op_id='killed',base_revision=s._
                         index = counter[0]; counter[0] += 1
                         if index == fail_at: raise OSError(5, "injected EIO " + helper)
                         return original(*args, **kw)
-                    with patch.object(obj, attr, fail):
+                    with patch.object(obj, helper, fail):
                         result = timeline_transaction(target, dict(operation="adopt", op_id="disk-failure", base_revision=sha(before)))
                     self.assertFalse(result["ok"], result)
                     current = target.read_bytes()
@@ -423,13 +430,21 @@ s.timeline_transaction(p,dict(operation='adopt',op_id='killed',base_revision=s._
         code = """import os,signal,sys
 from vtx import timeline_store as s
 def stop(name):
- if name==sys.argv[2]: os.kill(os.getpid(),signal.SIGKILL)
+ if name==sys.argv[2]:
+  if sys.platform=='win32': os._exit(93)  # Do not unwind native publication handles.
+  os.kill(os.getpid(),signal.SIGKILL)
 s._checkpoint=stop
 s.timeline_store_status(sys.argv[1])
 """
-        points = ("init_mkdir", "publish_created", "publish_written", "publish_synced",
-                  "publish_replaced", "publish_parent_synced", "init_manifest_synced",
-                  "init_published", "init_parent_synced")
+        windows = sys.platform == 'win32'
+        if windows:
+            # This adapter writes the manifest via native handles and publishes
+            # the complete initial directory in one handle-relative rename.
+            points = ('init_mkdir', 'init_manifest_synced', 'init_published')
+        else:
+            points = ("init_mkdir", "publish_created", "publish_written", "publish_synced",
+                      "publish_replaced", "publish_parent_synced", "init_manifest_synced",
+                      "init_published", "init_parent_synced")
         for point in points:
             with self.subTest(point=point), tempfile.TemporaryDirectory(prefix="framivra-init-") as tmp:
                 target = Path(tmp) / "timeline.json"
@@ -437,12 +452,23 @@ s.timeline_store_status(sys.argv[1])
                 child = subprocess.run([sys.executable, "-c", code, str(target), point], cwd=tmp,
                                        env=dict(os.environ, PYTHONPATH=str(ROOT), PYTHONDONTWRITEBYTECODE="1"),
                                        capture_output=True, timeout=20)
-                self.assertEqual(child.returncode, -signal.SIGKILL, child.stderr)
+                self.assertEqual(child.returncode, 93 if windows else -signal.SIGKILL, child.stderr)
                 home = store._location(target)
-                self.assertEqual(home.exists(), point in ("init_published", "init_parent_synced"))
+                published = point in ("init_published", "init_parent_synced")
+                self.assertEqual(home.exists(), published)
                 # Unpublished artifacts are not adopted, modified or removed.
+                pattern = '.initializing-*' if windows else home.name + '.initializing-*'
                 leftovers = {p: {f.name: f.read_bytes() for f in p.iterdir()}
-                             for p in Path(tmp).glob(home.name + ".initializing-*")}
+                             for p in Path(tmp).glob(pattern)}
+                if windows:
+                    self.assertEqual(len(leftovers), 0 if published else 1)
+                    if published:
+                        entries = {p.name: p.read_bytes() for p in home.iterdir()}
+                    else:
+                        entries, = leftovers.values()
+                    self.assertEqual(set(entries), set() if point == 'init_mkdir' else {'manifest.json'})
+                    if entries:
+                        self.assertEqual(json.loads(entries['manifest.json'])['target'], target.name)
                 for recover in (False, True):
                     self.assertTrue(timeline_store_status(target, recover=recover)["ok"])
                     self.assertEqual(target.read_bytes(), raw)
@@ -494,10 +520,22 @@ s.timeline_store_status(sys.argv[1])
             return original(path)
         raw = self.path.read_bytes()
         req = self.request("adopt", "after-init-failure")
-        with patch.object(store, "_sync_dir", fail):
+        if sys.platform == 'win32':
+            # NTFS publishes the complete directory by handle-relative rename
+            # and does not use the POSIX parent-directory fsync helper.
+            def fail_after_publish(name):
+                if name == 'init_published':
+                    raise OSError(5, 'interrupted after native initialization rename')
+            fault = patch.object(store, '_checkpoint', fail_after_publish)
+        else:
+            fault = patch.object(store, '_sync_dir', fail)
+        with fault:
             result = timeline_transaction(self.path, req)
         self.assertFalse(result["ok"], result)
-        self.assertTrue((store._location(self.path) / "manifest.json").is_file())
+        home = store._location(self.path)
+        self.assertTrue((home / "manifest.json").is_file())
+        if sys.platform == 'win32':
+            self.assertEqual({p.name for p in home.iterdir()}, {'manifest.json'})
         self.assertEqual(self.path.read_bytes(), raw)
         self.assertTrue(timeline_store_status(self.path, recover=True)["ok"])
         self.assertTrue(timeline_transaction(self.path, req)["ok"])

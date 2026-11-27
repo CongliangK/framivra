@@ -262,6 +262,7 @@ class GcExemptions(unittest.TestCase):
     def test_completion_markers_follow_each_cleanup_mode_owner(self):
         from vtx.cli.commands import _cleanup_plan
         from vtx.cache.recovery import completion_marker
+        from vtx.cache._formal_video import proof_name
         modes = [('normal', 'gc', {}, True), ('out-only', 'gc', {}, False),
                  ('deep', 'gc', {'deep': True}, True),
                  ('clean', 'clean', {}, True), ('nuke', 'clean', {'nuke': True}, True)]
@@ -290,7 +291,10 @@ class GcExemptions(unittest.TestCase):
                     media.parent.mkdir(parents=True, exist_ok=True)
                     media.write_bytes(b'owned media placeholder')
                     completion_marker(media).write_bytes(b'certificate bytes are not interpreted by GC')
+                    if media.parent == c.out and proof_name(media.name):
+                        media.with_name(proof_name(media.name)).write_bytes(b'private proof')
                 junk = [c.out / 'orphan.mp4.complete.json',
+                        c.out / 'orphan.mp4.formal-video.json',
                         completion_marker(live[0]).with_name(live[0].name + '.complete.json.complete.json'),
                         c.out / (live[0].name + '.complete.json.bak')]
                 if with_cache:
@@ -311,6 +315,9 @@ class GcExemptions(unittest.TestCase):
                     self.assertEqual(self._selected(plan, media), not keep, str(media))
                     self.assertEqual(self._selected(plan, completion_marker(media)), not keep,
                                      str(completion_marker(media)))
+                    if media.parent == c.out and proof_name(media.name):
+                        proof = media.with_name(proof_name(media.name))
+                        self.assertEqual(self._selected(plan, proof), not keep, str(proof))
                 self.assertTrue(all(self._selected(plan, path) for path in junk))
                 self.assertFalse(self._selected(plan, lock))
                 self.assertFalse(self._selected(plan, source_marker))

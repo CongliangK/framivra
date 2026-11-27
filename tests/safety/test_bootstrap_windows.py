@@ -38,14 +38,16 @@ class BootstrapPowerShell(unittest.TestCase):
 
     def run_ps(self, body):
         script = self.base / 'test.ps1'
-        prefix = ("$ErrorActionPreference = 'Stop'\n. $env:FRAMIVRA_TEST_BOOTSTRAP\n"
+        prefix = ("$ErrorActionPreference = 'Stop'\n"
+                  "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)\n"
+                  ". $env:FRAMIVRA_TEST_BOOTSTRAP\n"
                   "function Test-ElevatedWindows { return $false }\n")
         script.write_text(prefix + body, encoding='utf-8-sig')
         env = dict(os.environ, FRAMIVRA_TEST_BOOTSTRAP=str(BOOTSTRAP),
                    FRAMIVRA_TEST_PYTHON=sys.executable, FRAMIVRA_TEST_TEMP=str(self.base),
                    LOCALAPPDATA=str(self.base / 'local-appdata'))
         result = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(script)],
-                                env=env, text=True, capture_output=True, timeout=90)
+                                env=env, encoding='utf-8', capture_output=True, timeout=90)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_parser_and_real_interpreter_probe(self):
@@ -85,6 +87,21 @@ function Find-Python { return $env:FRAMIVRA_TEST_PYTHON }
 function Get-SmallText { throw 'Read-only plan must not access the network' }
 Invoke-Bootstrap
 if (Test-Path -LiteralPath $env:LOCALAPPDATA) { throw 'Plan created a root' }
+''')
+
+    def test_plan_without_localappdata_never_resolves_a_download_cache(self):
+        self.run_ps('''
+Remove-Item Env:LOCALAPPDATA
+function Find-Python { return (Test-Python $env:FRAMIVRA_TEST_PYTHON) }
+function Get-LockedPython { throw 'Read-only plan must not download' }
+function Get-SmallText { throw 'Read-only plan must not access the network' }
+$target = Join-Path $env:FRAMIVRA_TEST_TEMP 'explicit root'
+foreach ($argsVariant in @(@('--plan'), @('--plan', '--root', $target))) {
+    $script:InstallerArgs = @($argsVariant)
+    $message = Invoke-Bootstrap | Out-String
+    if ($message -notmatch 'Read-only bootstrap plan') { throw 'Expected read-only plan' }
+}
+if (Test-Path -LiteralPath $target) { throw 'Plan created the explicit root' }
 ''')
 
     def test_nonzero_installer_is_not_failure_if_real_python_is_now_usable(self):
@@ -185,6 +202,39 @@ if (-not $failed) { throw 'Changed validator was accepted' }
 if ([IO.File]::ReadAllText($part) -ne 'first') { throw 'Changed representation was appended' }
 '''.replace('__ENDPOINT__', endpoint))
         self.assertEqual(received, [('bytes=5-', '"old"')])
+
+    def test_full_response_invalidates_old_prefix_before_saving_new_validator(self):
+        self.run_ps('''
+$cache = Join-Path $env:FRAMIVRA_TEST_TEMP 'replace-range-cache'
+[IO.Directory]::CreateDirectory($cache) | Out-Null
+$name = '5da012101ba2e17113a9a1cd901e9ce1441086f2b7ecb5de06ec94163899a190-python-3.13.17-amd64.exe'
+$part = Join-Path $cache ($name + '.part')
+[IO.File]::WriteAllText($part, 'old bytes')
+$metadata = $part + '.json'
+Write-ResumeState $metadata @{ url = 'https://www.python.org/ftp/python/3.13.17/python-3.13.17-amd64.exe'; validator = 'old' }
+function New-Request {
+    $request = [pscustomobject]@{ Headers = @{} }
+    $request | Add-Member ScriptMethod AddRange { param($Offset) if ($Offset -ne 9) { throw 'Wrong saved offset' } }
+    $request | Add-Member ScriptMethod GetResponse {
+        $response = [pscustomobject]@{ StatusCode = 200; ContentType = 'application/octet-stream'; Headers = @{ ETag = 'new' } }
+        $response | Add-Member ScriptMethod Dispose { }
+        return $response
+    }
+    return $request
+}
+$publish = (Get-Command Write-ResumeState).ScriptBlock
+function Write-ResumeState([string]$Path, $State) {
+    & $publish $Path $State
+    throw 'Integrity failure: simulated interruption at validator publication'
+}
+$failed = $false
+try { Get-LockedPython $cache 'official' } catch {
+    if ($_.Exception.Message -notmatch 'simulated interruption') { throw }
+    $failed = $true
+}
+if (-not $failed -or (Get-Item -LiteralPath $part).Length -ne 0) { throw 'Replacement validator backed by stale partial bytes' }
+if ((Get-Content -LiteralPath $metadata -Raw | ConvertFrom-Json).validator -ne 'new') { throw 'Did not reach validator publication' }
+''')
 
     def test_corrupt_cache_is_a_hard_stop_without_http(self):
         self.run_ps('''

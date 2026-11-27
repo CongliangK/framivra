@@ -98,7 +98,9 @@ def fingerprint(p: Path) -> dict:
 
 
 def run(cmd):
-    return subprocess.run(cmd, capture_output=True, text=True)
+    # FFmpeg's native Windows builds report UTF-8 paths, not the active ACP.
+    # Keep subprocess exit status and parse only recognized ASCII metrics.
+    return subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
 
 
 def level(stderr, label, unit):
@@ -238,7 +240,7 @@ def main():
 
     have_tl = TL_PATH.exists()
     if have_tl:
-        TL = json.loads(TL_PATH.read_text())
+        TL = json.loads(TL_PATH.read_text(encoding="utf-8"))
         F = float(parse_fps(TL["project"]["fps"]))
         DURF = TL["project"]["duration_frames"]
     else:
@@ -472,7 +474,7 @@ def main():
 
     # ---------- 自定义项目门 ----------
     if args.project_gates:
-        pg = json.loads(Path(args.project_gates).read_text())
+        pg = json.loads(Path(args.project_gates).read_text(encoding="utf-8"))
         for key, want in pg.items():
             if key == "frames":
                 if MEDIA.exists():
@@ -531,4 +533,7 @@ def main():
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        for stream in (sys.stdout, sys.stderr):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     main()

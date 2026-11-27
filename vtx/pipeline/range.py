@@ -67,12 +67,33 @@ def range_label(fr: int, fps: int) -> str:
 
 
 def window_from_clip(tl: dict, cid: str):
-    """--clip <id>：按 clip 的 src 名（Path(src).stem，与日志/gfx cid 同一叫法）匹配。
-    命中多轨多条时取最先出现的（图层序，即画面最上层的轨序不确定——取轨道序首个），
-    返回该 clip 的窗口 (dst_in, dst_in+dur)；找不到返回 None（调用方报错）。"""
+    """Select a half-open window by clip src stem or declared media filename.
+
+    Preserve all previous src-stem matches (including GFX paths) before trying
+    ordinary media filenames, so an existing command cannot switch clips.
+    Each pass keeps the original track/clip order and performs no filesystem I/O.
+    """
     for tr in tl["video_tracks"]:
         for cl in tr["clips"]:
             if Path(cl["src"]).stem == cid:
+                return cl["dst_in"], cl["dst_in"] + cl["dur"]
+
+    sources = tl.get('sources')
+    if not isinstance(sources, list):
+        return None
+    paths = {}
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        sid, path = source.get('id'), source.get('path')
+        if isinstance(sid, str) and isinstance(path, str):
+            paths.setdefault(sid, path)  # Ctx.src_path uses the first declaration.
+    for tr in tl["video_tracks"]:
+        if tr.get('kind') == 'gfx':
+            continue
+        for cl in tr["clips"]:
+            path = paths.get(cl['src'])
+            if path and Path(path).stem == cid:
                 return cl["dst_in"], cl["dst_in"] + cl["dur"]
     return None
 

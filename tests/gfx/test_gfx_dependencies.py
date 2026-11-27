@@ -65,6 +65,26 @@ class DependencyContracts(unittest.TestCase):
         shared.write_text('body {margin:1}')
         self.assertTrue(all(hygiene.gfx_key(self.c, cl) != key for cl, key in zip((a,b),new)))
 
+    def test_legacy_scan_resolves_declared_native_file_uris(self):
+        self.write('pages/page.html', '<link rel="stylesheet" href="local.css">')
+        css = self.write('pages/local.css', 'body {background:url("a%20b%23.png")}')
+        image = self.write('pages/a b#.png', 'image')
+        clip = dict(self.clip, src='pages/page.html', cache_dependencies=['pages/local.css', 'pages/a b#.png'])
+        record = deps.resolve(self.c, clip)
+        self.assertEqual(record['closure'], 'unproven')  # legacy is never strict proof
+        self.assertNotIn('static_error', record)
+        self.assertFalse(record['legacy_key_safe'])
+        self.assertEqual({e['url']: e['path'] for e in record['resource_requests']},
+                         {p.resolve().as_uri(): str(p.resolve()) for p in (css, image)})
+        if os.name == 'nt':
+            for url in ('file://server/share/p.png', 'file:////server/share/p.png',
+                        image.as_uri() + ':stream', image.as_uri().replace('pages/', 'pages%2F')):
+                with self.subTest(url=url), self.assertRaises(deps.DependencyError):
+                    deps.local_path(url, record['html_uri'])
+            self.strict()
+            with self.assertRaisesRegex(deps.DependencyError, 'requires POSIX'):
+                deps.resolve(self.c, clip)
+
     def test_nested_css_font_image_encoded_path(self):
         self.strict()
         self.write('page.html', '<link rel="stylesheet" href="a.css"><img src="a%20b.png">')

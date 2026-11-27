@@ -36,7 +36,10 @@ def render_srt(subs, fps=30):
     for i, sub in enumerate(subs, 1):
         t0 = frame_to_srt_time(sub["in"], fps)
         t1 = frame_to_srt_time(sub["out"], fps)
-        blocks.append("%d\n%s --> %s\n%s" % (i, t0, t1, sub["text"]))
+        # Format cue breaks as LF before each output stream translates newlines.
+        # Otherwise Windows adds a second CR to an existing CRLF inside the cue.
+        text = sub["text"].replace("\r\n", "\n")
+        blocks.append("%d\n%s --> %s\n%s" % (i, t0, t1, text))
     return "\n\n".join(blocks) + ("\n" if blocks else "")
 
 
@@ -52,7 +55,14 @@ def write_file(subs, out_path, fps=30):
 if __name__ == "__main__":
     import argparse
     import json
+    import os
     import sys
+    if os.name == 'nt':
+        # Redirected Python streams otherwise use the legacy Windows code page.
+        # Decode the JSON strictly so bad bytes cannot silently alter subtitles.
+        sys.stdin.reconfigure(encoding='utf-8', errors='strict')
+        sys.stdout.reconfigure(encoding='utf-8', errors='strict')
+        sys.stderr.reconfigure(encoding='utf-8', errors='backslashreplace')
     ap = argparse.ArgumentParser(description="subtitles[]（stdin json）→ SRT（stdout / -o 文件）")
     ap.add_argument("-o", "--out", default=None)
     from pathlib import Path

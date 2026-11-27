@@ -26,7 +26,7 @@ python3 -m vtx -t "$RUN/project/timeline.json" qc --strict
 |---|---|
 | CDP（默认） | `--format html`，`VTX_GFX=cdp`，原生 Chromium 系浏览器；Windows 用产品认可的原生 Chrome/Edge。 |
 | SVG | 新目录 `--format svg`；按 [Inkscape 原生依赖](../demo-timeline-svg/README.md#实际依赖与字体)准备。不支持 Windows。 |
-| CEF（实验） | `--format html`，`VTX_GFX=cef`，[`VTX_CEF_WORKER` 指向重新构建的原生 worker](../../experiments/gfx_cef_worker/README.md#生产接线实验性-alpha)。不是一键安装依赖，不回落 CDP，不支持 Windows。 |
+| CEF（实验） | `--format html`，`VTX_GFX=cef`，[`VTX_CEF_WORKER` 指向重新构建的原生 worker](../../experiments/gfx_cef_worker/README.md#生产接线实验性-alpha)。不是一键安装依赖，不回落 CDP；Windows x64 仅软件 A0，见 [原生构建](../../experiments/gfx_cef_worker/README.md#windows-x64-构建)。 |
 
 同平台原生实测才是资格；HTML 能打开、生成工程成功或已装工具都不等于全片通过。不同渲染器的字型边缘可能不同，不用跨后端逐字节相等代替字幕、人眼和帧时钟验证。
 

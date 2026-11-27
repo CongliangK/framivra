@@ -19,11 +19,11 @@ v1 时代本文件经 spec_from_file_location 加载 scripts/post_loudness.py（
 env python3 前缀：AppImage 劫持 argv[0]，裸 python3 的 sys.executable 指向错误
 解释器，见全局 AGENTS.md）
 """
-import hashlib, json, math, os, shutil, struct, sys, tempfile, unittest, wave
+import hashlib, json, math, os, shutil, struct, subprocess, sys, tempfile, unittest, wave
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
-from contextlib import contextmanager, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 import io
 
 REPO = Path(__file__).resolve().parents[2]
@@ -124,6 +124,125 @@ class TestMixAudioChain(unittest.TestCase):
         mix_audio_wav(c, c.out / "audio.wav")
         self.assertEqual(len(c.calls), 1, "dry 跳过测量遍，只打印输出命令")
         self.assertIn(f",volume={0.0:+.2f}dB,aformat=sample_fmts=s16,{ALIMITER}[aout]", " ".join(c.calls[0]))
+
+
+class TestWindowsAudioGraphTransport(unittest.TestCase):
+    def test_utf16_argv_includes_quoting_and_terminator(self):
+        self.assertEqual(stages._windows_audio_argument_units(['ffmpeg', '😀 x']), 14)
+
+    def test_long_graph_uses_exact_bytes_during_both_passes_and_removes_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            c = _FakeCtx(root, stderr_script=('I: -20.5 LUFS',))
+            files = []
+            chain = 'x' * 33000
+            tail = ',volume=+6.50dB,aformat=sample_fmts=s16,' + ALIMITER + '[aout]'
+            expected = [chain + ',ebur128=framelog=quiet[amet]', chain + tail]
+
+            run = c.run
+
+            def consume(cmd):
+                i = cmd.index('-/filter_complex')
+                self.assertEqual(cmd[:i], ['ffmpeg', '-v', 'info' if not files else 'error'])
+                path = Path(cmd[i + 1])
+                self.assertEqual(path.read_bytes(), expected[len(files)].encode('utf-8'))
+                files.append(path)
+                return run(cmd)
+
+            with mock.patch.object(stages, '_audio_graph', return_value=(
+                    ['ffmpeg', '-v', 'error'], [chain], 1, False)), \
+                 mock.patch.object(c, 'run', side_effect=consume), \
+                 mock.patch.object(stages.sys, 'platform', 'win32'):
+                self.assertEqual(mix_audio_wav(c, c.out / 'audio.wav'), (6.5, -20.5, 1, False))
+            self.assertEqual(len(files), 2)
+            self.assertTrue(all(not p.parent.exists() for p in files))
+
+    def test_owned_svg_job_sizes_the_authorized_argv_and_refuses_residual_overflow(self):
+        from contextlib import contextmanager
+        from vtx.render import gfx_svg_win_media as native
+
+        media = native.WindowsSvgMedia.__new__(native.WindowsSvgMedia)
+        media.scratch = Path('private')
+        media.operation = SimpleNamespace(keep=False)
+        media.environment = object()
+        active = []
+        graph = 'anull' + 'x' * 11000
+
+        @contextmanager
+        def command_inputs(cmd):
+            yield ['X:/locked/ffmpeg.exe', '-i', 'i' * input_size, *cmd[1:]]
+
+        @contextmanager
+        def private_input(data, suffix):
+            self.assertEqual(data, graph.encode('utf-8'))
+            self.assertEqual(suffix, '.graph')
+            active.append(True)
+            try:
+                yield media.scratch / 'sample.graph'
+            finally:
+                active.pop()
+
+        def launch(_state, args, _cwd, _env, _stdin, **options):
+            if input_size == 22500:
+                index = args.index('-/filter_complex')
+                self.assertEqual(args[index + 1], str(media.scratch / 'sample.graph'))
+                self.assertTrue(active)
+            else:
+                self.assertIn('-filter_complex', args)
+                self.assertFalse(active)
+            self.assertEqual(args[-3:], ['-f', 'null', '-'])
+            return SimpleNamespace(proc=SimpleNamespace(returncode=0), _output=lambda: (b'', b'')), None
+
+        media.command_inputs = command_inputs
+        media.private_input = private_input
+        c = SimpleNamespace(dry=False, run=media.execute, _windows_svg_media=media)
+        with mock.patch.object(stages.sys, 'platform', 'win32'), \
+                mock.patch.object(native.shell, '_run_owned', side_effect=launch) as start:
+            for input_size in (100, 22500):
+                stages._run_audio_graph(c, ['ffmpeg'], graph, ['-f', 'null', '-'])
+                self.assertFalse(active)
+            input_size = 33000
+            with self.assertRaisesRegex(RuntimeError, '命令行长度上限'):
+                stages._run_audio_graph(c, ['ffmpeg'], graph, ['-f', 'null', '-'])
+            self.assertEqual(start.call_count, 2)
+            self.assertFalse(active)
+            self.assertFalse(media.operation.keep)
+
+    def test_budget_accounts_for_atomic_destination_expansion(self):
+        graph = 'x' * 32600
+        c = SimpleNamespace(dry=False)
+        target = Path('expanded') / ('x' * 180) / 'audio.wav'
+        seen = []
+
+        def run(cmd):
+            index = cmd.index('-/filter_complex')
+            path = Path(cmd[index + 1])
+            self.assertEqual(path.read_bytes(), graph.encode('utf-8'))
+            self.assertEqual(cmd[-1], 'out/audio.wav')
+            seen.append(path)
+
+        c.run = run
+        with mock.patch.object(stages.sys, 'platform', 'win32'), \
+             mock.patch.object(stages.recovery, 'media_output', return_value=target):
+            stages._run_audio_graph(c, ['ffmpeg'], graph, ['out/audio.wav'])
+        self.assertEqual(len(seen), 1)
+        self.assertFalse(seen[0].exists())
+
+    def test_oversized_input_argv_fails_before_run_and_dry_run_writes_nothing(self):
+        c = SimpleNamespace(dry=False, run=mock.Mock())
+        inputs = ['ffmpeg', '-i', 'x' * 33000]
+        with mock.patch.object(stages.sys, 'platform', 'win32'), redirect_stderr(io.StringIO()) as error:
+            with self.assertRaises(SystemExit) as raised:
+                stages._run_audio_graph(c, inputs, 'anull', ['-'])
+            self.assertEqual(raised.exception.code, 1)
+            self.assertIn('命令行长度上限', error.getvalue())
+            c.run.assert_not_called()
+        c.dry = True
+        with mock.patch.object(stages.sys, 'platform', 'win32'), \
+             mock.patch.object(stages.tempfile, 'TemporaryDirectory') as temp:
+            stages._run_audio_graph(c, inputs, 'anull', ['-'])
+        temp.assert_not_called()
+        c.run.assert_called_once_with([*inputs, '-filter_complex', 'anull', '-'])
 
 
 class TestAudioDigestStreaming(unittest.TestCase):
@@ -490,6 +609,29 @@ class TestPostLoudnessCompat(unittest.TestCase):
         self.assertFalse(list(self.out.glob(".post-*")), "临时件已清理")
         (self.root / "measurements.json").write_text(
             json.dumps({"first": first, "second": second}, indent=2), encoding="utf-8")
+
+    def test_cli_redirected_normalization_preserves_receipt_and_pcm_clock(self):
+        out = self.out / 'audio.wav'
+        original = out.read_bytes()
+        receipt = self.receipt.read_bytes()
+        env = dict(os.environ, PYTHONUTF8='0' if os.name == 'nt' else '1',
+                   PYTHONIOENCODING='cp936:strict' if os.name == 'nt' else 'utf-8:strict')
+        script = REPO / 'scripts/audio/normalize_project_audio.py'
+        result = subprocess.run([sys.executable, '-B', script, self.root,
+                                 '--ffmpeg', FFMPEG, '--target', '-14'],
+                                env=env, capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout.decode('utf-8').splitlines()[-1])
+        self.assertNotIn('FATAL:', result.stderr.decode('utf-8'))
+        self.assertGreater(abs(report['gain_db']), .1)  # Exercise the warning/real apply path.
+        self.assertAlmostEqual(report['output_i'], -14, delta=1.5)
+        final = out.read_bytes()
+        self.assertNotEqual(final, original)
+        self.assertEqual(report['sha256'], hashlib.sha256(final).hexdigest())
+        self.assertEqual(self.receipt.read_bytes(), receipt)
+        with wave.open(str(out), 'rb') as wav:
+            self.assertEqual((wav.getnchannels(), wav.getsampwidth(), wav.getframerate(), wav.getnframes()),
+                             (2, 2, 48000, 96000))
 
     def test_encoder_failure_preserves_original(self):
         before = (self.out / "audio.wav").read_bytes(), self.receipt.read_bytes()

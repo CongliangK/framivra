@@ -10,7 +10,7 @@ resemble_enhance（秒回，doctor 10s 探测超时内稳定）；缺件打印�
 import shutil
 import sys
 
-from denoise_voice import conda_python, run_dir   # 同目录模块（脚本模式 sys.path 自含）
+from denoise_voice import _configure_cli_output, conda_python, run_dir
 
 
 def main() -> int:
@@ -31,4 +31,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    _configure_cli_output()
     sys.exit(main())

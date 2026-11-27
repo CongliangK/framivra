@@ -1029,44 +1029,84 @@ class RealFFmpegRecovery(unittest.TestCase):
             shutil.copyfile(target, sibling)
             sibling_bytes = sibling.read_bytes()
             old = target.read_bytes()
-            worker = '''import json,subprocess,sys\nfrom pathlib import Path\nfrom vtx.pipeline.infra import Ctx\nc=Ctx(Path(sys.argv[1]))\noriginal=subprocess.run\ndef run(cmd,**kw):\n if cmd[0]=='ffmpeg':\n  p=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE)\n  print('OWNED_FFMPEG_PID='+str(p.pid),flush=True)\n  out,err=p.communicate()\n  return subprocess.CompletedProcess(cmd,p.returncode,out.decode(),err.decode())\n return original(cmd,**kw)\nsubprocess.run=run\nc.run(['ffmpeg','-v','error','-y','-re','-f','lavfi','-i','color=blue:s=64x48:r=30:d=30','-c:v','libx264','-preset','ultrafast','-tune','zerolatency','-g','1','-flush_packets','1','-movflags','frag_keyframe+empty_moov',sys.argv[2]])\n'''
-            proc = subprocess.Popen([sys.executable, '-c', worker, str(c.tl_path), str(target)],
-                                    cwd=Path(__file__).resolve().parents[2],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    text=True, start_new_session=True)
+            worker = '''
+from pathlib import Path
+import subprocess
+import sys
+
+sys.path.insert(0, sys.argv[3])
+from vtx.pipeline.infra import Ctx
+
+c = Ctx(Path(sys.argv[1]))
+original = subprocess.run
+
+def run(cmd, **kw):
+    if cmd[0] != 'ffmpeg':
+        return original(cmd, **kw)
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    ready = Path(sys.argv[4])
+    uncommitted = ready.with_suffix('.tmp')
+    uncommitted.write_text(str(p.pid), encoding='ascii')
+    uncommitted.replace(ready)
+    out, err = p.communicate()
+    return subprocess.CompletedProcess(cmd, p.returncode, out.decode(), err.decode())
+
+subprocess.run = run
+c.run(['ffmpeg', '-v', 'error', '-y', '-re', '-f', 'lavfi', '-i',
+       'color=blue:s=64x48:r=30:d=30', '-c:v', 'libx264', '-preset', 'ultrafast',
+       '-tune', 'zerolatency', '-g', '1', '-flush_packets', '1',
+       '-movflags', 'frag_keyframe+empty_moov', sys.argv[2]])
+'''
+            repo = Path(__file__).resolve().parents[2]
+            ready = root / 'encoder.pid'
+            argv = [sys.executable, '-c', worker, str(c.tl_path), str(target), str(repo), str(ready)]
+            if os.name == 'nt':
+                from vtx.runtime.windows_browser import BrowserJob
+                job = BrowserJob(argv)
+                proc, settle = job.proc, job.close
+            else:
+                proc = subprocess.Popen(argv, cwd=repo, start_new_session=True)
+
+                def settle():
+                    # Keep the group leader PID unreaped until after signaling.
+                    # An early worker failure may still leave the encoder alive.
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass  # The isolated group has already exited.
+                    proc.wait(timeout=5)
+
             try:
-                pidline = proc.stdout.readline().strip()
-                self.assertTrue(pidline.startswith('OWNED_FFMPEG_PID='), pidline)
-                encoder_pid = int(pidline.split('=')[1])
                 deadline = time.monotonic() + 10
                 partial = []
                 while time.monotonic() < deadline:
                     partial = [p for p in target.parent.glob('.out.mp4.*.tmp')
                                if p.stat().st_size > 64]
-                    if partial:
+                    if os.name == 'nt' and proc.poll() is not None:
+                        self.fail(f'owned writer exited before interruption: {proc.returncode}')
+                    if partial and ready.is_file():
                         break
-                    if proc.poll() is not None:
-                        self.fail(proc.stderr.read())
                     time.sleep(.03)
+                self.assertTrue(ready.is_file(), 'owned worker must report its FFmpeg launch')
                 self.assertTrue(partial, 'owned writer must actually create partial bytes')
-                print('KILLED_OWNED_PGID=%d FFMPEG_PID=%d' % (proc.pid, encoder_pid))
-                os.killpg(proc.pid, signal.SIGKILL)
-                proc.wait(timeout=5)
-                self.assertEqual(target.read_bytes(), old)
-                rec = json.loads((c.out / 'receipt.json').read_text())
-                self.assertFalse(rec['stages'].get('video', {}).get('ok', False))
-                self.assertTrue(recovery.media_cache_valid(target, 6))
-                c.run(cmd)
-                c.receipt('video', True)
-                self.assertFalse(partial[0].exists())
-                self.assertTrue(recovery.media_cache_valid(target, 6))
-                self.assertEqual(sibling.read_bytes(), sibling_bytes)
+                encoder_pid = int(ready.read_text(encoding='ascii'))
+                self.assertGreater(encoder_pid, 0)
             finally:
-                if proc.poll() is None:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    proc.wait(timeout=5)
-                proc.stdout.close()
-                proc.stderr.close()
+                settle()
+            if os.name == 'nt':
+                self.assertNotIn(proc.returncode, (None, 0))
+            else:
+                self.assertEqual(proc.returncode, -signal.SIGKILL)
+            print(f'KILLED_OWNED_TREE={proc.pid} FFMPEG_PID={encoder_pid}')
+            self.assertEqual(target.read_bytes(), old)
+            rec = json.loads((c.out / 'receipt.json').read_text(encoding='utf-8'))
+            self.assertFalse(rec['stages'].get('video', {}).get('ok', False))
+            self.assertTrue(recovery.media_cache_valid(target, 6))
+            c.run(cmd)
+            c.receipt('video', True)
+            self.assertFalse(partial[0].exists())
+            self.assertTrue(recovery.media_cache_valid(target, 6))
+            self.assertEqual(sibling.read_bytes(), sibling_bytes)
 
 
 @unittest.skipUnless(os.environ.get('VTX_TEST_CHROME'), 'set VTX_TEST_CHROME')

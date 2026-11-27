@@ -12,12 +12,14 @@
 //         字节口径与 #110 产物一致（基线对照面）。
 #include "png_writer.h"
 
+#include "cpu_features.hpp"
+#include "native_runtime.hpp"
+
 #if defined(__APPLE__)
 #include <pthread.h>
-#else
+#elif !defined(_WIN32)
 #include <sys/syscall.h>
 #endif
-#include <unistd.h>
 
 #include <zlib.h>
 
@@ -232,8 +234,7 @@ int SelectSubUpFilter(const uint8_t* row, const uint8_t* previous, size_t size) 
   if (size > static_cast<size_t>(INT32_MAX / 128)) return SPNG_FILTER_CHOICE_SUB | SPNG_FILTER_CHOICE_UP;
   using ScoreFn = FilterScores (*)(const uint8_t*, const uint8_t*, size_t);
 #if defined(__x86_64__) || defined(__i386__)
-  static const ScoreFn score = __builtin_cpu_supports("avx2") ? ScoreSubUpAvx2
-                                                               : ScoreSubUpScalar;
+  static const ScoreFn score = CpuHasAvx2() ? ScoreSubUpAvx2 : ScoreSubUpScalar;
 #elif defined(__aarch64__)
   static const ScoreFn score = ScoreSubUpNeon;
 #else
@@ -524,6 +525,43 @@ bool AtomicWriteBytes(const std::string& final_path, const uint8_t* data,
   // 命名规范：同目录 <final>.tmp.<pid>.<tid>（vtx/runtime/fstxn.py 语义的 C++ 镜像；
   // pid+tid 保证并发编码线程互不碰撞，残件模式 *.tmp.<pid>.* 可辨识可清扫）。
   char suffix[64];
+#if defined(_WIN32)
+  std::snprintf(suffix, sizeof(suffix), ".tmp.%lu.%lu",
+                static_cast<unsigned long>(NativePid()),
+                static_cast<unsigned long>(::GetCurrentThreadId()));
+  const auto tmp = WindowsIoPath(final_path + suffix);
+  const auto dst = WindowsIoPath(final_path);
+  if (tmp.empty() || dst.empty()) return false;
+  HANDLE file = ::CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+  DWORD error = file == INVALID_HANDLE_VALUE ? ::GetLastError() : ERROR_SUCCESS;
+  if (file != INVALID_HANDLE_VALUE) {
+    size_t offset = 0;
+    while (offset < len) {
+      const DWORD size = static_cast<DWORD>(std::min<size_t>(len - offset, 1u << 20));
+      DWORD wrote = 0;
+      if (!::WriteFile(file, data + offset, size, &wrote, nullptr)) {
+        error = ::GetLastError();
+        break;
+      }
+      if (!wrote) {
+        error = ERROR_WRITE_FAULT;
+        break;
+      }
+      offset += wrote;
+    }
+    if (!::CloseHandle(file) && error == ERROR_SUCCESS) error = ::GetLastError();
+    if (error == ERROR_SUCCESS) {
+      if (::MoveFileExW(tmp.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING)) return true;
+      error = ::GetLastError();
+    }
+    ::DeleteFileW(tmp.c_str());
+  }
+  std::fprintf(stderr, "png_writer: native output commit failed (Win32=%lu): %s\n",
+               static_cast<unsigned long>(error), final_path.c_str());
+  std::fflush(stderr);
+  return false;
+#else
 #if defined(__APPLE__)
   uint64_t tid = 0;
   if (pthread_threadid_np(nullptr, &tid) != 0) return false;
@@ -563,6 +601,7 @@ bool AtomicWriteBytes(const std::string& final_path, const uint8_t* data,
     return false;
   }
   return true;  // 原子替换完成：目标任一时刻见到的都是完整文件
+#endif
 }
 
 }  // namespace vtx_cef

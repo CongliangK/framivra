@@ -43,9 +43,9 @@ API（上下文管理器 + mutator 两形态）：
                                  → dump 后经 ①② 落盘。mutator 返回 None 中止
                                  事务不写（目标不动）。账本类目标的末段符号链接
                                  允许被原子替换（目标侧免疫，issue #23/#31 语义）。
-  atomic_write(path, data)       无锁原子写（仅 ②）：调用方已持锁区段内的
-                                 伴生件写入用（如 receipt 轮转旁证 prev.json，
-                                 持 receipt.json 锁的写者天然独占）。
+  atomic_write(path, data)       不获取事务锁的原子写：调用方已持锁区段内的
+                                 伴生件写入用（如 receipt 轮转旁证 prev.json）。
+                                 Windows 仅协调同进程竞争的最终替换。
   mkdir/unlink/replace           写点原语的 fd 锚定形态（降级平台等价 main 行为）。
   pinned_parent/fd_path/flock_at/remove_at/entry_identity/check_regular_at
                                  fd 锚定公开原语（目录操作要求目录能力；
@@ -255,6 +255,10 @@ except ImportError:
 # never evict an active lock or delete its on-disk sidecar to reclaim memory.
 _LOCKS_GUARD = threading.Lock()
 _LOCKS = weakref.WeakValueDictionary()
+# Windows can reject simultaneous replacements of the same directory entry.
+# Keep this bounded lock table separate from transaction locks: a caller may
+# already own a transaction lock when publishing a companion file.
+_WIN_REPLACE_LOCKS = tuple(threading.Lock() for _ in range(64))
 
 
 def _thread_lock_for(path: Path) -> threading.Lock:
@@ -709,7 +713,7 @@ def replace(source, target, *, root=None):
 
 
 def atomic_write(path, data, *, root=None):
-    """无锁原子写（tmp + os.replace）：调用方已持锁区段内的伴生件写入用
+    """原子写（tmp + os.replace，不获取事务锁）：调用方已持锁区段内的伴生件写入用
     （如 _archive_stale_receipt 的 receipt.prev.json——receipt.json 锁的持有
     者独占轮转，无需再拿第二把锁文件）。str 按 UTF-8 编码，bytes 直写。
     目标目录不存在时自动建；写失败抛原始异常（残件在 finally 清理）；
@@ -718,12 +722,19 @@ def atomic_write(path, data, *, root=None):
     p = _write_target(path, root=root)
     if _directory_guard():
         p.parent.mkdir(parents=True, exist_ok=True)
-        fd, name = tempfile.mkstemp(prefix="." + p.name + ".", suffix=".tmp",
-                                    dir=p.parent)
+        # On Windows a valid target (e.g. a media completion marker) can be
+        # close to MAX_PATH. Don't copy its basename into our random temp name.
+        prefix = '.vtx-' if os.name == 'nt' else '.' + p.name + '.'
+        fd, name = tempfile.mkstemp(prefix=prefix, suffix='.tmp', dir=p.parent)
         try:
             with os.fdopen(fd, "wb") as stream:
                 stream.write(payload)
-            os.replace(name, p)
+            if os.name == 'nt':
+                key = os.path.normcase(os.fspath(p))
+                with _WIN_REPLACE_LOCKS[hash(key) % len(_WIN_REPLACE_LOCKS)]:
+                    os.replace(name, p)
+            else:
+                os.replace(name, p)
         finally:
             Path(name).unlink(missing_ok=True)   # 成功路径已被 replace 移走；失败清残件
         return

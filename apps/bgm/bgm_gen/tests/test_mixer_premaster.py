@@ -20,6 +20,27 @@ pytestmark = pytest.mark.fast
 SR = 44100
 
 
+@pytest.mark.parametrize('stage', ['track', 'sum'])
+def test_mixer_retains_ffmpeg_error_for_unicode_input(tmp_path, stage):
+    from bgm_gen.core.mixer import _render_track_chain, _sum_buses
+    from bgm_gen.core.project import ProjectError
+
+    name = '缺缺缺-missing-bgm-bus'
+    if stage == 'track':
+        proj = {'automation': [], 'meta': {'sr': SR, 'channels': 2}}
+        plan = {'spb': 1.0, 'duration_s': 1.0}
+        track = {'name': name, 'engine': 'synth', 'start_s': 0, 'gain_db': 0, 'pan': 0, 'bus': []}
+        with pytest.raises(ProjectError) as error:
+            _render_track_chain(proj, plan, track, 0, str(tmp_path))
+        filename = f'{name}.synth.wav'
+    else:
+        filename = f'{name}.wav'
+        with pytest.raises(ProjectError) as error:
+            _sum_buses([str(tmp_path / filename)], str(tmp_path / 'premix.wav'), SR, 2)
+    assert filename in str(error.value)
+    assert not list(tmp_path.iterdir())
+
+
 def _synth_premix(path, sr=SR, dur_s=2.0):
     """基准音 0.1 幅 + 每 0.5s 一记 1.5 幅爆发（crest 人为拉高）→ f32 wav。"""
     from bgm_gen.core.mixer import _write_f32_wav

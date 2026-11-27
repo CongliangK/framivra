@@ -7,7 +7,8 @@ src/ipc_protocol.hpp 静态断言、src/shm_ring.hpp 控制块布局逐字段一
 tests/gfx/test_cef_worker_shm.py 以 shm_ring_selftest --dump-ring 跨语言锁定）。
 
 职责：
-  - 连接 worker serve 模式 Unix Socket，收 Hello + SCM_RIGHTS(SHM fd)；
+  - POSIX: Unix Socket + SCM_RIGHTS(SHM fd); Windows: inherited anonymous
+    pipes, same protocol-v1 packets, PNG receipts only (no SHM);
   - 模式 1（request_png）：发 64B FrameRequest，收 128B FrameSlotHeader
     计时回执；
   - 模式 2（request_slot）：发请求收 32B 槽通知，经同一 mmap 句柄零拷贝
@@ -19,6 +20,7 @@ tests/gfx/test_cef_worker_shm.py 以 shm_ring_selftest --dump-ring 跨语言锁�
 """
 from __future__ import annotations
 
+import ctypes as C
 import math
 import mmap
 import os
@@ -102,6 +104,106 @@ class CefWorkerError(RuntimeError):
         self.detail = detail or {}
 
 
+def _check_windows_cancel(cancel):
+    if cancel is not None and cancel.is_set():
+        raise KeyboardInterrupt('Windows CEF rendering cancelled')
+
+
+class _WindowsPipes:
+    """Two anonymous byte streams; nonblocking host ends, no helper threads.
+
+    The exact child ends are the only IPC handles in the Job launch allowlist.
+    Closing the host write end is the same shutdown signal as POSIX stream EOF.
+    """
+
+    def __init__(self, cancel=None):
+        from ..runtime import windows_browser as native
+        self._cancel = cancel
+        self._native = native
+        self._api = native._api()
+        self._read, self._write = native._H(), native._H()
+        self._child_read, self._child_write = native._H(), native._H()
+        self._timeout = None
+
+    def open(self):
+        api, native = self._api, self._native
+        native._check(api.CreatePipe(C.byref(self._child_read), C.byref(self._write), None, 0),
+                      'CreatePipe (CEF request)')
+        native._check(api.CreatePipe(C.byref(self._read), C.byref(self._child_write), None, 0),
+                      'CreatePipe (CEF reply)')
+        mode = native._D(1)  # PIPE_NOWAIT; child handles keep blocking mode
+        for handle in (self._read, self._write):
+            native._check(api.SetNamedPipeHandleState(handle, C.byref(mode), None, None),
+                          'SetNamedPipeHandleState (CEF host)')
+        for handle in (self._child_read, self._child_write):
+            native._check(api.SetHandleInformation(handle, 1, 1), 'SetHandleInformation (CEF child)')
+        return self
+
+    @property
+    def child_handles(self):
+        return self._child_read.value, self._child_write.value
+
+    def _close(self, *handles):
+        with ExitStack() as cleanup:
+            for handle in handles:
+                cleanup.callback(self._native._close_handle, self._api, handle, 'value')
+
+    def close_child_ends(self):
+        self._close(self._child_read, self._child_write)
+
+    def close(self):
+        self._close(self._read, self._write, self._child_read, self._child_write)
+
+    def settimeout(self, timeout):
+        self._timeout = timeout
+
+    def _deadline(self):
+        return None if self._timeout is None else time.monotonic() + self._timeout
+
+    def _check_time(self, deadline):
+        _check_windows_cancel(self._cancel)
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            raise socket.timeout()
+        return remaining
+
+    def _pause(self, deadline):
+        remaining = self._check_time(deadline)
+        time.sleep(.005 if remaining is None else min(.005, remaining))
+
+    def recv(self, length):
+        deadline = self._deadline()
+        buf, count = C.create_string_buffer(length), self._native._D()
+        while True:
+            self._check_time(deadline)
+            if self._api.ReadFile(self._read, buf, length, C.byref(count), None):
+                self._check_time(deadline)
+                return buf[:count.value]
+            code = C.get_last_error()
+            if code in (109, 233):  # ERROR_BROKEN_PIPE / ERROR_PIPE_NOT_CONNECTED
+                return b''
+            if code != 232:  # ERROR_NO_DATA: temporarily empty on a PIPE_NOWAIT reader
+                raise self._native._win_error('ReadFile (CEF reply)', code)
+            self._pause(deadline)
+
+    def sendall(self, data):
+        deadline = self._deadline()
+        buf, count = C.create_string_buffer(data), self._native._D()
+        offset = 0
+        while offset < len(data):
+            self._check_time(deadline)
+            if not self._api.WriteFile(self._write, C.byref(buf, offset), len(data) - offset,
+                                       C.byref(count), None):
+                code = C.get_last_error()
+                if code in (109, 232, 233):  # no reader; full byte pipe is success + short/zero count
+                    raise BrokenPipeError('CEF request pipe closed')
+                raise self._native._win_error('WriteFile (CEF request)', code)
+            if count.value == 0:
+                self._pause(deadline)
+            offset += count.value
+        self._check_time(deadline)
+
+
 def _align64(v: int) -> int:
     return (v + 63) & ~63
 
@@ -157,27 +259,29 @@ class SlotFrame:
 class CefWorkerClient:
     """Single-owner (not thread-safe) frame client; see IPC_PROTOCOL.md."""
 
-    def __init__(self, sock: socket.socket, shm_fd: int, hello: dict):
+    def __init__(self, sock, shm_fd, hello: dict):
         self._sock = sock
         self._shm_fd = shm_fd
         self.hello = hello
-        size = os.fstat(shm_fd).st_size
-        self._mm = mmap.mmap(shm_fd, size)  # MAP_SHARED 读写（门释放需要）
-        with ExitStack() as cleanup:
-            cleanup.callback(self._mm.close)
-            self._validate_ring(size)
-            self._closed = False
-            # FIFO 深度 2：submit_png 入队，receive_png 按序弹出最旧回执
-            # （协议 v1 双 ticket 流水：帧 N 编码与帧 N+1 捕获并行，回执
-            # 仍按请求顺序到达；串行 worker 下退化为单条排队）。
-            self._pending_pngs: "deque[_PendingPng]" = deque()
-            cleanup.pop_all()
+        self._mm = None
+        if shm_fd is not None:
+            size = os.fstat(shm_fd).st_size
+            self._mm = mmap.mmap(shm_fd, size)  # MAP_SHARED 读写（门释放需要）
+            with ExitStack() as cleanup:
+                cleanup.callback(self._mm.close)
+                self._validate_ring(size)
+                cleanup.pop_all()
+        # FIFO: native may capture frame N+1 during encode of N, but sends receipts in order.
+        self._closed = False
+        self._pending_pngs: "deque[_PendingPng]" = deque()
 
     # ------------------------------------------------------------ 连接
 
     @classmethod
     def connect(cls, socket_path, connect_timeout=30.0, ready_timeout=30.0):
         """连 serve worker；socket_path 为其 --ipc-socket 路径。"""
+        if sys.platform == 'win32':
+            raise CefWorkerError("Windows CEF requires inherited anonymous pipes")
         path, fd = str(socket_path), None
         if sys.platform == 'darwin' and len(path.encode()) >= 104:
             raise CefWorkerError("Darwin socket path too long; use an inherited socketpair")
@@ -235,21 +339,47 @@ class CefWorkerClient:
             data = cls._recv_exact(sock, 64, "Hello", receive_fd=own_fd, deadline=deadline)
             if len(fds) != 1:
                 raise CefWorkerError(f"Hello 必须附带一个 SHM fd（实际 {len(fds)}）")
-            values = struct.unpack(_HELLO_FMT, data)
-            hello = {
-                "magic": values[0], "protocol_version": values[1],
-                "flags": values[2], "run_id": values[3], "pid": values[4],
-                "ring_slots": values[5], "max_width": values[6],
-                "max_height": values[7], "frame_bytes": values[8],
-            }
-            if hello["magic"] != HELLO_MAGIC:
-                raise CefWorkerError(f"Hello magic 不符: {hello['magic']:#x}")
-            if hello["protocol_version"] != PROTOCOL_VERSION:
-                raise CefWorkerError(
-                    f"协议版本不符: {hello['protocol_version']}")
+            hello = cls._parse_hello(data)
             sock.settimeout(ready_timeout)  # restore before the next request sends
             client = cls(sock, fds[0], hello)
             cleanup.pop_all()  # only a fully validated client owns socket + fd
+            return client
+
+    @staticmethod
+    def _parse_hello(data):
+        values = struct.unpack(_HELLO_FMT, data)
+        hello = {
+            "magic": values[0], "protocol_version": values[1],
+            "flags": values[2], "run_id": values[3], "pid": values[4],
+            "ring_slots": values[5], "max_width": values[6],
+            "max_height": values[7], "frame_bytes": values[8],
+        }
+        if hello["magic"] != HELLO_MAGIC:
+            raise CefWorkerError(f"Hello magic 不符: {hello['magic']:#x}")
+        if hello["protocol_version"] != PROTOCOL_VERSION:
+            raise CefWorkerError(f"协议版本不符: {hello['protocol_version']}")
+        return hello
+
+    @classmethod
+    def from_windows_pipes(cls, pipes, *, expected_pid, expected_wh, ready_timeout=45.0):
+        """Take ownership of a PNG-only, paired-exact pipe session or fail closed."""
+        with ExitStack() as cleanup:
+            cleanup.callback(pipes.close)
+            if not math.isfinite(ready_timeout) or ready_timeout <= 0:
+                raise ValueError("worker Hello timeout must be finite and positive")
+            data = cls._recv_exact(pipes, 64, "Hello", deadline=time.monotonic() + ready_timeout)
+            hello = cls._parse_hello(data)
+            if hello["flags"] != HELLO_FLAG_PAIRED_EXACT or hello["ring_slots"] != 0:
+                raise CefWorkerError("Windows CEF requires paired-exact PNG-only Hello (no fallback)")
+            if expected_pid <= 0 or hello["pid"] != expected_pid or not hello["run_id"]:
+                raise CefWorkerError("Windows CEF Hello does not match the owned worker identity")
+            w, h = hello["max_width"], hello["max_height"]
+            if (not 16 <= w <= MAX_VIEWPORT_SIZE or not 16 <= h <= MAX_VIEWPORT_SIZE
+                    or (w, h) != expected_wh or hello["frame_bytes"] != w * h * 4):
+                raise CefWorkerError("Windows CEF Hello viewport/capacity mismatch")
+            pipes.settimeout(ready_timeout)
+            client = cls(pipes, None, hello)
+            cleanup.pop_all()
             return client
 
     def _validate_ring(self, size: int) -> None:
@@ -403,6 +533,8 @@ class CefWorkerClient:
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError("PNG request timeout must be finite and positive, or None")
         path, fd = str(out_png_path), None
+        if self._shm_fd is None and (not worker_relative or path not in ("frame0.png", "frame1.png")):
+            raise CefWorkerError("Windows CEF requires a worker-relative frame0.png or frame1.png")
         if worker_relative:
             if not path or path in (".", "..") or Path(path).name != path:
                 raise CefWorkerError("worker-relative output must be a plain basename")
@@ -482,6 +614,8 @@ class CefWorkerClient:
 
     def request_slot(self, frame_index: int, request_id: int = 0,
                      dump_raw_path=None, timeout: float = 90.0) -> SlotFrame:
+        if self._mm is None:
+            raise CefWorkerError("Windows CEF does not support shared-memory slot requests")
         path, fd = dump_raw_path, None
         if path is not None and len(os.path.abspath(str(path)).encode()) > MAX_OUT_PNG_PATH:
             if sys.platform == 'darwin':
@@ -553,6 +687,8 @@ class CefWorkerClient:
     def stats(self) -> dict:
         """环级账目（诊断/证据面）。"""
         mm = self._mm
+        if mm is None:
+            raise CefWorkerError("Windows CEF does not have a shared-memory ring")
         (published,) = struct.unpack_from("<Q", mm, _CTRL_PUBLISHED)
         (released,) = struct.unpack_from("<Q", mm, _CTRL_RELEASED)
         (backpressure,) = struct.unpack_from("<Q", mm, _CTRL_BACKPRESSURE)
@@ -568,10 +704,12 @@ class CefWorkerClient:
             self._sock.close()
         finally:
             try:
-                self._mm.close()
+                if self._mm is not None:
+                    self._mm.close()
             finally:
                 try:
-                    os.close(self._shm_fd)
+                    if self._shm_fd is not None:
+                        os.close(self._shm_fd)
                 finally:
                     pending, self._pending_pngs = list(self._pending_pngs), deque()
                     for p in pending:

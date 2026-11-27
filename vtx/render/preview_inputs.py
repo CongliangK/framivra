@@ -118,10 +118,12 @@ class PreviewInputs:
             else:
                 from ..cache.hygiene import seg_key
                 from ..media.encoders import seg_encoder_kind, seg_needs_alpha
-                alpha = seg_needs_alpha(clip, self.c.probe(self.c.src_path(clip['src'])))
+                source_info = self.c.probe(self.c.src_path(clip['src']))
+                alpha = seg_needs_alpha(clip, source_info)
                 encoder = 'prores' if alpha else seg_encoder_kind(self.c)
                 key = seg_key(self.c, clip, entry['ti'], entry['ci'],
-                              any(k in clip for k in ('scale', 'x', 'y')), alpha, encoder)
+                              any(k in clip for k in ('scale', 'x', 'y')), alpha, encoder,
+                              source_info=source_info)
                 asset = {'original': _file(self.c.src_path(clip['src'])), 'seg_key': key}
                 layer = warm.get((entry['ti'], id(clip)))
                 if layer is not None:

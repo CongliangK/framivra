@@ -210,7 +210,7 @@ class SvgContract(unittest.TestCase):
         self.assertIn(name, files)
         self.assertEqual(node['inputs']['dependencies'], {str(self.root / n): d for n, d in files.items()})
         self.assertEqual(node['key'], expected.directory.name)
-        self.assertEqual(node['artifact'], str(expected.directory.relative_to(self.root)))
+        self.assertEqual(node['artifact'], expected.directory.relative_to(self.root).as_posix())
         final = read.call_args_list[-len(files):]
         self.assertEqual([call.args[1] for call in final], list(files))
         self.assertTrue(all(call.args[0].root == root for call in read.call_args_list))
@@ -849,7 +849,7 @@ class WindowsSvgProductionAdmission(unittest.TestCase):
             Ctx(timeline, _svg_runtime_factory=runtime, _svg_all=True, _svg_standard=True)
         doc['subtitles_src'] = 'must-not-read.json'
         timeline.write_text(json.dumps(doc), encoding='utf-8')
-        with self.assertRaisesRegex(ValueError, 'does not support subtitles'):
+        with self.assertRaisesRegex(ValueError, 'cannot read subtitles_src'):
             Ctx(timeline, _svg_runtime_factory=runtime, _svg_all=True)
         runtime.assert_not_called()
         self.assertEqual({path.name for path in root.iterdir()}, {'timeline.json'})

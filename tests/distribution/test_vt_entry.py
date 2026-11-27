@@ -20,6 +20,7 @@
 fixture 用当前测试解释器的 -I -B 子进程，隔离环境注入与源码字节码写入。
 """
 import contextlib
+import io
 import json
 import os
 import shutil
@@ -27,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import venv
 from pathlib import Path
 from unittest import mock
 
@@ -34,7 +36,7 @@ REPO = Path(__file__).resolve().parents[2]
 if __name__ == "__main__" and not __package__:
     sys.path.insert(0, str(REPO))
 
-from tests._support import OwnedInitCheckout
+from tests._support import OwnedInitCheckout, cli_python
 
 INIT_KEYS = [
     "python", "ffmpeg", "ffprobe", "chrome",                       # 1/5 基础
@@ -303,6 +305,45 @@ class FixLinks(unittest.TestCase):
         self.assertEqual(r3.returncode, 0)
         self.assertIn("0 处变更", r3.stdout)
 
+    def test_unrepresentable_windows_relative_target_refuses_mount_writes(self):
+        from ntpath import relpath as windows_relpath
+        import vt as vt_mod
+
+        checkout = Path(self._tmp.name) / 'checkout'
+        checkout.mkdir()
+        for name in ('first', 'second'):
+            (checkout / name).mkdir()
+        existing = self.mount.with_name('existing')
+        existing.mkdir()
+        protected = existing / 'first'
+        protected.write_bytes(b'untouched')
+
+        def relpath(target, _start):
+            # Use the real Windows path semantics even on a Linux test runner.
+            return windows_relpath(f'C:/checkout/{target.name}',
+                                  'C:/mount' if target.name == 'first' else 'D:/mount')
+
+        for mount in (self.mount, existing):
+            with self.subTest(mount=mount), \
+                    mock.patch.object(vt_mod, 'ROOT', checkout), \
+                    mock.patch.object(vt_mod, 'MOUNT_LINKS', (('first', 'first'), ('second', 'second'))), \
+                    mock.patch.object(vt_mod, 'mount_root', return_value=mount), \
+                    mock.patch.object(vt_mod.sys, 'platform', 'win32'), \
+                    mock.patch.object(vt_mod.os.path, 'relpath', side_effect=relpath), \
+                    mock.patch.object(vt_mod.os, 'symlink') as symlink, \
+                    mock.patch.object(vt_mod, '_registry_fix_plan', return_value=([], [])), \
+                    contextlib.redirect_stdout(io.StringIO()) as stdout, \
+                    contextlib.redirect_stderr(io.StringIO()) as stderr:
+                self.assertEqual(vt_mod.cmd_fix_links(True), 1)
+                self.assertEqual(vt_mod.cmd_fix_links(False), 1)
+                self.assertIn('VT_MOUNT_ROOT', stderr.getvalue())
+                self.assertNotIn('[dry] 将创建', stdout.getvalue())
+                self.assertEqual(vt_mod._doctor_fix(True)['mount']['status'], 'manual')
+                symlink.assert_not_called()
+                self.assertFalse(self.mount.exists())
+                self.assertEqual(list(existing.iterdir()), [protected])
+                self.assertEqual(protected.read_bytes(), b'untouched')
+
     def test_wrong_target_repaired(self):
         env = {"VT_MOUNT_ROOT": str(self.mount)}
         _vt("--fix-links", env_extra=env)               # 先建正确链接
@@ -391,6 +432,30 @@ class PythonProbeEncoding(unittest.TestCase):
                 self.assertEqual(ok, code == 0)
                 self.assertEqual(detail, "exit %d｜可用 中文路径🐈" % code)
 
+    @unittest.skipUnless(sys.platform == "win32", "native Windows venv layout")
+    def test_health_uses_launching_venv_not_path_python3(self):
+        selected = self.root / "selected venv"
+        alternative = self.root / "other venv"
+        for target in (selected, alternative):
+            venv.EnvBuilder(with_pip=False).create(target)
+        selected_scripts = selected / "Scripts"
+        other_scripts = alternative / "Scripts"
+        # An earlier interpreter basename used to win even from a later PATH
+        # directory. Copy a real redirector so the test never needs a Store alias.
+        shutil.copyfile(other_scripts / "python.exe", other_scripts / "python3.exe")
+        self.script.write_text("import sys\nprint(sys.prefix.rsplit('\\\\', 1)[-1], '✓')\n",
+                               encoding="utf-8")
+        env = dict(self.env, PATH=os.pathsep.join(map(str, (selected_scripts, other_scripts))),
+                   PATHEXT=".EXE", NoDefaultCurrentDirectoryInExePath="1")
+        code = ("import json, pathlib, sys; sys.path.insert(0, sys.argv[1]); import vt; "
+                "print(json.dumps(vt._probe_health(json.loads(sys.argv[3]), pathlib.Path(sys.argv[2]))))")
+        result = subprocess.run([str(selected_scripts / "python.exe"), "-I", "-B", "-c", code,
+                                 str(REPO), str(self.root), json.dumps(self.manifest)],
+                                env=env, cwd=self.root, capture_output=True, text=True,
+                                encoding="utf-8", timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), [True, "exit 0｜selected venv ✓"])
+
     def test_health_timeout_remains_failure_and_is_forwarded(self):
         with self.legacy_defaults(), \
              mock.patch.object(subprocess, "run", side_effect=subprocess.TimeoutExpired("health.py", 10)) as run:
@@ -464,8 +529,8 @@ class CanonicalInitEntry(unittest.TestCase):
 
 class VtxRegression(unittest.TestCase):
     def test_vtx_help_still_works(self):
-        r = subprocess.run(["env", "python3", str(REPO / "vtx" / "vtx.py"), "-h"],
-                           capture_output=True, text=True, cwd=str(REPO))
+        r = subprocess.run([*cli_python(), "-X", "utf8", str(REPO / "vtx" / "vtx.py"), "-h"],
+                           capture_output=True, encoding="utf-8", cwd=str(REPO), timeout=30)
         self.assertEqual(r.returncode, 0)
         self.assertIn("vtx", r.stdout)
 

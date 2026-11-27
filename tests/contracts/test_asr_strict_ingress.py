@@ -116,6 +116,17 @@ class ASRStrictIngress(unittest.TestCase):
         self.assertNotIn("_vtx", after)
         self.assertEqual(json.loads(Path(summary["backup"]).read_bytes()), fixture()["subtitles"])
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows redirected output encoding')
+    def test_rejection_survives_a_legacy_redirected_encoding(self):
+        before = tree(self.root)
+        result = subprocess.run([sys.executable, '-B', str(SCRIPT), '-t', str(self.path)],
+                                input=b'null', capture_output=True, timeout=30,
+                                env=dict(os.environ, PYTHONIOENCODING='cp936:strict', PYTHONUTF8='0'))
+        self.assertEqual(result.returncode, 1, result)
+        self.assertEqual(result.stderr, b'')
+        self.assertIn('✗ subtitles 必须是数组', result.stdout.decode('utf-8'))
+        self.assertEqual(tree(self.root), before)
+
     def test_array_shape_and_invalid_timeline_remain_rejected(self):
         self.rejected(b'null', "subtitles 必须是数组")
         self.rejected(b'{"in":0,"out":24,"text":"not-array"}', "subtitles 必须是数组")

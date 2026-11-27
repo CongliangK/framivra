@@ -11,14 +11,14 @@ import hashlib
 import json
 import os
 import subprocess
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 
 from ..cache.cache_state import file_digest, media_stat_digest
 from ..pipeline.composite import (RenderPlan, _graph_code_digest, choose_cutpoints,
                         segment_content_key, pass_content_key, needs_qc_clean)
 from ..cache.hygiene import audio_key, seg_key
-from ..media.encoders import seg_needs_alpha, probe_video_alpha
+from ..media.encoders import seg_needs_alpha, probe_video_alpha, display_video_size
 
 SCHEMA = 'framivra-impact-snapshot-v2'
 
@@ -134,25 +134,26 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
                     key = source.directory.name
                     if windows_svg and key != gfx_svg.record_key(svg_record):
                         raise ValueError('SVG PNG source identity differs from the observed input record')
-                    artifact = str(source.directory.relative_to(root))
+                    artifact = source.directory.relative_to(root).as_posix()
                     upstream = source.identity
                     # Declared closure is not runtime proof of dynamic JS/network.
                     if dependency_record['closure'] == 'unproven':
                         warnings.append({'node': ident, 'reason': 'gfx_dependency_closure_unproven'})
                 else:
                     windowed = any(k in clip for k in ('scale', 'x', 'y'))
-                    alpha = seg_needs_alpha(clip, source_info(c.src_path(clip['src'])))
+                    info = source_info(c.src_path(clip['src']))
+                    alpha = seg_needs_alpha(clip, info)
                     if windowed:
                         if probe is None:
                             raise ValueError('windowed media dimensions unavailable')
-                        dims = source_info(c.src_path(clip['src']))
-                        w2 = int(dims['w'] * clip.get('scale', 1.0)) // 2 * 2
-                        h2 = int(dims['h'] * clip.get('scale', 1.0)) // 2 * 2
+                        width, height = display_video_size(info)
+                        w2 = int(width * clip.get('scale', 1.0)) // 2 * 2
+                        h2 = int(height * clip.get('scale', 1.0)) // 2 * 2
                     else:
                         x = y = 0
                     inputs['source'] = source_ids[clip['src']]
                     key = seg_key(c, clip, ti, ci, windowed, alpha,
-                                  'prores' if alpha else encoder)
+                                  'prores' if alpha else encoder, source_info=info)
                     upstream = key + ('.mov' if alpha else '.mp4')
                     artifact = 'cache/seg/' + upstream
             except (OSError, ValueError, KeyError, RuntimeError) as error:
@@ -251,6 +252,15 @@ def compare(before, after):
     if before['root'] != after['root']:
         raise ValueError('impact snapshots must refer to the same project root')
     old, new = before['nodes'], after['nodes']
+    windows_root = PureWindowsPath(before['root']).is_absolute()
+
+    def artifact(row):
+        path = row['artifact']
+        # Older Windows v2 snapshots used native separators for GFX only.
+        if windows_root and row['stage'] == 'gfx' and path:
+            return path.replace('\\', '/')
+        return path
+
     changed = []
     for node in sorted(set(old) | set(new)):
         a, b = old.get(node), new.get(node)
@@ -261,15 +271,15 @@ def compare(before, after):
             reasons.append('node_removed')
         elif a['key'] is None or b['key'] is None:
             reasons.append('identity_unavailable')
-        elif a['key'] != b['key'] or a['artifact'] != b['artifact']:
+        elif a['key'] != b['key'] or artifact(a) != artifact(b):
             reasons = ['input_changed:' + k for k in sorted(set(a['inputs']) | set(b['inputs']))
                        if a['inputs'].get(k) != b['inputs'].get(k)] or ['execution_identity_changed']
         if reasons:
             changed.append({'node': node, 'stage': (b or a)['stage'],
                             'old_key': a['key'] if a else None,
                             'new_key': b['key'] if b else None, 'reasons': reasons})
-    old_paths = {v['artifact'] for v in old.values() if v['artifact']}
-    new_paths = {v['artifact'] for v in new.values() if v['artifact']}
+    old_paths = {artifact(v) for v in old.values() if v['artifact']}
+    new_paths = {artifact(v) for v in new.values() if v['artifact']}
     uncertain = {w['node'] for snapshot in (before, after) for w in snapshot['warnings']}
     for node, value in new.items():
         if any(p in uncertain for p in value['parents']):

@@ -9,10 +9,12 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 
 from .bgm_gen import paths
 from .bgm_gen.ref_slots import scan_ref_file, track_ref_slots
+from .bgm_gen.sf2_shorthand import parse_instrument_shorthand
 
 APP_ROOT = Path(__file__).resolve().parent
 
@@ -42,8 +44,51 @@ def code_identity(root=None):
     return _digest(records)
 
 
-def _tool_identity(command, env):
-    resolved = shutil.which(command, path=env.get("PATH")) if command else None
+def _native_windows_media_tool(command, env, application):
+    """Look for the literal .exe used by bare CreateProcess media launches."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    def directory(name):
+        getter = getattr(kernel, name)
+        getter.argtypes = (wintypes.LPWSTR, wintypes.UINT)
+        getter.restype = wintypes.UINT
+        buf = ctypes.create_unicode_buffer(32768)
+        length = getter(buf, len(buf))
+        if not 0 < length < len(buf):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return Path(buf.value)
+
+    windows = directory("GetWindowsDirectoryW")
+    caller = Path(application).absolute()
+    # The default BGM child uses this interpreter; a Windows venv redirector
+    # loads the base Python image before that child launches any media tool.
+    if caller == Path(sys.executable).absolute():
+        caller = Path(getattr(sys, "_base_executable", None) or sys.executable)
+    search = [caller.parent]
+    if not any(name.upper() == "NODEFAULTCURRENTDIRECTORYINEXEPATH" for name in env):
+        search.append(Path.cwd())
+    search.extend((directory("GetSystemDirectoryW"), windows / "System", windows))
+    path = env.get("PATH", os.environ.get("PATH", os.defpath))
+    search.extend(Path(value.strip('"')) for value in path.split(os.pathsep) if value)
+    for root in search:
+        executable = root / (command + ".exe")
+        if executable.is_file():
+            return executable
+    return None
+
+
+def _tool_identity(command, env, *, application=None):
+    if os.name == "nt" and application and command in ("ffmpeg", "ffprobe"):
+        resolved = _native_windows_media_tool(command, env, application)
+    else:
+        resolved = shutil.which(command, path=env.get("PATH")) if command else None
+    return _selected_tool_identity(command, resolved)
+
+
+def _selected_tool_identity(command, resolved):
     if not resolved:
         return {"command": command, "state": "missing"}
     selected = Path(resolved).absolute()
@@ -75,13 +120,20 @@ def execution_identity(command, env):
     """Return identity and effective runtime; never return private config values."""
     runtime = paths.effective_runtime(environ=env)
     tools = {"python": _tool_identity(command[0], env),
-             "ffmpeg": _tool_identity("ffmpeg", env),
-             "ffprobe": _tool_identity("ffprobe", env)}
+             "ffmpeg": _tool_identity("ffmpeg", env, application=command[0]),
+             "ffprobe": _tool_identity("ffprobe", env, application=command[0])}
     # Configured tools are user-owned dependencies. Hash their resolved file
     # identity when present; a shared-library soname may remain loader-resolved.
     configured_tools = {}
     for name, value in (runtime.get("tools") or {}).items():
-        if isinstance(value, str):
+        if not isinstance(value, str):
+            continue
+        if os.name == 'nt' and name == 'fluidsynth_lib' and Path(value).is_absolute():
+            # ctypes loads the explicitly named file directly. Executable PATH
+            # discovery can omit it because .DLL is not normally in PATHEXT.
+            library = Path(value)
+            configured_tools[name] = _selected_tool_identity(value, library if library.is_file() else None)
+        else:
             configured_tools[name] = _tool_identity(value, env)
     # Bind the interpreters actually selected by QC and optional local engines,
     # separately from host tools. Preserve each logical venv entry for RECORD.
@@ -162,14 +214,11 @@ def asset_dependencies(project, runtime):
         elif engine == "sf2":
             if not isinstance(instrument, str):
                 continue
-            ref = instrument
-            if ref.count(":") == 2:
-                name, bank, program = ref.rsplit(":", 2)
-                try:
-                    if 0 <= int(bank) <= 128 and 0 <= int(program) <= 127:
-                        ref = name
-                except ValueError:
-                    pass
+            try:
+                parsed = parse_instrument_shorthand(instrument)
+            except ValueError:
+                parsed = None  # Render projection owns the invalid shorthand diagnostic.
+            ref = parsed[0] if parsed is not None else instrument
             p = os.path.expanduser(ref)
             if os.path.isabs(p):
                 dependencies.add(p)

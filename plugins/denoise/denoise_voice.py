@@ -84,10 +84,10 @@ def missing_env() -> list:
     return miss
 
 
-def _sh(cmd):
+def _sh(cmd, *, env=None):
     """子进程执行；失败打印 stderr 尾并退出（fail-hard，不产半链产物）。"""
     r = subprocess.run(cmd, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace")
+                       encoding="utf-8", errors="replace", env=env)
     if r.returncode != 0:
         print("✗ denoise 链失败：" + " ".join(map(str, cmd))[:200], file=sys.stderr)
         print(r.stderr[-1500:], file=sys.stderr)
@@ -117,7 +117,9 @@ data, sr = sf.read(normed, dtype="float32")
 out, sr_out = denoise(torch.from_numpy(data), sr, "cpu", run_dir=Path(run_directory))
 sf.write(denoised, out.cpu().numpy(), sr_out)
 '''
-        _sh([str(conda_python()), "-c", code, normed, str(rd), denoised])
+        # Only the Python child's standard streams need the explicit wire codec.
+        python_env = dict(os.environ, PYTHONIOENCODING="utf-8") if os.name == "nt" else None
+        _sh([str(conda_python()), "-c", code, normed, str(rd), denoised], env=python_env)
         last = ["ffmpeg", "-y", "-v", "error", "-i", denoised,
                 "-af", f"{POST},aresample=48000,"
                        f"atrim=start_sample={TRIM_48K},asetpts=PTS-STARTPTS"]
@@ -146,5 +148,13 @@ def main(argv=None) -> int:
     return 0
 
 
+def _configure_cli_output():
+    if sys.platform == 'win32':
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, 'reconfigure'):
+                stream.reconfigure(encoding='utf-8', errors='replace')
+
+
 if __name__ == "__main__":
+    _configure_cli_output()
     sys.exit(main())

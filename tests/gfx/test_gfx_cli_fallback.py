@@ -5,7 +5,7 @@
 被测对象 vtx/render/gfx_cli.py：`vtx gfx` 的 CLI 回退（VTX_GFX=cli、CDP 不可用整页
 回落、CDP 帧级失败补渲）原先不检查每个 chrome --headless --screenshot 子进程
 的退出码、完成度靠 PNG 数量推断，损坏 PNG 会被当作缓存命中。本测试用假
-chrome 可执行脚本（stub，无需真 Chrome，POSIX shebang 直 exec）覆盖五类行为：
+Chrome 脚本（POSIX shebang；Windows 经真实 Job 启动 Python）覆盖五类行为：
 
   ① 非零退出：显式 GfxCliError，报完整命令 + 退出码 + stderr 线索；
   ② 退出码 0 但不写文件：目标帧报「缺失」，绝不计为完成；
@@ -27,6 +27,7 @@ R3 红队复审 D1：interlace=1 + zlib.compress(垃圾) 的隔行攻击件（�
   python3 -m unittest tests.gfx.test_gfx_cli_fallback
   python3 tests/gfx/test_gfx_cli_fallback.py
 """
+from contextlib import ExitStack, nullcontext
 import json
 import os
 import struct
@@ -43,7 +44,7 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:  # 独立跑（python3 tests/gfx/test_gfx_cli_fallback.py）时锚定仓根
     sys.path.insert(0, str(REPO))
 
-from tests.gfx._environment import environment_cli  # noqa: E402
+from tests.gfx._environment import environment_cli, run_environment_cli  # noqa: E402
 from vtx.render.gfx_cli import (GfxCliError, PNG_SIGNATURE, _cli_shot_cmd,  # noqa: E402
                          png_invalid_reason, render_cli, require_frames,
                          run_cli_shot, verify_frames)
@@ -247,8 +248,40 @@ sys.exit(0)
 '''
 
 
+def _windows_stub_runner():
+    if os.name != 'nt':
+        return nullcontext()
+    from vtx.runtime import windows_browser
+    run_browser = windows_browser.run_browser
+
+    def run(argv, *, timeout=None):
+        # Windows does not exec a shebang. Use the interpreter as the real
+        # Job executable, preserving the original screenshot flags and streams.
+        path = Path(argv[0])
+        if not (path.name.startswith('chrome_stub_') and path.suffix == '.py'):
+            return run_browser(argv, timeout=timeout)
+        return run_browser([sys.executable, '-E', '-X', 'utf8', *argv], timeout=timeout)
+
+    return mock.patch.object(windows_browser, 'run_browser', new=run)
+
+
+def _run_fixture_cli():
+    with _windows_stub_runner():
+        run_environment_cli()
+
+
+def _fixture_cli():
+    if os.name != 'nt':
+        return environment_cli()
+    return [sys.executable, '-c',
+            'from tests.gfx.test_gfx_cli_fallback import _run_fixture_cli; _run_fixture_cli()']
+
+
 class GfxCliFallbackTests(unittest.TestCase):
     def setUp(self):
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(_windows_stub_runner())
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
         self.html = self.tmp / "page.html"
@@ -262,12 +295,14 @@ class GfxCliFallbackTests(unittest.TestCase):
 
     def _stub(self, mode: str, png: bytes = MINIMAL_PNG) -> Path:
         """生成可执行的假 chrome 脚本，返回其路径（png=stub 落盘的产物字节）。"""
-        path = self.tmp / f"chrome_stub_{mode}"
+        suffix = '.py' if os.name == 'nt' else ''
+        path = self.tmp / f"chrome_stub_{mode}{suffix}"
         path.write_text(
             _STUB_TEMPLATE.replace("__MODE__", repr(mode))
                           .replace("__PNG__", repr(png)),
             encoding="utf-8")
-        path.chmod(0o755)
+        if os.name != 'nt':
+            path.chmod(0o755)
         return path
 
     # ---------------------------------------------------------- ① 非零退出
@@ -280,7 +315,7 @@ class GfxCliFallbackTests(unittest.TestCase):
         self.assertIn(f"退出码 3", msg)
         self.assertIn(str(stub), msg)                              # 是哪条命令
         self.assertIn("--screenshot=", msg)
-        self.assertIn(f"--screenshot={self.out}/f0000.png", msg)
+        self.assertIn(f"--screenshot={self.out / 'f0000.png'}", msg)
         self.assertIn("boooom", msg)                               # stderr 线索
         self.assertFalse(list(self.out.glob("f*.png")))            # 无产物混入完成数
 
@@ -501,7 +536,7 @@ class GfxCliFallbackTests(unittest.TestCase):
                                     "--font-render-hinting=none", "--window-size=1920,1080",
                                     "--default-background-color=00000000"])
         self.assertEqual(cmd[0], str(stub))
-        self.assertEqual(cmd[9], f"--screenshot={self.out}/f0003.png")
+        self.assertEqual(cmd[9], f"--screenshot={self.out / 'f0003.png'}")
         self.assertTrue(cmd[10].startswith("file://"))
         self.assertTrue(cmd[10].endswith(f"{self.html.name}?f=3"))
 
@@ -537,12 +572,13 @@ class GfxCliEntryTests(unittest.TestCase):
                              ("truncated", "截断")):
             with self.subTest(mode=mode):
                 result = subprocess.run(
-                    [*environment_cli(), "-t", str(c.tl_path), "gfx"],
+                    [*_fixture_cli(), "-t", str(c.tl_path), "gfx"],
                     cwd=REPO, env=dict(os.environ, VTX_GFX="cli", VTX_CHROME=str(self._stub(mode))),
-                    capture_output=True, text=True, timeout=30)
+                    capture_output=True, text=True,
+                    encoding='utf-8' if os.name == 'nt' else None, timeout=30)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn(reason, result.stdout)
-                rec = json.loads((c.out / "receipt.json").read_text())
+                rec = json.loads((c.out / "receipt.json").read_bytes())
                 self.assertIs(rec["stages"]["gfx"]["ok"], False)
                 self.assertNotIn("渲染 1 帧（", result.stdout)
 
@@ -557,12 +593,13 @@ class GfxCliEntryTests(unittest.TestCase):
             d.mkdir(parents=True)
             (d / "f9999.png").write_bytes(MINIMAL_PNG)
             result = subprocess.run(
-                [*environment_cli(), "-t", str(c.tl_path), "gfx"], cwd=REPO, env=env,
-                capture_output=True, text=True, timeout=30)
+                [*_fixture_cli(), "-t", str(c.tl_path), "gfx"], cwd=REPO, env=env,
+                capture_output=True, text=True,
+                encoding='utf-8' if os.name == 'nt' else None, timeout=30)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertNotIn("帧已缓存", result.stdout)
-        self.assertIs(json.loads((c.out / "receipt.json").read_text())["stages"]["gfx"]["ok"], False)
-        self.assertEqual(json.loads((d / ENV_PENDING_FILE).read_text())["key"], d.name)
+        self.assertIs(json.loads((c.out / "receipt.json").read_bytes())["stages"]["gfx"]["ok"], False)
+        self.assertEqual(json.loads((d / ENV_PENDING_FILE).read_bytes())["key"], d.name)
         self.assertEqual((d / "f9999.png").read_bytes(), MINIMAL_PNG)
         self.assertFalse((d / "f0000.png").exists())
 
@@ -578,14 +615,15 @@ class GfxCliEntryTests(unittest.TestCase):
         for run in (1, 2):
             with self.subTest(run=run):
                 result = subprocess.run(
-                    [*environment_cli(), "-t", str(c.tl_path), "gfx"],
+                    [*_fixture_cli(), "-t", str(c.tl_path), "gfx"],
                     cwd=REPO, env=dict(os.environ, VTX_GFX="cli", VTX_CHROME=str(stub)),
-                    capture_output=True, text=True, timeout=30)
+                    capture_output=True, text=True,
+                    encoding='utf-8' if os.name == 'nt' else None, timeout=30)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn("IDAT", result.stdout)          # 报因指向 IDAT 解码
                 self.assertNotIn("帧已缓存", result.stdout)   # 二次运行不是缓存命中
                 self.assertNotIn("渲染 1 帧（", result.stdout)
-                rec = json.loads((c.out / "receipt.json").read_text())
+                rec = json.loads((c.out / "receipt.json").read_bytes())
                 self.assertIs(rec["stages"]["gfx"]["ok"], False)
 
     def test_cli_interlaced_attack_png_fails_and_never_cache_hits(self):
@@ -602,14 +640,15 @@ class GfxCliEntryTests(unittest.TestCase):
         for run in (1, 2):
             with self.subTest(run=run):
                 result = subprocess.run(
-                    [*environment_cli(), "-t", str(c.tl_path), "gfx"],
+                    [*_fixture_cli(), "-t", str(c.tl_path), "gfx"],
                     cwd=REPO, env=dict(os.environ, VTX_GFX="cli", VTX_CHROME=str(stub)),
-                    capture_output=True, text=True, timeout=30)
+                    capture_output=True, text=True,
+                    encoding='utf-8' if os.name == 'nt' else None, timeout=30)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn("隔行", result.stdout)          # 报因指向隔行拒绝
                 self.assertNotIn("帧已缓存", result.stdout)   # 二次运行不是缓存命中
                 self.assertNotIn("渲染 1 帧（", result.stdout)
-                rec = json.loads((c.out / "receipt.json").read_text())
+                rec = json.loads((c.out / "receipt.json").read_bytes())
                 self.assertIs(rec["stages"]["gfx"]["ok"], False)
 
     def test_cdp_whole_page_and_frame_fallback_fail_with_false_receipt(self):
@@ -631,7 +670,7 @@ class GfxCliEntryTests(unittest.TestCase):
                 self.assertEqual(renderer.call_count, 1)
                 fallback.assert_called_once()
                 self.assertEqual(fallback.call_args.args[0], [0])
-                receipt = json.loads((c.out / "receipt.json").read_text())["stages"]["gfx"]
+                receipt = json.loads((c.out / "receipt.json").read_bytes())["stages"]["gfx"]
                 self.assertIs(receipt["ok"], False)
                 self.assertIn("CLI boom", receipt["detail"])
 
@@ -651,7 +690,7 @@ class GfxCliEntryTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as cm:
                 cli.gfx(c)
         self.assertEqual(cm.exception.code, 1)
-        self.assertIs(json.loads((c.out / "receipt.json").read_text())["stages"]["gfx"]["ok"], False)
+        self.assertIs(json.loads((c.out / "receipt.json").read_bytes())["stages"]["gfx"]["ok"], False)
 
 
 if __name__ == "__main__":

@@ -64,9 +64,18 @@ def logical_local_url(url, base):
 
 def local_path(url, base):
     logical = logical_local_url(url, base)
-    path = unquote(urlsplit(logical).path, errors='strict')
+    encoded = urlsplit(logical).path
+    path = unquote(encoded, errors='strict')
     if '\0' in path or '\\' in path:
         raise DependencyError('invalid URL path', url)
+    if os.name == 'nt':
+        # A native local file URI is file:///C:/..., not the drive-relative
+        # pathname \\C:\\... that pathlib would infer from the URL path. Refuse
+        # ambiguous UNC/device/stream spellings and escaped path separators.
+        if (not re.match(r'/[A-Za-z]:/', encoded) or ':' in path[3:]
+                or re.search(r'%2f', encoded, re.IGNORECASE)):
+            raise DependencyError('invalid Windows local file URL path', url)
+        path = path[1:]
     return Path(path).resolve()
 
 

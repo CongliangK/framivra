@@ -298,6 +298,10 @@ def main():
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        # A redirected Windows stream may not encode the result of a committed edit.
+        for stream in (sys.stdout, sys.stderr):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     try:
         main()
     except (RuntimeError, ValueError, OSError) as exc:

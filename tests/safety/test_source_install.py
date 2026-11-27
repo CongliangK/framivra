@@ -28,6 +28,7 @@ class SourceInstall(unittest.TestCase):
         self.root.mkdir()
         self.upstream = self.base / 'upstream'
         self.upstream.mkdir()
+        self.git_executable = str(Path(shutil.which('git')).resolve())
         self.run_git('init', '-b', 'main')
         self.run_git('config', 'user.name', 'Test')
         self.run_git('config', 'user.email', 'test@example.invalid')
@@ -295,10 +296,40 @@ class SourceInstall(unittest.TestCase):
             self.deploy()
         self.assertFalse((self.root / 'source').exists())
 
+    @unittest.skipUnless(sys.platform == 'win32', 'native Windows executable search')
+    def test_windows_source_uses_selected_git_before_runtime_verification(self):
+        selected = Path(shutil.which('git.exe')).resolve()
+        ambient = self.base / 'ambient'
+        ambient.mkdir()
+        # A bare Windows CreateProcess command can prefer this over PATH.
+        (ambient / 'git.exe').write_bytes(b'not an executable')
+        commits = [self.run_git('rev-parse', 'HEAD')]
+        (self.upstream / 'later').write_text('advance main', encoding='utf-8')
+        commits.append(self.commit('later'))
+        args = ['--root', str(self.root), '--repo', str(self.upstream), '--yes', '--update']
+        previous_cwd = Path.cwd()
+        with mock.patch.dict(os.environ), \
+                mock.patch.object(install, 'prepare_tools', return_value={'git': str(selected)}), \
+                mock.patch.object(install, 'verify_native_tools'), \
+                mock.patch.object(install, 'prepare_python', side_effect=install.InstallError('fixture stops before runtime')), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+            os.environ.pop('NoDefaultCurrentDirectoryInExePath', None)
+            try:
+                os.chdir(ambient)
+                for commit in commits:
+                    self.assertEqual(install.main(args + ['--restart-update', '--source-commit', commit]
+                                                  if commit != commits[0] else args + ['--source-commit', commit]), 1)
+                    state = install.json_record(self.root / 'installation.json')
+                    self.assertEqual(state.get('commit'), commit, errors.getvalue())
+                    self.assertTrue(state['sourceApproved'])
+                    self.assertIn('fixture stops before runtime', errors.getvalue())
+            finally:
+                os.chdir(previous_cwd)
+
     def test_same_update_after_dependency_failure_keeps_approved_source(self):
         approved = self.run_git('rev-parse', 'HEAD')
         args = ['--root', str(self.root), '--repo', str(self.upstream), '--yes', '--update']
-        with mock.patch.object(install, 'prepare_tools', return_value={}), mock.patch.object(install, 'verify_native_tools'), mock.patch.object(install, 'prepare_python', side_effect=install.InstallError('fixture dependency failure')), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        with mock.patch.object(install, 'prepare_tools', return_value={'git': self.git_executable}), mock.patch.object(install, 'verify_native_tools'), mock.patch.object(install, 'prepare_python', side_effect=install.InstallError('fixture dependency failure')), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(install.main(args), 1)
             (self.upstream / 'advanced').write_text('main moved after source approval')
             self.commit('main advanced during dependency interruption')
@@ -343,11 +374,11 @@ class SourceInstall(unittest.TestCase):
                 if self.run_git('rev-parse', 'HEAD', cwd=source) != new:
                     raise install.InstallError('old verification failed')
 
-        with mock.patch.object(install, 'prepare_tools', return_value={}), \
+        with mock.patch.object(install, 'prepare_tools', return_value={'git': self.git_executable}), \
                 mock.patch.object(install, 'verify_native_tools'), \
                 mock.patch.object(install, 'prepare_python', return_value=(Path(sys.executable), {'VTX_CHROME': 'chrome'})), \
-                mock.patch.object(install.windows, 'ensure_python_runtime'), \
-                mock.patch.object(install, 'verify_macos_tool_paths'), \
+                mock.patch.object(install.windows, 'ensure_python_runtime', return_value={'status': 'available'}), \
+                mock.patch.object(install, 'verify_runtime_tool_paths'), \
                 mock.patch.object(install, 'env_tool', return_value='ffmpeg'), \
                 mock.patch.object(install, 'command', side_effect=command), \
                 contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()) as errors:
@@ -432,7 +463,7 @@ class SourceInstall(unittest.TestCase):
             return root / 'venv/Scripts/python.exe', {'PATH': '/fixture'}
         with mock.patch.object(install.sys, 'platform', 'win32'), \
                 mock.patch.object(install.platform, 'machine', return_value='AMD64'), \
-                mock.patch.object(install, 'prepare_tools', return_value={}), \
+                mock.patch.object(install, 'prepare_tools', return_value={'git': self.git_executable}), \
                 mock.patch.object(install, 'verify_native_tools'), \
                 mock.patch.object(install, 'prepare_python', side_effect=prepared), \
                 mock.patch.object(install.windows, 'ensure_python_runtime',
@@ -469,13 +500,58 @@ class SourceInstall(unittest.TestCase):
         self.assertEqual(target.read_text(), original)
 
     def test_failed_dependency_preparation_never_registers_ready(self):
-        with mock.patch.object(install, 'prepare_tools', return_value={}), mock.patch.object(install, 'verify_native_tools'), mock.patch.object(install, 'prepare_python', side_effect=install.InstallError('fixture failure')), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        with mock.patch.object(install, 'prepare_tools', return_value={'git': self.git_executable}), mock.patch.object(install, 'verify_native_tools'), mock.patch.object(install, 'prepare_python', side_effect=install.InstallError('fixture failure')), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(install.main(['--root', str(self.root), '--repo', str(self.upstream), '--yes']), 1)
         self.assertEqual(json.loads((self.root / 'installation.json').read_text())['status'], 'preparing')
         self.assertFalse((self.root / 'bin/vtx').exists())
 
 
 class ManagedEnvironment(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'win32', 'native Windows executable search')
+    def test_private_ffmpeg_pair_wins_and_reverse_shadow_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            source, prefix = root / 'source', root / 'venv'
+            shared, private = root / 'shared tools', root / 'selected ffmpeg'
+            for path in (source, prefix / 'Scripts', shared, private):
+                path.mkdir(parents=True)
+            config = root / 'config.json'
+            config.write_text('{}', encoding='utf-8')
+            # Match the order of an install that discovered Git/SoX first, then
+            # appended a replacement pair after rejecting the shared FFmpeg.
+            tools = {name: str(directory / (name + '.exe')) for directory, names in (
+                (shared, ('git', 'sox', 'chrome')), (private, ('ffmpeg', 'ffprobe')))
+                for name in names}
+            for path in (*map(Path, tools.values()), shared / 'ffmpeg.exe', shared / 'ffprobe.exe'):
+                path.touch()
+            receipt = dict(schema=install.SCHEMA, sourceRoot=str(source), commit='a' * 40,
+                           status='ready', profile='non-ai', renderer='cdp', tools=tools,
+                           configFile=str(config), environment={})
+            (root / 'installation.json').write_text(json.dumps(receipt), encoding='utf-8')
+            env = install.runtime_env(root, tools)
+            managed_env = {}
+            self.assertTrue(configure_environment(prefix, source, managed_env))
+            for surface in (env, managed_env):
+                self.assertIn('NoDefaultCurrentDirectoryInExePath', surface)
+                for name in ('ffmpeg', 'ffprobe', 'git', 'sox'):
+                    self.assertEqual(Path(install.env_tool(surface, name)), Path(tools[name]))
+
+            # Run the same isolated verification child as the real installer,
+            # making this checkout importable in place of editable installation.
+            real_command = install.command
+            def command(argv, **kwargs):
+                code_prefix = f'import sys; sys.path.insert(0, {str(Path(install.__file__).parents[1])!r}); '
+                return real_command([*argv[:2], '-B', argv[2], code_prefix + argv[3], *argv[4:]], **kwargs)
+            with mock.patch.object(install, 'command', side_effect=command):
+                install.verify_runtime_tool_paths(root, sys.executable, env, tools)
+                # Nothing should silently switch to the other Git when the pair
+                # wins: in this layout there is no correct directory order.
+                (private / 'git.exe').touch()
+                with self.assertRaisesRegex(install.InstallError, 'shadows selected tools: git'):
+                    install.verify_runtime_tool_paths(root, sys.executable, env, tools)
+            with self.assertRaisesRegex(RuntimeError, 'shadows selected tools: git'):
+                configure_environment(prefix, source, {})
+
     def test_only_prefix_bound_receipt_is_used_and_explicit_choices_survive(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp).resolve()
@@ -485,7 +561,7 @@ class ManagedEnvironment(unittest.TestCase):
             config.write_text('{}', encoding='utf-8')
             tools = {}
             for name in (*install.TOOL_NAMES, 'chrome'):
-                path = root / 'tools' / name
+                path = root / 'tools' / (name + '.exe' if os.name == 'nt' else name)
                 path.parent.mkdir(exist_ok=True)
                 path.write_text('fixture', encoding='utf-8')
                 tools[name] = str(path)

@@ -208,9 +208,13 @@ function Get-LockedPython([string]$Cache, [string]$Network) {
                 $validator = [string]$response.Headers['ETag']
                 if (-not $validator -or $validator.StartsWith('W/')) { $validator = [string]$response.Headers['Last-Modified'] }
                 if ($status -eq 206 -and $validator -ne $state.validator) { throw 'Integrity failure: Python range validator changed or disappeared' }
-                $state = @{ url = $url; validator = $validator }
-                Write-ResumeState $metadata $state
+                # Truncate a replaced prefix before publishing the new validator.
+                # On interruption, the old state may describe an empty file, never
+                # the new state a nonempty prefix from the old representation.
                 $output = New-Object IO.FileStream($part, $mode, [IO.FileAccess]::Write, [IO.FileShare]::None)
+                $nextState = @{ url = $url; validator = $validator }
+                Write-ResumeState $metadata $nextState
+                $state = $nextState
                 $incoming = $response.GetResponseStream()
                 $buffer = New-Object byte[] 131072
                 $received = $offset
@@ -250,12 +254,12 @@ function Get-InstallerOption([string]$Name, [string]$Default) {
 function Invoke-Bootstrap {
     if ($InstallerArgs -contains '--help') {
         Write-Output 'Usage: .\bootstrap.ps1 [--yes] [--plan] [--no-system] [--update] [--network cn|official] [--verify-render]'
-        Write-Output 'Native Windows x64; private installation, resumable original packages. Native validation pending.'
+        Write-Output 'Native Windows x64; per-user installation, resumable original packages.'
         Write-Output 'CDP end-to-end render verification is opt-in and may take several minutes.'
         return
     }
     $network = Get-InstallerOption '--network' 'cn'
-    $root = Get-InstallerOption '--root' (Join-Path $env:LOCALAPPDATA 'framivra')
+    $root = Get-InstallerOption '--root' ''
     if ($network -notin @('cn', 'official')) { throw '--network must be cn or official' }
     if (-not ($InstallerArgs -contains '--plan') -and (Test-ElevatedWindows)) {
         throw 'Per-user Windows installation requires a non-administrator PowerShell; rerun from an ordinary PowerShell. Existing files and ACLs were not changed.'
@@ -265,6 +269,13 @@ function Invoke-Bootstrap {
         if (($InstallerArgs -contains '--plan') -or ($InstallerArgs -contains '--no-system')) { throw 'Python x64 >=3.9 is missing; no changes made.' }
         if (-not ($InstallerArgs -contains '--yes')) {
             if ((Read-Host 'Download verified user-level Python 3.13.17 and prepare Framivra? [y/N]') -notmatch '^(y|yes)$') { throw 'Cancelled' }
+        }
+        # The Python installer resolves its own default. Only a bootstrapped
+        # Python download needs the same root before Python is available.
+        if (-not $root) {
+            $local = $env:LOCALAPPDATA
+            if (-not $local) { $local = Join-Path $HOME 'AppData\Local' }
+            $root = Join-Path $local 'framivra'
         }
         $installer = Get-LockedPython (Join-Path $root 'cache\downloads') $network
         $process = Start-Process -FilePath $installer -ArgumentList '/quiet', 'InstallAllUsers=0', 'PrependPath=1', 'Include_test=0', 'Include_launcher=1', 'InstallLauncherAllUsers=0' -Wait -PassThru

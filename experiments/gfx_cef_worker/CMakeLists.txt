@@ -1,7 +1,7 @@
 # vtx_cef_worker 构建系统（issue #108：CEF 独立 Worker 构建系统、版本锁与产物隔离）
 #
 # 设计约束：
-# - 版本锁在 cef_lock.json，二进制获取/校验/解包全在 build_cef_worker.sh；
+# - 平台版本锁在 cef_lock*.json，二进制获取/校验/解包由各平台构建脚本负责；
 #   本文件不做任何网络获取（可复现性：无隐式下载）。
 # - CEF_ROOT 指向解包后的官方分发包目录（cef_binary_*，.gitignore 隔离）。
 #   构建脚本显式传 -DCEF_ROOT=...；独立调用本文件时可自动推断唯一候选。
@@ -17,6 +17,17 @@ cmake_minimum_required(VERSION 3.21)
 project(vtx_cef_worker_build LANGUAGES C CXX)
 if(APPLE)
   enable_language(OBJCXX)
+elseif(WIN32)
+  if(NOT MSVC OR NOT MSVC_CXX_ARCHITECTURE_ID STREQUAL "x64")
+    message(FATAL_ERROR "CEF Windows minimal requires an x64 MSVC ABI compiler (MSVC or clang-cl).")
+  endif()
+  if(CMAKE_CONFIGURATION_TYPES OR NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+    message(FATAL_ERROR "CEF Windows minimal is Release-only; use build_windows.py.")
+  endif()
+  enable_language(RC)
+  # Keep the worker, CEF wrapper, selftests and zlib on the same static CRT.
+  set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
+  set(CEF_RUNTIME_LIBRARY_FLAG "" CACHE STRING "CRT selected by CMake" FORCE)
 endif()
 
 # ---- CEF_ROOT：上游分发包根目录 ----
@@ -40,6 +51,22 @@ list(APPEND CMAKE_MODULE_PATH "${CEF_ROOT}/cmake")
 find_package(CEF REQUIRED)
 
 # ---- 上游 flag 集与工单要求对齐 ----
+if(WIN32)
+  # Both the application and wrapper use the same C++/CRT exception model.
+  list(REMOVE_ITEM CEF_COMPILER_DEFINES _HAS_EXCEPTIONS=0)
+  # Statically import the side-by-side CEF DLL under /DEPENDENTLOADFLAG below,
+  # rather than asking the delay-load helper to search for it at call time.
+  list(REMOVE_ITEM CEF_EXE_LINKER_FLAGS /DELAYLOAD:libcef.dll)
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    list(REMOVE_ITEM CEF_COMPILER_FLAGS /MP /GF)
+    # Match the upstream Clang exemptions for CEF's generated wrapper code.
+    list(APPEND CEF_CXX_COMPILER_FLAGS /clang:-Wno-missing-field-initializers
+                                       /clang:-Wno-undefined-var-template)
+  endif()
+  add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+  add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8;/O2>"
+                      "$<$<COMPILE_LANGUAGE:CXX>:/EHsc;/Zc:__cplusplus>")
+else()
 # 1) 上游对 x86_64 追加保守的 -march=x86-64，命令行后到者生效会压过工单的
 #    -march=x86-64-v3；且 CMake 对重复 flag 去重，无法靠再追加覆盖 → 从
 #    CEF 列表移除基线 march，全域统一 v3（下方目录级 add_compile_options）。
@@ -54,6 +81,7 @@ set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
 #    Keep all other upstream release/security flags and leave Debug unchanged.
 list(REMOVE_ITEM CEF_COMPILER_FLAGS_RELEASE -O2)
 list(APPEND CEF_COMPILER_FLAGS_RELEASE -O3)
+endif()
 
 # ---- 语言标准：C++20 ----
 set(CMAKE_CXX_STANDARD 20)
@@ -61,7 +89,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # ---- 工单要求的编译面（GNU/Clang）----
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+if(NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-O3 -Wall -Wextra -Werror)
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
     add_compile_options(-march=x86-64-v3)
@@ -75,12 +103,17 @@ endif()
 add_subdirectory("${CEF_LIBCEF_DLL_WRAPPER_PATH}"
                  "${CMAKE_BINARY_DIR}/libcef_dll_wrapper")
 
-# ---- libcef.so：直接链接分发包内预编译动态库 ----
-if(NOT APPLE)
-add_library(libcef SHARED IMPORTED)
-set_target_properties(libcef PROPERTIES
-  IMPORTED_LOCATION "${CEF_LIB_RELEASE}"
-  IMPORTED_SONAME "libcef.so")
+# ---- libcef: link the official Windows import library or Linux shared library ----
+if(WIN32)
+  add_library(libcef SHARED IMPORTED)
+  set_target_properties(libcef PROPERTIES
+    IMPORTED_IMPLIB "${CEF_LIB_RELEASE}"
+    IMPORTED_LOCATION "${CEF_BINARY_DIR_RELEASE}/libcef.dll")
+elseif(NOT APPLE)
+  add_library(libcef SHARED IMPORTED)
+  set_target_properties(libcef PROPERTIES
+    IMPORTED_LOCATION "${CEF_LIB_RELEASE}"
+    IMPORTED_SONAME "libcef.so")
 endif()
 
 # ---- vtx_cef_worker 可执行 ----
@@ -105,15 +138,24 @@ set(FPNG_SOURCES "${VTX_THIRD_PARTY}/fpng/fpng.cpp")
 # 上游源按其自述要求补指令集（fpng 的 SSE4.1/PCLMUL intrinsic 运行时分派，
 # 但编译 TU 需 -msse4.1 -mpclmul；二者不在 -march=x86-64-v3 集合内）；
 # -w 关上游告警面（上游不按本仓 -Werror 纪律维护）。
-set_source_files_properties(${SPNG_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
-  set_source_files_properties(${FPNG_SOURCES} PROPERTIES COMPILE_OPTIONS "-w;-msse4.1;-mpclmul")
+if(WIN32)
+  add_compile_definitions(SPNG_STATIC)
+  set_source_files_properties(${SPNG_SOURCES} ${FPNG_SOURCES}
+    PROPERTIES COMPILE_OPTIONS "/w" COMPILE_DEFINITIONS "_CRT_SECURE_NO_WARNINGS")
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    set_property(SOURCE ${FPNG_SOURCES} APPEND PROPERTY
+      COMPILE_OPTIONS "/clang:-msse4.1;/clang:-mpclmul")
+  endif()
 else()
-  set_source_files_properties(${FPNG_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+  set_source_files_properties(${SPNG_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
+    set_source_files_properties(${FPNG_SOURCES} PROPERTIES COMPILE_OPTIONS "-w;-msse4.1;-mpclmul")
+  else()
+    set_source_files_properties(${FPNG_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+  endif()
+  # fpng owns temporary vectors; keep their unwind cleanup for bad_alloc.
+  set_property(SOURCE ${FPNG_SOURCES} APPEND PROPERTY COMPILE_OPTIONS "-fexceptions")
 endif()
-# fpng owns temporary std::vectors across allocations. Preserve their unwind
-# cleanup when serve.cpp catches bad_alloc; retain the vendor/architecture flags.
-set_property(SOURCE ${FPNG_SOURCES} APPEND PROPERTY COMPILE_OPTIONS "-fexceptions")
 add_executable(vtx_cef_worker src/main.cpp src/app_handler.cpp
                              src/frame_pipeline.cpp src/pixel_ops.cpp
                              src/png_writer.cpp src/serve.cpp
@@ -123,23 +165,37 @@ add_executable(vtx_cef_worker src/main.cpp src/app_handler.cpp
 # writer owns the spng context/output while vector allocation or a progressive
 # row callback can throw, so its RAII cleanup also needs unwind tables. CEF's
 # upstream -fno-exceptions remains unchanged for other translation units.
-set_source_files_properties(src/serve.cpp src/png_writer.cpp
-                            PROPERTIES COMPILE_OPTIONS "-fexceptions")
-# CEF disables thread-safe local statics globally. These two application TUs
-# cache dynamic LUT/backend/filter state and are also callable concurrently;
-# restore standard C++ first-use initialization without changing CEF/vendor flags.
-set_property(SOURCE src/pixel_ops.cpp src/png_writer.cpp APPEND
-             PROPERTY COMPILE_OPTIONS "-fthreadsafe-statics")
+if(NOT WIN32)
+  set_source_files_properties(src/serve.cpp src/png_writer.cpp
+                              PROPERTIES COMPILE_OPTIONS "-fexceptions")
+  # CEF disables thread-safe local statics on POSIX; restore them for worker
+  # TUs whose dynamic LUT/backend/filter initializers can run concurrently.
+  set_property(SOURCE src/pixel_ops.cpp src/png_writer.cpp APPEND
+               PROPERTY COMPILE_OPTIONS "-fthreadsafe-statics")
+endif()
 # CEF 官方 exe 属性宏：CEF flag 集（含 -std=c++20 -O3 -Wall -Wextra -Werror，
 # 与目录级工单 flag 同语义）+ include 路径。
 SET_EXECUTABLE_TARGET_PROPERTIES(vtx_cef_worker)
 find_package(Threads REQUIRED)
-find_package(ZLIB REQUIRED)
+if(WIN32)
+  if(NOT IS_DIRECTORY "${VTX_ZLIB_ROOT}" OR NOT EXISTS "${VTX_ZLIB_ROOT}/zlib.h")
+    message(FATAL_ERROR "Set VTX_ZLIB_ROOT to the verified zlib source or use build_windows.py.")
+  endif()
+  set(ZLIB_BUILD_SHARED OFF)
+  set(ZLIB_BUILD_STATIC ON)
+  set(ZLIB_BUILD_TESTING OFF)
+  set(ZLIB_INSTALL OFF)
+  add_subdirectory("${VTX_ZLIB_ROOT}" "${CMAKE_BINARY_DIR}/zlib" EXCLUDE_FROM_ALL)
+  set(VTX_ZLIB_TARGET ZLIB::ZLIBSTATIC)
+else()
+  find_package(ZLIB REQUIRED)
+  set(VTX_ZLIB_TARGET ZLIB::ZLIB)
+endif()
 target_include_directories(vtx_cef_worker PRIVATE
                           "${VTX_THIRD_PARTY}/spng" "${VTX_THIRD_PARTY}/fpng")
 target_link_libraries(vtx_cef_worker PRIVATE
                       libcef_dll_wrapper Threads::Threads
-                      ZLIB::ZLIB ${CMAKE_DL_LIBS})
+                      ${VTX_ZLIB_TARGET} ${CMAKE_DL_LIBS})
 # RPATH=$ORIGIN：与可执行同目录的 CEF 运行时优先于系统路径。
 # BUILD_WITH_INSTALL_RPATH：以 INSTALL_RPATH 替代 build RPATH，避免链接
 # 解包目录内 libcef.so 时 CMake 把该目录的本机绝对路径写入产物。
@@ -147,16 +203,18 @@ if(APPLE)
   set_target_properties(vtx_cef_worker PROPERTIES
                         BUILD_WITH_INSTALL_RPATH TRUE
                         INSTALL_RPATH "@executable_path/../Frameworks")
-else()
+elseif(NOT WIN32)
   set_target_properties(vtx_cef_worker PROPERTIES
                         BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
 endif()
 
 # ---- shm_ring_selftest：4-Slot 环/协议原生自检（无 CEF 依赖；tests 门控
 #      消费，亦支持 --dump-ring 供 Python 解析器跨语言锁定偏移表）。----
-add_executable(shm_ring_selftest src/shm_ring_selftest.cpp
-                                src/frame_pipeline.cpp src/pixel_ops.cpp)
-target_link_libraries(shm_ring_selftest PRIVATE Threads::Threads)
+if(NOT WIN32)  # POSIX SHM diagnostic; Windows IPC is exercised via inherited pipes.
+  add_executable(shm_ring_selftest src/shm_ring_selftest.cpp
+                                  src/frame_pipeline.cpp src/pixel_ops.cpp)
+  target_link_libraries(shm_ring_selftest PRIVATE Threads::Threads)
+endif()
 
 # ---- pixel_ops_selftest：#111 算子/双编码器/原子落盘原生自检与基准
 #      （无 CEF 依赖；(c,a) 全域穷举 + 双编码器往返 + --bench 性能证据；
@@ -166,8 +224,7 @@ add_executable(pixel_ops_selftest src/pixel_ops_selftest.cpp
                                  ${SPNG_SOURCES} ${FPNG_SOURCES})
 target_include_directories(pixel_ops_selftest PRIVATE
                           "${VTX_THIRD_PARTY}/spng" "${VTX_THIRD_PARTY}/fpng")
-target_link_libraries(pixel_ops_selftest PRIVATE Threads::Threads
-                                                 ZLIB::ZLIB)
+target_link_libraries(pixel_ops_selftest PRIVATE Threads::Threads ${VTX_ZLIB_TARGET})
 
 # ---- frame_sync_selftest：#114 状态机原生对抗自检（无 CEF 依赖；强制注入
 #      旧 paint/跨世代同帧/重复请求/签名半更新/超时等确定性 fixture；
@@ -187,6 +244,16 @@ if(APPLE)
   target_link_libraries(vtx_cef_worker PRIVATE "-framework Cocoa")
   set_target_properties(vtx_cef_worker PROPERTIES MACOSX_BUNDLE TRUE
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/mac/Info.plist")
+elseif(WIN32)
+  # Keep the console subsystem (wmain and inherited pipes). CEF disables the
+  # default linker manifest; embed our app/compatibility manifest as resource 1.
+  target_sources(vtx_cef_worker PRIVATE windows/vtx_cef_worker.rc)
+  target_include_directories(vtx_cef_worker PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/windows")
+  set_property(SOURCE windows/vtx_cef_worker.rc APPEND PROPERTY OBJECT_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/windows/vtx_cef_worker.exe.manifest")
+  # LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32.
+  target_link_options(vtx_cef_worker PRIVATE /DEPENDENTLOADFLAG:0xA00)
+  target_link_libraries(vtx_cef_worker PRIVATE libcef ${CEF_STANDARD_LIBS})
 else()
   target_link_libraries(vtx_cef_worker PRIVATE libcef)
 endif()

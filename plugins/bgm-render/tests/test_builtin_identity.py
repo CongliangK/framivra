@@ -4,6 +4,7 @@ import errno
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -303,6 +304,35 @@ class ProducerIdentity(_Base):
         self.ref_file.unlink()
         self.assertEqual(set(identity.asset_dependencies(self.proj, runtime)), {str(samples), str(sfz)})
 
+    def test_absolute_sf2_shorthand_projects_and_binds_the_same_file(self):
+        from apps.bgm.bgm_gen.core.project import build_render_plan, load_project, track_engine_spec
+
+        sf2 = self.root / "音色 bank.sf2"
+        source = identity.APP_ROOT / "examples" / "synth.json"
+        for path in dict.fromkeys((str(sf2), sf2.as_posix())):
+            for suffix, overrides, expected in (
+                (":128:127", {}, (128, 127)),
+                (":1:2", {"bank": 3, "program": 4}, (3, 4)),
+                ("", {}, (0, 0)),
+            ):
+                with self.subTest(path=path, suffix=suffix, overrides=overrides):
+                    sf2.write_bytes(b"original asset bytes")
+                    project = json.loads(source.read_text(encoding="utf-8"))
+                    project["tracks"][0].update(engine="sf2", instrument=path + suffix, **overrides)
+                    self.proj.write_text(json.dumps(project), encoding="utf-8")
+                    loaded = load_project(self.proj)
+                    track = build_render_plan(loaded)["tracks"][0]
+                    payload = track_engine_spec(track, loaded, "unused.wav")["payload"]
+                    dependencies = identity.asset_dependencies(self.proj, {})
+                    self.assertEqual((payload["sf2"], payload["bank"], payload["program"]),
+                                     (path, *expected))
+                    self.assertEqual(dependencies, [path])
+                    c = self._ctx(True)
+                    before = self.state(c)
+                    sf2.write_bytes(b"replaced asset bytes")
+                    after = self.state(c)
+                    self.assertTrue(all(a != b for a, b in zip(before, after)))
+
     def test_master_reference_changes_all_identities_same_context(self):
         reference = self.root / "reference.wav"
         reference.write_bytes(b"first reference audio")
@@ -429,7 +459,7 @@ assert "numpy" not in sys.modules
         env = dict(os.environ)
         Path(env["MUSIC_RUNTIME"]).write_text(
             json.dumps({"tools": {"ffmpeg": "/configured/ffmpeg"}}), encoding="utf-8")
-        def tool(command, env):
+        def tool(command, env, **kwargs):
             return {"command": command, "stamp": stamps.get(command, 1)}
         stamps = {"ffmpeg": 1}
         with mock.patch.object(identity, "_tool_identity", side_effect=tool):
@@ -438,6 +468,80 @@ assert "numpy" not in sys.modules
             after, _ = identity.execution_identity([sys.executable], env)
         self.assertNotEqual(before, after)
         self.assertEqual(before["configured_tools"], after["configured_tools"])
+
+    @mock.patch.dict(os.environ, {"PATHEXT": ".CMD;.EXE"})
+    def test_windows_configured_fluidsynth_dll_rekeys_render_and_receipt(self):
+        if os.name != 'nt':
+            self.skipTest('native Windows DLL stat versus executable search')
+        library = self.root / '音源 FluidSynth.dll'
+        runtime = Path(os.environ['MUSIC_RUNTIME'])
+        runtime.write_text(json.dumps({'tools': {'fluidsynth_lib': str(library)}}), encoding='utf-8')
+        env = dict(os.environ)
+        def library_identity():
+            data, _ = identity.execution_identity([sys.executable], env)
+            return data['configured_tools']['fluidsynth_lib']
+
+        self.assertEqual(library_identity(), {'command': str(library), 'state': 'missing'})
+        # The identity collector never loads or executes this synthetic file.
+        library.write_bytes(b'first DLL placeholder')
+        # Since Python 3.12, PATHEXT also applies to explicit paths in which().
+        if sys.version_info >= (3, 12):
+            self.assertIsNone(shutil.which(str(library)))
+        self.assertEqual(Path(library_identity()['selected']), library.absolute())
+        c = self._ctx(True)
+        before = self.state(c)
+        replacement = self.root / 'next.dll'
+        replacement.write_bytes(b'second DLL placeholder with a different size')
+        replacement.replace(library)
+        self.assertEqual(library_identity()['size'], library.stat().st_size)
+        self.assertTrue(all(old != new for old, new in zip(before, self.state(c))))
+        self.assertEqual(self._calls(), [])
+        self.assertFalse((self.root / 'cache').exists())
+
+    @mock.patch.dict(os.environ, {"PATHEXT": ".CMD;.EXE"})
+    def test_windows_bare_media_identity_ignores_wrappers_and_rekeys_on_exe_replacement(self):
+        if os.name != "nt":
+            self.skipTest("native Windows CreateProcess lookup")
+        wrappers, native = self.root / "wrappers", self.root / "native"
+        wrappers.mkdir()
+        native.mkdir()
+        system = Path(os.environ["SystemRoot"]) / "System32"
+        for command in ("ffmpeg", "ffprobe"):
+            for name in (command + ".cmd", command + ".exe.cmd"):
+                (wrappers / name).write_text("@exit /b 17\n", encoding="ascii")
+            shutil.copyfile(system / "cmd.exe", native / (command + ".exe"))
+        path = os.pathsep.join((str(wrappers), str(native), os.environ["PATH"]))
+        with mock.patch.dict(os.environ, {"PATH": path}):
+            for command in ("ffmpeg", "ffprobe"):
+                self.assertEqual(Path(shutil.which(command)), wrappers / (command + ".cmd"))
+                result = subprocess.run([command, "/d", "/c", "echo native"],
+                                        capture_output=True, check=True)
+                self.assertEqual(result.stdout.strip(), b"native")
+            c = self._ctx(True)
+            for command in ("ffmpeg", "ffprobe"):
+                executable = native / (command + ".exe")
+                execution, _ = identity.execution_identity([sys.executable], dict(os.environ))
+                self.assertEqual(Path(execution["tools"][command]["selected"]), executable)
+                before = self.state(c)
+                replacement = native / "next.exe"
+                shutil.copyfile(system / "where.exe", replacement)
+                replacement.replace(executable)
+                after = self.state(c)
+                self.assertTrue(all(old != new for old, new in zip(before, after)), command)
+
+            # Managed launches suppress the implicit current directory. That
+            # must affect identity too, even when a local .exe actually exists.
+            caller = Path.cwd()
+            local = self.root / 'caller'
+            local.mkdir()
+            shutil.copyfile(system / 'cmd.exe', local / 'ffmpeg.exe')
+            try:
+                os.chdir(local)
+                with mock.patch.dict(os.environ, {'NoDefaultCurrentDirectoryInExePath': '1'}):
+                    execution, _ = identity.execution_identity([sys.executable], dict(os.environ))
+                self.assertEqual(Path(execution['tools']['ffmpeg']['selected']), native / 'ffmpeg.exe')
+            finally:
+                os.chdir(caller)
 
     def test_venvs_sharing_python_have_distinct_numpy_identity(self):
         if os.name == "nt":

@@ -40,6 +40,7 @@
 #include <string>
 
 #include "ipc_protocol.hpp"
+#include "native_runtime.hpp"
 
 namespace vtx_cef {
 
@@ -83,13 +84,6 @@ static_assert(offsetof(RingControl, run_id) == 32);
 static_assert(offsetof(RingControl, published_total) == 48);
 static_assert(offsetof(RingControl, gates) == 128, "门数组须整缓存行起始");
 static_assert(sizeof(RingControl) == 384);
-
-inline uint64_t NowUs() {
-  struct timespec ts;
-  ::clock_gettime(CLOCK_MONOTONIC, &ts);
-  return static_cast<uint64_t>(ts.tv_sec) * 1000000ull +
-         static_cast<uint64_t>(ts.tv_nsec) / 1000ull;
-}
 
 inline uint64_t AlignUp64(uint64_t v) { return (v + 63ull) & ~63ull; }
 

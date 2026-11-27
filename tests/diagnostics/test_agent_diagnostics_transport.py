@@ -58,8 +58,23 @@ class UnicodeTransport(unittest.TestCase):
             # deliberately ASCII-only human terminal are outside this comparison.
             human = self.invoke(value, 'utf-8:strict', agent=False)
             self.assertEqual(human.returncode, 0)
-            self.assertEqual(report['legacy_output']['stdout'], human.stdout.decode('utf-8'))
-            self.assertEqual(human.stderr, b'')
+            # The agent captures text before the platform's pipe newline translation.
+            for stream in ('stdout', 'stderr'):
+                text = getattr(human, stream).decode('utf-8').replace(os.linesep, '\n')
+                self.assertEqual(report['legacy_output'][stream], text)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows legacy pipe encoding')
+    def test_text_entry_keeps_legacy_pipe_diagnostics_readable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / '时间线.json'
+            path.write_text(json.dumps(timeline()), encoding='ascii')
+            result = subprocess.run([sys.executable, '-m', 'vtx.agent_diagnostics',
+                                     '-t', str(path), 'validate', '--format', 'text'],
+                                    cwd=REPO, capture_output=True, timeout=30,
+                                    env=dict(os.environ, PYTHONIOENCODING='cp936:strict', PYTHONUTF8='0'))
+            self.assertEqual(result.returncode, 0, result)
+            self.assertIn('✓ 校验通过', result.stdout.decode('utf-8'))
+            self.assertNotIn(b'UnicodeEncodeError', result.stderr)
 
     def test_surrogate_source_id_failure_still_has_a_document(self):
         value = timeline()

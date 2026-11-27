@@ -1,13 +1,13 @@
 """R4 测试共享工具（tests/ 内部使用，不被 pytest 收集）。
 
-关键坑（R3 实测）：sys.executable 在部分直呼环境被改写成宿主 AppImage 路径，
-一切子进程解释器一律用 runtime.json 的 python_system 绝对路径（缺失时退 "python3"
-字面量，绝不用 sys.executable）。
+子进程优先用 runtime.json 的 python_system。POSIX 缺省用 python3，避开宿主
+AppImage 对 sys.executable 的改写；原生 Windows 用当前 Python，避免 Store 别名。
 """
 
 import json
 import os
 import subprocess
+import sys
 
 # ---- 路径常量（绝对路径，测试不依赖 cwd） --------------------------------
 PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))      # bgm_gen/
@@ -149,9 +149,9 @@ def require_fixture(path):
 
 
 def py3():
-    """子进程解释器：runtime.json python_system（绝对路径），缺省退 "python3"。"""
+    """Keep the configured interpreter, otherwise use the platform test default."""
     py = runtime().get("python_system")
-    return py if py and os.path.isfile(py) else "python3"
+    return py if py and os.path.isfile(py) else (sys.executable if os.name == 'nt' else 'python3')
 
 
 def run(cmd, cwd=None, timeout=600, check=False, env_extra=None):
@@ -161,8 +161,9 @@ def run(cmd, cwd=None, timeout=600, check=False, env_extra=None):
                                      if env.get("PYTHONPATH") else "")
     if env_extra:
         env.update(env_extra)
+    encoding = 'utf-8' if os.name == 'nt' and tuple(cmd[1:3]) == ('-m', 'bgm_gen') else None
     return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True,
-                          text=True, timeout=timeout, check=check)
+                          text=True, encoding=encoding, timeout=timeout, check=check)
 
 
 def in_proc_env():

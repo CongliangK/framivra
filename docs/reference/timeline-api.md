@@ -174,7 +174,7 @@ HTML 执行许可独立于预览写入：只信任自己检查过的保存页面
 
 ### Windows SVG 单帧预览
 
-不同于上文 POSIX 路径，Windows x64 使用[独立原生配置](windows-svg.md#普通-svg-sequence-工程)，可对符合该配置的工程（包括锁定主片）执行显式冷准备。设置三个运行时根，再用 `timeline frame --frame N --expected-content-version sha256:VERSION --render --prepare-gfx --include-png`，不传 `--trust-html`。它复核保存版本及声明输入，栅格化可见 SVG，并按内核时钟合成整帧；不读成片或正式缓存。普通视频取经裁切和变换的原生帧，不做正式视频段再编码。中间文件仅写私有暂存，确认进程收尾并清理后才返回内联 PNG。此路不开放默认暖预览、HTML、字幕或连续预览，不授侧栏编辑、成片或 QC 资格。
+不同于上文 POSIX 路径，Windows x64 使用[独立原生配置](windows-svg.md#普通-svg-sequence-工程)，可对符合该配置的工程（包括锁定主片）执行显式冷准备。设置三个运行时根，再用 `timeline frame --frame N --expected-content-version sha256:VERSION --render --prepare-gfx --include-png`，不传 `--trust-html`。它复核保存版本及声明输入，栅格化可见 SVG，并按内核时钟合成整帧；不读成片或正式缓存。普通视频取经裁切和变换的原生帧，不做正式视频段再编码。中间文件仅写私有暂存，确认进程收尾并清理后才返回内联 PNG。普通工程按同一配置叠加当前帧的纯文本字幕；启用插件的工程仍拒绝预览。此路不开放默认暖预览、HTML 或连续预览，不授侧栏编辑、成片或 QC 资格。
 
 ## 显式写事务第一切片（v1；不是完整编辑器）
 

@@ -78,6 +78,10 @@ class AcceptanceFixture:
 class AcceptanceTests(AcceptanceFixture, unittest.TestCase):
     def test_realistic_package_and_visual_unknown(self):
         self.build()
+        manifest = a.read_json(self.package / 'manifest.json')
+        self.assertIn('inputs/timeline.json', manifest['files'])
+        self.assertIn('artifacts/final.mp4', manifest['files'])
+        self.assertTrue(all('\\' not in name for name in manifest['files']))
         report = self.verify()
         self.assertTrue(report['integrity_verified'])
         self.assertFalse(report['accepted'])

@@ -16,7 +16,7 @@
 |---|---|---|
 | Linux | `~/.local/share/framivra` | apt-get/dnf/pacman；保留发行版/组件/架构与签名，不跨装发行版包。精简容器或缺库时明确失败 |
 | macOS | `~/.local/share/framivra` | 自动 bottles 路线限 Apple Silicon、macOS ≥15、原生 Google Chrome.app。macOS 26.5.2 arm64 已实机验收非 AI/CDP；Intel、其余系统版本及从无 Homebrew/Chrome 起步未验，不静默转源码编译 |
-| Windows | `%LOCALAPPDATA%\framivra`（缺失时用户 AppData/Local） | Win10 x64 已实跑到字体/CLI 协议，旧 Git 权限修复后可用；soxr 缺 C++ 运行库阻塞制作验收。新 MinGit/自动运行库修复待实机复验，不声明 SVG 主 Demo 支持；Linux portable PS7 夹具不证明 PS5 整体验收 |
+| Windows | `%LOCALAPPDATA%\framivra`（缺失时用户 AppData/Local） | Win10 22H2 x64 普通用户 PowerShell 5.1 已通过隔离冷根、中断续传与默认 ready，首次准备私有 MinGit/FFmpeg/SoX，复用已有 Python、Edge 和 C++ 运行库；不外推至无运行库起步或 SVG 主 Demo |
 
 根内含 `source/`、`venv/`、`config.json`、`fonts/`、`verification/`、`installation.json` 和下载缓存；POSIX 入口 `bin/vtx`，Windows 入口 `venv/Scripts/vtx.exe`。配置、字体、验证产物在源码外。Linux 只用根内 fontconfig；macOS/Windows 另复制到用户字体目录，不覆盖不同字节的同名文件。已合格工具复用，缺失或 FFmpeg 能力不足才准备；keg-only/私有工具路径由受管 CLI 真实加载，重跑仍核验，不把登记路径当合格证明。
 
@@ -89,12 +89,14 @@ init 生成 `config.local.json`；参数原样透传，如 `bash -s -- -- --fix`
 以下为原生 PowerShell，无需 WSL/Git Bash；脚本先保存再执行，控制台直连不吞交互：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing https://raw.githubusercontent.com/CongliangK/framivra/main/scripts/install_windows.ps1 -OutFile $env:TEMP\vt-i.ps1; & $env:TEMP\vt-i.ps1"
+$p = Join-Path $env:TEMP 'vt-i.ps1'
+Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/CongliangK/framivra/main/scripts/install_windows.ps1 -OutFile $p
+powershell -NoProfile -ExecutionPolicy Bypass -File $p
 ```
 
 默认克隆位置 `%LOCALAPPDATA%\framivra-repo`。引导器检测 python≥3.9 与 git；缺失时使用 winget 用户级安装（Git 包为 Git.Git），失败给手动指引。winget 新装后需新开终端更新 PATH。企业域控无 winget 时手动装 Python 与 Git；隔离内网不在支持范围。
 
-脚本名后参数原样交给 init，短横线开头须加引号，如 `& $env:TEMP\vt-i.ps1 '--fix'`；`--fix` 自动装缺失基础依赖。
+脚本名后参数原样交给 init，如 `powershell -NoProfile -ExecutionPolicy Bypass -File $p '--fix'`；`--fix` 自动装缺失基础依赖。
 
 ## 可选音乐环境
 

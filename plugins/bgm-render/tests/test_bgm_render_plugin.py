@@ -1048,6 +1048,61 @@ class RealChainIntegration(_Base):
     """Built-in synth chain: real NumPy/FFmpeg, no third-party assets or skip gate."""
     FAKE_CLI = False
 
+    def _two_track_project(self, second_name):
+        src = REPO / "apps/bgm/examples/synth.json"
+        project = json.loads(src.read_text(encoding="utf-8"))
+        first = project["tracks"][0]
+        second = dict(first, name=second_name, pan=0.6,
+                      notes=[[pitch + 12, *rest] for pitch, *rest in first["notes"]])
+        project["tracks"].append(second)
+        self.proj.write_text(json.dumps(project), encoding="utf-8")
+        return first["name"], second["name"]
+
+    @unittest.skipUnless(os.name == "nt", "native Windows stem names")
+    def test_windows_case_alias_is_rejected_before_output_or_engine(self):
+        from apps.bgm.bgm_gen.core import project
+
+        self._two_track_project("Keys")
+        out = self.root / "render"
+        with mock.patch.object(project, "run_engine", side_effect=AssertionError("early engine launch")), \
+                self.assertRaisesRegex(project.ProjectError, r"Windows stem.*[Kk]eys\.bus\.wav.*[Kk]eys\.bus\.wav"):
+            project.render_project(self.proj, out, runtime={})
+        self.assertFalse(out.exists())
+
+    @unittest.skipUnless(os.name == "nt", "native Windows stem names")
+    def test_windows_invalid_single_stem_is_rejected_before_output_or_engine(self):
+        from apps.bgm.bgm_gen.core import project
+
+        src = REPO / "apps/bgm/examples/synth.json"
+        score = json.loads(src.read_text(encoding="utf-8"))
+        score["tracks"] = score["tracks"][:1]
+        out = self.root / "invalid-stems"
+        for name in ("NUL", "nul.take", "NUL ", "CONIN$", "COM¹", "LPT9.take", "name:stream", "bad?name"):
+            with self.subTest(name=name):
+                score["tracks"][0]["name"] = name
+                self.proj.write_text(json.dumps(score), encoding="utf-8")
+                self.assertEqual(project.load_project(self.proj)["tracks"][0]["name"], name)
+                with mock.patch.object(project, "run_engine", side_effect=AssertionError("early engine launch")), \
+                        self.assertRaisesRegex(project.ProjectError, r"Windows stem.*请重命名"):
+                    project.render_project(self.proj, out, runtime={})
+                self.assertFalse(out.exists())
+        for name in ("COM0", "CLOCK$", "CONcert", "CONıN$", "音轨 🎵"):
+            project._check_windows_stem_names([{"name": name}])
+
+    def test_real_two_tracks_keep_distinct_plugin_stems(self):
+        # Case-only names remain different on POSIX; use non-aliases on Windows.
+        first, second = self._two_track_project("Keys-high" if os.name == "nt" else "Keys")
+        c = _context(self.root, self._tl_srcs(
+            {"id": "low", "path": "music/ep.json", "bgm": {"output": f"stem:{first}"}},
+            {"id": "high", "path": "music/ep.json", "bgm": {"output": f"stem:{second}"}},
+        ))
+        outputs = [_bgm.prepare_source(c, sid) for sid in ("low", "high")]
+        shared = _bgm.render_cache_dir(c, "low")
+        self.assertEqual(shared, _bgm.render_cache_dir(c, "high"))
+        self.assertFalse((shared / "stems" / f"{first}.bus.wav").samefile(
+            shared / "stems" / f"{second}.bus.wav"))
+        self.assertNotEqual(outputs[0].read_bytes(), outputs[1].read_bytes())
+
     def test_real_minimal_project_end_to_end(self):
         src = REPO / "apps/bgm/examples/synth.json"
         self.assertTrue(src.is_file(), "仓内原创 synth 示例必须存在")

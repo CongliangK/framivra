@@ -19,7 +19,9 @@
 //                         双路解码回的 RGBA 必须相同且==输入）
 //   6. atomic_write       成功路径目标字节精确 + 目录零 *.tmp.* 残留；
 //                         4 线程×50 文件并发写零残留；非法目录失败不崩溃
-#include <unistd.h>
+#include "native_runtime.hpp"
+
+#include <fstream>
 
 #include <algorithm>
 #include <atomic>
@@ -641,40 +643,70 @@ void TestEncoderPairEquivalence() {
 
 void TestAtomicWrite() {
   const std::filesystem::path dir = std::filesystem::temp_directory_path() /
-      ("pixel_ops_selftest_" + std::to_string(::getpid()));
-  std::filesystem::create_directories(dir);
+      ("pixel_ops_selftest_" + std::to_string(vtx_cef::NativePid()));
+  if (!std::filesystem::create_directory(dir)) {
+    Check(false, "atomic_write", "private scratch already exists");
+    return;
+  }
   size_t failures = 0;
   // 成功路径：字节精确 + 零 *.tmp.* 残留
   std::string payload(7777, '\0');
   for (size_t i = 0; i < payload.size(); ++i) {
     payload[i] = static_cast<char>(i * 31 & 255);
   }
-  const std::filesystem::path target = dir / "f0001.png";
-  if (!vtx_cef::AtomicWriteBytes(target.string(),
+  const std::filesystem::path target = dir / vtx_cef::NativePath("中文 # f0001.png");
+  if (!vtx_cef::AtomicWriteBytes(vtx_cef::PathUtf8(target),
                                  reinterpret_cast<const uint8_t*>(payload.data()),
                                  payload.size())) {
     ++failures;
   } else {
-    std::FILE* fh = std::fopen(target.string().c_str(), "rb");
-    if (fh == nullptr) {
+    std::ifstream file(target, std::ios::binary);
+    if (!file) {
       ++failures;
     } else {
       std::string got(payload.size(), 0);
-      const size_t n = std::fread(got.data(), 1, got.size(), fh);
-      std::fclose(fh);
-      if (n != payload.size() || got != payload) ++failures;
+      if (!file.read(got.data(), got.size()) || got != payload ||
+          file.peek() != std::ifstream::traits_type::eof()) ++failures;
     }
   }
   // 覆写路径：同名目标重写 → 新字节完整替换（rename 原子性面）
   const std::string payload2(999, 7);
-  if (!vtx_cef::AtomicWriteBytes(target.string(),
+  if (!vtx_cef::AtomicWriteBytes(vtx_cef::PathUtf8(target),
                                  reinterpret_cast<const uint8_t*>(payload2.data()),
                                  payload2.size())) {
     ++failures;
+  } else {
+    std::ifstream file(target, std::ios::binary);
+    std::string got(payload2.size(), '\0');
+    if (!file.read(got.data(), got.size()) || got != payload2 ||
+        file.peek() != std::ifstream::traits_type::eof()) ++failures;
   }
+#if defined(_WIN32)
+  // Exercise both sides of the legacy path bound: a fitting destination whose
+  // exclusive temporary name exceeds it, and an extended destination too.
+  const auto parent_size = dir.native().size() + 1;
+  for (const size_t size : {size_t{MAX_PATH - 5}, size_t{MAX_PATH + 8}}) {
+    if (size <= parent_size || size - parent_size > 255) {
+      ++failures;
+      continue;
+    }
+    const auto path = vtx_cef::PathUtf8(dir / std::wstring(size - parent_size, L'x'));
+    const auto native = vtx_cef::WindowsIoPath(path);
+    if (!vtx_cef::AtomicWriteBytes(path, reinterpret_cast<const uint8_t*>(payload.data()),
+                                   payload.size())) ++failures;
+    {
+      std::ifstream file(native, std::ios::binary);
+      std::string got(payload.size(), '\0');
+      if (!file.read(got.data(), got.size()) || got != payload ||
+          file.peek() != std::ifstream::traits_type::eof()) ++failures;
+    }
+    std::error_code cleanup;
+    if (!std::filesystem::remove(native, cleanup) || cleanup) ++failures;
+  }
+#endif
   // 失败路径：不存在目录 → false 不崩溃
   if (vtx_cef::AtomicWriteBytes(
-          "/nonexistent_dir_9f3a/f0002.png",
+          vtx_cef::PathUtf8(dir / "nonexistent" / "f0002.png"),
           reinterpret_cast<const uint8_t*>(payload.data()), payload.size())) {
     ++failures;
   }
@@ -689,7 +721,7 @@ void TestAtomicWrite() {
           const auto p = dir / ("c_" + std::to_string(t) + "_" +
                                 std::to_string(i) + ".png");
           if (!vtx_cef::AtomicWriteBytes(
-                  p.string(),
+                  vtx_cef::PathUtf8(p),
                   reinterpret_cast<const uint8_t*>(data.data()), data.size())) {
             ++bad;
           }
@@ -702,7 +734,7 @@ void TestAtomicWrite() {
   // 残留检查：目录内不允许任何 *.tmp.*（成功/失败路径均应清理）
   size_t residue = 0;
   for (const auto& entry : std::filesystem::directory_iterator(dir)) {
-    const std::string name = entry.path().filename().string();
+    const std::string name = vtx_cef::PathUtf8(entry.path().filename());
     if (name.find(".tmp.") != std::string::npos) ++residue;
   }
   std::error_code ec;

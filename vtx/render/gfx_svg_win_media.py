@@ -32,6 +32,7 @@ _SOURCE_FORMATS = {
 }
 _MARKER_LIMIT = 16 * 1024
 _PRIVATE_OUTPUT = ContextVar('windows_svg_private_output', default=None)
+_AUDIO_GRAPH = ContextVar('windows_svg_audio_graph', default=None)
 _STANDARD_TIMELINE = 'a7008c2e5b2833da13021c3a1ccb46a09068ca1775b6724328563d2d37f7d105'
 # Raw LF bytes of the frozen input lock (the Git blob and source archives).
 _STANDARD_INPUTS = 'b4a687a8cdaf3166b0f74f30015ef9c24ff8d1a27cdd9f491e5e4b78ea3d1bb0'
@@ -111,12 +112,16 @@ class WindowsSvgMedia:
             self.tools[name] = str(tool_dir / leaf)
         self.identity = {'profile': 'windows-svg-media/v1', 'sha256': dict(expected)}
         system = shell._system_windows_path()
-        env = {'SystemRoot': str(system), 'WINDIR': str(system), 'SYSTEMDRIVE': system.drive,
-               'PATH': str(system / 'System32'), 'HOME': str(scratch),
-               'TEMP': str(scratch), 'TMP': str(scratch), 'LANG': 'C', 'TZ': 'UTC'}
-        self.environment = ctypes.create_unicode_buffer('\0'.join(
-            f'{name}={env[name]}' for name in sorted(env, key=str.casefold)) + '\0')
+        self._env = {'SystemRoot': str(system), 'WINDIR': str(system), 'SYSTEMDRIVE': system.drive,
+                     'PATH': str(system / 'System32'), 'HOME': str(scratch),
+                     'TEMP': str(scratch), 'TMP': str(scratch), 'LANG': 'C', 'TZ': 'UTC'}
+        self.environment = self.process_environment()
         self.directory = pins.enter_context(anchored(scratch))
+
+    def process_environment(self, **extra):
+        env = {**self._env, **extra}
+        return ctypes.create_unicode_buffer('\0'.join(
+            f'{name}={env[name]}' for name in sorted(env, key=str.casefold)) + '\0')
 
     @staticmethod
     def _digest(chunks):
@@ -162,7 +167,16 @@ class WindowsSvgMedia:
                     argv[option:option] = options
             yield argv
 
-    def execute(self, cmd, *, text=True, capture_limit=16 * 1024 * 1024):
+    @contextmanager
+    def audio_graph_scope(self):
+        """Allow file-backed transport only for the kernel's generated mix graph."""
+        token = _AUDIO_GRAPH.set(self)
+        try:
+            yield
+        finally:
+            _AUDIO_GRAPH.reset(token)
+
+    def execute(self, cmd, *, text=True, capture_limit=16 * 1024 * 1024, deadline=None):
         if not 0 < capture_limit <= 64 * 1024 * 1024:
             raise ValueError('Windows SVG media capture exceeds its byte budget')
         if self.operation.keep:
@@ -171,10 +185,28 @@ class WindowsSvgMedia:
         # unresolved ownership. Only propagate the sticky failure back upward.
         state = SimpleNamespace(keep=False)
         try:
-            with self.command_inputs(cmd) as argv:
-                job, _ = shell._run_owned(state, argv, self.scratch, self.environment, None,
-                                          deadline=time.monotonic() + 600, capture_limit=capture_limit,
-                                          phase='media tool')
+            with self.command_inputs(cmd) as argv, ExitStack() as graph_inputs:
+                if cmd[0] == 'ffmpeg' and _AUDIO_GRAPH.get() is self and '-filter_complex' in argv:
+                    # Size the final argv: absolute tool, authorized input
+                    # options, and the actual staged WAV are already present.
+                    from ..pipeline.stages import _windows_audio_argument_units
+                    if _windows_audio_argument_units(argv) > 32767:
+                        index = argv.index('-filter_complex')
+                        graph = argv[index + 1].encode('utf-8')
+                        path = graph_inputs.enter_context(self.private_input(graph, '.graph'))
+                        argv[index:index + 2] = ['-/filter_complex', str(path)]
+                        if _windows_audio_argument_units(argv) > 32767:
+                            graph_inputs.close()  # No child was launched; remove the private graph now.
+                            raise RuntimeError('Windows SVG 混音输入参数仍超过进程命令行长度上限；'
+                                               '请减少单次混音的音频事件或缩短工程路径。')
+                from .gfx_svg_win_subtitles import job_environment
+                now = time.monotonic()
+                if deadline is None:
+                    deadline = now + 600
+                elif deadline <= now + shell._SETTLE_RESERVE:
+                    raise TimeoutError('Windows SVG media exhausted its time budget before launch')
+                job, _ = shell._run_owned(state, argv, self.scratch, job_environment(self, cmd), None,
+                                          deadline=deadline, capture_limit=capture_limit, phase='media tool')
         finally:
             if state.keep:
                 self.operation.keep = True
@@ -319,6 +351,7 @@ class WindowsSvgMedia:
     def publish(self, c, target, producer, *, max_frames, before_commit, after_commit):
         from ..cache.cache_state import verify_input_identity
         from ..cache.recovery import _inspect
+        from ..cache._formal_video import publish as publish_formal_video
 
         suffix = target.suffix.lower()
         if _PRIVATE_OUTPUT.get() == (self, target):
@@ -371,5 +404,6 @@ class WindowsSvgMedia:
                 self.published[target] = rec['sha256']
             if after_commit is not None:
                 after_commit()
+            publish_formal_video(c, target, rec, write=parent.publish)
             self.directory.remove(leaf)
             return result

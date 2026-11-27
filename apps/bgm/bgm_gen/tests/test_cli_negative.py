@@ -62,7 +62,7 @@ def test_stem_input_missing():
     assert r.returncode != 0, "stem 输入不存在应当失败却 exit 0"
     _assert_no_traceback(r, "stem 输入不存在")
     assert "stem 失败" in r.stderr and "不存在" in r.stderr, r.stderr[-800:]
-    assert p in r.stderr, f"报错缺输入路径 {p}：\n{r.stderr[-800:]}"
+    assert repr(p) in r.stderr, f"报错缺输入路径 {p}：\n{r.stderr[-800:]}"
 
 
 # ---------------------------------------------------------------- master
@@ -73,7 +73,7 @@ def test_master_input_missing():
     assert r.returncode != 0
     _assert_no_traceback(r, "master 输入不存在")
     assert "master 失败" in r.stderr and "不存在" in r.stderr, r.stderr[-800:]
-    assert p in r.stderr, f"报错缺输入路径 {p}：\n{r.stderr[-800:]}"
+    assert repr(p) in r.stderr, f"报错缺输入路径 {p}：\n{r.stderr[-800:]}"
 
 
 @pytest.mark.fast
@@ -115,7 +115,7 @@ def test_qc_project_missing():
     assert r.returncode != 0
     _assert_no_traceback(r, "qc --project 不存在")
     assert "qc 失败" in r.stderr, r.stderr[-800:]
-    assert p in r.stderr, f"报错缺工程路径 {p}：\n{r.stderr[-800:]}"
+    assert repr(p) in r.stderr, f"报错缺工程路径 {p}：\n{r.stderr[-800:]}"
 
 
 @pytest.mark.fast

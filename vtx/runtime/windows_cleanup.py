@@ -13,7 +13,9 @@ import stat
 
 
 @contextlib.contextmanager
-def pinned(path, *, delete=False, directory=False):
+def pinned(path, *, delete=False, directory=False, allow_child_renames=False):
+    if allow_child_renames and (delete or not directory):
+        raise ValueError('child renames require a non-deleting directory pin')
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
                                   ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
@@ -22,8 +24,11 @@ def pinned(path, *, delete=False, directory=False):
     kernel.GetFileInformationByHandleEx.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
     kernel.SetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
     # GENERIC_READ participates in sharing checks (metadata-only access does
-    # not prevent rename on Windows). Share READ only: deny both rename and in-place reparse mutation.
-    handle = kernel.CreateFileW(str(path), 0x80000000 | (0x10000 if delete else 0), 1, None, 3,
+    # not prevent rename). Default share READ only denies rename and in-place
+    # reparse mutation. A caller allowing child renames must separately keep
+    # its directory nonempty to prevent conversion to a reparse point.
+    share = 3 if allow_child_renames else 1  # never share DELETE on the pinned entry
+    handle = kernel.CreateFileW(str(path), 0x80000000 | (0x10000 if delete else 0), share, None, 3,
                                 0x02000000 | 0x00200000, None)
     if handle == wintypes.HANDLE(-1).value:
         raise ctypes.WinError(ctypes.get_last_error())

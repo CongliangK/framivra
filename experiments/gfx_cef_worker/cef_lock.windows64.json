@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "platform": "windows64",
+  "distribution": "minimal",
+  "cef_version": "154.0.34+g14c5a08+chromium-154.0.8037.98",
+  "chromium_version": "154.0.8037.98",
+  "chromium_major": 154,
+  "channel": "stable",
+  "archive": "cef_binary_154.0.34+g14c5a08+chromium-154.0.8037.98_windows64_minimal.tar.bz2",
+  "url": "https://cef-builds.spotifycdn.com/cef_binary_154.0.34%2Bg14c5a08%2Bchromium-154.0.8037.98_windows64_minimal.tar.bz2",
+  "size_bytes": 172752666,
+  "sha1_official_index": "be54bbaf3222191dec59ffd9c9ec7e8a7f44a26d",
+  "sha256": "c81c34d048d87276f4a18f0b000206710a1709bb67dd658948b87100e1a538da",
+  "runtime": {
+    "Release": [
+      "chrome_elf.dll",
+      "d3dcompiler_47.dll",
+      "dxcompiler.dll",
+      "dxil.dll",
+      "libcef.dll",
+      "v8_context_snapshot.bin",
+      "vk_swiftshader.dll",
+      "vk_swiftshader_icd.json",
+      "vulkan-1.dll"
+    ],
+    "Resources": [
+      "chrome_100_percent.pak",
+      "chrome_200_percent.pak",
+      "icudtl.dat",
+      "resources.pak"
+    ]
+  },
+  "zlib": {
+    "archive": "zlib-1.3.2.tar.gz",
+    "url": "https://zlib.net/fossils/zlib-1.3.2.tar.gz",
+    "size_bytes": 1502830,
+    "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16"
+  }
+}

@@ -11,11 +11,15 @@
 // （magic/版本/路径非法）；4 = 请求中途连接断裂；5 = 空闲超时。
 #include "serve.h"
 
+#if defined(_WIN32)
+#include "windows_control_pipe.hpp"
+#else
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <unistd.h>
+#include "shm_ring.hpp"
+#endif
 
 #include <array>
 #include <atomic>
@@ -35,7 +39,7 @@
 #include "ipc_protocol.hpp"
 #include "pair_swap_planner.hpp"
 #include "png_writer.h"
-#include "shm_ring.hpp"
+#include "native_runtime.hpp"
 
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
@@ -49,8 +53,8 @@
 
 namespace vtx_cef {
 
-// ---------------------------------------------------------------- Socket 基元
-//（ipc_protocol.hpp 声明；此处为全仓唯一定义）
+#if !defined(_WIN32)
+// ---------------------------------------------------------------- POSIX socket transport
 
 int RecvAllOrShort(int fd, void* buf, size_t n, int timeout_ms) {
   auto* p = static_cast<uint8_t*>(buf);
@@ -120,6 +124,8 @@ bool SendHelloWithFd(int conn, const HelloInfo& hello, int shm_fd) {
   return ::sendmsg(conn, &msg, VTX_SEND_FLAGS) ==
          static_cast<ssize_t>(sizeof(hello));
 }
+
+#endif
 
 // ---------------------------------------------------------------- 编码线程池
 
@@ -1398,7 +1404,15 @@ bool CloseServeBrowser(RunState& state, PumpDriver& pump,
 
 // ---------------------------------------------------------------- RunServe
 
-int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
+int RunServe(const ServeOptions& opt, [[maybe_unused]] int argc,
+             [[maybe_unused]] char* argv[]) {
+#if defined(_WIN32)
+  WindowsControlPipe pipe;
+  if (!pipe.Adopt(opt.ipc_read_handle, opt.ipc_write_handle)) {
+    std::fprintf(stderr, "vtx_cef_worker: --serve requires inherited pipe ends in a Job\n");
+    return 2;
+  }
+#else
   ::signal(SIGPIPE, SIG_IGN);  // 宿主暴毙时 send 得错误而非被信号杀死
 
   // An inherited transport must already be a connected AF_UNIX stream. Close
@@ -1416,6 +1430,8 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
       return 2;
     }
   }
+
+#endif
 
   // ---- 参数面校验 ----
   const bool sync_mode_p = opt.sync && opt.sync_mode == "p";
@@ -1436,6 +1452,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
     std::fprintf(stderr, "vtx_cef_worker: --url-template 缺 {f} 占位\n");
     return 2;
   }
+#if !defined(_WIN32)
   struct SocketDirFd {
     int fd = -1;
     ~SocketDirFd() { if (fd >= 0) ::close(fd); }
@@ -1456,13 +1473,16 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
     std::fprintf(stderr, "vtx_cef_worker: --ipc-socket 缺失或超长\n");
     return 2;
   }
-  if (opt.cef.width <= 0 || opt.cef.height <= 0) {
+#endif
+  if (opt.cef.width <= 0 || opt.cef.height <= 0 ||
+      static_cast<uint64_t>(opt.cef.width) * opt.cef.height * 4u >
+          std::numeric_limits<uint32_t>::max()) {
     std::fprintf(stderr, "vtx_cef_worker: 视口尺寸非法\n");
     return 2;
   }
 
   // ---- root_cache_path（缺省自建临时目录，退出即删）----
-  std::filesystem::path root_cache(opt.root_cache_path);
+  auto root_cache = NativePath(opt.root_cache_path);
   const bool owns_cache = opt.root_cache_path.empty();
   const auto cleanup_owned = [&]() {
     if (owns_cache) {
@@ -1473,7 +1493,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   if (owns_cache) {
     std::error_code ec;
     root_cache = std::filesystem::temp_directory_path(ec) /
-                 ("vtx_cef_worker-" + std::to_string(::getpid()));
+                 ("vtx_cef_worker-" + std::to_string(NativePid()));
     std::filesystem::create_directories(root_cache, ec);
     if (ec) {
       std::fprintf(stderr, "vtx_cef_worker: root_cache_path 不可创建\n");
@@ -1482,7 +1502,15 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   }
 
   // ---- 监听 socket（路径归宿主目录；残留名先解绑）----
+#if !defined(_WIN32)
   int listen_fd = -1;
+  const auto close_listener = [&]() {
+    if (listen_fd >= 0) {
+      ::close(listen_fd);
+      listen_fd = -1;
+      ::unlink(opt.ipc_socket.c_str());
+    }
+  };
   if (opt.ipc_fd < 0) {
     listen_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (listen_fd < 0) {
@@ -1502,10 +1530,15 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
       std::fprintf(stderr, "vtx_cef_worker: bind/listen %s 失败: %s\n",
                    opt.ipc_socket.c_str(), std::strerror(errno));
       ::close(listen_fd);
+      cleanup_owned();
       return 1;
     }
 
   }
+
+#else
+  const auto close_listener = [] {};
+#endif
 
   // ---- CEF 初始化 + 建窗 ----
   Options cef_opt = opt.cef;
@@ -1523,13 +1556,16 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   bool creation_requested_b = false;
   bool pair_b_broken = false;             // B 对创建失败/中途死亡 → 永久降级单对
   pairswap::Planner planner{pair_swap_engaged};
+#if defined(_WIN32)
+  CefMainArgs main_args(::GetModuleHandleW(nullptr));
+#else
   CefMainArgs main_args(argc, argv);
-  CefSettings settings = MakeWorkerSettings(root_cache.string());
+#endif
+  CefSettings settings = MakeWorkerSettings(PathUtf8(root_cache));
   CefRefPtr<WorkerApp> app = new WorkerApp(&cef_opt, &state);
   if (!CefInitialize(main_args, settings, app, nullptr)) {
     std::fprintf(stderr, "vtx_cef_worker: CefInitialize 失败\n");
-    ::close(listen_fd);
-    ::unlink(opt.ipc_socket.c_str());
+    close_listener();
     cleanup_owned();
     return 1;
   }
@@ -1572,8 +1608,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
           30000) || state.closed.load()) {
     std::fprintf(stderr, "vtx_cef_worker: 浏览器创建失败或超时\n");
     shutdown_signed();
-    ::close(listen_fd);
-    ::unlink(opt.ipc_socket.c_str());
+    close_listener();
     cleanup_owned();
     return 1;
   }
@@ -1587,13 +1622,12 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   std::FILE* sync_log_fh = nullptr;
   if (opt.sync) {
     if (!opt.sync_log.empty()) {
-      sync_log_fh = std::fopen(opt.sync_log.c_str(), "wb");
+      sync_log_fh = OpenWriteFile(opt.sync_log);
       if (sync_log_fh == nullptr) {
         std::fprintf(stderr, "vtx_cef_worker: --sync-log 打不开: %s\n",
                      opt.sync_log.c_str());
         shutdown_signed();
-        ::close(listen_fd);
-        ::unlink(opt.ipc_socket.c_str());
+        close_listener();
         cleanup_owned();
         return 1;
       }
@@ -1634,8 +1668,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
         if (sync_log_fh != nullptr) {
           std::fclose(sync_log_fh);
         }
-        ::close(listen_fd);
-        ::unlink(opt.ipc_socket.c_str());
+        close_listener();
         cleanup_owned();
         return 1;
       }
@@ -1643,8 +1676,17 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   }
 
   // ---- SHM 环（容量=期望视口；名字即建即解绑 → /dev/shm 零残留）----
-  const uint64_t run_id = (static_cast<uint64_t>(::getpid()) << 32) ^
+  const uint64_t run_id = (static_cast<uint64_t>(NativePid()) << 32) ^
                           (NowUs() & 0xffffffffull);
+#if defined(_WIN32)
+  const auto send = [&](const void* payload, size_t n) { return pipe.Send(payload, n); };
+  const auto receive = [&](void* payload, size_t n) { return pipe.Receive(payload, n, opt.idle_timeout_ms); };
+  const auto poll_request = [&] { return pipe.Poll(10); };
+  const auto close_connection = [&] { pipe.Close(); };
+  std::printf("VTXCEF_SERVE_READY transport=pipe pid=%lu run_id=%llu slots=0\n",
+              static_cast<unsigned long>(NativePid()), static_cast<unsigned long long>(run_id));
+  std::fflush(stdout);
+#else
   std::string ring_err;
   auto ring = ShmRingWriter::Create(
       static_cast<uint32_t>(cef_opt.width), static_cast<uint32_t>(cef_opt.height),
@@ -1654,8 +1696,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
                  ring_err.c_str());
     shutdown_signed();
     if (sync_log_fh != nullptr) std::fclose(sync_log_fh);
-    ::close(listen_fd);
-    ::unlink(opt.ipc_socket.c_str());
+    close_listener();
     cleanup_owned();
     return 1;
   }
@@ -1681,8 +1722,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
     conn = -1;
     accept_rc = -1;
   }
-  ::close(listen_fd);
-  ::unlink(opt.ipc_socket.c_str());  // 监听名使命完成（单宿主契约）
+  close_listener();  // 监听名使命完成（单宿主契约）
   if (conn < 0) {
     std::fprintf(stderr, "vtx_cef_worker: 无宿主连接（accept %s）\n",
                  accept_rc == 0 ? "空闲超时" : "错误");
@@ -1692,22 +1732,42 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
     return accept_rc == 0 ? 5 : 1;
   }
 
+  const auto send = [&](const void* payload, size_t n) { return SendAll(conn, payload, n); };
+  const auto receive = [&](void* payload, size_t n) { return RecvAllOrShort(conn, payload, n, opt.idle_timeout_ms); };
+  const auto poll_request = [&] {
+    struct pollfd pfd { conn, POLLIN, 0 };
+    int rc;
+    do { rc = ::poll(&pfd, 1, 10); } while (rc < 0 && errno == EINTR);
+    return rc;
+  };
+  const auto close_connection = [&] {
+    ::shutdown(conn, SHUT_RDWR);
+    ::close(conn);
+  };
+#endif
+
   {
     HelloInfo hello;
     std::memset(&hello, 0, sizeof(hello));
     hello.magic = kHelloMagic;
     hello.protocol_version = kProtocolVersion;
-    hello.flags = kHelloHasShmFd;
-    if (opt.sync && opt.sync_canary == "exact") hello.flags |= kHelloPairedExact;
     hello.run_id = run_id;
-    hello.pid = static_cast<int32_t>(::getpid());
-    hello.ring_slots = kRingSlots;
+    hello.pid = static_cast<int32_t>(NativePid());
     hello.max_width = static_cast<uint32_t>(cef_opt.width);
     hello.max_height = static_cast<uint32_t>(cef_opt.height);
+    if (opt.sync && opt.sync_canary == "exact") hello.flags |= kHelloPairedExact;
+#if defined(_WIN32)
+    hello.frame_bytes = hello.max_width * hello.max_height * 4u;
+    const bool hello_sent = send(&hello, sizeof(hello));
+#else
+    hello.flags |= kHelloHasShmFd;
+    hello.ring_slots = kRingSlots;
     hello.frame_bytes = ring->geometry().frame_bytes;
-    if (!SendHelloWithFd(conn, hello, ring->fd())) {
-      std::fprintf(stderr, "vtx_cef_worker: Hello/fd 交付失败\n");
-      ::close(conn);
+    const bool hello_sent = SendHelloWithFd(conn, hello, ring->fd());
+#endif
+    if (!hello_sent) {
+      std::fprintf(stderr, "vtx_cef_worker: Hello 交付失败\n");
+      close_connection();
       shutdown_signed();
       if (sync_log_fh != nullptr) std::fclose(sync_log_fh);
       cleanup_owned();
@@ -1820,7 +1880,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
     FillReceipt(&receipt, p.r, run_id, p.request_id, p.frame_index,
                 p.t_alpha, p.t_png, p.t_disk);
     p.active = false;
-    if (!SendAll(conn, &receipt, sizeof(receipt))) {
+    if (!send(&receipt, sizeof(receipt))) {
       exit_code = 4;
       return false;
     }
@@ -1858,7 +1918,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
     std::memset(&req, 0, sizeof(req));
     int rc = 0;
     if (!pending.active) {
-      rc = RecvAllOrShort(conn, &req, sizeof(req), opt.idle_timeout_ms);
+      rc = receive(&req, sizeof(req));
     } else {
       // —— 流水等待：帧 N-1 编码在飞 ——
       // 串行宿主（收到回执才提交下一请求）：编码一完成立即回执，零死锁；
@@ -1867,17 +1927,12 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
       // 宽限的等价上限（宿主长期静默也照此退出）。
       const uint64_t pipeline_deadline = NowUs() + 65000000ull;
       for (;;) {
-        struct pollfd pfd;
-        pfd.fd = conn;
-        pfd.events = POLLIN;
-        pfd.revents = 0;
-        const int pr = ::poll(&pfd, 1, 10);
+        const int pr = poll_request();
         if (pr > 0) {
-          rc = RecvAllOrShort(conn, &req, sizeof(req), opt.idle_timeout_ms);
+          rc = receive(&req, sizeof(req));
           break;
         }
         if (pr < 0) {
-          if (errno == EINTR) continue;
           rc = -2;  // 连接层错误：与"请求中途断裂"同档（exit 4）
           break;
         }
@@ -1887,7 +1942,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
             break;
           }
           // 回执已送达（串行宿主此刻才能提交下一请求）：回到常规等待。
-          rc = RecvAllOrShort(conn, &req, sizeof(req), opt.idle_timeout_ms);
+          rc = receive(&req, sizeof(req));
           break;
         }
         pump.Once();  // 编码期间保持 CEF 消息循环（外置泵语义不变）
@@ -1922,6 +1977,19 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
       exit_code = 3;
       break;
     }
+#if defined(_WIN32)
+    // Production sends only these two alternating leaves inside the owned cwd.
+    // Never accept a device name, ADS, traversal or a SHM request on this pipe.
+    const std::string name(req.out_png_path);
+    if (req.flags != 0 || (name != "frame0.png" && name != "frame1.png") ||
+        (req.expected_width != 0 && req.expected_width != cef_opt.width) ||
+        (req.expected_height != 0 && req.expected_height != cef_opt.height)) {
+      std::fprintf(stderr, "vtx_cef_worker: unsupported Windows PNG request\n");
+      if (pending.active) (void)drain_and_send_pending();
+      exit_code = 3;
+      break;
+    }
+#endif
     const uint64_t request_started_us = NowUs();
     // ---- PairSwap 绑定：选出服务对 + 预取命中判定（一次性消费）----
     // 惰性建窗：首个路由到 B 对的请求以目标 URL 创建 B signed 浏览器
@@ -2082,7 +2150,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
         FrameSlotHeader receipt;
         FillReceipt(&receipt, r, run_id, req.request_id, req.frame_index,
                     0, 0, 0);
-        if (!SendAll(conn, &receipt, sizeof(receipt))) {
+        if (!send(&receipt, sizeof(receipt))) {
           exit_code = 4;
           break;
         }
@@ -2124,6 +2192,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
         }
       });
       staging_idx ^= 1;  // 帧 N+1 捕获切到另一缓冲（帧 N 编码仍读本缓冲）
+#if !defined(_WIN32)
     } else {
       // ================= 模式 2：SHM 环跨进程零拷贝 ====================
       // 混合会话防御：上一帧模式 1 编码仍在飞时收到模式 2 请求，先排空其
@@ -2252,10 +2321,11 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
         ++ok_replies;
       }
       finish_sync(capture_wall_us, 0, 0, 0, 0, bp_wait, r.status);
-      if (!SendAll(conn, &notice, sizeof(notice))) {
+      if (!send(&notice, sizeof(notice))) {
         exit_code = 4;
         break;
       }
+#endif
     }
 
     // DoD③ 故障注入：第 N 帧成功交付后 abort()（模拟 Worker 中途暴毙）。
@@ -2263,13 +2333,16 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
         ok_replies == static_cast<uint32_t>(opt.fault_abort_after_frames)) {
       std::fflush(stdout);
       std::fflush(stderr);
+#if defined(_WIN32)
+      ExitUnclosedServe(4);  // abrupt exit without an interactive CRT crash dialog
+#else
       std::abort();
+#endif
     }
   }
 
   // ---- 收尾：关连接 → 关浏览器 → CefShutdown → 清理 ----
-  ::shutdown(conn, SHUT_RDWR);
-  ::close(conn);
+  close_connection();
   {
     std::lock_guard<std::mutex> lock(state.mu);
     state.sync_machine = nullptr;  // 先摘除再析构（防御晚回调）

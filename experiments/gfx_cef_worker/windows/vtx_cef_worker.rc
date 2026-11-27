@@ -1,0 +1,2 @@
+// Application manifest in the process manifest resource slot (RT_MANIFEST).
+1 24 "vtx_cef_worker.exe.manifest"

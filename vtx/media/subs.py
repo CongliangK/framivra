@@ -11,7 +11,7 @@ from ..runtime import fstxn
 from . import union_intervals
 from ..pipeline.composite import RenderPlan
 from .encoders import seg_encoder_kind, seg_needs_alpha
-from ..render.frame_source import png_source
+from ..render.frame_source import png_source, single_png_output
 from ..cache.hygiene import manifest_record, seg_key, tmp_run
 from ..pipeline.infra import Ctx, filter_filename
 from ..cache.recovery import media_cache_valid
@@ -264,9 +264,10 @@ def _layer_ready(c: Ctx, f: int):
                                "w2": None, "h2": None, "gfx": True, "ti": ti})
             else:
                 windowed = any(k in cl for k in ("scale", "x", "y"))
-                need_alpha = seg_needs_alpha(cl, c.probe(c.src_path(cl['src'])))
+                source_info = c.probe(c.src_path(cl['src']))
+                need_alpha = seg_needs_alpha(cl, source_info)
                 skey = seg_key(c, cl, ti, ci, windowed, need_alpha,
-                               "prores" if need_alpha else seg_kind)
+                               "prores" if need_alpha else seg_kind, source_info=source_info)
                 seg = c.cache / "seg" / f"{skey}.{'mov' if need_alpha else 'mp4'}"
                 if not media_cache_valid(seg, cl["dur"], allow_short_verified=True):
                     return None
@@ -281,11 +282,19 @@ def _bg_frame(c: Ctx, f: int, d: Path, dry: bool):
     返回 (png 路径|None, 来源描述)。dry 只返回描述不执行。"""
     policy = getattr(c, 'cache_policy', None)
     qc = c.cache / "qc_clean.mp4"
-    if (policy is None or policy.reuse_media) and media_cache_valid(qc, c.dur):
+    tracks = c.tl.get('video_tracks', [])
+    bottom = tracks[0] if tracks else None
+    reuse = (policy is None or policy.reuse_media) and media_cache_valid(qc, c.dur)
+    if reuse and bottom and bottom.get('kind') != 'gfx':
+        # Completion certifies bytes and frame count, not the display transform
+        # under which older flat qc_clean files were composed.
+        sources = dict.fromkeys(cl['src'] for cl in bottom['clips'])
+        reuse = not any(c.probe(c.src_path(sid)).get('quarter_turn') for sid in sources)
+    if reuse:
         p = d / "bg.png"
         if not dry:
             c.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{f * c.spf:.6f}", "-i", str(qc),
-                   "-frames:v", "1", str(p)])
+                   *single_png_output(p)])
         return p, "cache/qc_clean.mp4 提帧"
     if policy is not None and not dry:
         from ..cache.cache_state import verify_input_identity
@@ -298,7 +307,7 @@ def _bg_frame(c: Ctx, f: int, d: Path, dry: bool):
         video = d / 'bg.mp4'
         plan.composite(layers, video, False, a=f, b=f + 1)
         c.run(['ffmpeg', '-v', 'error', '-y', '-i', str(video),
-               '-frames:v', '1', str(d / 'bg.png')])
+               *single_png_output(d / 'bg.png')])
         verify_input_identity(c)
         if inputs.identity() != identity:
             raise ValueError('subtitle preview inputs changed during composition')
@@ -309,13 +318,13 @@ def _bg_frame(c: Ctx, f: int, d: Path, dry: bool):
         p = d / "bg.mp4"
         if not dry:
             plan.composite(layers, p, False, a=f, b=f + 1)
-            c.run(["ffmpeg", "-v", "error", "-y", "-i", str(p), "-frames:v", "1", str(d / "bg.png")])
+            c.run(["ffmpeg", "-v", "error", "-y", "-i", str(p), *single_png_output(d / "bg.png")])
         return d / "bg.png", "图层单帧合成（with_subs=False）"
     print(f"⚠ 帧 {f}：qc_clean.mp4 缺失或未通过完成校验，且图层素材不全——背景为黑场，仅字幕位置/样式预览")
     p = d / "bg.png"
     if not dry:
         c.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
-               "-i", f"color=c=black:s={c.w}x{c.h}:d=1", "-frames:v", "1", str(p)])
+               "-i", f"color=c=black:s={c.w}x{c.h}:d=1", *single_png_output(p)])
     return p, "黑场画布（兜底）"
 
 
@@ -336,9 +345,9 @@ def _run_preview(c: Ctx, tokens, dry: bool, *, before_summary=None):
             ass = d / "point.ass"
             if not dry:
                 _write_point_ass(c, ass, subs)
-                r = c.run(["ffmpeg", "-v", "error", "-y", "-i", str(bg),
+                r = c.run(["ffmpeg", "-v", "error", "-y", "-f", "image2", "-pattern_type", "none", "-i", str(bg),
                            "-vf", f"subtitles=filename={filter_filename(ass)}",
-                           "-frames:v", "1", str(dst)], need=False)
+                           *single_png_output(dst)], need=False)
                 if r.returncode != 0 or not dst.exists():
                     print(f"✗ 帧 {f}：字幕烧录失败"); ok = False; continue
         tag = "[dry-run] " if dry else ""

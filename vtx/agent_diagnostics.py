@@ -49,9 +49,16 @@ def main(argv=None):
                     mark_handled(error)
                     raise
             print(f'== {args.command} ==')
-            with stage_scope(c):
-                c.begin_stage(args.command)
+            with stage_scope(c), contextlib.ExitStack() as qc_stack:
                 media = getattr(c, '_windows_svg_media', None)
+                if args.command == 'qc' and media is None:
+                    from .cache.session import CacheSession
+                    session = qc_stack.enter_context(CacheSession(c))
+                else:
+                    session = None
+                c.begin_stage(args.command)
+                if session is not None:
+                    session.ensure_stage_inputs('qc')
                 if args.command == 'qc' and media is not None:
                     with media.qc_scope(c, standalone=True):
                         qc(c)
@@ -82,4 +89,7 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
+    if sys.platform == 'win32':
+        for stream in (sys.stdout, sys.stderr):
+            stream.reconfigure(encoding='utf-8', errors='replace')
     sys.exit(main())

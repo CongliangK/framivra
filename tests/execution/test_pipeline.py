@@ -34,6 +34,7 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
+from tests._support import cli_python
 from vtx import _stage_receipt_name        # __init__ 再导出（v2 §1.4）
 from vtx.cli.commands import _pipeline_enabled
 
@@ -110,9 +111,9 @@ def _run_vtx(tl: Path, *args, extra_env=None):
     env.pop("VTX_PIPELINE", None)  # 缺省拓扑与宿主配置隔离；显式线性模式仍由调用者覆盖。
     env.update(extra_env or {})
     return subprocess.run(
-        ["env", "python3", "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
+        [*cli_python(), "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
          "-t", str(tl), *args],
-        capture_output=True, text=True, cwd=str(REPO), env=env)
+        capture_output=True, encoding="utf-8", cwd=str(REPO), env=env)
 
 
 @unittest.skipUnless(shutil.which("ffmpeg"),
@@ -256,6 +257,8 @@ class TestUntilFlag(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         root = Path(self._tmp.name)
         self.tl = root / "timeline.json"
+        self.config = root / "empty-config.json"
+        self.config.write_bytes(b"{}\n")
         # dur=90：_synth_timeline 的 pip clip（dst_in=20/dur=30）要求 ≥50 帧
         self.tl.write_text(json.dumps(_synth_timeline(root, self.assets, dur=90)),
                            encoding="utf-8")
@@ -264,7 +267,13 @@ class TestUntilFlag(unittest.TestCase):
         self._tmp.cleanup()
 
     def _dry(self, *args, extra_env=None):
-        return _run_vtx(self.tl, "all", "--dry-run", *args, extra_env=extra_env)
+        before = self.tl.read_bytes()
+        env = {"VTX_CONFIG": str(self.config), **(extra_env or {})}
+        result = _run_vtx(self.tl, "all", "--dry-run", *args, extra_env=env)
+        self.assertEqual(self.tl.read_bytes(), before)
+        self.assertEqual(set(self.tl.parent.iterdir()), {self.tl, self.config})
+        self.assertEqual(self.config.read_bytes(), b"{}\n")
+        return result
 
     def test_until_serial_head_bin(self):
         # until=prepare：只跑串行头，不起波（无并行波行、无 gfx/video 头）

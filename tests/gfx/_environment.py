@@ -40,11 +40,14 @@ def bind_environment(test):
     test.addCleanup(browser.stop)
 
 
+def run_environment_cli():
+    import runpy
+    with mock.patch('vtx.render.gfx_environment.collect', side_effect=collect), \
+            mock.patch('vtx.media.encoders.find_chrome', side_effect=find_chrome):
+        runpy.run_module('vtx', run_name='__main__')
+
+
 def environment_cli():
     import sys
     return [sys.executable, '-c',
-            "import runpy\nfrom unittest.mock import patch\n"
-            "from tests.gfx._environment import collect, find_chrome\n"
-            "with patch('vtx.render.gfx_environment.collect', side_effect=collect), "
-            "patch('vtx.media.encoders.find_chrome', side_effect=find_chrome):\n"
-            "    runpy.run_module('vtx', run_name='__main__')\n"]
+            'from tests.gfx._environment import run_environment_cli; run_environment_cli()']
