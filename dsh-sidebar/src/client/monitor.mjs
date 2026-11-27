@@ -1166,6 +1166,9 @@ export function ProgramMonitor({ owner, opened, timeline, selectionDisplay, sess
     if (program?.signal?.aborted && !program.cleanupFailed && !program.cleanupPending) void localProgram.current?.()
   }, [program?.signal?.aborted, program?.cleanupFailed, program?.cleanupPending])
   const orphanProgram = monitor.stopProgram && monitor.stopProgram !== localProgram.current
+  // Playback stops immediately; Host revocation and browser cache removal can
+  // still be pending. Cleared playable entries are not a cache deletion receipt.
+  const cleanupStatus = program?.cleanupPending ? '正在停止，等待回收确认' : program?.cleanupFailed ? '回收未确认' : undefined
   const programBusy = running || orphanProgram || program?.cleanupPending || program?.cleanupFailed
   const canTransport = canWindow && !unavailable && (!blocked || blank) && !tabSignal.aborted &&
     !(windowState.active ?? windowState.job)?.formalArchiveOwner && !orphanProgram && !program?.cleanupPending && !program?.cleanupFailed
@@ -1256,8 +1259,8 @@ export function ProgramMonitor({ owner, opened, timeline, selectionDisplay, sess
         h(ToolButton, { icon: 'film', label: '成片渲染', tooltip: '成片渲染 · 播放已有成片，不启动渲染', 'aria-pressed': mode === 'rendered', onClick: () => change('rendered') })),
       mode !== 'window' && sessionControls?.needsRevoke ? h(ToolButton, { icon: 'cancel', disabled: sessionControls.pending,
         label: sessionControls.failed ? '重试撤销自动预览授权' : '停止并撤销自动预览', onClick: sessionControls.revoke }) : null),
-    program && program.status !== 'idle' ? h('p', { role: 'status', className: 'fv-monitor-status' },
-      `整片后台预览：${({ authorizing: '正在申请授权', running: '渲染中', complete: '本版窗口已备齐', partial: '未完成', cancelled: '已停止', error: '无法继续' })[program.status] ?? '未就绪'}${program.pendingWindow ? ` · 正在准备第 ${program.pendingWindow.start}–${program.pendingWindow.end - 1} 帧` : ''} · 已缓存 ${program.completedFrames}/${program.totalFrames} 帧${program.code ? ` · ${program.code}` : ''}`) : null,
+    program && (cleanupStatus || program.status !== 'idle') ? h('p', { role: 'status', className: 'fv-monitor-status' },
+      cleanupStatus ? `整片后台预览：${cleanupStatus}` : `整片后台预览：${({ authorizing: '正在申请授权', running: '渲染中', complete: '本版窗口已备齐', partial: '未完成', cancelled: '已停止', error: '无法继续' })[program.status] ?? '未就绪'}${program.pendingWindow ? ` · 正在准备第 ${program.pendingWindow.start}–${program.pendingWindow.end - 1} 帧` : ''} · 已缓存 ${program.completedFrames}/${program.totalFrames} 帧${program.code ? ` · ${program.code}` : ''}`) : null,
     canRender ? h(FrameTools, { key: contentVersion, owner, opened: timeline ? { ...opened, timeline } : opened, selectionDisplay, sessionId, frame, selection, tabSignal, getDraftServices, call, disclosureGroup, active: mode === 'live', suspended: suspended || !!(windowState.job || windowState.active) }) : null,
     mode === 'window' ? h(WindowPlayer, { key: `${sessionId}:${opened.grant}:${contentVersion}`, monitor, state: windowState, owner, binding: { project: timeline, sessionId, grant, contentVersion, duration, fps, clock, tabSignal, onGrantDead }, frame, blocked, onFrame, disclosureGroup, sessionControls, previewSession, formalArchiveOwner, windowTransport, programBusy }) : null,
     !canRender && !canWindow ? h('p', { className: 'fv-monitor-status' }, '当前宿主或内核不支持生成监看预览；仍可查看时间线和已有成片。') : null,

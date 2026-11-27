@@ -863,7 +863,7 @@ async function endWindow(f, node) {
   await f.emit(node, 'ended')
 }
 
-async function programMonitor(t, { second, boundaryCheck, autoPlay = true, onCheck, beforeMint, afterStart } = {}) {
+async function programMonitor(t, { second, boundaryCheck, autoPlay = true, onCheck, onRevoke, beforeMint, afterStart } = {}) {
   const commands = [], stored = new Map(), duration = 90, togglePreview = {}
   const opened = { ...continuationOpened, previewSession: { ...continuationQualification, programRun: { version: 1 } },
     snapshot: { ...windowOpened.snapshot, document: { project: { duration_frames: duration, fps: 30 } } } }
@@ -886,7 +886,7 @@ async function programMonitor(t, { second, boundaryCheck, autoPlay = true, onChe
         return { ok: true, grantId: 'program', frame: request.frame, sha256: request.sha256 }
       }
       assert.equal(request.op, 'revoke-preview-session')
-      return { ok: true, revoked: true, grantId: 'program' }
+      return await onRevoke?.() ?? { ok: true, revoked: true, grantId: 'program' }
     },
   }, { mockBlobURLs: true })
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { locks: { request: async (_name, _options, acquire) => acquire({}) } } })
@@ -1116,6 +1116,23 @@ test('program parks one muted node and promotes it at zero only after an exact b
   await untilWindow(() => f.stored.size === 0)
   assert.equal(f.video(), null); assert(next.paused && next.muted)
   assert.deepEqual(new Set(f.revoked), new Set(f.urls.map(({ url }) => url)))
+})
+
+test('whole-timeline stop waits for a matching Host acknowledgement before reporting stopped', async t => {
+  const release = deferred()
+  let attempts = 0
+  const f = await programMonitor(t, { onRevoke: () => ++attempts === 1 ? release.promise : undefined })
+  const status = () => [...document.querySelectorAll('[role=status]')].map(n => n.textContent).find(s => s.startsWith('整片后台预览：'))
+  await f.click('停止整片预览')
+  assert.match(status(), /正在停止，等待回收确认/)
+  assert.doesNotMatch(status(), /已停止|已缓存/)
+  assert(f.button('停止整片预览').disabled)
+  await act(async () => release.resolve({ ok: true, revoked: true, grantId: 'wrong-grant' }))
+  assert.match(status(), /回收未确认/)
+  assert.doesNotMatch(status(), /已停止|已缓存/)
+  await f.click('重试回收后台任务')
+  await untilWindow(() => status()?.includes('已停止'))
+  assert.equal(attempts, 2)
 })
 
 test('a cold program boundary waits with no picture or audio advance; pause and pin preempt the spare read', async t => {
