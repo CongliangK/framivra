@@ -17,7 +17,7 @@ const midpoint = (frame, num = 30, den = 1) => (frame + 0.5) * den / num
 // are adapted. These tests do not certify native browser decoding or seek accuracy.
 async function fixture(t, Component = RenderedPlayer, initial = {}, { quantizeToMicroseconds = false, mockBlobURLs = false, deferNativePins = false } = {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://monitor.invalid/' })
-  const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch', 'URL', 'Image', 'navigator', 'caches', 'location'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
+  const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch', 'URL', 'Image', 'navigator', 'caches', 'location', 'requestAnimationFrame', 'cancelAnimationFrame'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
   globalThis.window = dom.window; globalThis.document = dom.window.document
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   const requests = [], urls = [], revoked = []
@@ -838,6 +838,41 @@ async function programMonitor(t, { second, boundaryCheck } = {}) {
   return { ...f, first, loadPlayable, checks: () => commands.filter(({ request }) => request.op === 'program-check').map(({ request }) => request.frame),
     commands, stored, spare: () => document.querySelectorAll('video')[1] }
 }
+
+test('a nonzero program pin stays hidden until both native seek and target PTS, then pause can cancel queued play', async t => {
+  for (const ptsFirst of [true, false]) await t.test(ptsFirst ? 'PTS first' : 'seeked first', async t => {
+    const f = await programMonitor(t)
+    const paints = new Map(); let seq = 0
+    globalThis.requestAnimationFrame = callback => { paints.set(++seq, callback); return seq }
+    globalThis.cancelAnimationFrame = id => paints.delete(id)
+    async function paint() {
+      const [id, callback] = paints.entries().next().value
+      paints.delete(id)
+      await act(async () => callback())
+    }
+    await f.pin(35)
+    await untilWindow(() => f.video() && f.video() !== f.first)
+    const node = f.video()
+    await f.click('播放预览')
+    await f.loadPlayable(node)
+    const time = midpoint(5)
+    assert.equal(node.currentTime, time)
+    await f.decoded(node, 0, time)
+    assert(!visible(node) && node.muted && node.paused)
+    if (ptsFirst) await f.decoded(node, 5 / 30, time)
+    else await f.settle(node)
+    assert(!visible(node) && node.muted && node.paused)
+    if (ptsFirst) await f.settle(node)
+    else await f.decoded(node, 5 / 30, time)
+    assert(visible(node) && node.muted && node.paused && !node.controls)
+    await paint()
+    assert(node.paused && node.muted)
+    if (ptsFirst) await f.click('取消待播放')
+    await paint()
+    assert.deepEqual(f.plays, ptsFirst ? [f.first] : [f.first, node])
+    assert(!node.muted && node.controls); assert.equal(f.frame(), 35)
+  })
+})
 
 test('program parks one muted node and promotes it at zero only after an exact boundary recheck', async t => {
   const proof = deferred(), f = await programMonitor(t, { boundaryCheck: proof })

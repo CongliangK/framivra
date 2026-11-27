@@ -469,15 +469,34 @@ export class WindowMonitor {
         if (!reachable || time >= node.duration) return
         pin.started = true
         node.pause()
+        if (media.program && typeof node.requestVideoFrameCallback === 'function') {
+          const observePin = () => {
+            const id = node.requestVideoFrameCallback((_now, metadata) => {
+              if (media.callback !== id) return
+              media.callback = undefined
+              if (!this.ownsMedia(media) || !attachedWindowNode(media, node) || media.initialPin !== pin) return
+              // mediaTime is a browser-quantized PTS. The half-frame allowance
+              // maps it to the nearest frame, not the midpoint seek position.
+              if (frameFromSeconds(metadata.mediaTime + step / 2, media.fps) === offset) {
+                pin.presented = true
+                this.ready(media, node)
+              } else observePin()
+            })
+            media.callback = id
+          }
+          observePin()
+        }
         try { node.currentTime = time } catch { this.cancel('浏览器无法定位已验证的音画窗口。'); return }
       }
       // A clamped/ignored seek cannot certify the requested frame. Keep the
       // stage hidden and let the existing decode deadline retire the operation.
-      if (!node.paused || node.seeking || node.readyState < HAVE_CURRENT_DATA || frameFromSeconds(node.currentTime, media.fps) !== offset) return
+      if (!node.paused || node.seeking || node.readyState < HAVE_CURRENT_DATA || frameFromSeconds(node.currentTime, media.fps) !== offset ||
+          (media.program && !pin.presented)) return
+      if (media.program) media.pinPaint = true
       media.cursor = pin.frame
       media.initialPin = undefined
     }
-    clearTimeout(media.decodeTimer)
+    if (!media.pinPaint) clearTimeout(media.decodeTimer)
     media.ready = true
     media.readyNode = node
     const image = this.state.firstFrame
@@ -840,7 +859,7 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
   })
 
   async function playWindow(item, node, successor = false) {
-    if (!monitor.ownsNode(item, node)) return
+    if (!monitor.ownsNode(item, node) || item.pinPaint) return
     if (monitor.playOperation === item.operationId) monitor.playOperation = undefined
     item.resume = false
     const attempt = item.resumeAttempt = {}
@@ -860,7 +879,22 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
   }
   useLayoutEffect(() => {
     const node = media?.node
-    if (!ready || !monitor.ownsNode(media, node) || node.seeking || media.pendingSeek !== undefined) return
+    if (!ready || !media.pinPaint || !monitor.ownsNode(media, node)) return
+    // Give the decoded, paused target a render opportunity while still muted
+    // before letting the media clock advance. A later intent is not captured.
+    let paint = requestAnimationFrame(() => {
+      paint = requestAnimationFrame(() => {
+        if (!monitor.ownsNode(media, node)) return
+        clearTimeout(media.decodeTimer)
+        media.pinPaint = false
+        monitor.refresh()
+      })
+    })
+    return () => cancelAnimationFrame(paint)
+  }, [monitor, media, ready])
+  useLayoutEffect(() => {
+    const node = media?.node
+    if (!ready || !monitor.ownsNode(media, node) || media.pinPaint || node.seeking || media.pendingSeek !== undefined) return
     if (media.resume) {
       // A natural handoff starts at the exact beginning, not a midpoint seek.
       onFrame(String(media.frame), media)
@@ -904,7 +938,7 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
       current ? [media, state.spare].filter(Boolean).map(item => {
         const active = item === media, visible = active && ready && !showFirstFrame
         return h('video', { key: item.url, ref: node => { if (node) item.node = node }, src: item.url,
-          controls: !!visible && !waiting, muted: !active || !!item.initialPin, preload: 'auto', playsInline: true, disablePictureInPicture: true, disableRemotePlayback: true,
+          controls: !!visible && !waiting && !item.pinPaint, muted: !active || !!item.initialPin || !!item.pinPaint, preload: 'auto', playsInline: true, disablePictureInPicture: true, disableRemotePlayback: true,
           'aria-label': active ? (archive ? `已核归档 A/V [${item.frame}, ${item.end})` : '仅当前窗口的原生音画') : undefined, 'aria-hidden': !visible,
           style: !visible ? { visibility: 'hidden', ...(active ? {} : { position: 'absolute' }) } : undefined,
           onLoadedData: event => monitor.ready(item, event.currentTarget),
