@@ -24,12 +24,30 @@ from pathlib import Path
 from fractions import Fraction
 from unittest import mock
 
+try:
+    import resource
+except ImportError:
+    resource = None
+
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
 from tests._support import cli_python
 from vtx.pipeline.range import (parse_timespec, range_label, window_from_clip,
                         window_from_track, select_segments)
+
+
+HAS_FILE_SIZE_LIMIT = hasattr(resource, 'RLIMIT_FSIZE')
+
+
+@contextlib.contextmanager
+def _file_size_limit(limit):
+    soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+    resource.setrlimit(resource.RLIMIT_FSIZE, (min(soft, limit) if soft != resource.RLIM_INFINITY else limit, hard))
+    try:
+        yield
+    finally:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (soft, hard))
 
 
 FPS = 30
@@ -767,7 +785,6 @@ class TestRangeIntegration(unittest.TestCase):
             self.assertFalse((root / 'out').exists(), 'range must not publish formal outputs')
 
     def test_native_faded_pip_slice_matches_full_prores_and_keeps_window_clocks(self):
-        import resource
         import wave
         from vtx.cache.hygiene import seg_key
         from vtx.pipeline.composite import RenderPlan, prepare_layers
@@ -863,14 +880,10 @@ class TestRangeIntegration(unittest.TestCase):
             self.assertEqual(frame_sample(b, rate) - frame_sample(a, rate), 3204)
             workspace = c.cache / 'preview' / 'isolated-pip-window'
             workspace.mkdir()
-            soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
-            limit = 32 << 20 if soft == resource.RLIM_INFINITY else min(soft, 32 << 20)
-            with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0', 'VTX_VIDEO_SEGMENTS': '1'}):
-                resource.setrlimit(resource.RLIMIT_FSIZE, (limit, hard))
-                try:
-                    out = render_1080p_window(c, a, b, workspace=workspace)
-                finally:
-                    resource.setrlimit(resource.RLIMIT_FSIZE, (soft, hard))
+            # Keep the real clock and decode checks even where RLIMIT_FSIZE is unavailable.
+            file_cap = _file_size_limit(32 << 20) if HAS_FILE_SIZE_LIMIT else contextlib.nullcontext()
+            with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0', 'VTX_VIDEO_SEGMENTS': '1'}), file_cap:
+                out = render_1080p_window(c, a, b, workspace=workspace)
             part, = (workspace / 'work/seg').glob('native-alpha-v1-*.mov')
             self.assertEqual(frame_pts(part), [0, 1 / rate])
             self.assertEqual(frame_pts(out), [0, 1 / rate])
@@ -879,10 +892,10 @@ class TestRangeIntegration(unittest.TestCase):
             _probe_facts(json.loads(info.stdout), rate, b - a, 3204)
             with wave.open(str(workspace / 'work/preview' / out.with_suffix('.wav').name), 'rb') as pcm:
                 self.assertEqual((pcm.getframerate(), pcm.getnframes()), (48000, 3204))
-            print(f'native faded PiP two-frame quota-bound 1080p window intermediate={part.stat().st_size} bytes')
+            print(f'native faded PiP two-frame 1080p window intermediate={part.stat().st_size} bytes')
 
+    @unittest.skipUnless(HAS_FILE_SIZE_LIMIT, 'requires RLIMIT_FSIZE')
     def test_native_alpha_slice_fits_original_file_limit_when_full_clip_does_not(self):
-        import resource
         from vtx.pipeline.composite import prepare_layers
         from vtx.pipeline.infra import Ctx
 
@@ -901,18 +914,14 @@ class TestRangeIntegration(unittest.TestCase):
                 'sources': [{'id': 'pip', 'path': source.name}],
                 'video_tracks': [{'name': 'pip', 'kind': 'pip', 'clips': [clip]}]}), encoding='utf-8')
             c = Ctx(timeline)
-            soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
             limit = 32 << 20
             with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
                 # The reference is produced once unrestricted in fixture scratch
                 # solely to measure why the unmodified worker must refuse it.
                 whole, = prepare_layers(c)
                 self.assertGreater(whole['seg'].stat().st_size, limit)
-                resource.setrlimit(resource.RLIMIT_FSIZE, (min(soft, limit) if soft != resource.RLIM_INFINITY else limit, hard))
-                try:
+                with _file_size_limit(limit):
                     two, = prepare_layers(c, native_window=(73, 75), staged_gfx={})
-                finally:
-                    resource.setrlimit(resource.RLIMIT_FSIZE, (soft, hard))
             self.assertLess(two['seg'].stat().st_size, limit)
             print(f'quota stress full PiP={whole["seg"].stat().st_size} bytes; two-frame PiP={two["seg"].stat().st_size} bytes')
 
