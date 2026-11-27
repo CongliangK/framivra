@@ -31,7 +31,7 @@ export const HOST_PROTOCOL_OPS = [
   'inspect', 'query', 'reference',
   'storage-inspect', 'storage-plan', 'storage-clean', 'storage-cancel', 'preview-window',
 ]
-export const HOST_IDENTITY = { plugin: '0.3.0', protocol: 1, ops: HOST_PROTOCOL_OPS }
+export const HOST_IDENTITY = { plugin: '0.3.1', protocol: 1, ops: HOST_PROTOCOL_OPS }
 
 /**
  * Deterministic build fingerprint inputs — the single home for WHICH source
