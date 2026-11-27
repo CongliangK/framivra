@@ -400,11 +400,12 @@ export class WindowMonitor {
   }
   invalidate(origin, pin) {
     if (this.owns(origin)) return // The owning video is reporting playback, not requesting a seek.
-    const hadPendingPlayback = this.playOperation !== undefined
     this.playOperation = undefined
     if (this.program) { this.program.invalidate(pin); return }
     if (pin && !origin && this.automatic.pin(pin.frame)) {
-      if (hadPendingPlayback) this.refresh()
+      // A ruler release can repeat the move's frame. Publish the accepted
+      // pin even when no new seek or React frame value will be committed.
+      this.refresh()
       return
     }
     this.automatic.discardIntent()
@@ -427,12 +428,29 @@ export class WindowMonitor {
       ...(op === 'continue' ? { previousOperationId, inputEpoch } : {}) }, signal)
       : windowRequest(job, op, signal)
   }
+  canObservePin(node) {
+    return typeof node.requestVideoFrameCallback === 'function' && typeof globalThis.requestAnimationFrame === 'function' &&
+      typeof globalThis.cancelAnimationFrame === 'function'
+  }
+
   seek(media, frame) {
     const node = media.node
     if (!node) return
-    retireWindowCallback(media)
+    this.stopContinuation(media)
     node.pause()
-    if (frame !== media.cursor) {
+    if (frame === (media.initialPin?.frame ?? media.cursor)) return
+    retireWindowCallback(media)
+    if (this.canObservePin(node)) {
+      media.initialPin = { frame }
+      media.pinPaint = undefined
+      media.pendingSeek = undefined
+      clearTimeout(media.decodeTimer)
+      media.decodeTimer = setTimeout(() => {
+        if (this.ownsMedia(media)) this.cancel('浏览器未及时呈现定位帧。')
+      }, 15_000)
+      this.ready(media, node)
+      this.refresh()
+    } else {
       const { clock } = media
       const time = (frame - media.frame + 0.5) * clock.den / clock.num
       media.cursor = frame
@@ -440,15 +458,15 @@ export class WindowMonitor {
       node.currentTime = time
       if (!node.seeking && Math.abs(node.currentTime - time) < 1e-6) media.pendingSeek = undefined
     }
-    this.stopContinuation(media)
   }
 
   ready(media, node) {
-    if (!this.ownsMedia(media) || !attachedWindowNode(media, node) || media.ready) return
+    if (!this.ownsMedia(media) || !attachedWindowNode(media, node) || (media.ready && !media.initialPin)) return
     // A Blob URL may be selected and emit progress before its metadata or
     // first frame exists. This is not evidence of a bad size or duration.
     const pin = media.initialPin
-    if (pin && (node.error || node.ended || node.readyState < HAVE_CURRENT_DATA)) return
+    if (pin && (node.error || (!media.ready && node.ended) || node.readyState < HAVE_CURRENT_DATA ||
+        (media.program && !this.canObservePin(node)))) return
     const step = media.clock.den / media.clock.num
     const expected = (media.end - media.frame) * step
     // The container may include an audio-sample/codec tail. Do not derive a
@@ -469,7 +487,8 @@ export class WindowMonitor {
         if (!reachable || time >= node.duration) return
         pin.started = true
         node.pause()
-        if (media.program && typeof node.requestVideoFrameCallback === 'function') {
+        pin.needsPresentation = this.canObservePin(node)
+        if (pin.needsPresentation) {
           const observePin = () => {
             const id = node.requestVideoFrameCallback((_now, metadata) => {
               if (media.callback !== id) return
@@ -488,11 +507,11 @@ export class WindowMonitor {
         }
         try { node.currentTime = time } catch { this.cancel('浏览器无法定位已验证的音画窗口。'); return }
       }
-      // A clamped/ignored seek cannot certify the requested frame. Keep the
-      // stage hidden and let the existing decode deadline retire the operation.
+      // Both the completed native seek and presented PTS must identify the
+      // requested frame when the browser can observe presentation.
       if (!node.paused || node.seeking || node.readyState < HAVE_CURRENT_DATA || frameFromSeconds(node.currentTime, media.fps) !== offset ||
-          (media.program && !pin.presented)) return
-      if (media.program) media.pinPaint = true
+          (pin.needsPresentation && !pin.presented)) return
+      media.pinPaint = pin.needsPresentation ? pin : undefined
       media.cursor = pin.frame
       media.initialPin = undefined
     }
@@ -824,7 +843,7 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
     const { active, job } = monitor.state
     const operation = active ?? job
     if (operation) {
-      if (!matchesWindowBinding(operation, binding)) return
+      if (operation.formalArchiveOwner || !matchesWindowBinding(operation, binding)) return
       const node = active?.node
       const pending = monitor.playOperation === operation.operationId
       if (pending || active?.resumeAttempt || active?.waiting || node?.paused === false) {
@@ -838,9 +857,9 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
           void monitor.cancel('已取消待播放的音画窗口。')
         }
       } else if (owner.epoch !== epoch) return
-      else if (active?.ready && node && !node.seeking && active.pendingSeek === undefined && monitor.ownsNode(active, node)) {
+      else if (active?.ready && !active.initialPin && !active.pinPaint && node && !node.seeking && active.pendingSeek === undefined && monitor.ownsNode(active, node)) {
         void playWindow(active, node)
-      } else if (!operation.formalArchiveOwner && (monitor.owns(active) || monitor.ownsJob(job))) {
+      } else if (monitor.owns(active) || monitor.ownsJob(job)) {
         monitor.queuePlayback(operation)
       }
       return
@@ -859,7 +878,7 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
   })
 
   async function playWindow(item, node, successor = false) {
-    if (!monitor.ownsNode(item, node) || item.pinPaint) return
+    if (!monitor.ownsNode(item, node) || item.initialPin || item.pinPaint) return
     if (monitor.playOperation === item.operationId) monitor.playOperation = undefined
     item.resume = false
     const attempt = item.resumeAttempt = {}
@@ -878,23 +897,23 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
     }
   }
   useLayoutEffect(() => {
-    const node = media?.node
-    if (!ready || !media.pinPaint || !monitor.ownsNode(media, node)) return
-    // Give the decoded, paused target a render opportunity while still muted
-    // before letting the media clock advance. A later intent is not captured.
+    const node = media?.node, pin = media?.pinPaint
+    if (!ready || !pin || !monitor.ownsNode(media, node)) return
+    // Give the verified paused target a paint opportunity before starting its
+    // clock. Never release this fence for a replaced node or generation.
     let paint = requestAnimationFrame(() => {
       paint = requestAnimationFrame(() => {
-        if (!monitor.ownsNode(media, node)) return
+        if (!monitor.ownsNode(media, node) || media.pinPaint !== pin) return
         clearTimeout(media.decodeTimer)
-        media.pinPaint = false
+        media.pinPaint = undefined
         monitor.refresh()
       })
     })
     return () => cancelAnimationFrame(paint)
-  }, [monitor, media, ready])
+  }, [monitor, media, media?.pinPaint, ready])
   useLayoutEffect(() => {
     const node = media?.node
-    if (!ready || !monitor.ownsNode(media, node) || media.pinPaint || node.seeking || media.pendingSeek !== undefined) return
+    if (!ready || !monitor.ownsNode(media, node) || media.initialPin || media.pinPaint || node.seeking || media.pendingSeek !== undefined) return
     if (media.resume) {
       // A natural handoff starts at the exact beginning, not a midpoint seek.
       onFrame(String(media.frame), media)
@@ -906,7 +925,7 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
   }, [monitor, media, state, ready, onFrame])
 
   function publish(item, node, time, decoded = false) {
-    if (!monitor.ownsNode(item, node) || !item.ready || item.pendingSeek !== undefined) return
+    if (!monitor.ownsNode(item, node) || !item.ready || item.initialPin || item.pinPaint || item.pendingSeek !== undefined) return
     const adjustment = decoded ? item.clock.den / (2 * item.clock.num) : 0
     const offset = frameFromSeconds(time + adjustment, item.fps)
     if (offset === null) return
@@ -914,7 +933,7 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
     if (next !== item.cursor) { item.cursor = next; onFrame(String(next), item) }
   }
   function observe(item, node) {
-    if (!monitor.ownsNode(item, node) || !item.ready) { node.pause(); return }
+    if (!monitor.ownsNode(item, node) || !item.ready || item.initialPin || item.pinPaint) { node.pause(); return }
     if (node.paused) return // A queued play event cannot revive canceled playback.
     if (!item.resumeAttempt) monitor.played(item)
     if (item.callback !== undefined || typeof node.requestVideoFrameCallback !== 'function') return
@@ -936,7 +955,7 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
   return h('section', { className: 'fv-rendered', 'aria-label': '单窗口音画监看' },
     h('div', { className: 'fv-program-stage', 'data-mode': 'window' },
       current ? [media, state.spare].filter(Boolean).map(item => {
-        const active = item === media, visible = active && ready && !showFirstFrame
+        const active = item === media, visible = active && ready && !item.initialPin && !showFirstFrame
         return h('video', { key: item.url, ref: node => { if (node) item.node = node }, src: item.url,
           controls: !!visible && !waiting && !item.pinPaint, muted: !active || !!item.initialPin || !!item.pinPaint, preload: 'auto', playsInline: true, disablePictureInPicture: true, disableRemotePlayback: true,
           'aria-label': active ? (archive ? `已核归档 A/V [${item.frame}, ${item.end})` : '仅当前窗口的原生音画') : undefined, 'aria-hidden': !visible,
@@ -1052,6 +1071,8 @@ export function ProgramMonitor({ owner, opened, timeline, selectionDisplay, sess
   }, [program?.signal?.aborted, program?.cleanupFailed, program?.cleanupPending])
   const orphanProgram = monitor.stopProgram && monitor.stopProgram !== localProgram.current
   const programBusy = running || orphanProgram || program?.cleanupPending || program?.cleanupFailed
+  const canTransport = canWindow && !unavailable && (!blocked || blank) && !tabSignal.aborted &&
+    !(windowState.active ?? windowState.job)?.formalArchiveOwner && !orphanProgram && !program?.cleanupPending && !program?.cleanupFailed
   const otherLease = !!(sessionControls?.needsRevoke || sessionControls?.pending || previewSession)
   useLayoutEffect(() => {
     if (!running || unavailable || mode !== 'window') return
@@ -1093,10 +1114,11 @@ export function ProgramMonitor({ owner, opened, timeline, selectionDisplay, sess
     if (blank) onFrame('0')
   }
   function togglePlayback() {
-    if (unavailable || tabSignal.aborted || (blocked && !blank)) return
+    if (!canTransport) return
+    // A program read/boundary consumes this intent itself. A decoded program
+    // window returns false and uses the same native toggle as an ordinary one.
     if (owner.programTransport?.(blank ? 0 : frame)) return
-    if (!canWindow) return
-    if (program?.cleanupPending || program?.cleanupFailed || (running && !monitor.state.active?.program)) return
+    if (running && !monitor.state.active?.program) return
     if (program && !otherLease && !running && mode !== 'window') {
       programDisclosure.current.open = true
       return
@@ -1111,7 +1133,7 @@ export function ProgramMonitor({ owner, opened, timeline, selectionDisplay, sess
     }
   }
   useLayoutEffect(() => {
-    if (togglePreview) togglePreview.current = canWindow ? togglePlayback : undefined
+    if (togglePreview) togglePreview.current = canTransport ? togglePlayback : undefined
     const intent = pendingStart.current
     pendingStart.current = undefined
     if (intent && mode === 'window' && !blocked && !tabSignal.aborted && intent.frame === frame && intent.epoch === owner.epoch) {
@@ -1124,7 +1146,7 @@ export function ProgramMonitor({ owner, opened, timeline, selectionDisplay, sess
   const playing = active?.waiting || active?.node?.paused === false
   return h('div', { className: 'fv-program-monitor' },
     h('div', { className: 'fv-monitor-toolbar' }, transport,
-      canWindow ? h('button', { type: 'button', onClick: togglePlayback, disabled: unavailable || (blocked && !blank),
+      canWindow ? h('button', { type: 'button', onClick: togglePlayback, disabled: !canTransport,
         'aria-keyshortcuts': 'Space', title: '空格：播放或暂停音画预览' }, pending ? '取消待播放' : playing ? '暂停预览' : '播放预览') : null,
       program ? h('details', { ref: programDisclosure, name: disclosureGroup, className: 'fv-monitor-disclosure' },
         h('summary', null, '整片后台预览'), h('div', { className: 'fv-monitor-popover' },

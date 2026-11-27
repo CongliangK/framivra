@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import React, { act } from 'react'
 import { JSDOM } from 'jsdom'
 import { PreviewBody } from '../src/client/index.mjs'
@@ -59,7 +60,7 @@ async function fixture(t, qualification, respond = () => {}, windowCapability = 
     await act(async () => target.dispatchEvent(event))
     return event.defaultPrevented
   }
-  return { button, click, checkbox, consent, requests, tab, space, pin: value => act(async () => Simulate.change(document.querySelector('input[inputmode="numeric"]'), { target: { value } })) }
+  return { dom, button, click, checkbox, consent, requests, tab, space, pin: value => act(async () => Simulate.change(document.querySelector('input[inputmode="numeric"]'), { target: { value } })) }
 }
 
 const enable = '开启当前工程自动预览'
@@ -106,6 +107,62 @@ test('monitor and timeline Space share preview transport without stealing text, 
   await act(async () => late.resolve(new Response('late')))
   assert.equal(document.querySelector('video'), null)
   assert(view.button('播放预览'))
+})
+
+test('one Space after duplicate ruler move/release queues playback before the ready-window seek settles', async t => {
+  const bytes = new Uint8Array([1, 2, 3])
+  const view = await fixture(t, qualified, body => {
+    if (body.op === 'session-render') return new Response(bytes, { headers: {
+      'Content-Type': 'video/mp4', 'X-Framivra-Version': version, 'X-Framivra-Start': String(body.frame),
+      'X-Framivra-End': String(body.frame + 30), 'X-Framivra-SHA256': createHash('sha256').update(bytes).digest('hex'),
+    } })
+    if (body.op === 'session-cancel') return reap(body)
+  })
+  const { dom } = view
+  const proto = dom.window.HTMLMediaElement.prototype
+  let paused = true, seeking = false, time = 0, plays = 0
+  Object.defineProperties(proto, {
+    currentSrc: { get() { return this.getAttribute('src') ?? '' } },
+    currentTime: { get: () => time, set: value => { time = value; seeking = true } },
+    duration: { get: () => 1 }, readyState: { get: () => 4 },
+    seekable: { get: () => ({ length: 1, start: () => 0, end: () => 1 }) },
+    seeking: { get: () => seeking }, paused: { get: () => paused },
+  })
+  proto.pause = () => { paused = true }
+  proto.play = function () { plays++; paused = false; this.dispatchEvent(new dom.window.Event('play')); return Promise.resolve() }
+  proto.load = () => {}
+  Object.defineProperties(dom.window.HTMLVideoElement.prototype, { videoWidth: { get: () => 1920 }, videoHeight: { get: () => 1080 } })
+  await view.pin('0')
+  await view.consent(allowRender)
+  await view.consent(allowPrepare)
+  await view.click(enable)
+  const untilVideo = () => document.querySelector('video')
+  for (let i = 0; i < 50 && !untilVideo(); i++) await act(async () => new Promise(resolve => setImmediate(resolve)))
+  const node = untilVideo()
+  assert(node)
+  await act(async () => node.dispatchEvent(new dom.window.Event('loadeddata')))
+  const ruler = document.querySelector('.fv-ruler')
+  ruler.getBoundingClientRect = () => ({ left: 0, width: 180 })
+  async function rulerPointer(type, clientX) {
+    const event = new dom.window.MouseEvent(type, { clientX, button: 0, bubbles: true })
+    Object.defineProperty(event, 'pointerId', { value: 1 })
+    await act(async () => ruler.dispatchEvent(event))
+  }
+  await rulerPointer('pointerdown', 1)
+  await rulerPointer('pointermove', 5)
+  await rulerPointer('pointerup', 5)
+  assert.equal(ruler.getAttribute('aria-valuenow'), '5')
+  assert(seeking && paused)
+  assert.equal(await view.space(ruler), true)
+  assert(view.button('取消待播放'), 'same-frame pointerup must not leave the Space handler one epoch behind')
+  assert.equal(plays, 0)
+  seeking = false
+  await act(async () => node.dispatchEvent(new dom.window.Event('seeked')))
+  assert.equal(plays, 1)
+  await rulerPointer('pointerdown', 5)
+  await rulerPointer('pointerup', 5)
+  assert(paused, 'an intentional same-frame gesture still pauses playback')
+  assert.equal(view.requests.filter(({ body }) => body.op === 'session-render').length, 1)
 })
 
 // Existing manual advertisement must never be interpreted as session capability.

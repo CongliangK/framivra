@@ -435,7 +435,8 @@ test('qualified archive is a default-off one-shot, plays in the window video and
   await f.render({ opened, sessionControls: { pending: true } })
   assert.equal(f.button(read).disabled, true)
   await f.render({ sessionControls: undefined })
-  assert.deepEqual(f.requests, [])
+  await f.click('播放预览')
+  assert.deepEqual(f.requests, [], 'ordinary Play cannot select an available archive')
   await f.click(read)
   const { request, signal } = f.requests[0], { operationId } = request
   assert.deepEqual(request, { op: 'formal-archive-read', grant: opened.grant, ownerId: 'owner', sessionId: 'session', operationId,
@@ -457,6 +458,7 @@ test('qualified archive is a default-off one-shot, plays in the window video and
   await f.emit(node, 'loadeddata')
   assert(node.controls && visible(node))
   assert.equal(node.getAttribute('aria-label'), '已核归档 A/V [25, 85)')
+  assert.equal(f.button('播放预览').disabled, true, 'archive playback stays with native controls')
   assert.equal(node.autoplay, false)
   assert.equal(node.muted, false)
   await act(async () => node.play())
@@ -683,6 +685,74 @@ for (const latest of [39, 10]) test(`pending auto render keeps its original wind
   assert.equal(calls.length, 1)
 })
 
+test('retargeted ordinary playback waits for target PTS and native seek; a revoked paint cannot play', async t => {
+  for (const ptsFirst of [true, false]) await t.test(ptsFirst ? 'PTS before seeked' : 'seeked before PTS', async t => {
+    const terminal = deferred(), calls = []
+    const { adapter, revoked } = sessionAdapter((op, request, signal) => {
+      calls.push({ op, request, signal })
+      return op === 'render' ? terminal.promise : sessionReap(request)
+    })
+    const f = await fixture(t, ProgramMonitor, { opened: windowOpened, timeline: 'timeline.json', frame: 10, previewSession: adapter }, { mockBlobURLs: true })
+    const paints = new Map(); let seq = 0
+    globalThis.requestAnimationFrame = callback => { paints.set(++seq, callback); return seq }
+    globalThis.cancelAnimationFrame = id => paints.delete(id)
+    async function paint() {
+      const [id, callback] = paints.entries().next().value
+      paints.delete(id)
+      await act(async () => callback())
+    }
+    await f.click('播放预览')
+    assert.deepEqual(calls.map(({ op }) => op), ['render'], 'existing consent starts playback without Generate click')
+    await f.pin(15)
+    assert.deepEqual(calls.map(({ op }) => op), ['render'])
+    await f.click('播放预览') // The new pin retired the old play intent, not the qualified render.
+    await act(async () => terminal.resolve(windowReply(calls[0].request, 40)))
+    await untilWindow(f.video)
+    const node = f.video(), time = midpoint(5)
+    await loadWindow(f, node)
+    assert.equal(node.currentTime, time)
+    await f.decoded(node, 0, time)
+    assert(!visible(node) && node.muted && node.paused)
+    if (ptsFirst) await f.decoded(node, 5 / 30, time)
+    else await f.settle(node)
+    assert(!visible(node) && node.muted && node.paused)
+    if (ptsFirst) await f.settle(node)
+    else await f.decoded(node, 5 / 30, time)
+    assert(visible(node) && node.muted && node.paused && !node.controls)
+    await paint()
+    assert(node.paused && node.muted)
+    if (ptsFirst) {
+      const late = paints.values().next().value
+      await act(async () => revoked.abort())
+      await act(async () => late())
+      assert.equal(f.video(), null)
+      assert.deepEqual(f.plays, [])
+      assert.deepEqual(calls.map(({ op }) => op), ['render', 'cancel'])
+    } else {
+      await paint()
+      assert.deepEqual(f.plays, [node]); assert(!node.muted && node.controls)
+      assert.equal(f.frame(), 15)
+      await f.click('暂停预览')
+      assert(node.paused)
+      await f.click('播放预览')
+      assert.deepEqual(f.plays, [node, node])
+      // A same-window drag and immediately queued Play also use the fence.
+      await f.pin(20)
+      await f.click('播放预览')
+      await f.settle(node)
+      assert(!visible(node) && node.muted && node.paused)
+      await f.decoded(node, 5 / 30, midpoint(10))
+      assert(!visible(node) && node.paused)
+      await f.decoded(node, 10 / 30, midpoint(10))
+      assert(visible(node) && node.muted && node.paused && !node.controls)
+      await paint()
+      await paint()
+      assert.deepEqual(f.plays, [node, node, node]); assert.equal(f.frame(), 20)
+      assert.deepEqual(calls.map(({ op }) => op), ['render'])
+    }
+  })
+})
+
 test('an off-target initial seek stays hidden; pinning the original start after receipt reaps the old operation', async t => {
   const calls = [], terminal = deferred()
   const { adapter } = sessionAdapter((op, request, signal) => {
@@ -794,10 +864,10 @@ async function endWindow(f, node) {
 }
 
 async function programMonitor(t, { second, boundaryCheck } = {}) {
-  const commands = [], stored = new Map(), duration = 90
+  const commands = [], stored = new Map(), duration = 90, togglePreview = {}
   const opened = { ...continuationOpened, previewSession: { ...continuationQualification, programRun: { version: 1 } },
     snapshot: { ...windowOpened.snapshot, document: { project: { duration_frames: duration, fps: 30 } } } }
-  const f = await fixture(t, ProgramMonitor, { opened, timeline: 'timeline.json', duration,
+  const f = await fixture(t, ProgramMonitor, { opened, timeline: 'timeline.json', duration, togglePreview,
     async call(sessionId, request, signal) {
       commands.push({ request, signal })
       if (request.op === 'authorize-preview-session') return { ok: true, grant: { id: 'program', ownerId: 'owner', openGrant: opened.grant,
@@ -836,7 +906,8 @@ async function programMonitor(t, { second, boundaryCheck } = {}) {
   await loadPlayable(first)
   assert.deepEqual(f.plays, [first]); assert(!first.muted)
   return { ...f, first, loadPlayable, checks: () => commands.filter(({ request }) => request.op === 'program-check').map(({ request }) => request.frame),
-    commands, stored, spare: () => document.querySelectorAll('video')[1] }
+    commands, stored, space: () => act(async () => { assert.equal(typeof togglePreview.current, 'function'); togglePreview.current() }),
+    spare: () => document.querySelectorAll('video')[1] }
 }
 
 test('a nonzero program pin stays hidden until both native seek and target PTS, then pause can cancel queued play', async t => {
@@ -853,7 +924,8 @@ test('a nonzero program pin stays hidden until both native seek and target PTS, 
     await f.pin(35)
     await untilWindow(() => f.video() && f.video() !== f.first)
     const node = f.video()
-    await f.click('播放预览')
+    await f.space()
+    assert(f.button('取消待播放'), 'one Space queues the program window through the shared native path')
     await f.loadPlayable(node)
     const time = midpoint(5)
     assert.equal(node.currentTime, time)
