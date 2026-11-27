@@ -287,8 +287,10 @@ export class PreviewProgramRun {
     run.status = status
     run.code = code
     run.cleanup = (async () => {
-      await run.finished
       const host = async () => {
+        // A known lease can be revoked while a render response or cache write
+        // is still pending. Only authorization itself may return a late grant.
+        if (!run.grant) await run.finished
         const { call, sessionId, grant, ownerId } = run.binding
         if (run.grant) {
           const answer = await call(sessionId, { op: 'revoke-preview-session', ...original(run.grant) }, timeout())
@@ -300,8 +302,9 @@ export class PreviewProgramRun {
         }
         run.authorizationId = undefined
       }
-      const browser = async () => { await run.cache?.close(); run.cache = undefined }
-      const results = await Promise.allSettled([host(), browser()])
+      // Do not delete/release the private cache until the last put has settled.
+      const browser = async () => { await run.finished; await run.cache?.close(); run.cache = undefined }
+      const results = await Promise.allSettled([Promise.resolve().then(host), browser()])
       run.cleaned = results.every(result => result.status === 'fulfilled')
       if (!run.cleaned) { run.status = 'error'; run.code = 'PROGRAM_CLEANUP_UNCONFIRMED' }
       run.cleanup = undefined
