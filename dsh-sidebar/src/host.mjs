@@ -3,7 +3,7 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import { readFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { PreviewError, TimelineReader, validateEnvelope, prepareGfxArgs, prepareGfxCapable, hitsWarmSvgWindow, validatePreviewWindowRange, validateFormalArchiveRange, fail, HOST_IDENTITY, createRequestLogger, BAKED_BUILD_STAMP, BUILD_STAMP_MARKER, HOST_LIB_MODULES, CLIENT_MODULES, composeBuildStamp } from './protocol.mjs'
+import { PreviewError, TimelineReader, validateEnvelope, prepareGfxArgs, prepareGfxCapable, hitsWarmSvgWindow, validatePreviewWindowRange, validateFormalArchiveRange, fail, HOST_IDENTITY, createRequestLogger, BAKED_BUILD_STAMP, BUILD_STAMP_MARKER, HOST_LIB_MODULES, CLIENT_MODULES, composeBuildStamp, ORDINARY_PROGRAM_CAPABILITY } from './protocol.mjs'
 import { mediaResponse } from './media.mjs'
 import { boundedText, CONTROL_REQUEST_LIMIT, FRAME_REQUEST_LIMIT, FRAME_WIRE_LIMIT, PROGRAM_RUN_MAX_WINDOWS, PROGRAM_RUN_MAX_BYTES, PROGRAM_RUN_WINDOW_BYTES, PROGRAM_RUN_TTL } from './bounded.mjs'
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
@@ -49,13 +49,21 @@ const MEDIA = ['out/final.mp4', 'out/draft_final.mp4']
 const PREVIEW_NONCE_LIMIT = 128
 const SESSION_WINDOW_LIMIT = 120, SESSION_WINDOW_TTL = 10 * 60 * 1000
 const continuationCapable = capability => capability?.input_epoch === true
+// Release identities are independently approved. There are none in this build.
+const APPROVED_PROGRAM_PROVIDERS = Object.freeze([])
+const PROGRAM_LAUNCHER_LIMIT = 64 * 1024
+const programCapable = binding => binding?.ordinaryProgramQualified === true
 // Both bits must come from the same verified direct launcher capability as ordinary continuation.
 const programAudioContinuationCapable = capability => continuationCapable(capability) && capability.program_audio === true
-const sessionQualification = (ownerId, capability) => ({ capability: 'preview-session', version: 1, ownerId,
-  ...(continuationCapable(capability) && { continuation: { version: 1 }, programRun: { version: 1 } }),
-  ...(programAudioContinuationCapable(capability) && { programAudioContinuation: { version: 1 } }),
-  ...(capability.first_frame?.version === 1 && { firstFrame: { version: 1 } }),
-  ...(capability.formal_archive?.version === 1 && { formalArchive: { version: 1 } }) })
+const sessionQualification = (ownerId, binding) => {
+  const { capability } = binding
+  return { capability: 'preview-session', version: 1, ownerId,
+    ...(continuationCapable(capability) && { continuation: { version: 1 } }),
+    ...(programCapable(binding) && { programRun: { version: 1 } }),
+    ...(programAudioContinuationCapable(capability) && { programAudioContinuation: { version: 1 } }),
+    ...(capability.first_frame?.version === 1 && { firstFrame: { version: 1 } }),
+    ...(capability.formal_archive?.version === 1 && { formalArchive: { version: 1 } }) }
+}
 
 class WindowSessions {
   #receiptKey = randomBytes(32)
@@ -71,7 +79,8 @@ class WindowSessions {
     if (!open.owner || !open.windowOwnerId || open.closing || !open.windowExecutable) fail('SESSION_UNSUPPORTED', 'Open a qualified owner preview first', 403)
     if ((programBinding ? data.scope !== 'whole-timeline' : data.scope !== 'current-project') || data.renderConsent !== 'cache/preview-only' || data.prepareInputs !== true) fail('SESSION_CONSENT', 'Separate render and cold-input permissions are required', 403)
     const { capability } = open.windowExecutable
-    if (programBinding && (!continuationCapable(capability) || this.activeFor(open.session))) fail('PROGRAM_RUN_BUSY', 'Requires input identity support and no other preview session', 409)
+    if (programBinding && !programCapable(open.windowExecutable)) fail('PROGRAM_RUN_UNSUPPORTED', 'Whole-timeline preview requires a separately approved ordinary A/V provider', 422)
+    if (programBinding && this.activeFor(open.session)) fail('PROGRAM_RUN_BUSY', 'Requires no other preview session', 409)
     if (!programBinding && this.activeFor(open.session, true)) fail('SESSION_BUSY', 'Stop the whole-timeline preview before authorizing another scope', 409)
     if (Object.hasOwn(data, 'continuation') && (data.continuation !== true || !continuationCapable(capability))) fail('CONTINUATION_DENIED', 'Continuous preview requires separate consent and input identity support', 403)
     if (Object.hasOwn(data, 'readWarmSvg') && (data.readWarmSvg !== true || capability.warm_svg_media !== true)) fail('WARM_SVG_DENIED', 'Warm SVG reads require exact owner consent and a qualified fixed-wheel capability', 403)
@@ -213,7 +222,10 @@ function writeCapabilityRefusal(capabilities) {
   if (transport?.flag !== '--request-stdin' || transport.max_bytes !== 8388608) return 'Installed vtx lacks the official bounded --request-stdin transport; read/copy remain available. Reopening /dev/stdin is not a supported fallback.'
 }
 
-export function createPreviewHost(ctx, config = {}) {
+export function createPreviewHost(ctx, config = {}, { approvedProgramProviders = APPROVED_PROGRAM_PROVIDERS } = {}) {
+  // Runtime apply passes only ctx and config; approval cannot come from config,
+  // the environment, or an incoming request. Tests supply closed fixtures here.
+  const programProviders = approvedProgramProviders.map(identity => Object.freeze({ ...identity }))
   const reader = new TimelineReader(ctx.subprocess, config, async (snapshot, signal) => {
     try { return await validateKernelConfigSelection(ctx, snapshot, signal) }
     catch (error) {
@@ -305,6 +317,26 @@ export function createPreviewHost(ctx, config = {}) {
   function sameWindowExecutable(a, b) {
     if (a.targetKey !== b.targetKey || a.profileKey !== b.profileKey || a.version !== b.version) fail('EXECUTABLE_CHANGED', 'Independent window launcher identity changed; reopen preview', 409)
   }
+  async function qualifyOrdinaryProgram(binding, capability, identify, signal) {
+    if (!continuationCapable(capability) || capability.ordinary_long_run !== ORDINARY_PROGRAM_CAPABILITY ||
+        !programProviders.length || typeof ctx.fs.readBytes !== 'function') return false
+    const candidates = programProviders.filter(pin => pin.wheelSha256 === capability.wheel_sha256 &&
+      pin.runtimeProjectionSha256 === capability.runtime_projection_sha256)
+    if (!candidates.length) return false
+    try {
+      const target = await localTarget(binding.executable, undefined, signal)
+      if (target.targetKey !== binding.targetKey) return false
+      const bytes = await ctx.fs.readBytes(target, signal, PROGRAM_LAUNCHER_LIMIT)
+      if (!ArrayBuffer.isView(bytes) || bytes.byteLength < 1 || bytes.byteLength > PROGRAM_LAUNCHER_LIMIT) return false
+      sameWindowExecutable(binding, await identify())
+      signal.throwIfAborted()
+      const digest = createHash('sha256').update(bytes).digest('hex')
+      return candidates.some(pin => pin.launcherSha256 === digest)
+    } catch {
+      signal.throwIfAborted()
+      return false // Independent long-run refusal does not disable ordinary windows.
+    }
+  }
   async function probeWindow(config, root, project, timeline, ordinaryExecutable, signal, owner, deadlineAt) {
     if (!platformAllowsWindow() || !config.previewWindowExecutable) return
     try {
@@ -330,7 +362,8 @@ export function createPreviewHost(ctx, config = {}) {
       }
       if (capability.input_epoch === true) await optionalProbe(reader.firstFrameCapabilities.bind(reader))
       await optionalProbe(reader.formalArchiveCapabilities.bind(reader))
-      return Object.freeze({ ...binding, capability })
+      const ordinaryProgramQualified = await qualifyOrdinaryProgram(binding, capability, identify, signal)
+      return Object.freeze({ ...binding, capability, ordinaryProgramQualified })
     } catch (error) {
       signal.throwIfAborted()
       // Failed qualification never takes over ordinary timeline opens. Actual
@@ -736,7 +769,7 @@ export function createPreviewHost(ctx, config = {}) {
         for (const previous of grants.values()) if (previous.session === session && previous.timeline.targetKey === timeline.targetKey) { previous.storagePlan = undefined; previous.storageEpoch = (previous.storageEpoch ?? 0) + 1 }
         const windowOwnerId = windowExecutable ? randomUUID() : undefined
         grants.set(grantId, { id: grantId, owner, windowOwnerId, session, cwd, root, relative, timeline, project, projectPath, executable, executableTarget, executableVersion, windowExecutable, capabilities, media, contentVersion: snapshot.content_version, savedProject: snapshot.document.project, expiresAt: clock() + ttlMs, configFingerprint: config.fingerprint, configSnapshot: config })
-        return json({ grant: grantId, snapshot, capabilities, ...(windowOwnerId ? { previewSession: sessionQualification(windowOwnerId, windowExecutable.capability) } : {}), expires_in_ms: ttlMs, host: hostIdentity(),
+        return json({ grant: grantId, snapshot, capabilities, ...(windowOwnerId ? { previewSession: sessionQualification(windowOwnerId, windowExecutable) } : {}), expires_in_ms: ttlMs, host: hostIdentity(),
           ...(!platformAllowsWrites() ? { storeCapabilities: writeUnavailable(writePlatformMessage) } : {}),
           media: [...media].map(([mediaId, item]) => ({ mediaId, label: item.path, provenance: 'unknown', warning: 'Existing output; correspondence to this timeline content_version is NOT verified' })) })
         } catch (error) {
@@ -771,6 +804,7 @@ export function createPreviewHost(ctx, config = {}) {
         if (!owner || !grant.owner) fail('BAD_SESSION_GRANT', 'Explicit owner authorization is required', 403)
         let attempt
         if (program) {
+          if (!programCapable(grant.windowExecutable)) fail('PROGRAM_RUN_UNSUPPORTED', 'Whole-timeline preview requires a separately approved ordinary A/V provider', 422)
           const attempts = grant.programAttempts ??= new Map()
           if (!uuidShape(data.authorizationId) || attempts.has(data.authorizationId)) fail('BAD_PROGRAM_RUN', 'An authorization attempt is single-use', 409)
           if (attempts.size >= PREVIEW_NONCE_LIMIT) fail('PROGRAM_RUN_LIMIT', 'No more authorization attempts on this open grant', 429)
@@ -784,8 +818,15 @@ export function createPreviewHost(ctx, config = {}) {
         }
         let binding
         if (program) {
-          if (data.storageConsent !== 'temporary-browser-cache' || data.renderConsent !== 'cache/preview-only' || data.prepareInputs !== true ||
-              !continuationCapable(grant.windowExecutable?.capability)) fail('SESSION_CONSENT', 'Whole-timeline preview requires qualified input identity and explicit temporary browser-cache consent', 403)
+          if (data.storageConsent !== 'temporary-browser-cache' || data.renderConsent !== 'cache/preview-only' || data.prepareInputs !== true) {
+            fail('SESSION_CONSENT', 'Whole-timeline preview requires explicit temporary browser-cache consent', 403)
+          }
+          const supplier = grant.windowExecutable
+          const identify = () => windowExecutableIdentity(supplier.executable, grant.root, grant.project, grant.executableTarget, hold.signal)
+          sameWindowExecutable(supplier, await identify())
+          if (!await qualifyOrdinaryProgram(supplier, supplier.capability, identify, hold.signal)) {
+            fail('EXECUTABLE_CHANGED', 'Approved ordinary A/V provider identity changed; reopen preview', 409)
+          }
           const busy = () => frameOwners.size || reader.frameBusy || grant.plan || grant.running || grant.outcomeUnknown || semanticAdmission || storageOwners.size
           if (busy()) fail('PROGRAM_RUN_BUSY', 'Settle current preview, edits or storage work first', 409)
           const timelineVersion = await programTimelineVersion(grant, hold.signal)

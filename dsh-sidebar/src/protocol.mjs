@@ -89,6 +89,7 @@ const WINDOW_DIAGNOSTICS = new Map([
   ['output.limit', 'The generated window exceeds the inline response limit.'],
 ])
 const WINDOW_LAUNCHER = 'framivra.preview-window.fixed-wheel/v1'
+export const ORDINARY_PROGRAM_CAPABILITY = 'framivra.preview-window.ordinary-long-run/v1'
 const windowDigest = value => typeof value === 'string' && value.length === 64 && /^[a-f0-9]{64}$/.test(value)
 
 function decodePreviewWindowCapabilities(text) {
@@ -101,6 +102,7 @@ function decodePreviewWindowCapabilities(text) {
   return Object.freeze({ schema: WINDOW_SCHEMA, inline_media: true, prepare_inputs: true, launcher: WINDOW_LAUNCHER,
     wheel_sha256: capability.wheel_sha256, runtime_projection_sha256: capability.runtime_projection_sha256,
     ...(capability.input_epoch === true ? { input_epoch: true } : {}),
+    ...(capability.ordinary_long_run === ORDINARY_PROGRAM_CAPABILITY ? { ordinary_long_run: ORDINARY_PROGRAM_CAPABILITY } : {}),
     ...(capability.warm_svg_media === true ? { warm_svg_media: true } : {}),
     ...(capability.program_audio === true ? { program_audio: true } : {}) })
 }
