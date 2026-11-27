@@ -5,9 +5,10 @@ A candidate statement records observations, not release approval. Qualification
 requires independent expected wheel/launcher hashes from the reviewing caller;
 this tool never reads approval from the statement, a project or an install.
 
-The normal installer can enable this only after a maintainer has approved and
-published the exact artifact and updated the separately shipped installer
-catalog. No user steps are added. The first installer transaction supports
+The normal installer can enable this only after a maintainer has reviewed the
+exact source/build/artifact identities in the separately shipped installer
+catalog. It builds locally without a published wheel. No user steps are added.
+The first installer transaction supports
 fresh install and exact-match retry only; a different existing profile is
 preserved and needs a future automatic upgrade transaction.
 """
@@ -73,7 +74,8 @@ def _json(raw):
 def _env(home):
     return {'PATH': '/usr/bin:/bin', 'HOME': str(home), 'LC_ALL': 'C.UTF-8', 'TZ': 'UTC',
             'PIP_CONFIG_FILE': os.devnull, 'PIP_NO_INDEX': '1', 'SOURCE_DATE_EPOCH': '315532800',
-            'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_TERMINAL_PROMPT': '0'}
+            'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_TERMINAL_PROMPT': '0',
+            'GIT_ALLOW_PROTOCOL': '', 'GIT_NO_LAZY_FETCH': '1'}
 
 
 @contextmanager
@@ -196,13 +198,15 @@ def _write(path, data, mode=0o400):
     path.chmod(mode)
 
 
-def _source_archive(source, commit, env):
+def _source_archive(source, commit, env, *, expected_tree=None, check=_noop):
     def git(*args, limit=32 * 1024):
-        return _run(['/usr/bin/git', *args], cwd=source, env=env, limit=limit)
+        return _run(['/usr/bin/git', *args], cwd=source, env=env, limit=limit, check=check)
 
     _require(_COMMIT.fullmatch(commit) is not None and git('rev-parse', 'HEAD').strip() == commit.encode('ascii')
              and not git('status', '--porcelain'), 'expected a clean checkout at the exact requested commit')
     listing = git('ls-tree', '-rz', commit, '--', *_INPUTS, limit=1024**2)
+    if expected_tree is not None:
+        _require(_sha(listing.replace(b'\0', b'\n')) == expected_tree, 'approved Git source tree differs')
     expected = {}
     for line in listing.split(b'\0')[:-1]:
         meta, name = line.split(b'\t', 1)
@@ -229,20 +233,41 @@ def _source_archive(source, commit, env):
     return members
 
 
-def _build(python, root, members, env):
+def _build(python, root, members, env, *, check=_noop):
     source, wheels = root / 'src', root / 'wheels'
     source.mkdir(parents=True)
     wheels.mkdir()
     for name, data in members.items():
+        check()
         path = source / name
         path.parent.mkdir(parents=True, exist_ok=True)
         _write(path, data)
     _run([python, '-IB', '-m', 'pip', '--isolated', '--disable-pip-version-check', 'wheel', '--no-index',
-          '--no-deps', '--no-build-isolation', '--wheel-dir', wheels, source], cwd=root, env=env)
+          '--no-deps', '--no-build-isolation', '--no-cache-dir', '--wheel-dir', wheels, source],
+         cwd=root, env=env, check=check)
     paths = tuple(wheels.iterdir())
     _require(len(paths) == 1 and re.fullmatch(r'framivra-[A-Za-z0-9_.+]+-py3-none-any\.whl', paths[0].name),
              'expected one pure Framivra kernel wheel')
     return paths[0].name, _read(paths[0], _WHEEL_LIMIT)
+
+
+def _build_tools(python, root, env, *, check=_noop):
+    return _json(_run([python, '-IB', '-c', 'import importlib.metadata as m,json,sys; '
+                     'print(json.dumps(dict(python=sys.version.split()[0], '
+                     'pip=m.version("pip"),setuptools=m.version("setuptools"),wheel=m.version("wheel"))))'],
+                      cwd=root, env=env, check=check))
+
+
+def build_approved_wheel(python, scratch, source, commit, *, source_tree_sha256, build_tools,
+                         wheel_filename, wheel_bytes, wheel_sha256, check):
+    """Consumer of a maintainer's prior inputs/outputs, not a catalog generator."""
+    env = _env(scratch)
+    members = _source_archive(source, commit, env, expected_tree=source_tree_sha256, check=check)
+    _require(_build_tools(python, scratch, env, check=check) == build_tools, 'approved preview build tool versions differ')
+    filename, wheel = _build(python, scratch / 'build', members, env, check=check)
+    _require(filename == wheel_filename and len(wheel) == wheel_bytes and _sha(wheel) == wheel_sha256,
+             'offline wheel differs from independently approved bytes')
+    return wheel
 
 
 def build_candidate(source, commit, output, *, python):
@@ -253,17 +278,15 @@ def build_candidate(source, commit, output, *, python):
         root = Path(tmp)
         env = _env(root)
         members = _source_archive(source, commit, env)
-        tools = _json(_run([python, '-IB', '-c', 'import importlib.metadata as m,json,sys; '
-                           'print(json.dumps(dict(python=sys.version.split()[0], '
-                           'pip=m.version("pip"),setuptools=m.version("setuptools"),wheel=m.version("wheel"))))'],
-                          cwd=root, env=env))
+        tools = _build_tools(python, root, env)
         filename, wheel = _build(python, root / 'one', members, env)
         _require(_build(python, root / 'two', members, env) == (filename, wheel), 'offline wheel build was not reproducible')
         launcher = members['scripts/preview_window_wheel.py']
         identity = _run(['/usr/bin/git', 'ls-tree', '-r', commit, '--', *_INPUTS], cwd=source, env=env, limit=1024**2)
         proposal = {'schema': 'framivra.preview-supplier-candidate/v1', 'commit': commit,
                     'sourceTreeSha256': _sha(identity), 'wheelFilename': filename,
-                    'launcherSha256': _sha(launcher), 'wheelSha256': _sha(wheel), 'buildTools': tools}
+                    'launcherSha256': _sha(launcher), 'wheelSha256': _sha(wheel),
+                    'wheelBytes': len(wheel), 'buildTools': tools}
         output.mkdir(mode=0o700)  # Exclusive: no existing distribution or install is replaced.
         _write(output / 'vtx-preview', launcher, 0o500)
         _write(output / 'kernel.whl', wheel)
@@ -499,7 +522,7 @@ def _publish_new(staged, target):
         raise OSError(error, 'cannot publish preview profile without replacement')
 
 
-def enroll_profile(root, *, launcher_path, fetch_wheel, wheel_filename, launcher_sha256, wheel_sha256,
+def enroll_profile(root, *, launcher_path, prepare_wheel, wheel_filename, launcher_sha256, wheel_sha256,
                    projection_sha256, python, check=_noop):
     """Installer-only operation, under the existing install lock and approved catalog.
 
@@ -518,15 +541,17 @@ def enroll_profile(root, *, launcher_path, fetch_wheel, wheel_filename, launcher
     with tempfile.TemporaryDirectory(prefix='.preview-enrollment-', dir=root) as tmp:
         scratch = Path(tmp)
         profile = target if adopt else scratch / 'preview'
-        fresh = None
-        if not adopt:
-            launcher = _read(launcher_path, 256 * 1024)
-            _require(_sha(launcher) == launcher_sha256, 'candidate does not match independently approved launcher')
-            wheel = _read(fetch_wheel(), _WHEEL_LIMIT)
-            fresh = launcher, wheel
-        receipt = _supervise(lambda child_check: _qualify_profile(scratch, profile, wheel_filename=wheel_filename,
-            launcher_sha256=launcher_sha256, wheel_sha256=wheel_sha256, python=python,
-            fresh=fresh, expected_projection=projection_sha256, check=child_check), check)
+        def qualify(child_check):
+            fresh = None
+            if not adopt:
+                launcher = _read(launcher_path, 256 * 1024)
+                _require(_sha(launcher) == launcher_sha256, 'candidate does not match independently approved launcher')
+                fresh = launcher, prepare_wheel(scratch, child_check)
+            return _qualify_profile(scratch, profile, wheel_filename=wheel_filename,
+                launcher_sha256=launcher_sha256, wheel_sha256=wheel_sha256, python=python,
+                fresh=fresh, expected_projection=projection_sha256, check=child_check)
+
+        receipt = _supervise(qualify, check)
         check()
         if not adopt:
             before = profile.stat()

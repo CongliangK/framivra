@@ -64,11 +64,11 @@ class PreparePreviewSupplierTest(unittest.TestCase):
 
             with patch.object(supplier, '_supervise', side_effect=lambda op, check: op(check)), \
                     patch.object(supplier, '_qualify_profile', side_effect=probe) as verify:
-                result = supplier.enroll_profile(root, launcher_path=launch, fetch_wheel=lambda: wheel, **approved)
+                result = supplier.enroll_profile(root, launcher_path=launch, prepare_wheel=lambda _scratch, _check: wheel.read_bytes(), **approved)
                 self.assertEqual((root / 'preview').stat().st_ino, seen[1])
                 self.assertEqual(old.read_bytes(), b'{"status":"ready"}\n')  # interruption before receipt
                 again = supplier.enroll_profile(root, launcher_path=launch,
-                    fetch_wheel=lambda: self.fail('adoption must not fetch'), **approved)
+                    prepare_wheel=lambda _scratch, _check: self.fail('adoption must not rebuild'), **approved)
                 self.assertEqual(again, result)
                 self.assertEqual(seen[::2], [True, False])
                 self.assertEqual(verify.call_count, 2)
@@ -86,14 +86,14 @@ class PreparePreviewSupplierTest(unittest.TestCase):
             active.write_bytes(b'{"status":"ready"}\n')
             with patch.object(supplier, '_qualify_profile', side_effect=supplier.SupplierError('fixture failed')):
                 with self.assertRaisesRegex(supplier.SupplierError, 'fixture failed'):
-                    supplier.enroll_profile(root, launcher_path=launcher, fetch_wheel=lambda: wheel, **approved)
+                    supplier.enroll_profile(root, launcher_path=launcher, prepare_wheel=lambda _scratch, _check: wheel.read_bytes(), **approved)
             self.assertFalse(profile.exists())
             profile.mkdir(mode=0o700)
             foreign = profile / 'owner-data'
             foreign.write_bytes(b'unrelated')
             with self.assertRaisesRegex(supplier.SupplierError, 'unexpected entries'):
                 supplier.enroll_profile(root, launcher_path=launcher,
-                    fetch_wheel=lambda: self.fail('conflict must not fetch'), **approved)
+                    prepare_wheel=lambda _scratch, _check: self.fail('conflict must not rebuild'), **approved)
             self.assertEqual(foreign.read_bytes(), b'unrelated')
             self.assertEqual(active.read_bytes(), b'{"status":"ready"}\n')
 
@@ -114,7 +114,8 @@ class PreparePreviewSupplierTest(unittest.TestCase):
             helper.write_text("raise AssertionError('unapproved helper executed')\n")
             listing = 'same wheel sources at both commits'
             key = hashlib.sha256((listing + '\n').encode()).hexdigest()
-            approved = {key: {'releaseTag': 'v2.3.0', 'wheelFilename': 'framivra-2.3.0-py3-none-any.whl',
+            approved = {key: {'wheelFilename': 'framivra-2.3.0-py3-none-any.whl', 'wheelBytes': 13,
+                              'buildTools': {k: '1.2.3' for k in ('python','pip','setuptools','wheel')},
                               'helperSha256': hashlib.sha256(b'# approved helper\n').hexdigest()}}
             with patch.object(install_source, '_PREVIEW_SUPPLIER_RELEASES', approved), \
                     patch.object(install_source, 'git', return_value=listing), \
@@ -124,6 +125,55 @@ class PreparePreviewSupplierTest(unittest.TestCase):
                         install_source.optional_preview_supplier(source, source, commit, install_source.REPOSITORY,
                                                                 sys.executable)
                 acquire.assert_not_called()
+
+    def test_matching_catalog_hands_off_only_the_offline_builder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp).resolve()
+            helper = source / 'scripts/release/prepare_preview_supplier.py'
+            helper.parent.mkdir(parents=True)
+            helper.write_bytes(b'''def build_approved_wheel(python, scratch, source, commit, **pins):
+    pins['check']()
+    return {'sourceTreeSha256': pins['source_tree_sha256'], 'commit': commit,
+            'scratch': scratch.name, 'wheelSha256': pins['wheel_sha256']}
+def enroll_profile(root, *, prepare_wheel, **pins):
+    return prepare_wheel(root / '.private-build', pins['check'])
+''')
+            tree = 'reviewed inputs'
+            key = supplier._sha((tree + '\n').encode('ascii'))
+            record = {'wheelFilename': 'framivra-2.3.0-py3-none-any.whl', 'wheelBytes': 13,
+                      'buildTools': dict(python='3.12.0', pip='24.0', setuptools='75.0', wheel='0.44.0'),
+                      'helperSha256': supplier._sha(helper.read_bytes()), 'launcherSha256': 'a' * 64,
+                      'wheelSha256': 'b' * 64, 'runtimeProjectionSha256': 'c' * 64}
+            with patch.object(install_source, '_PREVIEW_SUPPLIER_RELEASES', {key: record}), \
+                    patch.object(install_source, 'git', return_value=tree), \
+                    patch.object(install_source.downloads, 'acquire') as acquire:
+                enrollment = install_source.optional_preview_supplier(source, source, '1' * 40,
+                                                                        install_source.REPOSITORY, sys.executable)
+                self.assertEqual(enrollment, {'sourceTreeSha256': key, 'commit': '1' * 40,
+                                              'scratch': '.private-build', 'wheelSha256': 'b' * 64})
+                acquire.assert_not_called()
+
+    def test_approved_offline_build_checks_toolset_and_wheel_before_qualification(self):
+        versions = dict(python='3.12.0', pip='24.0', setuptools='75.0', wheel='0.44.0')
+        wheel = b'a wheel candidate'
+        filename = 'framivra-2.3.0-py3-none-any.whl'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            params = dict(source_tree_sha256='b' * 64, build_tools=versions, wheel_filename=filename,
+                          wheel_bytes=len(wheel), wheel_sha256=supplier._sha(wheel), check=lambda: None)
+            with patch.object(supplier, '_source_archive', return_value={'vt.py': b'reviewed'}) as archive, \
+                    patch.object(supplier, '_build_tools', return_value=dict(versions, pip='25.0')) as tools, \
+                    patch.object(supplier, '_build', return_value=(filename, wheel)) as build:
+                with self.assertRaisesRegex(supplier.SupplierError, 'tool versions differ'):
+                    supplier.build_approved_wheel(sys.executable, root, root/'source', 'a'*40, **params)
+                build.assert_not_called()
+                tools.return_value = versions
+                with self.assertRaisesRegex(supplier.SupplierError, 'wheel differs'):
+                    supplier.build_approved_wheel(sys.executable, root, root/'source', 'a'*40,
+                                                  **dict(params, wheel_sha256='c'*64))
+                self.assertEqual(supplier.build_approved_wheel(sys.executable, root, root/'source', 'a'*40, **params), wheel)
+                self.assertEqual(archive.call_args.kwargs['expected_tree'], params['source_tree_sha256'])
+                self.assertIs(build.call_args.kwargs['check'], params['check'])
 
     def test_optional_receipt_write_failure_leaves_confirmed_core_ready(self):
         with tempfile.TemporaryDirectory() as tmp:

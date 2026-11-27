@@ -47,7 +47,7 @@ BUNDLE = ('install_source.py', 'install_downloads.py', 'install_native_windows.p
 SCHEMA = 'framivra.installation/v1'
 REPOSITORY = 'https://github.com/CongliangK/framivra.git'
 # Release-reviewed records only, keyed by wheel-source Git object identity.
-# Empty until independently signed/approved distribution exists. Nothing in
+# Empty until independently signed/approved build and runtime pins exist. Nothing in
 # a project, install receipt, environment variable or downloaded wheel adds pins.
 _PREVIEW_SUPPLIER_RELEASES = {}
 _PREVIEW_SOURCE = ('vt.py', 'vtx', 'pyproject.toml', 'setup.py', 'VERSION', 'MANIFEST.in', 'README.md',
@@ -652,7 +652,7 @@ def _preview_helper_bytes(path, digest):
 
 def optional_preview_supplier(root, source, commit, repository, python, *, check=lambda: None):
     # This hook runs under installation_lock. Unapproved installations never
-    # look at the destination or load an optional helper or download a wheel.
+    # look at the destination, load an optional helper or build a wheel.
     if sys.platform != 'linux' or repository != REPOSITORY or not _PREVIEW_SUPPLIER_RELEASES:
         return None
     tree = git('ls-tree', '-r', commit, '--', *_PREVIEW_SOURCE, cwd=source)
@@ -660,10 +660,14 @@ def optional_preview_supplier(root, source, commit, repository, python, *, check
     approved = _PREVIEW_SUPPLIER_RELEASES.get(key)
     if approved is None:
         return None
-    tag, filename = approved['releaseTag'], approved['wheelFilename']
-    if (not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[1-9][0-9]*)?', tag)
-            or not re.fullmatch(r'framivra-[A-Za-z0-9_.+]+-py3-none-any\.whl', filename)):
-        raise InstallError('Invalid release-reviewed preview catalog entry')
+    filename = approved.get('wheelFilename')
+    build_tools = approved.get('buildTools')
+    wheel_bytes = approved.get('wheelBytes')
+    if (type(filename) is not str or not re.fullmatch(r'framivra-[A-Za-z0-9_.+]+-py3-none-any\.whl', filename)
+            or type(build_tools) is not dict or build_tools.keys() != {'python', 'pip', 'setuptools', 'wheel'}
+            or not all(type(v) is str and re.fullmatch(r'[A-Za-z0-9.+!_-]{1,64}', v) for v in build_tools.values())
+            or type(wheel_bytes) is not int or not 0 < wheel_bytes <= 64 * 1024**2):
+        raise InstallError('Invalid release-reviewed preview build catalog entry')
     helper_name = 'scripts/release/prepare_preview_supplier.py'
     helper_path = physical(source / helper_name)
     raw = _preview_helper_bytes(helper_path, approved.get('helperSha256'))
@@ -672,14 +676,13 @@ def optional_preview_supplier(root, source, commit, repository, python, *, check
     helper.__file__ = str(helper_path)
     exec(compile(raw, str(helper_path), 'exec'), helper.__dict__)
 
-    def fetch_wheel():
-        check()
-        return downloads.acquire(root / 'cache' / 'downloads',
-            [f'https://github.com/CongliangK/framivra/releases/download/{tag}/{filename}'],
-            approved['wheelSha256'], size=approved['wheelBytes'], filename=filename)
+    def prepare_wheel(scratch, child_check):
+        return helper.build_approved_wheel(python, scratch, source, commit,
+            source_tree_sha256=key, build_tools=build_tools, wheel_filename=filename,
+            wheel_bytes=wheel_bytes, wheel_sha256=approved['wheelSha256'], check=child_check)
 
     return helper.enroll_profile(root, launcher_path=physical(source / 'scripts/preview_window_wheel.py'),
-        fetch_wheel=fetch_wheel, wheel_filename=filename, launcher_sha256=approved['launcherSha256'],
+        prepare_wheel=prepare_wheel, wheel_filename=filename, launcher_sha256=approved['launcherSha256'],
         wheel_sha256=approved['wheelSha256'], projection_sha256=approved['runtimeProjectionSha256'], python=python,
         check=check)
 
@@ -727,7 +730,7 @@ def install(args):
     print('Source deployment: official Git/HTTPS trust, NOT signed-release provenance.\n'
           'Install root: %s\nChannel: %s (resolved to an exact commit)\nNetwork: %s\n'
           'Downloads: source, PyPI packages, native packages and pinned public fonts.\n'
-          'If release-approved for this Linux source, also obtain the pinned ordinary preview wheel and run a local synthetic A/V check (separate from --verify-render).\n'
+          'If release-approved for this Linux source, also build the previously pinned ordinary preview wheel locally and run a local synthetic A/V check (separate from --verify-render).\n'
           'Verified cache/partials persist under cache/downloads. No AI models/services.\n'
           'System packages may require administrator approval; native managers display additional side effects.' % (root, args.ref, args.network), flush=True)
     if args.plan:
