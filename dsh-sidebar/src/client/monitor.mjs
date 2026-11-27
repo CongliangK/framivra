@@ -1119,10 +1119,6 @@ export function ProgramMonitor({ owner, opened, timeline, selectionDisplay, sess
     // window returns false and uses the same native toggle as an ordinary one.
     if (owner.programTransport?.(blank ? 0 : frame)) return
     if (running && !monitor.state.active?.program) return
-    if (program && !otherLease && !running && mode !== 'window') {
-      programDisclosure.current.open = true
-      return
-    }
     if (mode === 'window' && !blank) windowTransport.current?.()
     else {
       // Mount the verified-window stage (and connect any existing authorization)
