@@ -49,6 +49,7 @@ REPOSITORY = 'https://github.com/CongliangK/framivra.git'
 # Release-reviewed records only, keyed by wheel-source Git object identity.
 # Empty until independently signed/approved build and runtime pins exist. Nothing in
 # a project, install receipt, environment variable or downloaded wheel adds pins.
+# A tree can name one flat build record or a helperSha256 with full variants.
 _PREVIEW_SUPPLIER_RELEASES = {}
 _PREVIEW_SOURCE = ('vt.py', 'vtx', 'pyproject.toml', 'setup.py', 'VERSION', 'MANIFEST.in', 'README.md',
                    'LICENSE', 'plugins/registry.json', 'scripts/preview_window_wheel.py')
@@ -650,6 +651,21 @@ def _preview_helper_bytes(path, digest):
     return raw
 
 
+def _preview_build_record(record):
+    tools = record.get('buildTools') if type(record) is dict else None
+    if (type(tools) is not dict or tools.keys() != {'python', 'pip', 'setuptools', 'wheel'}
+            or not all(type(v) is str and re.fullmatch(r'[A-Za-z0-9.+!_-]{1,64}', v) for v in tools.values())
+            or record.keys() != {'buildTools', 'wheelFilename', 'wheelBytes', 'wheelSha256',
+                                 'launcherSha256', 'runtimeProjectionSha256'}
+            or type(record['wheelFilename']) is not str
+            or not re.fullmatch(r'framivra-[A-Za-z0-9_.+]+-py3-none-any\.whl', record['wheelFilename'])
+            or type(record['wheelBytes']) is not int or not 0 < record['wheelBytes'] <= 64 * 1024**2
+            or not all(type(record[k]) is str and re.fullmatch('[0-9a-f]{64}', record[k])
+                       for k in ('wheelSha256', 'launcherSha256', 'runtimeProjectionSha256'))):
+        raise InstallError('Invalid release-reviewed preview build catalog entry')
+    return tuple(sorted(tools.items()))
+
+
 def optional_preview_supplier(root, source, commit, repository, python, *, check=lambda: None):
     # This hook runs under installation_lock. Unapproved installations never
     # look at the destination, load an optional helper or build a wheel.
@@ -657,17 +673,21 @@ def optional_preview_supplier(root, source, commit, repository, python, *, check
         return None
     tree = git('ls-tree', '-r', commit, '--', *_PREVIEW_SOURCE, cwd=source)
     key = hashlib.sha256((tree + '\n').encode('ascii')).hexdigest()
-    approved = _PREVIEW_SUPPLIER_RELEASES.get(key)
-    if approved is None:
+    if key not in _PREVIEW_SUPPLIER_RELEASES:
         return None
-    filename = approved.get('wheelFilename')
-    build_tools = approved.get('buildTools')
-    wheel_bytes = approved.get('wheelBytes')
-    if (type(filename) is not str or not re.fullmatch(r'framivra-[A-Za-z0-9_.+]+-py3-none-any\.whl', filename)
-            or type(build_tools) is not dict or build_tools.keys() != {'python', 'pip', 'setuptools', 'wheel'}
-            or not all(type(v) is str and re.fullmatch(r'[A-Za-z0-9.+!_-]{1,64}', v) for v in build_tools.values())
-            or type(wheel_bytes) is not int or not 0 < wheel_bytes <= 64 * 1024**2):
+    approved = _PREVIEW_SUPPLIER_RELEASES[key]
+    if type(approved) is not dict:
         raise InstallError('Invalid release-reviewed preview build catalog entry')
+    variants = None
+    if 'variants' in approved:
+        variants = approved['variants']
+        if approved.keys() != {'helperSha256', 'variants'} or type(variants) not in (list, tuple) or not variants:
+            raise InstallError('Invalid release-reviewed preview build variants')
+        toolsets = [_preview_build_record(row) for row in variants]
+        if len(set(toolsets)) != len(toolsets):
+            raise InstallError('Duplicate release-reviewed preview build tool versions')
+    else:
+        _preview_build_record({k: v for k, v in approved.items() if k != 'helperSha256'})
     helper_name = 'scripts/release/prepare_preview_supplier.py'
     helper_path = physical(source / helper_name)
     raw = _preview_helper_bytes(helper_path, approved.get('helperSha256'))
@@ -675,14 +695,21 @@ def optional_preview_supplier(root, source, commit, repository, python, *, check
     helper = ModuleType('_framivra_preview_supplier')
     helper.__file__ = str(helper_path)
     exec(compile(raw, str(helper_path), 'exec'), helper.__dict__)
+    launcher = physical(source / 'scripts/preview_window_wheel.py')
+    if variants is not None:
+        enroll = getattr(helper, 'enroll_approved_variants', None)
+        if not callable(enroll):
+            raise InstallError('Release-approved preview helper does not support build variants')
+        return enroll(root, launcher_path=launcher, source=source, commit=commit,
+                      source_tree_sha256=key, variants=variants, python=python, check=check)
 
     def prepare_wheel(scratch, child_check):
         return helper.build_approved_wheel(python, scratch, source, commit,
-            source_tree_sha256=key, build_tools=build_tools, wheel_filename=filename,
-            wheel_bytes=wheel_bytes, wheel_sha256=approved['wheelSha256'], check=child_check)
+            source_tree_sha256=key, build_tools=approved['buildTools'], wheel_filename=approved['wheelFilename'],
+            wheel_bytes=approved['wheelBytes'], wheel_sha256=approved['wheelSha256'], check=child_check)
 
-    return helper.enroll_profile(root, launcher_path=physical(source / 'scripts/preview_window_wheel.py'),
-        prepare_wheel=prepare_wheel, wheel_filename=filename, launcher_sha256=approved['launcherSha256'],
+    return helper.enroll_profile(root, launcher_path=launcher,
+        prepare_wheel=prepare_wheel, wheel_filename=approved['wheelFilename'], launcher_sha256=approved['launcherSha256'],
         wheel_sha256=approved['wheelSha256'], projection_sha256=approved['runtimeProjectionSha256'], python=python,
         check=check)
 
