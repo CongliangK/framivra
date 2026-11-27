@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import React, { act, useState } from 'react'
 import { JSDOM } from 'jsdom'
 import { FrameEpoch } from '../src/client/frame.mjs'
-import { ProgramMonitor, RenderedPlayer, useWindowMonitor } from '../src/client/monitor.mjs'
+import { ProgramMonitor, RenderedPlayer, useWindowMonitor, WindowMonitor } from '../src/client/monitor.mjs'
 import { VisualTimeline } from '../src/client/timeline.mjs'
 import { usePreviewSessionAccess } from '../src/client/preview-session-access.mjs'
 
@@ -1027,6 +1027,24 @@ test('program native play cannot bypass the gate or override user mute', async t
   await f.space()
   await untilWindow(() => f.plays.length === 2)
   assert(!f.first.paused && f.first.muted)
+})
+
+test('replacing a pending program video retires the old element even when callback IDs collide', () => {
+  const m = new WindowMonitor(), media = { program: { live: () => true }, tabSignal: new AbortController().signal,
+    initialPin: { frame: 35 }, url: 'blob:test' }
+  m.state = { active: media }; m.canObservePin = () => true
+  const node = () => ({ isConnected: true, currentSrc: media.url, getAttribute: () => media.url, paused: true,
+    requestVideoFrameCallback(cb) { this.registered = (this.registered ?? 0) + 1; this.deliver = cb; return 1 },
+    cancelVideoFrameCallback(id) { this.cancelled = id } })
+  const first = node(), next = node()
+  m.attach(media, first); m.attach(media, first)
+  assert.equal(first.registered, 1)
+  media.initialPin.started = media.initialPin.presented = true
+  m.attach(media, next)
+  assert.equal(first.cancelled, 1)
+  assert.deepEqual(media.initialPin, { frame: 35, waitForOrigin: true })
+  first.deliver(0, { mediaTime: 0 })
+  assert.equal(media.callback, 1, 'the replaced element must not clear the new registration')
 })
 
 test('a nonzero program pin stays hidden until both native seek and target PTS, then pause can cancel queued play', async t => {

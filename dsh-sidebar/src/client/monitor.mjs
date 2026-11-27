@@ -446,6 +446,11 @@ export class WindowMonitor {
 
   attach(media, node) {
     if (!node || media.node === node) return
+    if (media.node && media.program && media.initialPin) {
+      // rVFC handles and decoded/seek proofs belong to the element, not its URL.
+      retireWindowCallback(media)
+      media.initialPin = { frame: media.initialPin.frame }
+    }
     media.node = node
     const pin = media.initialPin
     if (!media.program || !pin || !this.canObservePin(node)) return
@@ -455,9 +460,9 @@ export class WindowMonitor {
     pin.waitForOrigin = true
     const owns = () => this.ownsMedia(media) && media.initialPin === pin && attachedWindowNode(media, node)
     const id = node.requestVideoFrameCallback((_now, metadata) => {
-      if (media.callback !== id) return
+      if (media.callback !== id || !owns()) return
       media.callback = undefined
-      if (!owns() || !node.paused || node.seeking || metadata.mediaTime !== 0) return
+      if (!node.paused || node.seeking || metadata.mediaTime !== 0) return
       const paint = requestAnimationFrame(() => {
         if (media.originPaint !== paint) return
         media.originPaint = undefined
@@ -530,9 +535,8 @@ export class WindowMonitor {
         if (pin.needsPresentation) {
           const observePin = () => {
             const id = node.requestVideoFrameCallback((_now, metadata) => {
-              if (media.callback !== id) return
+              if (media.callback !== id || media.initialPin !== pin || !this.ownsMedia(media) || !attachedWindowNode(media, node)) return
               media.callback = undefined
-              if (!this.ownsMedia(media) || !attachedWindowNode(media, node) || media.initialPin !== pin) return
               // mediaTime is a browser-quantized PTS. The half-frame allowance
               // maps it to the nearest frame, not the midpoint seek position.
               if (frameFromSeconds(metadata.mediaTime + step / 2, media.fps) === offset) {
