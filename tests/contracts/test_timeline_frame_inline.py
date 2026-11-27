@@ -1331,6 +1331,40 @@ class PreviewWindowCandidate(unittest.TestCase):
             self.assertNotEqual(snapshot(), changed_font_config)
 
     @unittest.skipUnless(sys.platform == 'linux' and artifact.fstxn.directory_write_capability(),
+                         'requires Linux memfd and directory anchoring')
+    def test_managed_font_projection_reads_only_approved_leaves_and_seals_them(self):
+        from scripts.install_runtime_fonts import SOURCES
+        from vtx.runtime import preview_window_isolation as isolation
+
+        self.assertEqual(isolation._MANAGED_FONT_PINS, {s['filename']: s['sha256'] for s in SOURCES if s['kind'] == 'font'})
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            fonts = root / 'fonts'; fonts.mkdir()
+            live = root / 'preview'; live.mkdir()
+            scratch = root / '.preview-enrollment-test'; scratch.mkdir(mode=0o700)
+            staged = scratch / 'preview'; staged.mkdir()
+            font = fonts / 'Approved.ttf'; font.write_bytes(b'approved')
+            (fonts / 'other.ttf').symlink_to('/does-not-exist')
+            (fonts / 'fonts.conf').write_bytes(b'not an approved config')
+            pins = {font.name: hashlib.sha256(b'approved').hexdigest()}
+            with patch.object(isolation, '_MANAGED_FONT_PINS', pins), contextlib.ExitStack() as stack:
+                check = lambda: None
+                one = isolation._managed_font_projection(stack, live, check)
+                two = isolation._managed_font_projection(stack, staged, check)
+                self.assertEqual([row for _, _, row in one], [row for _, _, row in two])
+                self.assertEqual([dest.name for _, dest, _ in one], ['Approved.ttf', 'fonts.conf'])
+                font.write_bytes(b'changed')
+                self.assertEqual(os.pread(one[0][0], 64, 0), b'approved')
+                self.assertEqual(os.pread(one[1][0], 4096, 0), isolation._MANAGED_FONT_CONFIG)
+                with self.assertRaises(PermissionError):
+                    os.pwrite(one[0][0], b'changed', 0)
+                with self.assertRaisesRegex(isolation.IsolationError, 'approved bytes'):
+                    isolation._managed_font_projection(stack, live, check)
+                font.unlink(); font.symlink_to(fonts / 'fonts.conf')
+                with self.assertRaises((isolation.IsolationError, OSError, ValueError)):
+                    isolation._managed_font_projection(stack, live, check)
+
+    @unittest.skipUnless(sys.platform == 'linux' and artifact.fstxn.directory_write_capability(),
                          'requires Linux directory anchoring')
     def test_owned_request_cleanup_preserves_unsettled_ledger_and_primary_failure(self):
         from vtx.runtime.proc_supervisor import WORKER_LEDGER

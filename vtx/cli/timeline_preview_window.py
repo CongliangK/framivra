@@ -19,6 +19,7 @@ INPUT_EPOCH_ABI = 'framivra.preview-window.inputs/v1'
 WARM_SVG_MEDIA_ABI = 'framivra.preview-window.warm-svg-media/v1'
 PROGRAM_AUDIO_ABI = 'framivra.preview-window.program-audio/v1'
 FIRST_FRAME_ABI = stream.ABI
+MANAGED_FONTS_ABI = 'framivra.preview-window.managed-fonts/v1'
 _QUALIFICATION_KEYS = ('launcher', 'wheel_sha256', 'runtime_projection_sha256')
 
 
@@ -65,21 +66,22 @@ def _cancellation():
             signal.signal(signum, handler)
 
 
-def run_preview_window_command(argv, *, qualification=None):
+def run_preview_window_command(argv, *, qualification=None, managed_font_profile=None):
     """Only a trusted launcher supplies qualification; argv cannot select it."""
-    code, wire = _command(argv, qualification)
+    code, wire = _command(argv, qualification, managed_font_profile=managed_font_profile)
     print(wire)
     return code
 
 
-def run_first_frame_command(argv, *, qualification, nonce, reverify_profile, emit):
+def run_first_frame_command(argv, *, qualification, nonce, reverify_profile, emit, managed_font_profile=None):
     """Fixed-wheel launcher ABI; ordinary CLI ingress cannot select it."""
     if qualification is None or not stream.NONCE.fullmatch(nonce):
         raise WindowError('input_epoch.unavailable', 'first frame requires a qualified launcher and nonce')
-    return _command(argv, qualification, first_frame=(nonce, reverify_profile, emit))
+    return _command(argv, qualification, first_frame=(nonce, reverify_profile, emit),
+                    managed_font_profile=managed_font_profile)
 
 
-def _command(argv, qualification, *, first_frame=None):
+def _command(argv, qualification, *, first_frame=None, managed_font_profile=None):
     parser = _Parser(allow_abbrev=False, add_help=False)
     parser.add_argument('-t', '--timeline', required=True, action='append')
     parser.add_argument('group', choices=['timeline'])
@@ -115,11 +117,14 @@ def _command(argv, qualification, *, first_frame=None):
                 or any(not isinstance(qualification[k], str) or not re.fullmatch(r'[0-9a-f]{64}', qualification[k])
                        for k in _QUALIFICATION_KEYS[1:])):
             raise WindowError('input_epoch.unavailable', 'unverified fixed wheel qualification')
+        if managed_font_profile is not None and (qualification is None or svg_mode or args.use_program_audio):
+            raise WindowError('environment.unsupported', 'managed fonts require the ordinary managed window')
         with _cancellation() as check_cancelled, redirect_stdout(sys.stderr):
             result = preview_window(args.timeline[0], start=_integer(args.frame[0]),
                                     expected_content_version=args.expected_content_version[0],
                                     check_cancelled=check_cancelled, _qualification=qualification,
                                     _svg_mode=svg_mode, _program_audio=bool(args.use_program_audio),
+                                     **({"_managed_font_profile": managed_font_profile} if managed_font_profile is not None else {}),
                                     **({"_first_frame": first_frame} if first_frame is not None else {}))
             if result['ok']:
                 if svg_mode == 'svg-read':

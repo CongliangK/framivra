@@ -4,6 +4,7 @@ No host render scratch, no home/project tree mount, no unisolated fallback.
 Only fixed portable-v2 input leaves may use private host tmpfs staging.
 The byte ceiling is for tmpfs pages, not inodes, process memory or concurrency.
 """
+from contextlib import ExitStack
 import hashlib
 import json
 import os
@@ -21,6 +22,25 @@ _BWRAP = Path('/usr/bin/bwrap')
 _PROJECT_FILE_COUNT = 128
 _STDERR_LIMIT = 16 * 1024
 _EPOCH_FILESYSTEMS = frozenset(('ext4', 'xfs', 'btrfs', 'tmpfs', 'overlay'))
+# Installer font assets, not wheel members. The installer contract checks
+# these pins against its download catalog; installed sources.json is not authority.
+_MANAGED_FONT_PINS = {
+    'NotoSansCJK-Regular.ttc': 'b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a',
+    'NotoSansCJK-Bold.ttc': 'faa5f3656a78b2e2d450d27fe8382c778bc2b6bb5ea29c986664a6a435056ceb',
+    'DejaVuSans.ttf': '57f73e11f51999432bf7ab22ce55b6f945d5eca1bf824404cfa9ec2e3718c84e',
+    'DejaVuSans-Bold.ttf': 'a4c5bc453ca281d90ea079e596da7ae0dfeb5777497c29ec254e76d97ff6f890',
+    'InterVariable.ttf': '29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031',
+    'JetBrainsMono-Regular.ttf': 'e6fd0d7e91550b3ed2b735d4312474362c4716edc4fc0577a0f61ed782d5aed1',
+    'JetBrainsMono-Bold.ttf': 'd22c4f3821d725eb01210d278d95dfcfcaadc34699a06658d47c8a5cc5830ada',
+}
+_MANAGED_FONTS = Path('/run/framivra-preview-fonts')
+_MANAGED_FONT_CONFIG = b'''<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+<fontconfig>
+  <dir>/run/framivra-preview-fonts</dir>
+  <include ignore_missing="no">/etc/fonts/fonts.conf</include>
+</fontconfig>
+'''
 _BOOT = ('import sys;sys.path.insert(0,sys.argv.pop(1));'
          'from vtx.runtime.preview_window_isolation import check_entry_fds;check_entry_fds();'
          'from vtx.cli.timeline_preview_window import _isolated_worker;'
@@ -105,6 +125,49 @@ def binding_digest(fd, guard, limit, check):
 def binding_read(fd, guard, limit, check):
     """Read the full original descriptor into memory, with a small caller-supplied limit."""
     return b''.join(_binding_blocks(fd, guard, limit, check))
+
+
+def _managed_font_projection(stack, profile, check):
+    import fcntl
+
+    if profile.name != 'preview' or profile.resolve(strict=True) != profile:
+        raise IsolationError('managed fonts require the fixed preview layout')
+    root = profile.parent
+    # The existing installer qualifies root/.preview-enrollment-*/preview
+    # before publishing it as root/preview. Both use the same installed leaves.
+    if re.fullmatch(r'\.preview-enrollment-[a-z0-9_]{1,32}', root.name):
+        staging = root.stat()
+        if staging.st_uid != os.geteuid() or stat.S_IMODE(staging.st_mode) != 0o700:
+            raise IsolationError('managed font qualification directory is not private')
+        root = root.parent
+    fonts = root / 'fonts'
+    seals = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SEAL
+
+    def seal(name, blocks, expected):
+        dest = _MANAGED_FONTS / name
+        fd = os.memfd_create(name, os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+        stack.callback(os.close, fd)
+        digest = hashlib.sha256()
+        with os.fdopen(os.dup(fd), 'wb') as output:
+            for block in blocks:
+                digest.update(block)
+                output.write(block)
+        found = digest.hexdigest()
+        size = os.fstat(fd).st_size
+        if size == 0 or found != expected:
+            raise IsolationError('managed preview font differs from its approved bytes')
+        os.fchmod(fd, 0o400)
+        fcntl.fcntl(fd, fcntl.F_ADD_SEALS, seals)
+        os.lseek(fd, 0, os.SEEK_SET)
+        return fd, dest, (name, size, found)
+
+    leaves = []
+    for name, expected in sorted(_MANAGED_FONT_PINS.items()):
+        with ExitStack() as source:
+            fd, guard = _pin_binding(source, fonts / name, fonts, single_link=True)
+            leaves.append(seal(name, _binding_blocks(fd, guard, 24 * 1024**2, check), expected))
+    leaves.append(seal('fonts.conf', (_MANAGED_FONT_CONFIG,), hashlib.sha256(_MANAGED_FONT_CONFIG).hexdigest()))
+    return leaves
 
 
 def _binding_media_digest(fd, guard, check):
@@ -198,7 +261,7 @@ def _project_mounts(files):
     return found
 
 
-def _profile(check, *, svg=False):
+def _profile(check, *, svg=False, managed_fonts=False):
     from ..pluginlib.config import config_path
 
     if os.geteuid() == 0 or Path(sys.base_prefix) != Path('/usr'):
@@ -278,7 +341,9 @@ def _profile(check, *, svg=False):
             profile_files.append((target, path))
     trees.append((source / 'vtx', False))
     extra_trees = (source / 'plugins',)
-    if not svg:
+    # Managed fonts add only the approved leaves to the distribution profile.
+    # Do not scan or expose local/user font trees on this new path.
+    if not svg and not managed_fonts:
         extra_trees += (Path('/usr/local/share/fonts'), home / '.fonts', xdg['XDG_DATA_HOME'] / 'fonts')
     for path in extra_trees:
         if path.exists() or path.is_symlink():
@@ -353,7 +418,9 @@ def _read_worker(argv, descriptors, check, limit, *, keep_on_signal=False, frame
 
 def execute(stack, path, files, start, version, prepare_fingerprint, bytes_limit, wire_limit, check,
             *, root_identity, qualification=None, recheck=None, svg_mode=None, caption=None, read_caption=None,
-            program_paths=(), first_frame=None):
+            program_paths=(), first_frame=None, managed_font_profile=None):
+    if managed_font_profile is not None and (qualification is None or svg_mode is not None or program_paths):
+        raise IsolationError('managed fonts require qualified ordinary media')
     if first_frame is not None and (qualification is None or recheck is None or svg_mode is not None or program_paths):
         raise IsolationError('first frame requires the qualified ordinary window supervisor')
     if program_paths and (qualification is None or svg_mode == 'svg-read'):
@@ -374,7 +441,8 @@ def execute(stack, path, files, start, version, prepare_fingerprint, bytes_limit
     direct_files = [p for p in files if p not in projected_files]
     if len(direct_files) + bool(frame_paths) > _PROJECT_FILE_COUNT:
         raise IsolationError('too many separately anchored project files')
-    source, python, trees, profile_files, env = _profile(check, svg=svg_mode is not None)
+    source, python, trees, profile_files, env = _profile(check, svg=svg_mode is not None,
+        **({'managed_fonts': True} if managed_font_profile is not None else {}))
     if qualification is not None and (env.get('FONTCONFIG_FILE') is not None
             or any(dest == source / 'config.local.json' for _, dest in profile_files)):
         raise IsolationError('input proof requires the fixed wheel profile without independent configuration')
@@ -383,6 +451,9 @@ def execute(stack, path, files, start, version, prepare_fingerprint, bytes_limit
     project_mounts = _project_mounts(mount_paths) if qualification is not None else None
     scratch = root / 'cache' / 'preview'
     planned = [p for p, _ in trees] + [dest for _, dest in profile_files] + [Path('/proc'), Path('/dev')]
+    if managed_font_profile is not None:
+        planned.append(_MANAGED_FONTS)
+        env['FONTCONFIG_FILE'] = str(_MANAGED_FONTS / 'fonts.conf')
     if any(p == root or root in p.parents or p in root.parents for p in planned):
         raise IsolationError('project overlaps a fixed runtime mount')
     if any(p == scratch or scratch in p.parents or p in scratch.parents for p in files):
@@ -415,6 +486,15 @@ def execute(stack, path, files, start, version, prepare_fingerprint, bytes_limit
         bind(tree, tree, directory=True)
     for src, dest in profile_files:
         bind(src, dest)
+    managed_fonts = ()
+    if managed_font_profile is not None:
+        sealed = _managed_font_projection(stack, managed_font_profile, check)
+        for fd, dest, _ in sealed:
+            fds.append(fd)
+            # bwrap can copy a sealed anonymous file without resolving a
+            # pathname for its inode (memfd has no bindable host pathname).
+            argv.extend(('--ro-bind-data', str(fd), str(dest)))
+        managed_fonts = tuple(identity for _, _, identity in sealed)
     project_fds = {item: bind(item, item, project_file=True) for item in direct_files}
     if caption is not None:
         # Single-link checks do not detect two names for one file via a mount.
@@ -610,6 +690,8 @@ def execute(stack, path, files, start, version, prepare_fingerprint, bytes_limit
             raise IsolationError('isolated environment could not be verified')
         epoch_inputs = sorted(pinned + frame_observations) if frame_paths else pinned
         fields = (qualification, epoch_inputs, [str(p) for p, _ in trees], observed_environment)
+        if managed_fonts:
+            fields += (('managed-fonts/v1', managed_fonts),)
         if svg_mode == 'svg-media':
             # The rechecked planner fingerprint includes the SVG tool closure;
             # pack_observed is the entire original bound descriptor, not just

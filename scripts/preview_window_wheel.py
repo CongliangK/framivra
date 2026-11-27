@@ -290,7 +290,19 @@ def _write_record(data, check):
         os.set_blocking(fd, old)
 
 
-def _dispatch_first_frame(op, args, proof, reverify):
+def _managed_fonts(profile):
+    if profile is None:
+        return {}
+    from vtx.cli import timeline_preview_window
+
+    # Older fixed wheels keep their exact stock invocation. Only this verified
+    # launcher passes the layout to an opted-in wheel, never argv or environment.
+    if getattr(timeline_preview_window, 'MANAGED_FONTS_ABI', None) != 'framivra.preview-window.managed-fonts/v1':
+        return {}
+    return {'managed_font_profile': profile}
+
+
+def _dispatch_first_frame(op, args, proof, reverify, *, managed_profile=None):
     from vtx.timeline_preview_window import WIRE_LIMIT, supported
 
     command = _qualified_first_frame_command()
@@ -318,7 +330,7 @@ def _dispatch_first_frame(op, args, proof, reverify):
 
     normalized = [*args[:3], 'preview-window', *args[4:10]]
     status, result = command(normalized, qualification=proof, nonce=nonce,
-                             reverify_profile=reverify, emit=first)
+                             reverify_profile=reverify, emit=first, **_managed_fonts(managed_profile))
     if broken:
         return 1
     if status == 0:
@@ -395,7 +407,7 @@ def _dispatch_formal_archive(op, args, profile, proof, reverify, runtime):
     return 0
 
 
-def _dispatch(op, args, proof, *, managed=False):
+def _dispatch(op, args, proof, *, managed=False, managed_profile=None):
     from vtx.cli import timeline_preview_window
 
     warm_media = getattr(timeline_preview_window, 'WARM_SVG_MEDIA_ABI', None) == _WARM_SVG_MEDIA_ABI
@@ -433,7 +445,8 @@ def _dispatch(op, args, proof, *, managed=False):
     if command is None:
         print('preview wheel refused: wheel does not support launcher qualification', file=sys.stderr)
         return 2
-    return command(args, qualification=proof)
+    return command(args, qualification=proof,
+                   **(_managed_fonts(managed_profile) if op == 'preview-window' else {}))
 
 
 def main():
@@ -509,11 +522,12 @@ def main():
     from vtx.runtime.stdio import ensure_blocking_stdio
 
     ensure_blocking_stdio()  # Same transport preparation as the normal CLI.
+    managed_profile = profile if expected is not None else None
     if op in (_FIRST_FRAME, _FIRST_FRAME_PROBE):
         try:
             if op == _FIRST_FRAME_PROBE:
                 reverify()
-            return _dispatch_first_frame(op, args, proof, reverify)
+            return _dispatch_first_frame(op, args, proof, reverify, managed_profile=managed_profile)
         except (OSError, ProfileError):
             print('preview wheel refused: first-frame wire or wheel profile unavailable', file=sys.stderr)
             return 2
@@ -521,7 +535,7 @@ def main():
         return _dispatch(op, args, proof, managed=expected is not None)
     wire = io.StringIO()
     with redirect_stdout(wire):
-        status = _dispatch(op, args, proof)
+        status = _dispatch(op, args, proof, managed_profile=managed_profile)
     if status == 0:
         try:
             reverify()
