@@ -863,7 +863,7 @@ async function endWindow(f, node) {
   await f.emit(node, 'ended')
 }
 
-async function programMonitor(t, { second, boundaryCheck } = {}) {
+async function programMonitor(t, { second, boundaryCheck, autoPlay = true, onCheck } = {}) {
   const commands = [], stored = new Map(), duration = 90, togglePreview = {}
   const opened = { ...continuationOpened, previewSession: { ...continuationQualification, programRun: { version: 1 } },
     snapshot: { ...windowOpened.snapshot, document: { project: { duration_frames: duration, fps: 30 } } } }
@@ -874,6 +874,8 @@ async function programMonitor(t, { second, boundaryCheck } = {}) {
         sessionId, project: 'timeline.json', expiresAt: Date.now() + 60_000, maxWindows: 3,
         programRun: { version: 1, contentVersion: version, duration, span: 30, frame: request.frame, maxBytes: 1024 } } }
       if (request.op === 'program-check') {
+        const refusal = await onCheck?.(request, signal)
+        if (refusal) return refusal
         if (request.frame === 30 && commands.filter(({ request }) => request.op === 'program-check' && request.frame === 30).length > 1 && boundaryCheck) {
           const answer = await boundaryCheck.promise
           if (answer) return answer
@@ -903,12 +905,73 @@ async function programMonitor(t, { second, boundaryCheck } = {}) {
     Object.assign(f.state(node), { videoWidth: 1920, videoHeight: 1080, duration: 1, readyState: 3 })
     await f.emit(node, 'canplay')
   }
-  await loadPlayable(first)
-  assert.deepEqual(f.plays, [first]); assert(!first.muted)
+  if (autoPlay) {
+    await loadPlayable(first)
+    await untilWindow(() => f.plays.includes(first))
+    assert.equal(f.plays.length, 1, 'only one native play may start')
+    assert.ok(f.plays[0] === first, 'play must target the first window')
+    assert(!first.muted)
+  }
   return { ...f, first, loadPlayable, checks: () => commands.filter(({ request }) => request.op === 'program-check').map(({ request }) => request.frame),
     commands, stored, space: () => act(async () => { assert.equal(typeof togglePreview.current, 'function'); togglePreview.current() }),
     spare: () => document.querySelectorAll('video')[1] }
 }
+
+test('cached program playback must recheck the exact grant after decode and before resuming', async t => {
+  for (const stage of ['first decode', 'resume']) await t.test(stage, async t => {
+    let refusal
+    const f = await programMonitor(t, { autoPlay: stage === 'resume', onCheck: () => refusal && { ok: false, error: refusal } })
+    if (stage === 'resume') {
+      await f.space()
+      assert(f.first.paused)
+    }
+    const before = f.plays.length, priorChecks = f.checks().length
+    refusal = stage === 'resume' ? 'PROGRAM_RUN_EXPIRED' : 'PROGRAM_PROVIDER_CHANGED'
+    if (stage === 'resume') await f.space()
+    else await f.loadPlayable(f.first)
+    // Assert counts, not DOM nodes: a failing deep equality can traverse the
+    // React/DOM backing graph instead of reporting the attempted play.
+    assert.equal(f.plays.length, before, 'a formerly verified cache entry is not allowed to start native playback')
+    await untilWindow(() => f.commands.some(({ request }) => request.op === 'revoke-preview-session'))
+    assert.equal(f.checks().length, priorChecks + 1)
+  })
+})
+
+test('an in-flight program play check cannot survive Space, stop, repin or blur', async t => {
+  for (const action of ['Space', 'stop', 'pin', 'blur']) await t.test(action, async t => {
+    const proof = deferred()
+    let reads = 0
+    const f = await programMonitor(t, { autoPlay: false, onCheck: request => {
+      if (request.frame === 0 && ++reads === 2) return proof.promise
+    } })
+    await f.loadPlayable(f.first)
+    const check = f.commands.at(-1)
+    assert.equal(check.request.op, 'program-check')
+    assert(!check.signal.aborted && f.first.muted && !f.first.controls)
+    assert.equal(f.plays.length, 0)
+    if (action === 'Space') await f.space()
+    else if (action === 'stop') await f.click('停止整片预览')
+    else if (action === 'pin') await f.pin(60)
+    else await act(async () => f.dom.window.dispatchEvent(new f.dom.window.Event('blur')))
+    assert(check.signal.aborted)
+    await act(async () => proof.resolve({ ok: true, grantId: 'program', frame: 0, sha256: check.request.sha256 }))
+    assert.equal(f.plays.length, 0)
+    assert(f.first.paused && f.first.muted)
+  })
+})
+
+test('program native play cannot bypass the gate or override user mute', async t => {
+  const f = await programMonitor(t)
+  await f.space()
+  assert(f.first.paused && f.first.muted && !f.first.controls)
+  Object.assign(f.state(f.first), { paused: false })
+  await f.emit(f.first, 'play')
+  assert(f.first.paused && f.first.muted)
+  await f.click('后台预览静音')
+  await f.space()
+  await untilWindow(() => f.plays.length === 2)
+  assert(!f.first.paused && f.first.muted)
+})
 
 test('a nonzero program pin stays hidden until both native seek and target PTS, then pause can cancel queued play', async t => {
   for (const ptsFirst of [true, false]) await t.test(ptsFirst ? 'PTS first' : 'seeked first', async t => {
@@ -941,8 +1004,9 @@ test('a nonzero program pin stays hidden until both native seek and target PTS, 
     assert(node.paused && node.muted)
     if (ptsFirst) await f.click('取消待播放')
     await paint()
-    assert.deepEqual(f.plays, ptsFirst ? [f.first] : [f.first, node])
-    assert(!node.muted && node.controls); assert.equal(f.frame(), 35)
+    assert.equal(f.plays.length, ptsFirst ? 1 : 2)
+    assert(f.plays[0] === f.first && (ptsFirst || f.plays[1] === node))
+    assert.equal(node.muted, ptsFirst); assert(!node.controls); assert.equal(f.frame(), 35)
   })
 })
 
@@ -950,23 +1014,23 @@ test('program parks one muted node and promotes it at zero only after an exact b
   const proof = deferred(), f = await programMonitor(t, { boundaryCheck: proof })
   await untilWindow(f.spare)
   const next = f.spare(), firstUrl = f.first.getAttribute('src')
-  assert.deepEqual(f.checks(), [0, 30], 'next must be verified before the predecessor ends')
+  assert.deepEqual(f.checks(), [0, 0, 30], 'next must be verified before the predecessor ends')
   assert(next.muted && next.paused && !visible(next)); assert.equal(next.currentTime, 0)
   await f.loadPlayable(next)
-  assert.deepEqual(f.plays, [f.first]); assert.equal(f.urls.length, 2)
+  assert.equal(f.plays.length, 1); assert(f.plays[0] === f.first); assert.equal(f.urls.length, 2)
   await endWindow(f, f.first)
-  assert.deepEqual(f.checks(), [0, 30, 30]); assert.equal(f.frame(), 29)
-  const [, before, atBoundary] = f.commands.filter(({ request }) => request.op === 'program-check')
+  assert.deepEqual(f.checks(), [0, 0, 30, 30]); assert.equal(f.frame(), 29)
+  const [, , before, atBoundary] = f.commands.filter(({ request }) => request.op === 'program-check')
   assert.deepEqual(atBoundary.request, before.request, 'recheck identical grant, frame and digest')
   assert.notEqual(atBoundary.signal, before.signal)
-  assert(next.muted && next.paused && !visible(next)); assert.equal(f.video(), f.first)
+  assert(next.muted && next.paused && !visible(next)); assert(f.video() === f.first)
   await act(async () => proof.resolve())
-  assert.equal(f.video(), next, 'reuse the parked node without a second fetch/decode')
-  assert.deepEqual(f.plays, [f.first, next]); assert(!next.muted && !next.paused)
+  assert(f.video() === next, 'reuse the parked node without a second fetch/decode')
+  assert.equal(f.plays.length, 2); assert(f.plays[0] === f.first && f.plays[1] === next); assert(!next.muted && !next.paused)
   assert.equal(next.currentTime, 0); assert.equal(f.frame(), 30)
   assert(f.first.muted && !f.first.hasAttribute('src') && f.revoked.includes(firstUrl))
   await untilWindow(f.spare)
-  assert.deepEqual(f.checks(), [0, 30, 30, 60]); assert.equal(document.querySelectorAll('video').length, 2)
+  assert.deepEqual(f.checks(), [0, 0, 30, 30, 60]); assert.equal(document.querySelectorAll('video').length, 2)
   assert.match(document.body.textContent, /预缓冲一个相邻窗口，不保证无缝/)
   assert.doesNotMatch(document.body.textContent, /不自动续窗/)
   assert.deepEqual(f.requests.map(({ request }) => [request.op, request.frame]), [['program-render', 0], ['program-render', 30], ['program-render', 60]])
@@ -980,7 +1044,7 @@ test('a cold program boundary waits with no picture or audio advance; pause and 
   const late = deferred(), f = await programMonitor(t, { second: late })
   await endWindow(f, f.first)
   assert(f.button('暂停连续播放')); assert.equal(f.frame(), 29)
-  assert(f.first.paused && !f.spare()); assert.deepEqual(f.checks(), [0])
+  assert(f.first.paused && !f.spare()); assert.deepEqual(f.checks(), [0, 0])
   await f.click('暂停连续播放')
   assert(!f.button('暂停连续播放'))
   await f.pin(60)
@@ -988,9 +1052,9 @@ test('a cold program boundary waits with no picture or audio advance; pause and 
   await untilWindow(() => f.video() && f.video() !== f.first)
   const pinned = f.video()
   await f.loadPlayable(pinned)
-  assert.equal(f.frame(), 60); assert(pinned.paused && !pinned.muted)
-  assert.deepEqual(f.plays, [f.first], 'late speculative result must not resume after pause/pin')
-  assert.deepEqual(f.checks(), [0, 60]); assert.equal(f.urls.length, 2)
+  assert.equal(f.frame(), 60); assert(pinned.paused && pinned.muted)
+  assert.equal(f.plays.length, 1, 'late speculative result must not resume after pause/pin'); assert(f.plays[0] === f.first)
+  assert.deepEqual(f.checks(), [0, 0, 60]); assert.equal(f.urls.length, 2)
   assert.equal(f.commands.filter(({ request }) => request.op === 'authorize-preview-session').length, 1)
 })
 
@@ -1000,10 +1064,10 @@ test('rejecting a program spare leaves valid current video playing, then fails c
   const next = f.spare(), url = next.getAttribute('src')
   Object.assign(f.state(next), { videoWidth: 640, videoHeight: 480, duration: 1, readyState: 3 })
   await f.emit(next, 'canplay')
-  assert(!f.first.paused); assert.equal(f.video(), f.first); assert(!f.spare() && f.revoked.includes(url))
+  assert(!f.first.paused); assert(f.video() === f.first); assert(!f.spare() && f.revoked.includes(url))
   await endWindow(f, f.first)
   assert.match(document.body.textContent, /下一窗不可播放；音画已停止/)
-  assert.equal(f.frame(), 29); assert.deepEqual(f.plays, [f.first]); assert.deepEqual(f.checks(), [0, 30])
+  assert.equal(f.frame(), 29); assert.equal(f.plays.length, 1); assert(f.plays[0] === f.first); assert.deepEqual(f.checks(), [0, 0, 30])
 })
 
 test('a revoked or superseded boundary proof cannot promote its parked node', async t => {
@@ -1029,16 +1093,16 @@ test('a revoked or superseded boundary proof cannot promote its parked node', as
       await f.emit(next, 'waiting')
     }
     await act(async () => proof.resolve(['pause and pin', 'refusal'].includes(action) ? { ok: false, error: 'STALE_WINDOW' } : undefined))
-    assert.deepEqual(f.plays, [f.first]); assert(f.revoked.includes(url))
+    assert.equal(f.plays.length, 1); assert(f.plays[0] === f.first); assert(f.revoked.includes(url))
     if (action === 'pause and pin') {
       assert.equal(f.frame(), 60); assert(f.video()?.paused)
-      assert.deepEqual(f.checks(), [0, 30, 30, 60])
+      assert.deepEqual(f.checks(), [0, 0, 30, 30, 60])
       assert(!f.commands.some(({ request }) => request.op === 'revoke-preview-session'), 'a stale refusal cannot retire the foreground run')
     } else if (action === 'readiness lost') {
-      assert.equal(f.video(), f.first); assert.equal(f.frame(), 29)
+      assert(f.video() === f.first); assert.equal(f.frame(), 29)
       assert.match(document.body.textContent, /下一窗的播放状态已变化/)
       await f.loadPlayable(next)
-      assert.deepEqual(f.checks(), [0, 30, 30])
+      assert.deepEqual(f.checks(), [0, 0, 30, 30])
     } else {
       assert.equal(f.video(), null)
       assert(f.commands.some(({ request }) => request.op === 'revoke-preview-session'))
@@ -1057,13 +1121,13 @@ test('a parked window that regresses from canplay is retired after the bounded w
   t.mock.timers.enable({ apis: ['setTimeout'] })
   try {
     await endWindow(f, f.first)
-    assert(f.button('暂停连续播放')); assert.deepEqual(f.checks(), [0, 30])
+    assert(f.button('暂停连续播放')); assert.deepEqual(f.checks(), [0, 0, 30])
     await act(async () => t.mock.timers.tick(15_000))
   } finally { t.mock.timers.reset() }
   assert.match(document.body.textContent, /等待下一窗超时；音画已停止/)
   assert.equal(f.frame(), 29); assert(f.revoked.includes(url)); assert(!f.spare())
   await f.loadPlayable(next)
-  assert.deepEqual(f.checks(), [0, 30]); assert.deepEqual(f.plays, [f.first])
+  assert.deepEqual(f.checks(), [0, 0, 30]); assert.equal(f.plays.length, 1); assert(f.plays[0] === f.first)
 })
 
 test('continuation is an unchecked opt-in and the real authorization adapter requires Host confirmation', async t => {

@@ -254,8 +254,18 @@ function retireWindowCallback(media) {
   if (callback !== undefined) media.node?.cancelVideoFrameCallback?.(callback)
 }
 
+function stopProgramPlay(media) {
+  if (!media.program) return
+  media.resumeAttempt?.controller?.abort()
+  media.boundaryProof = undefined
+  if (media.programAudible && media.node) media.program.muted = media.node.muted
+  media.programAudible = false
+  if (media.node) media.node.muted = true
+}
+
 function disposeWindowMedia(media) {
   if (!media) return
+  stopProgramPlay(media)
   clearTimeout(media.decodeTimer)
   retireWindowCallback(media)
   const node = media.node
@@ -535,12 +545,13 @@ export class WindowMonitor {
     if (!this.owns(media)) return
     media.playIntent = false
     media.resume = false
-    media.resumeAttempt = undefined
     if (media.program) {
+      stopProgramPlay(media)
       if (this.playOperation === media.operationId) this.playOperation = undefined
       if (media.node?.paused) retireWindowCallback(media)
       media.program.pause(media)
     }
+    media.resumeAttempt = undefined
     if (media.waiting) {
       media.waiting = false
       this.refresh()
@@ -611,9 +622,10 @@ export class WindowMonitor {
     disposeWindowMedia(previous)
   }
 
-  promoteProgramSuccessor(previous, previousNode, spare, node) {
+  promoteProgramSuccessor(previous, previousNode, spare, node, epoch) {
     if (!this.ownsNode(previous, previousNode) || !previous.playIntent || !previous.atEnd || !previousNode.ended ||
         spare.node !== node || !node?.muted || !this.parkedSpare(previous, spare)) return false
+    spare.boundaryProof = { node, epoch }
     this.promoteSuccessor(previous, spare)
     return true
   }
@@ -877,18 +889,48 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
     return () => { windowTransport.current = undefined }
   })
 
-  async function playWindow(item, node, successor = false) {
+  async function playWindow(item, node, successor = false, boundaryProof) {
     if (!monitor.ownsNode(item, node) || item.initialPin || item.pinPaint) return
     if (monitor.playOperation === item.operationId) monitor.playOperation = undefined
     item.resume = false
-    const attempt = item.resumeAttempt = {}
+    const attempt = item.resumeAttempt = item.program ? { controller: new AbortController() } : {}
+    const currentEpoch = owner.epoch
     monitor.refresh()
+    if (item.program) {
+      // The cache-read check predates decode and may predate a long pause.
+      // A promoted parked node can consume only its immediate boundary proof.
+      const proof = item.boundaryProof
+      item.boundaryProof = undefined
+      const current = () => item.resumeAttempt === attempt && !attempt.controller.signal.aborted &&
+        owner.epoch === currentEpoch && monitor.ownsNode(item, node) && !item.initialPin && !item.pinPaint &&
+        !node.seeking && item.pendingSeek === undefined && playableWindowNode(item) === node
+      try {
+        if (!successor || !proof || proof !== boundaryProof || proof.node !== node) {
+          await item.program.recheck(item, attempt.controller.signal)
+        }
+        if (!current() || !node.paused) {
+          if (item.resumeAttempt === attempt) { monitor.stopContinuation(item); monitor.refresh() }
+          return
+        }
+        item.programAudible = true
+        node.muted = item.program.muted
+      } catch {
+        if (item.resumeAttempt === attempt && monitor.ownsNode(item, node)) {
+          monitor.stopContinuation(item)
+          monitor.update({ ...monitor.state, message: '后台窗口播放复核未通过。' })
+        }
+        return
+      }
+    }
     try {
       await node.play()
       if (item.resumeAttempt !== attempt || !monitor.ownsNode(item, node)) return
       item.resumeAttempt = undefined
       if (!node.paused) observe(item, node)
-      else monitor.refresh()
+      else {
+        stopProgramPlay(item)
+        monitor.refresh()
+      }
     } catch {
       if (item.resumeAttempt !== attempt || !monitor.ownsNode(item, node)) return
       monitor.stopContinuation(item)
@@ -916,8 +958,11 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
     if (!ready || !monitor.ownsNode(media, node) || media.initialPin || media.pinPaint || node.seeking || media.pendingSeek !== undefined) return
     if (media.resume) {
       // A natural handoff starts at the exact beginning, not a midpoint seek.
+      const proof = media.boundaryProof?.epoch === owner.epoch ? media.boundaryProof : undefined
       onFrame(String(media.frame), media)
-      if (media.resume) void playWindow(media, node, true)
+      // Reporting the owning media's frame advances FrameEpoch without an
+      // external pin. An intervening cancellation clears the stored proof.
+      if (media.resume) void playWindow(media, node, true, proof)
     } else if (monitor.playOperation === media.operationId) {
       if (media.program && media.cursor !== frame) onFrame(String(media.cursor), media)
       void playWindow(media, node)
@@ -951,13 +996,26 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
     }
     requestObservation()
   }
+  useLayoutEffect(() => {
+    const abandonPending = () => {
+      const item = monitor.state.active
+      if (item?.program && (item.resumeAttempt || item.resume || item.waiting || monitor.playOperation === item.operationId)) {
+        if (item.resumeAttempt && item.programAudible) item.node?.pause()
+        monitor.stopContinuation(item)
+        monitor.refresh()
+      }
+    }
+    window.addEventListener('blur', abandonPending)
+    return () => window.removeEventListener('blur', abandonPending)
+  }, [monitor])
   const epoch = owner.epoch
   return h('section', { className: 'fv-rendered', 'aria-label': '单窗口音画监看' },
     h('div', { className: 'fv-program-stage', 'data-mode': 'window' },
       current ? [media, state.spare].filter(Boolean).map(item => {
         const active = item === media, visible = active && ready && !item.initialPin && !showFirstFrame
         return h('video', { key: item.url, ref: node => { if (node) item.node = node }, src: item.url,
-          controls: !!visible && !waiting && !item.pinPaint, muted: !active || !!item.initialPin || !!item.pinPaint, preload: 'auto', playsInline: true, disablePictureInPicture: true, disableRemotePlayback: true,
+          controls: !item.program && !!visible && !waiting && !item.pinPaint,
+           muted: !active || !!item.initialPin || !!item.pinPaint || !!(item.program && (!item.programAudible || item.program.muted)), preload: 'auto', playsInline: true, disablePictureInPicture: true, disableRemotePlayback: true,
           'aria-label': active ? (archive ? `已核归档 A/V [${item.frame}, ${item.end})` : '仅当前窗口的原生音画') : undefined, 'aria-hidden': !visible,
           style: !visible ? { visibility: 'hidden', ...(active ? {} : { position: 'absolute' }) } : undefined,
           onLoadedData: event => monitor.ready(item, event.currentTarget),
@@ -971,7 +1029,11 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
           onWaiting: event => { if (!event.currentTarget.ended) monitor.playable(item, event.currentTarget, false) },
           onEmptied: event => monitor.playable(item, event.currentTarget, false),
           onError: () => monitor.rejectMedia(item, archive ? '浏览器无法解码归档 A/V。' : '浏览器无法解码窗口。'),
-          onPlay: event => observe(item, event.currentTarget),
+          onPlay: event => {
+             const node = event.currentTarget
+             if (item.program && !item.programAudible) { node.muted = true; node.pause(); return }
+             observe(item, node)
+           },
           onPause: event => {
             const node = event.currentTarget
             if (node.paused && !node.ended && monitor.ownsNode(item, node)) { monitor.stopContinuation(item); monitor.refresh() }
@@ -1017,7 +1079,15 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
           h('label', null, h('input', { type: 'checkbox', checked: prepare, onChange: event => { if (!occupied?.automatic) monitor.interrupt(); setPrepare(event.target.checked) } }), '允许按需冷准备输入（不授权执行 HTML）'),
           h('p', null, '如无法生成完整音画窗口，直接拒绝，不丢轨。默认只在窗口内归一，响度不保证与成片一致；技术可播（包括整片音频基准模式）不等于正式 QC 通过。'),
           sessionControls ? h(AutoPreviewPermission, { controls: sessionControls, blocked: blocked || !!occupied || !canVerifyWindow() }) : null)) : null,
-      waiting ? h('button', { type: 'button', onClick: () => monitor.stopContinuation(media) }, '暂停连续播放') : null,
+      media?.program && ready ? h('button', { type: 'button', 'aria-pressed': media.program.muted,
+         onClick: () => {
+           const node = media.node
+           if (!monitor.ownsNode(media, node)) return
+           media.program.muted = !(media.programAudible ? node.muted : media.program.muted)
+           if (media.programAudible) node.muted = media.program.muted
+           monitor.refresh()
+         } }, '后台预览静音') : null,
+       waiting ? h('button', { type: 'button', onClick: () => monitor.stopContinuation(media) }, '暂停连续播放') : null,
       !programBusy && occupied ? h(ToolButton, { icon: 'cancel', label: archive ? (state.failed ? '重试回收归档读取' : '撤销已核归档 A/V') :
         state.failed ? '重试回收音画窗口' : '取消并回收音画窗口', disabled: !!job?.reaping && !media, onClick: () => { void monitor.cancel() } }) : null,
       h('span', { className: 'fv-monitor-status', role: 'status', title: archive && ready ? `${status} · ${scopeText}` : showFirstFrame ? status : scopeText }, status)))

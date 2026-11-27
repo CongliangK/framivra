@@ -56,7 +56,7 @@ export function connectProgramPlayback(monitor, owner, binding, run, frame) {
   }
   function atBoundary(previous, spare) {
     if (!handoff) {
-      const attempt = handoff = { previous, node: previous.node, controller: new AbortController() }
+      const attempt = handoff = { previous, node: previous.node, epoch: owner.epoch, controller: new AbortController() }
       attempt.timer = setTimeout(() => {
         if (handoff === attempt && live() && monitor.owns(previous) && previous.playIntent) {
           monitor.failProgramHandoff(previous, '等待下一窗超时；音画已停止。')
@@ -67,13 +67,14 @@ export function connectProgramPlayback(monitor, owner, binding, run, frame) {
     if (attempt.previous !== previous || attempt.checking || !spare) return
     attempt.checking = true
     const node = spare.node
-    const currentAttempt = () => handoff === attempt && live() && !attempt.controller.signal.aborted && monitor.owns(previous) && previous.playIntent
+    const currentAttempt = () => handoff === attempt && live() && owner.epoch === attempt.epoch &&
+      !attempt.controller.signal.aborted && monitor.owns(previous) && previous.playIntent
     void (async () => {
       try {
         await recheck(spare, attempt.controller.signal)
         if (!currentAttempt()) return
         clearHandoff()
-        if (!monitor.promoteProgramSuccessor(previous, attempt.node, spare, node)) {
+        if (!monitor.promoteProgramSuccessor(previous, attempt.node, spare, node, attempt.epoch)) {
           monitor.failProgramHandoff(previous, '下一窗的播放状态已变化；音画已停止。')
         }
       } catch {
@@ -82,7 +83,7 @@ export function connectProgramPlayback(monitor, owner, binding, run, frame) {
     })()
   }
   const player = {
-    live, atBoundary, get wantsPlayback() { return !!pending?.wantPlay },
+    live, atBoundary, recheck, muted: false, get wantsPlayback() { return !!pending?.wantPlay },
     invalidate(pin) { if (pin) locate(pin.frame, false); else discard() },
     prefetch(previous) {
       if (!pending) void load(previous.end, false, previous)
