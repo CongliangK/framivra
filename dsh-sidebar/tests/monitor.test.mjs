@@ -735,6 +735,18 @@ test('retargeted ordinary playback waits for target PTS and native seek; a revok
       assert(node.paused)
       await f.click('播放预览')
       assert.deepEqual(f.plays, [node, node])
+      // A same-window drag and immediately queued Play also use the fence.
+      await f.pin(20)
+      await f.click('播放预览')
+      await f.settle(node)
+      assert(!visible(node) && node.muted && node.paused)
+      await f.decoded(node, 5 / 30, midpoint(10))
+      assert(!visible(node) && node.paused)
+      await f.decoded(node, 10 / 30, midpoint(10))
+      assert(visible(node) && node.muted && node.paused && !node.controls)
+      await paint()
+      await paint()
+      assert.deepEqual(f.plays, [node, node, node]); assert.equal(f.frame(), 20)
       assert.deepEqual(calls.map(({ op }) => op), ['render'])
     }
   })

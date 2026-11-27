@@ -415,12 +415,29 @@ export class WindowMonitor {
       ...(op === 'continue' ? { previousOperationId, inputEpoch } : {}) }, signal)
       : windowRequest(job, op, signal)
   }
+  canObservePin(node) {
+    return typeof node.requestVideoFrameCallback === 'function' && typeof globalThis.requestAnimationFrame === 'function' &&
+      typeof globalThis.cancelAnimationFrame === 'function'
+  }
+
   seek(media, frame) {
     const node = media.node
     if (!node) return
-    retireWindowCallback(media)
+    this.stopContinuation(media)
     node.pause()
-    if (frame !== media.cursor) {
+    if (frame === (media.initialPin?.frame ?? media.cursor)) return
+    retireWindowCallback(media)
+    if (this.canObservePin(node)) {
+      media.initialPin = { frame }
+      media.pinPaint = undefined
+      media.pendingSeek = undefined
+      clearTimeout(media.decodeTimer)
+      media.decodeTimer = setTimeout(() => {
+        if (this.ownsMedia(media)) this.cancel('浏览器未及时呈现定位帧。')
+      }, 15_000)
+      this.ready(media, node)
+      this.refresh()
+    } else {
       const { clock } = media
       const time = (frame - media.frame + 0.5) * clock.den / clock.num
       media.cursor = frame
@@ -428,15 +445,14 @@ export class WindowMonitor {
       node.currentTime = time
       if (!node.seeking && Math.abs(node.currentTime - time) < 1e-6) media.pendingSeek = undefined
     }
-    this.stopContinuation(media)
   }
 
   ready(media, node) {
-    if (!this.ownsMedia(media) || !attachedWindowNode(media, node) || media.ready) return
+    if (!this.ownsMedia(media) || !attachedWindowNode(media, node) || (media.ready && !media.initialPin)) return
     // A Blob URL may be selected and emit progress before its metadata or
     // first frame exists. This is not evidence of a bad size or duration.
     const pin = media.initialPin
-    if (pin && (node.error || node.ended || node.readyState < HAVE_CURRENT_DATA)) return
+    if (pin && (node.error || (!media.ready && node.ended) || node.readyState < HAVE_CURRENT_DATA)) return
     const step = media.clock.den / media.clock.num
     const expected = (media.end - media.frame) * step
     // The container may include an audio-sample/codec tail. Do not derive a
@@ -457,8 +473,7 @@ export class WindowMonitor {
         if (!reachable || time >= node.duration) return
         pin.started = true
         node.pause()
-        pin.needsPresentation = typeof node.requestVideoFrameCallback === 'function' && typeof globalThis.requestAnimationFrame === 'function' &&
-          typeof globalThis.cancelAnimationFrame === 'function'
+        pin.needsPresentation = this.canObservePin(node)
         if (pin.needsPresentation) {
           const observePin = () => {
             const id = node.requestVideoFrameCallback((_now, metadata) => {
@@ -480,7 +495,7 @@ export class WindowMonitor {
       // requested frame when the browser can observe presentation.
       if (!node.paused || node.seeking || node.readyState < HAVE_CURRENT_DATA || frameFromSeconds(node.currentTime, media.fps) !== offset ||
           (pin.needsPresentation && !pin.presented)) return
-      media.pinPaint = pin.needsPresentation
+      media.pinPaint = pin.needsPresentation ? pin : undefined
       media.cursor = pin.frame
       media.initialPin = undefined
     }
@@ -768,7 +783,7 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
           void monitor.cancel('已取消待播放的音画窗口。')
         }
       } else if (owner.epoch !== epoch) return
-      else if (active?.ready && !active.pinPaint && node && !node.seeking && active.pendingSeek === undefined && monitor.ownsNode(active, node)) {
+      else if (active?.ready && !active.initialPin && !active.pinPaint && node && !node.seeking && active.pendingSeek === undefined && monitor.ownsNode(active, node)) {
         void playWindow(active, node)
       } else if (monitor.owns(active) || monitor.ownsJob(job)) {
         monitor.queuePlayback(operation)
@@ -789,7 +804,7 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
   })
 
   async function playWindow(item, node, successor = false) {
-    if (!monitor.ownsNode(item, node) || item.pinPaint) return
+    if (!monitor.ownsNode(item, node) || item.initialPin || item.pinPaint) return
     if (monitor.playOperation === item.operationId) monitor.playOperation = undefined
     item.resume = false
     const attempt = item.resumeAttempt = {}
@@ -808,23 +823,23 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
     }
   }
   useLayoutEffect(() => {
-    const node = media?.node
-    if (!ready || !media.pinPaint || !monitor.ownsNode(media, node)) return
+    const node = media?.node, pin = media?.pinPaint
+    if (!ready || !pin || !monitor.ownsNode(media, node)) return
     // Give the verified paused target a paint opportunity before starting its
     // clock. Never release this fence for a replaced node or generation.
     let paint = requestAnimationFrame(() => {
       paint = requestAnimationFrame(() => {
-        if (!monitor.ownsNode(media, node)) return
+        if (!monitor.ownsNode(media, node) || media.pinPaint !== pin) return
         clearTimeout(media.decodeTimer)
-        media.pinPaint = false
+        media.pinPaint = undefined
         monitor.refresh()
       })
     })
     return () => cancelAnimationFrame(paint)
-  }, [monitor, media, ready])
+  }, [monitor, media, media?.pinPaint, ready])
   useLayoutEffect(() => {
     const node = media?.node
-    if (!ready || !monitor.ownsNode(media, node) || media.pinPaint || node.seeking || media.pendingSeek !== undefined) return
+    if (!ready || !monitor.ownsNode(media, node) || media.initialPin || media.pinPaint || node.seeking || media.pendingSeek !== undefined) return
     if (media.resume) {
       // A natural handoff starts at the exact beginning, not a midpoint seek.
       onFrame(String(media.frame), media)
@@ -833,7 +848,7 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
   }, [monitor, media, state, ready, onFrame])
 
   function publish(item, node, time, decoded = false) {
-    if (!monitor.ownsNode(item, node) || !item.ready || item.pendingSeek !== undefined) return
+    if (!monitor.ownsNode(item, node) || !item.ready || item.initialPin || item.pinPaint || item.pendingSeek !== undefined) return
     const adjustment = decoded ? item.clock.den / (2 * item.clock.num) : 0
     const offset = frameFromSeconds(time + adjustment, item.fps)
     if (offset === null) return
@@ -841,7 +856,7 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
     if (next !== item.cursor) { item.cursor = next; onFrame(String(next), item) }
   }
   function observe(item, node) {
-    if (!monitor.ownsNode(item, node) || !item.ready || item.pinPaint) { node.pause(); return }
+    if (!monitor.ownsNode(item, node) || !item.ready || item.initialPin || item.pinPaint) { node.pause(); return }
     if (node.paused) return // A queued play event cannot revive canceled playback.
     if (!item.resumeAttempt) monitor.played(item)
     if (item.callback !== undefined || typeof node.requestVideoFrameCallback !== 'function') return
@@ -863,7 +878,7 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
   return h('section', { className: 'fv-rendered', 'aria-label': '单窗口音画监看' },
     h('div', { className: 'fv-program-stage', 'data-mode': 'window' },
       current ? [media, state.spare].filter(Boolean).map(item => {
-        const active = item === media, visible = active && ready && !showFirstFrame
+        const active = item === media, visible = active && ready && !item.initialPin && !showFirstFrame
         return h('video', { key: item.url, ref: node => { if (node) item.node = node }, src: item.url,
           controls: !!visible && !waiting && !item.pinPaint, muted: !active || !!item.initialPin || !!item.pinPaint, preload: 'auto', playsInline: true, disablePictureInPicture: true, disableRemotePlayback: true,
           'aria-label': active ? (archive ? `已核归档 A/V [${item.frame}, ${item.end})` : '仅当前窗口的原生音画') : undefined, 'aria-hidden': !visible,
