@@ -225,6 +225,12 @@ def _probe_facts(info, rate, frames, samples, *, verify_dts=False):
     sound = (int(audio['sample_rate']), audio['channels'])
     if video['codec_name'] != 'h264' or dims != (1920, 1080) or audio['codec_name'] != 'aac' or sound != (48000, 2):
         raise WindowError('media.streams', 'expected 1080p H.264 and 48 kHz stereo AAC')
+    # Coded dimensions alone also match anamorphic H.264. Do not certify a
+    # window whose declared ratios contradict the monitor's 1920x1080 canvas.
+    # ffprobe JSON omits unspecified ratios; the player still checks the actual
+    # decoded dimensions before displaying or playing the window.
+    if video.get('sample_aspect_ratio', '1:1') != '1:1' or video.get('display_aspect_ratio', '16:9') != '16:9':
+        raise WindowError('media.streams', 'window aspect ratio does not match the 1920x1080 display canvas')
     vt, at = Fraction(video['time_base']), Fraction(audio['time_base'])
     if (int(video['start_pts']) != 0 or int(video['duration_ts']) * vt != frames / rate
             or Fraction(video['avg_frame_rate']) != rate):
@@ -683,7 +689,8 @@ def _verified_media(output, workspace, request, identity, start, end, rate, chec
     packet_fields = 'stream_index,pts,duration' + (',dts' if verify_dts else '')
     probe = _process(['ffprobe', '-v', 'error', '-protocol_whitelist', 'pipe', '-f', 'mov',
                      '-show_streams', '-show_packets', '-show_entries',
-                     'stream=index,codec_type,codec_name,width,height,sample_rate,channels,time_base,start_pts,duration_ts,avg_frame_rate:'
+                     'stream=index,codec_type,codec_name,width,height,sample_aspect_ratio,display_aspect_ratio,'
+                     'sample_rate,channels,time_base,start_pts,duration_ts,avg_frame_rate:'
                      f'packet={packet_fields}:packet_side_data=side_data_type,skip_samples',
                      '-of', 'json', '-i', 'pipe:0'], check, data=data)
     if probe.returncode or probe.stderr.strip():
