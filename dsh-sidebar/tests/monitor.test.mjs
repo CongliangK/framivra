@@ -17,7 +17,7 @@ const midpoint = (frame, num = 30, den = 1) => (frame + 0.5) * den / num
 // are adapted. These tests do not certify native browser decoding or seek accuracy.
 async function fixture(t, Component = RenderedPlayer, initial = {}, { quantizeToMicroseconds = false, mockBlobURLs = false, deferNativePins = false } = {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://monitor.invalid/' })
-  const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch', 'URL', 'Image', 'requestAnimationFrame', 'cancelAnimationFrame'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
+  const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch', 'URL', 'Image', 'navigator', 'caches', 'location', 'requestAnimationFrame', 'cancelAnimationFrame'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
   globalThis.window = dom.window; globalThis.document = dom.window.document
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   const requests = [], urls = [], revoked = []
@@ -559,11 +559,12 @@ test('rejects unknown window bounds, bad checksum and oversized stream before cr
   const responses = [request => windowReply(request, 56), request => windowReply(request, 55, { headers: { 'X-Framivra-SHA256': '0'.repeat(64) } }),
     request => windowReply(request, 55, { body: new ReadableStream({ start: stream => stream.enqueue(new Uint8Array(5 * 1024 * 1024 + 1)) }) }),
     request => windowReply(request, 55, { headers: { 'X-Framivra-Program-Audio': '1' } }),
+    () => Response.json({ ok: false, error: 'WINDOW_REJECTED', diagnostics: [{ code: 'gfx.unsupported', message: 'INTERNAL_SERVER_SENTINEL' }] }, { status: 422 }),
     () => new Response('INTERNAL_SERVER_SENTINEL', { status: 502 })]
   serveWindows(f, request => request.op === 'render' ? responses.shift()(request) : reaped())
   await f.click('音画窗口')
   for (const input of windowInputs()) await toggle(input)
-  for (const message of [/区间/, /SHA-256/, /5 MiB/, /窗口音频模式或输入身份不符/, /读取或校验窗口失败/]) {
+  for (const message of [/区间/, /SHA-256/, /5 MiB/, /窗口音频模式或输入身份不符/, /不能完整核验这个工程的图形轨/, /读取或校验窗口失败/]) {
     await f.click(generateWindow)
     await untilWindow(() => !f.button(generateWindow).disabled)
     assert.match(document.querySelector('[aria-label="单窗口音画监看"] [role="status"]').textContent, message)
@@ -571,7 +572,7 @@ test('rejects unknown window bounds, bad checksum and oversized stream before cr
     assert.equal(f.urls.length, 0)
   }
   assert(!document.body.textContent.includes('INTERNAL_SERVER_SENTINEL'))
-  assert.deepEqual(f.requests.map(({ request }) => request.op), Array.from({ length: 5 }, () => ['render', 'cancel']).flat())
+  assert.deepEqual(f.requests.map(({ request }) => request.op), Array.from({ length: 6 }, () => ['render', 'cancel']).flat())
 })
 
 function sessionAdapter(request, patch = {}) {
@@ -861,6 +862,209 @@ async function endWindow(f, node) {
   await f.emit(node, 'pause') // HTML media pauses on natural completion before `ended`.
   await f.emit(node, 'ended')
 }
+
+async function programMonitor(t, { second, boundaryCheck } = {}) {
+  const commands = [], stored = new Map(), duration = 90, togglePreview = {}
+  const opened = { ...continuationOpened, previewSession: { ...continuationQualification, programRun: { version: 1 } },
+    snapshot: { ...windowOpened.snapshot, document: { project: { duration_frames: duration, fps: 30 } } } }
+  const f = await fixture(t, ProgramMonitor, { opened, timeline: 'timeline.json', duration, togglePreview,
+    async call(sessionId, request, signal) {
+      commands.push({ request, signal })
+      if (request.op === 'authorize-preview-session') return { ok: true, grant: { id: 'program', ownerId: 'owner', openGrant: opened.grant,
+        sessionId, project: 'timeline.json', expiresAt: Date.now() + 60_000, maxWindows: 3,
+        programRun: { version: 1, contentVersion: version, duration, span: 30, frame: request.frame, maxBytes: 1024 } } }
+      if (request.op === 'program-check') {
+        if (request.frame === 30 && commands.filter(({ request }) => request.op === 'program-check' && request.frame === 30).length > 1 && boundaryCheck) {
+          const answer = await boundaryCheck.promise
+          if (answer) return answer
+        }
+        return { ok: true, grantId: 'program', frame: request.frame, sha256: request.sha256 }
+      }
+      assert.equal(request.op, 'revoke-preview-session')
+      return { ok: true, revoked: true, grantId: 'program' }
+    },
+  }, { mockBlobURLs: true })
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { locks: { request: async (_name, _options, acquire) => acquire({}) } } })
+  globalThis.location = f.dom.window.location
+  globalThis.caches = { delete: async () => stored.clear(), open: async () => ({
+    put: async (key, value) => stored.set(key, value), match: async key => stored.get(key)?.clone(),
+  }) }
+  serveWindows(f, async request => {
+    assert.equal(request.op, 'program-render')
+    if (request.frame === 30 && second) await second.promise
+    return windowReply(request, request.frame + 30, { headers: { 'Content-Length': String(windowPayload.length),
+      'X-Framivra-Input-Epoch': inputEpoch, 'X-Framivra-Operation-Id': request.operationId, 'X-Framivra-Media-Kind': 'program-preview-window/v1' } })
+  })
+  await f.render({})
+  await f.click('允许并开始整片预览')
+  await untilWindow(f.video)
+  const first = f.video()
+  const loadPlayable = async node => {
+    Object.assign(f.state(node), { videoWidth: 1920, videoHeight: 1080, duration: 1, readyState: 3 })
+    await f.emit(node, 'canplay')
+  }
+  await loadPlayable(first)
+  assert.deepEqual(f.plays, [first]); assert(!first.muted)
+  return { ...f, first, loadPlayable, checks: () => commands.filter(({ request }) => request.op === 'program-check').map(({ request }) => request.frame),
+    commands, stored, space: () => act(async () => { assert.equal(typeof togglePreview.current, 'function'); togglePreview.current() }),
+    spare: () => document.querySelectorAll('video')[1] }
+}
+
+test('a nonzero program pin stays hidden until both native seek and target PTS, then pause can cancel queued play', async t => {
+  for (const ptsFirst of [true, false]) await t.test(ptsFirst ? 'PTS first' : 'seeked first', async t => {
+    const f = await programMonitor(t)
+    const paints = new Map(); let seq = 0
+    globalThis.requestAnimationFrame = callback => { paints.set(++seq, callback); return seq }
+    globalThis.cancelAnimationFrame = id => paints.delete(id)
+    async function paint() {
+      const [id, callback] = paints.entries().next().value
+      paints.delete(id)
+      await act(async () => callback())
+    }
+    await f.pin(35)
+    await untilWindow(() => f.video() && f.video() !== f.first)
+    const node = f.video()
+    await f.space()
+    assert(f.button('取消待播放'), 'one Space queues the program window through the shared native path')
+    await f.loadPlayable(node)
+    const time = midpoint(5)
+    assert.equal(node.currentTime, time)
+    await f.decoded(node, 0, time)
+    assert(!visible(node) && node.muted && node.paused)
+    if (ptsFirst) await f.decoded(node, 5 / 30, time)
+    else await f.settle(node)
+    assert(!visible(node) && node.muted && node.paused)
+    if (ptsFirst) await f.settle(node)
+    else await f.decoded(node, 5 / 30, time)
+    assert(visible(node) && node.muted && node.paused && !node.controls)
+    await paint()
+    assert(node.paused && node.muted)
+    if (ptsFirst) await f.click('取消待播放')
+    await paint()
+    assert.deepEqual(f.plays, ptsFirst ? [f.first] : [f.first, node])
+    assert(!node.muted && node.controls); assert.equal(f.frame(), 35)
+  })
+})
+
+test('program parks one muted node and promotes it at zero only after an exact boundary recheck', async t => {
+  const proof = deferred(), f = await programMonitor(t, { boundaryCheck: proof })
+  await untilWindow(f.spare)
+  const next = f.spare(), firstUrl = f.first.getAttribute('src')
+  assert.deepEqual(f.checks(), [0, 30], 'next must be verified before the predecessor ends')
+  assert(next.muted && next.paused && !visible(next)); assert.equal(next.currentTime, 0)
+  await f.loadPlayable(next)
+  assert.deepEqual(f.plays, [f.first]); assert.equal(f.urls.length, 2)
+  await endWindow(f, f.first)
+  assert.deepEqual(f.checks(), [0, 30, 30]); assert.equal(f.frame(), 29)
+  const [, before, atBoundary] = f.commands.filter(({ request }) => request.op === 'program-check')
+  assert.deepEqual(atBoundary.request, before.request, 'recheck identical grant, frame and digest')
+  assert.notEqual(atBoundary.signal, before.signal)
+  assert(next.muted && next.paused && !visible(next)); assert.equal(f.video(), f.first)
+  await act(async () => proof.resolve())
+  assert.equal(f.video(), next, 'reuse the parked node without a second fetch/decode')
+  assert.deepEqual(f.plays, [f.first, next]); assert(!next.muted && !next.paused)
+  assert.equal(next.currentTime, 0); assert.equal(f.frame(), 30)
+  assert(f.first.muted && !f.first.hasAttribute('src') && f.revoked.includes(firstUrl))
+  await untilWindow(f.spare)
+  assert.deepEqual(f.checks(), [0, 30, 30, 60]); assert.equal(document.querySelectorAll('video').length, 2)
+  assert.match(document.body.textContent, /预缓冲一个相邻窗口，不保证无缝/)
+  assert.doesNotMatch(document.body.textContent, /不自动续窗/)
+  assert.deepEqual(f.requests.map(({ request }) => [request.op, request.frame]), [['program-render', 0], ['program-render', 30], ['program-render', 60]])
+  await f.click('停止整片预览')
+  await untilWindow(() => f.stored.size === 0)
+  assert.equal(f.video(), null); assert(next.paused && next.muted)
+  assert.deepEqual(new Set(f.revoked), new Set(f.urls.map(({ url }) => url)))
+})
+
+test('a cold program boundary waits with no picture or audio advance; pause and pin preempt the spare read', async t => {
+  const late = deferred(), f = await programMonitor(t, { second: late })
+  await endWindow(f, f.first)
+  assert(f.button('暂停连续播放')); assert.equal(f.frame(), 29)
+  assert(f.first.paused && !f.spare()); assert.deepEqual(f.checks(), [0])
+  await f.click('暂停连续播放')
+  assert(!f.button('暂停连续播放'))
+  await f.pin(60)
+  await act(async () => late.resolve())
+  await untilWindow(() => f.video() && f.video() !== f.first)
+  const pinned = f.video()
+  await f.loadPlayable(pinned)
+  assert.equal(f.frame(), 60); assert(pinned.paused && !pinned.muted)
+  assert.deepEqual(f.plays, [f.first], 'late speculative result must not resume after pause/pin')
+  assert.deepEqual(f.checks(), [0, 60]); assert.equal(f.urls.length, 2)
+  assert.equal(f.commands.filter(({ request }) => request.op === 'authorize-preview-session').length, 1)
+})
+
+test('rejecting a program spare leaves valid current video playing, then fails closed at the boundary', async t => {
+  const f = await programMonitor(t)
+  await untilWindow(f.spare)
+  const next = f.spare(), url = next.getAttribute('src')
+  Object.assign(f.state(next), { videoWidth: 640, videoHeight: 480, duration: 1, readyState: 3 })
+  await f.emit(next, 'canplay')
+  assert(!f.first.paused); assert.equal(f.video(), f.first); assert(!f.spare() && f.revoked.includes(url))
+  await endWindow(f, f.first)
+  assert.match(document.body.textContent, /下一窗不可播放；音画已停止/)
+  assert.equal(f.frame(), 29); assert.deepEqual(f.plays, [f.first]); assert.deepEqual(f.checks(), [0, 30])
+})
+
+test('a revoked or superseded boundary proof cannot promote its parked node', async t => {
+  for (const action of ['pause and pin', 'revoke', 'refusal', 'readiness lost']) await t.test(action, async t => {
+    const proof = deferred(), f = await programMonitor(t, { boundaryCheck: proof })
+    await untilWindow(f.spare)
+    const next = f.spare(), url = next.getAttribute('src')
+    await f.loadPlayable(next)
+    await endWindow(f, f.first)
+    const pending = f.commands.at(-1)
+    assert.equal(pending.request.frame, 30); assert(!pending.signal.aborted)
+    if (action === 'pause and pin') {
+      await f.click('暂停连续播放')
+      assert(pending.signal.aborted)
+      await f.pin(60)
+      await untilWindow(() => f.video() && f.video() !== f.first)
+      await f.loadPlayable(f.video())
+    } else if (action === 'revoke') {
+      await f.click('停止整片预览')
+      assert(pending.signal.aborted)
+    } else if (action === 'readiness lost') {
+      f.state(next).readyState = 2
+      await f.emit(next, 'waiting')
+    }
+    await act(async () => proof.resolve(['pause and pin', 'refusal'].includes(action) ? { ok: false, error: 'STALE_WINDOW' } : undefined))
+    assert.deepEqual(f.plays, [f.first]); assert(f.revoked.includes(url))
+    if (action === 'pause and pin') {
+      assert.equal(f.frame(), 60); assert(f.video()?.paused)
+      assert.deepEqual(f.checks(), [0, 30, 30, 60])
+      assert(!f.commands.some(({ request }) => request.op === 'revoke-preview-session'), 'a stale refusal cannot retire the foreground run')
+    } else if (action === 'readiness lost') {
+      assert.equal(f.video(), f.first); assert.equal(f.frame(), 29)
+      assert.match(document.body.textContent, /下一窗的播放状态已变化/)
+      await f.loadPlayable(next)
+      assert.deepEqual(f.checks(), [0, 30, 30])
+    } else {
+      assert.equal(f.video(), null)
+      assert(f.commands.some(({ request }) => request.op === 'revoke-preview-session'))
+      if (action === 'refusal') assert.match(document.body.textContent, /STALE_WINDOW/)
+    }
+  })
+})
+
+test('a parked window that regresses from canplay is retired after the bounded wait, without retries', async t => {
+  const f = await programMonitor(t)
+  await untilWindow(f.spare)
+  const next = f.spare(), url = next.getAttribute('src')
+  await f.loadPlayable(next)
+  f.state(next).readyState = 2
+  await f.emit(next, 'waiting')
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    await endWindow(f, f.first)
+    assert(f.button('暂停连续播放')); assert.deepEqual(f.checks(), [0, 30])
+    await act(async () => t.mock.timers.tick(15_000))
+  } finally { t.mock.timers.reset() }
+  assert.match(document.body.textContent, /等待下一窗超时；音画已停止/)
+  assert.equal(f.frame(), 29); assert(f.revoked.includes(url)); assert(!f.spare())
+  await f.loadPlayable(next)
+  assert.deepEqual(f.checks(), [0, 30]); assert.deepEqual(f.plays, [f.first])
+})
 
 test('continuation is an unchecked opt-in and the real authorization adapter requires Host confirmation', async t => {
   function MonitorWithAccess(props) {
