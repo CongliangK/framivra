@@ -1046,7 +1046,11 @@ test('a nonzero program pin stays hidden until both native seek and target PTS, 
     await f.space()
     assert(f.button('取消待播放'), 'one Space queues the program window through the shared native path')
     await f.loadPlayable(node)
-    const time = midpoint(5)
+    assert.equal(node.currentTime, 0, 'a fresh program element waits for its initial presentation before seeking')
+    await f.decoded(node, 0, 0)
+    assert.equal(node.currentTime, 0)
+    await paint()
+    const time = 5 / 30 + 0.5 / 48_000
     assert.equal(node.currentTime, time)
     await f.decoded(node, 0, time)
     assert(!visible(node) && node.muted && node.paused)
