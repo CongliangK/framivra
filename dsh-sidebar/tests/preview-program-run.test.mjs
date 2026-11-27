@@ -94,6 +94,57 @@ test('a cold canonical window is pending, not cached; cancelling clears its prog
   } finally { first.resolve(); await b.controller.cancel() }
 })
 
+for (const expiresDuring of ['request', 'cache write']) {
+  test(`a delayed expiry timer cannot publish progress or queue another window after expiry during ${expiresDuring}`, async t => {
+    const b = bench({ duration: 60 }); t.after(() => b.controller.cancel())
+    const { controller } = b, open = controller.open, render = controller.render
+    const now = Date.now(); let writes = 0, progress = 0, expired = false
+    controller.now = () => expired ? controller.run.grant.expiresAt : now
+    controller.notify = () => { progress = Math.max(progress, controller.run.completedFrames) }
+    controller.render = async (...args) => {
+      const response = await render(...args)
+      if (expiresDuring === 'request') expired = true
+      return response
+    }
+    controller.open = async (...args) => {
+      const cache = await open(...args)
+      return { ...cache, async put(...values) {
+        await cache.put(...values); writes++
+        if (expiresDuring === 'cache write') expired = true
+      } }
+    }
+    assert(controller.start(b.binding, 10))
+    await controller.run.finished
+    await controller.run.cleanup
+    assert.deepEqual(b.order, [0])
+    assert.equal(writes, expiresDuring === 'request' ? 0 : 1)
+    assert.equal(progress, 0)
+    assert.equal(controller.run.code, 'PROGRAM_RUN_EXPIRED')
+    assert.equal(controller.run.cleaned, true)
+    assert.equal(b.stored.size, 0)
+  })
+}
+
+test('a late quota rejection purges earlier windows instead of offering partial playback', async t => {
+  const b = bench(); t.after(() => b.controller.cancel())
+  const { controller } = b, open = controller.open
+  let now = Date.now(); controller.now = () => now
+  controller.open = async (...args) => {
+    const cache = await open(...args)
+    return { ...cache, async put(start, blob) {
+      if (start === 0) return cache.put(start, blob)
+      now = controller.run.grant.expiresAt
+      throw new DOMException('Storage is full', 'QuotaExceededError')
+    } }
+  }
+  assert(controller.start(b.binding, 0))
+  await controller.run.finished
+  await controller.run.cleanup
+  assert.deepEqual(b.order, [0, 30])
+  assert.equal(controller.run.code, 'PROGRAM_RUN_EXPIRED')
+  assert.equal(b.stored.size, 0)
+})
+
 test('cancel waits for a late grant and never reuses an unconfirmed cleanup', async () => {
   const issued = Promise.withResolvers(), acknowledge = Promise.withResolvers()
   let revokes = 0

@@ -158,11 +158,17 @@ export class PreviewProgramRun {
           !Number.isSafeInteger(grant.maxWindows) || grant.maxWindows < 1 || grant.maxWindows > PROGRAM_RUN_MAX_WINDOWS ||
           !Number.isSafeInteger(scope.maxBytes) || scope.maxBytes < 1 || scope.maxBytes > PROGRAM_RUN_MAX_BYTES) throw fault('PROGRAM_GRANT_INVALID')
       run.expiry = setTimeout(() => { void this.retire(run, 'error', 'PROGRAM_RUN_EXPIRED') }, remaining)
+      // Background tabs can delay the expiry timer. Check the lease at each
+      // asynchronous handoff before requesting, storing or crediting a window.
+      const assertLive = () => {
+        signal.throwIfAborted()
+        if (this.now() >= grant.expiresAt) throw fault('PROGRAM_RUN_EXPIRED')
+      }
       run.status = 'running'
       let cursor = grid(binding, frame), first = true
       const advance = start => start + span < duration ? start + span : 0
       while (run.completedFrames < duration) {
-        signal.throwIfAborted()
+        assertLive()
         if (run.entries.size >= grant.maxWindows || run.bytes >= scope.maxBytes) throw fault('PROGRAM_RUN_LIMIT')
         while (run.entries.has(cursor)) cursor = advance(cursor)
         const start = !first && run.wanted !== undefined && !run.entries.has(run.wanted) ? run.wanted : cursor
@@ -171,12 +177,13 @@ export class PreviewProgramRun {
         // This is the requested interval, not evidence of rendered or cached frames.
         run.pendingWindow = { start, end: Math.min(duration, start + span) }
         this.changed(run)
-        signal.throwIfAborted()
+        assertLive()
         const response = await this.render(grant, id, start, signal)
+        assertLive()
         const { blob, entry } = await accept(response, run, start, id, signal)
-        signal.throwIfAborted()
+        assertLive()
         await run.cache.put(start, blob)
-        signal.throwIfAborted()
+        assertLive()
         run.pendingWindow = undefined
         run.inputEpoch = entry.inputEpoch
         run.entries.set(start, entry)
@@ -184,12 +191,15 @@ export class PreviewProgramRun {
         run.completedFrames += entry.end - start
         this.changed(run)
       }
+      assertLive()
       run.status = 'complete'
       this.changed(run)
     } catch (error) {
       run.pendingWindow = undefined
       if (signal.aborted) return
-      if (isLimit(error) && run.completedFrames > 0) {
+      if (run.grant && this.now() >= run.grant.expiresAt) {
+        void this.retire(run, 'error', 'PROGRAM_RUN_EXPIRED')
+      } else if (isLimit(error) && run.completedFrames > 0) {
         run.status = 'partial'; run.code = 'PROGRAM_RUN_LIMIT'
         this.changed(run)
       } else void this.retire(run, 'error', isLimit(error) ? 'PROGRAM_RUN_LIMIT' : codeOf(error.code))
