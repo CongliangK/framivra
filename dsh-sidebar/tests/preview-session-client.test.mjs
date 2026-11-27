@@ -165,6 +165,68 @@ test('one Space after duplicate ruler move/release queues playback before the re
   assert.equal(view.requests.filter(({ body }) => body.op === 'session-render').length, 1)
 })
 
+test('Space starts qualified ordinary program-audio continuation and pauses without revoking it', async t => {
+  const bytes = Buffer.from('000000186674797069736f6d0000020069736f6d69736f32', 'hex'), epoch = `sha256:${'d'.repeat(64)}`
+  const initialReap = deferred()
+  const view = await fixture(t, { ...qualified, continuation: { version: 1 }, programAudioContinuation: { version: 1 } }, (body, _, grant) => {
+    if (body.op === 'authorize-preview-session') return json({ ok: true, grant: { ...grant, maxWindows: 3, continuation: body.continuation, useProgramAudio: body.useProgramAudio } })
+    if (body.op === 'session-cancel') return body.operationId === operations('session-render')[0]?.operationId ? initialReap.promise : reap(body)
+    if (['session-render', 'session-continue'].includes(body.op)) return new Response(bytes, { headers: {
+      'Content-Type': 'video/mp4', 'X-Framivra-Version': version, 'X-Framivra-Start': String(body.frame),
+      'X-Framivra-End': String(body.frame + 30), 'X-Framivra-SHA256': createHash('sha256').update(bytes).digest('hex'),
+      'X-Framivra-Program-Audio': '1', 'X-Framivra-Input-Epoch': epoch,
+      ...(body.previousOperationId && { 'X-Framivra-Continuation-From': body.previousOperationId }),
+    } })
+  }, { input_epoch: true, program_audio: true })
+  const operations = op => view.requests.map(({ body }) => body).filter(body => body.op === op)
+  const { dom } = view, prototype = dom.window.HTMLMediaElement.prototype
+  const playing = new WeakSet(), ended = new WeakSet()
+  let plays = 0
+  Object.defineProperties(prototype, {
+    currentSrc: { get() { return this.getAttribute('src') ?? '' } }, duration: { get: () => 1 }, readyState: { get: () => 4 },
+    paused: { get() { return !playing.has(this) } }, ended: { get() { return ended.has(this) } },
+  })
+  Object.defineProperties(dom.window.HTMLVideoElement.prototype, { videoWidth: { get: () => 1920 }, videoHeight: { get: () => 1080 } })
+  prototype.load = () => {}
+  prototype.play = function () { plays++; playing.add(this); this.dispatchEvent(new dom.window.Event('play')); return Promise.resolve() }
+  prototype.pause = function () { playing.delete(this); this.dispatchEvent(new dom.window.Event('pause')) }
+  const until = async predicate => {
+    for (let i = 0; i < 50 && !predicate(); i++) await act(async () => new Promise(resolve => setImmediate(resolve)))
+    assert(predicate(), 'expected playback transition')
+  }
+  await view.pin('0')
+  await view.consent(allowRender)
+  await view.consent(allowPrepare)
+  await view.consent(allowProgramAudio)
+  await view.consent('允许连续播放时准备下一窗')
+  await view.click(enable)
+  await until(() => document.querySelector('video') && operations('session-cancel').length === 1)
+  const original = document.querySelector('video'), ruler = document.querySelector('.fv-ruler')
+  await act(async () => original.dispatchEvent(new dom.window.Event('loadeddata')))
+  assert.equal(plays, 0)
+  assert.deepEqual(operations('session-continue'), [], 'authorization and readiness alone do not start lookahead')
+  assert.equal(await view.space(ruler), true)
+  assert.equal(plays, 1)
+  assert.deepEqual(operations('session-continue'), [], 'Space still waits for the original provider range to be reaped')
+  await act(async () => initialReap.resolve(reap(operations('session-cancel')[0])))
+  await until(() => operations('session-continue').length === 1 && document.querySelectorAll('video').length === 2)
+  const [authorization] = operations('authorize-preview-session'), [initial] = operations('session-render'), [successor] = operations('session-continue')
+  assert.equal(authorization.continuation, true)
+  assert.equal(authorization.useProgramAudio, true)
+  assert.deepEqual([successor.frame, successor.previewGrant, successor.previousOperationId, successor.inputEpoch, successor.useProgramAudio],
+    [30, initial.previewGrant, initial.operationId, epoch, true])
+  const spare = [...document.querySelectorAll('video')].find(node => node !== original)
+  await act(async () => spare.dispatchEvent(new dom.window.Event('loadeddata')))
+  assert.equal(await view.space(ruler), true)
+  assert(original.paused)
+  await act(async () => { ended.add(original); original.dispatchEvent(new dom.window.Event('ended')) })
+  assert.equal(plays, 1, 'a paused foreground must not start its successor on a late ended event')
+  assert(spare.paused)
+  assert.equal(operations('session-continue').length, 1)
+  assert.deepEqual(operations('revoke-preview-session'), [])
+  assert(view.button(revoke), 'the explicit revoke control remains available after pausing')
+})
+
 // Existing manual advertisement must never be interpreted as session capability.
 test('manual window remains available without explicit v1 owner qualification', async t => {
   const view = await fixture(t, { ...qualified, version: 2 }, undefined, { program_audio: true })

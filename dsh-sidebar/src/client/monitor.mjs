@@ -779,7 +779,7 @@ function AutoPreviewPermission({ controls, blocked }) {
         supportsProgramAudio ? h(React.Fragment, null,
           h('label', null, h('input', { type: 'checkbox', checked: useProgramAudio, disabled: pending || !render || !prepare || firstFrame || (continuation && !supportsProgramAudioContinuation),
             onChange: event => setUseProgramAudio(event.target.checked) }), '允许整片音频基准混音（限短工程，仅在私有窗口工作区处理）'),
-          h('p', null, supportsProgramAudioContinuation ? '整片音频基准可与暖 SVG、续窗分别授权，不可与临时首图同选。开启后，需点击窗口原生播放才会准备下一窗。' :
+          h('p', null, supportsProgramAudioContinuation ? '整片音频基准可与暖 SVG、续窗分别授权，不可与临时首图同选。授权续窗后，可按空格或使用窗口原生控件播放；实际开始播放才会准备下一窗。暂停不撤销自动预览授权。' :
             '整片音频基准可与已授权的暖 SVG 同选，不可与临时首图同选。当前宿主或内核不支持与续窗合用。')) : null) : null,
     needsRevoke ? h('button', { type: 'button', disabled: pending, onClick: controls.revoke }, failed ? '重试撤销自动预览授权' : '停止并撤销自动预览') :
       h('button', { type: 'button', disabled: blocked || pending || !render || !prepare, onClick: () => {
