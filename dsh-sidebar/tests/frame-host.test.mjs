@@ -615,7 +615,7 @@ test('active managed window detects disk-only replacement and waits for exact ma
   assert.equal(b.calls.filter(call => call.argv[0] === windowLauncher).length, 0)
 })
 
-test('whole-timeline Host lease is separate, canonical, and freshness-fenced on cache reads', linuxWindow, async t => {
+for (const mutation of ['save', 'retarget']) test(`whole-timeline Host lease is separate, canonical, and freshness-fenced on cache reads (${mutation})`, linuxWindow, async t => {
   const b = await bench({ ...programFixture,
     storageCapability: { schema: 'framivra.storage/v1', request_stdin: true, operations: ['inspect', 'plan', 'clean'] },
     windowResult: value => ({ ...value, input_epoch: nextVersion }) })
@@ -645,8 +645,21 @@ test('whole-timeline Host lease is separate, canonical, and freshness-fenced on 
   assert.equal((await render(24)).status, 409, 'a completed window cannot be rerendered on the same lease')
   const check = { op: 'program-check', grant: b.grant, previewGrant: grant.id, ownerId, frame: 24, sha256 }
   assert.equal((await b.control(check)).status, 200)
-  b.fs.files.get('/workspace/timeline.json').version = 'changed'
-  assert.equal((await b.control(check)).status, 409, 'retained bytes are not authorized after the file changes')
+  // Save while the Host is awaiting the provider identity read, after its
+  // first timeline observation. The in-flight cache check must not return OK.
+  const readLauncher = b.fs.readBytes
+  b.fs.readBytes = async (...args) => {
+    const bytes = await readLauncher(...args)
+    assert.equal(args[0].targetKey, windowLauncher)
+    if (mutation === 'save') b.fs.files.get('/workspace/timeline.json').version = 'changed'
+    else b.fs.aliases.set('/workspace/timeline.json', '/workspace/sub/nested.json')
+    return bytes
+  }
+  const stale = await b.control(check)
+  assert.equal(stale.status, 409, 'a save during the hand-off check invalidates retained bytes')
+  assert.equal((await stale.json()).error, 'STALE_WINDOW')
+  b.fs.readBytes = readLauncher
+  b.fs.aliases.delete('/workspace/timeline.json')
   assert.equal((await render(0)).status, 403)
   assert.equal((await b.control({ ...stopAttempt, authorizationId: scope.authorizationId })).status, 200)
 
