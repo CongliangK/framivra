@@ -52,7 +52,7 @@ const continuationCapable = capability => capability?.input_epoch === true
 // Release identities are independently approved. There are none in this build.
 const APPROVED_PROGRAM_PROVIDERS = Object.freeze([])
 const PROGRAM_LAUNCHER_LIMIT = 64 * 1024
-const programCapable = binding => binding?.ordinaryProgramQualified === true
+const programCapable = binding => typeof binding?.programLauncherSha256 === 'string'
 // Both bits must come from the same verified direct launcher capability as ordinary continuation.
 const programAudioContinuationCapable = capability => continuationCapable(capability) && capability.program_audio === true
 const sessionQualification = (ownerId, binding) => {
@@ -222,9 +222,11 @@ function writeCapabilityRefusal(capabilities) {
   if (transport?.flag !== '--request-stdin' || transport.max_bytes !== 8388608) return 'Installed vtx lacks the official bounded --request-stdin transport; read/copy remain available. Reopening /dev/stdin is not a supported fallback.'
 }
 
-export function createPreviewHost(ctx, config = {}, { approvedProgramProviders = APPROVED_PROGRAM_PROVIDERS } = {}) {
-  // Runtime apply passes only ctx and config; approval cannot come from config,
-  // the environment, or an incoming request. Tests supply closed fixtures here.
+export function createPreviewHost(ctx, config = {}, { approvedProgramProviders = APPROVED_PROGRAM_PROVIDERS, observeProgramProfile } = {}) {
+  // Runtime apply passes only ctx and config. A future enrollment must wire a
+  // trusted bounded, read-only profile verifier before adding release pins.
+  // The verifier observes actual wheel and runtime bytes, not launcher stdout.
+  // No config, environment variable or incoming request can supply either.
   const programProviders = approvedProgramProviders.map(identity => Object.freeze({ ...identity }))
   const reader = new TimelineReader(ctx.subprocess, config, async (snapshot, signal) => {
     try { return await validateKernelConfigSelection(ctx, snapshot, signal) }
@@ -319,7 +321,7 @@ export function createPreviewHost(ctx, config = {}, { approvedProgramProviders =
   }
   async function qualifyOrdinaryProgram(binding, capability, identify, signal) {
     if (!continuationCapable(capability) || capability.ordinary_long_run !== ORDINARY_PROGRAM_CAPABILITY ||
-        !programProviders.length || typeof ctx.fs.readBytes !== 'function') return false
+        !programProviders.length || typeof observeProgramProfile !== 'function' || typeof ctx.fs.readBytes !== 'function') return false
     const candidates = programProviders.filter(pin => pin.wheelSha256 === capability.wheel_sha256 &&
       pin.runtimeProjectionSha256 === capability.runtime_projection_sha256)
     if (!candidates.length) return false
@@ -331,7 +333,12 @@ export function createPreviewHost(ctx, config = {}, { approvedProgramProviders =
       sameWindowExecutable(binding, await identify())
       signal.throwIfAborted()
       const digest = createHash('sha256').update(bytes).digest('hex')
-      return candidates.some(pin => pin.launcherSha256 === digest)
+      const approved = candidates.find(pin => pin.launcherSha256 === digest)
+      if (!approved) return false
+      const observed = await observeProgramProfile(binding.executable, signal)
+      sameWindowExecutable(binding, await identify())
+      signal.throwIfAborted()
+      return observed?.wheelSha256 === approved.wheelSha256 && observed?.runtimeProjectionSha256 === approved.runtimeProjectionSha256 ? digest : false
     } catch {
       signal.throwIfAborted()
       return false // Independent long-run refusal does not disable ordinary windows.
@@ -362,8 +369,8 @@ export function createPreviewHost(ctx, config = {}, { approvedProgramProviders =
       }
       if (capability.input_epoch === true) await optionalProbe(reader.firstFrameCapabilities.bind(reader))
       await optionalProbe(reader.formalArchiveCapabilities.bind(reader))
-      const ordinaryProgramQualified = await qualifyOrdinaryProgram(binding, capability, identify, signal)
-      return Object.freeze({ ...binding, capability, ordinaryProgramQualified })
+      const programLauncherSha256 = await qualifyOrdinaryProgram(binding, capability, identify, signal)
+      return Object.freeze({ ...binding, capability, programLauncherSha256 })
     } catch (error) {
       signal.throwIfAborted()
       // Failed qualification never takes over ordinary timeline opens. Actual
@@ -506,11 +513,50 @@ export function createPreviewHost(ctx, config = {}, { approvedProgramProviders =
     return info.version
   }
 
+  function retireProgramProfile(grant) {
+    grant.programProfileRetired = true
+    automatic.closePrograms(open => open === grant)
+    const operation = grant.windowOperation
+    if (operation?.lease?.run) {
+      grant.frame?.abort()
+      // Keep exact operation ownership until actual provider reaping. A render
+      // may discover the mismatch itself, so do not wait on its own completion.
+      void reapWindow(grant, operation).catch(() => {})
+    }
+  }
+
+  async function verifyProgramProfile(grant, signal, refreshCapability = false) {
+    const supplier = grant.windowExecutable
+    const identify = () => windowExecutableIdentity(supplier.executable, grant.root, grant.project, grant.executableTarget, signal)
+    try {
+      if (grant.programProfileRetired || !programCapable(supplier) ||
+          await qualifyOrdinaryProgram(supplier, supplier.capability, identify, signal) !== supplier.programLauncherSha256) {
+        fail('PROGRAM_PROVIDER_CHANGED', 'Approved ordinary A/V profile changed; reopen preview', 409)
+      }
+      if (refreshCapability) {
+        // One fresh bounded launcher probe at authorization only, after the
+        // independent read-only check. Its output is not approval evidence.
+        const fresh = await reader.windowCapabilities(supplier.executable, ctx.fs.processPath(grant.timeline), signal, grant.configSnapshot, grant.id)
+        if (fresh.wheel_sha256 !== supplier.capability.wheel_sha256 || fresh.runtime_projection_sha256 !== supplier.capability.runtime_projection_sha256 ||
+            await qualifyOrdinaryProgram(supplier, fresh, identify, signal) !== supplier.programLauncherSha256) {
+          fail('PROGRAM_PROVIDER_CHANGED', 'Approved ordinary A/V capability changed; reopen preview', 409)
+        }
+      }
+      if (grant.programProfileRetired) fail('PROGRAM_PROVIDER_CHANGED', 'Approved ordinary A/V profile was retired; reopen preview', 409)
+    } catch (error) {
+      signal.throwIfAborted()
+      retireProgramProfile(grant)
+      if (error?.code === 'PROCESS_CLEANUP_FAILED') throw error
+      fail('PROGRAM_PROVIDER_CHANGED', 'Approved ordinary A/V profile could not be revalidated; reopen preview', 409)
+    }
+  }
+
   async function validateProgram(lease, grant, signal) {
     const { run, info } = lease
     const live = () => run && lease.open === grant && !grant.closing && automatic.active(lease)
     if (!live()) fail('PROGRAM_RUN_EXPIRED', 'Whole-timeline scope is no longer active', 403)
     const current = await programTimelineVersion(grant, signal)
+    await verifyProgramProfile(grant, signal)
     grantFor(grant.session.id, grant.id)
     if (!live()) fail('PROGRAM_RUN_EXPIRED', 'Whole-timeline scope is no longer active', 403)
     if (current !== run.timelineVersion || info.programRun.contentVersion !== grant.contentVersion) {
@@ -821,12 +867,6 @@ export function createPreviewHost(ctx, config = {}, { approvedProgramProviders =
           if (data.storageConsent !== 'temporary-browser-cache' || data.renderConsent !== 'cache/preview-only' || data.prepareInputs !== true) {
             fail('SESSION_CONSENT', 'Whole-timeline preview requires explicit temporary browser-cache consent', 403)
           }
-          const supplier = grant.windowExecutable
-          const identify = () => windowExecutableIdentity(supplier.executable, grant.root, grant.project, grant.executableTarget, hold.signal)
-          sameWindowExecutable(supplier, await identify())
-          if (!await qualifyOrdinaryProgram(supplier, supplier.capability, identify, hold.signal)) {
-            fail('EXECUTABLE_CHANGED', 'Approved ordinary A/V provider identity changed; reopen preview', 409)
-          }
           const busy = () => frameOwners.size || reader.frameBusy || grant.plan || grant.running || grant.outcomeUnknown || semanticAdmission || storageOwners.size
           if (busy()) fail('PROGRAM_RUN_BUSY', 'Settle current preview, edits or storage work first', 409)
           const timelineVersion = await programTimelineVersion(grant, hold.signal)
@@ -834,6 +874,7 @@ export function createPreviewHost(ctx, config = {}, { approvedProgramProviders =
           let current
           try { current = await reader.read(grant.executable, path, 'inspect', undefined, hold.signal, grant.configSnapshot, grant.id) }
           catch (error) { if (error instanceof PreviewError && error.details) delete error.details; throw error }
+          await verifyProgramProfile(grant, hold.signal, true)
           const after = await programTimelineVersion(grant, hold.signal)
           if (current.document.video_tracks?.some(track => track.kind === 'gfx' && track.clips?.length)) {
             fail('PROGRAM_GFX_UNSUPPORTED', 'Whole-timeline preview only supports ordinary audio/video without graphics tracks', 422)
@@ -1481,14 +1522,14 @@ export function createPreviewHost(ctx, config = {}, { approvedProgramProviders =
         const executable = await localTarget(grant.executable, undefined, signal)
         const info = await ctx.fs.stat(executable, signal)
         if (executable.targetKey !== grant.executableTarget.targetKey || info?.type !== 'file' || info.version !== grant.executableVersion || ctx.fs.contains(grant.root, executable)) fail('EXECUTABLE_CHANGED', 'Installed executable identity changed; reopen', 409)
-        if (isWindow) {
+        if (programRender) await validateProgram(sessionLease, grant, signal)
+        else if (isWindow) {
           if (grant.closing) fail('BAD_GRANT', 'Preview is closing; open a new grant', 403)
           const project = await localTarget(grant.projectPath, undefined, signal)
           if (project.targetKey !== grant.project.targetKey) fail('PATH_CHANGED', 'Project identity changed; reopen preview', 409)
           const binding = grant.windowExecutable
           sameWindowExecutable(binding, await windowExecutableIdentity(binding.executable, grant.root, project, executable, signal))
         }
-        if (programRender) await validateProgram(sessionLease, grant, signal)
         if (isAuto && !automatic.active(sessionLease)) fail('SESSION_EXPIRED', 'Automatic window authorization ended', 403)
         if (data.contentVersion !== grant.contentVersion) fail(`STALE_${errorPrefix}`, 'Displayed version changed', 409)
         grantFor(data.sessionId, data.grant)
