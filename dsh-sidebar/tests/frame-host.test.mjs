@@ -3,8 +3,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { PassThrough, Readable } from 'node:stream'
 import { createHash, randomUUID } from 'node:crypto'
+import { once } from 'node:events'
 import { crc32, deflateSync } from 'node:zlib'
+import { join } from 'node:path'
 import { createPreviewHost } from '../src/host.mjs'
+import { managedInstallationPaths } from '../src/kernel-management.mjs'
 import { PreviewProgramRun } from '../src/client/preview-program-run.mjs'
 import { ORDINARY_PROGRAM_CAPABILITY } from '../src/protocol.mjs'
 import { MemoryFs } from './helpers.mjs'
@@ -15,6 +18,8 @@ const linuxWindow = { skip: process.platform !== 'linux' }
 const bareWindowCapability = { schema: 'framivra.timeline.preview-window/v1', inline_media: true, prepare_inputs: true }
 const qualification = { launcher: 'framivra.preview-window.fixed-wheel/v1', wheel_sha256: 'c'.repeat(64), runtime_projection_sha256: 'd'.repeat(64) }
 const windowCapability = { ...bareWindowCapability, ...qualification }
+const managedCapability = { ...windowCapability, managed_identity: 'framivra.preview-window.managed-pins/v1' }
+const managedPinsArg = `--managed-preview-pins-v1=${qualification.wheel_sha256}:${qualification.runtime_projection_sha256}`
 const windowLauncher = '/opt/private-window/preview_window_wheel.py'
 const windowBytes = Buffer.from('000000186674797069736f6d0000020069736f6d69736f32', 'hex') // synthetic fixture, not playable media
 const sha256 = createHash('sha256').update(windowBytes).digest('hex')
@@ -25,6 +30,28 @@ const programFixture = { approvedProgramProviders: [approvedProgramProvider],
   windowCapability: { ...windowCapability, input_epoch: true, ordinary_long_run: ORDINARY_PROGRAM_CAPABILITY } }
 async function bench(options = {}) {
   const fs = new MemoryFs(), sessions = new Map([['one', { id: 'one' }]]), cwd = { value: '/workspace' }, calls = []
+  const installation = options.managed && managedInstallationPaths()
+  const managed = installation && join(installation.previewRoot, 'vtx-preview')
+  const fixed = managed || windowLauncher
+  let selection
+  if (managed) {
+    const set = (path, data) => fs.files.set(path, { type: 'file', version: `${path}:${data}`, size: Buffer.byteLength(data), data })
+    const launcher = '# synthetic approved launcher'
+    const supplier = { schema: 'framivra.preview-supplier/v1', abi: qualification.launcher, launcherSha256: createHash('sha256').update(launcher).digest('hex'),
+      wheelSha256: qualification.wheel_sha256, runtimeProjectionSha256: qualification.runtime_projection_sha256 }
+    const commit = '1'.repeat(40)
+    selection = ['v1', commit, supplier.launcherSha256, supplier.wheelSha256, supplier.runtimeProjectionSha256].join(':')
+    set(managed, launcher)
+    set(join(installation.previewRoot, 'kernel.sha256'), `${supplier.wheelSha256}\n`)
+    set(join(installation.previewRoot, 'kernel.whl'), 'mock wheel')
+    set(installation.vtxExecutable, 'ordinary')
+    set(installation.pythonExecutable, 'python')
+    set(installation.configFile, '{}')
+    set(installation.manifest, JSON.stringify({ ...installation, schema: 'framivra.installation/v1', commit, version: 'v1', installedAt: 'now', status: 'ready', profile: 'non-ai', renderer: 'cdp', previewSupplier: supplier }))
+    for (const p of [installation.previewRoot, join(installation.previewRoot, 'runtime'), installation.sourceRoot]) fs.files.set(p, { type: 'directory', version: p })
+    fs.lstat = async p => fs.files.get(p) ?? { type: 'directory' }
+    fs.readBytes = async ({ targetKey }) => Buffer.from(fs.files.get(targetKey).data)
+  }
   sessions.list = () => [...sessions.values()]
   fs.files.set(windowLauncher, { type: 'file', version: 'wheel-launcher' })
   if (options.approvedProgramProviders || options.launcherBytes) fs.readBytes = async (target, signal, max) => {
@@ -38,23 +65,24 @@ async function bench(options = {}) {
   let now = 0
   const subprocess = { resolveExecutable: async command => command, spawn(spec) {
     calls.push(spec)
-    const optionalProbe = ['--first-frame-capabilities', '--formal-archive-capabilities'].includes(spec.argv[1])
-    const operation = optionalProbe ? spec.argv[1] : spec.argv[3] === 'timeline' ? spec.argv[4] : spec.argv[3]
+    const argv = spec.argv[1] === managedPinsArg ? [spec.argv[0], ...spec.argv.slice(2)] : spec.argv
+    const optionalProbe = ['--first-frame-capabilities', '--formal-archive-capabilities'].includes(argv[1])
+    const operation = optionalProbe ? argv[1] : argv[3] === 'timeline' ? argv[4] : argv[3]
     let value = operation === 'frame' ? { schema: 'framivra.timeline.frame/v1', operation, ok: true, diagnostics: [], content_version: version, image: { path: '/never/read.png' } }
-      : { schema: 'framivra.timeline.read/v1', operation, ok: true, diagnostics: [], content_version: options.saved?.() ?? version, document: { project: options.project ?? { duration_frames: 36, fps: 23.976 } }, coverage: { complete: true, scope: 'unit fixture', unexpanded: [] }, capabilities: { operations: ['inspect', 'query'], preview_window: spec.argv[0] === windowLauncher ? (options.liveCapability?.() ?? options.windowCapability) : options.ordinaryWindowCapability, frame: options.unsupported ? {} : { schema: 'framivra.timeline.frame/v1', explicit_render_required: true, ...(options.prepareCapability ? { prepare_gfx: options.prepareCapability } : {}), inline_png: { flag: '--include-png', encoding: 'base64', wire_limit_bytes: FRAME_WIRE_LIMIT } } } }
+      : { schema: 'framivra.timeline.read/v1', operation, ok: true, diagnostics: [], content_version: options.saved?.() ?? version, document: { project: options.project ?? { duration_frames: 36, fps: 23.976 } }, coverage: { complete: true, scope: 'unit fixture', unexpanded: [] }, capabilities: { operations: ['inspect', 'query'], preview_window: spec.argv[0] === fixed ? (options.liveCapability?.() ?? options.windowCapability) : options.ordinaryWindowCapability, frame: options.unsupported ? {} : { schema: 'framivra.timeline.frame/v1', explicit_render_required: true, ...(options.prepareCapability ? { prepare_gfx: options.prepareCapability } : {}), inline_png: { flag: '--include-png', encoding: 'base64', wire_limit_bytes: FRAME_WIRE_LIMIT } } } }
     if (operation === 'inspect' && options.videoTracks) value.document.video_tracks = options.videoTracks
     if (operation === 'capabilities' && options.storageCapability) value.capabilities.storage = options.storageCapability
     if (operation === '--first-frame-capabilities') value = options.firstFrameCapability ?? { ok: false }
     if (operation === '--formal-archive-capabilities') value = options.archiveCapability ?? { ok: false }
     if (operation === 'preview-formal-archive') {
-      const start = Number(spec.argv[6])
+      const start = Number(argv[6])
       value = { schema: 'framivra.preview-formal-archive/v1', ...qualification, ok: true, nonce: spec.argv.at(-1).slice('--nonce='.length),
         content_version: version, start, end: 36, fps: { num: 24000, den: 1001 }, width: 1920, height: 1080, audio_sample_rate: 48000,
         audio_channels: 2, mime: 'video/mp4', sha256, byte_length: windowBytes.length, base64: windowBytes.toString('base64'), manifest_sha256: 'e'.repeat(64) }
       if (options.archiveResult) value = options.archiveResult(value)
     }
     if (['preview-window', 'preview-window-first-frame'].includes(operation)) {
-      const start = Number(spec.argv[6])
+      const start = Number(argv[6])
       value = { schema: windowCapability.schema, ...qualification, ok: true, content_version: version, start, end: Math.min(36, start + 24), fps: { num: 24000, den: 1001 }, width: 1920, height: 1080,
         mime: 'video/mp4', audio_sample_rate: 48000, audio_channels: 2, byte_length: windowBytes.length, sha256, base64: windowBytes.toString('base64'), path: '/never/read.mp4' }
       value = options.windowResult ? options.windowResult(value, spec) : value
@@ -74,19 +102,23 @@ async function bench(options = {}) {
     return { stdout: Readable.from([Buffer.from(text)]), done: Promise.resolve({ exitCode: optionalProbe || value.ok ? 0 : 1, signal: null }), terminate() {}, waitForExit: async () => true, collected: { stdout: { readFrom: () => ({ text, lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
   } }
   const config = { vtxExecutable: '/opt/trusted/vtx', previewWindowExecutable: options.windowExecutable ?? (options.windowCapability ? windowLauncher : ''), clock: () => now }
+  if (managed) Object.assign(config, { vtxExecutable: installation.vtxExecutable, vtxConfigFile: installation.configFile, managedPreviewSupplier: selection })
   if (options.ordinaryConfig) {
     config.vtxConfigFile = '/opt/settings/config.json'
     fs.files.set(config.vtxConfigFile, { type: 'file', version: 'ordinary-config' })
     fs.lstat = async path => fs.files.get(path) ?? { type: 'directory' }
   }
   const getCwd = session => session.cwd ?? cwd.value
+  const services = { fs, sessions, workingDirectory: { get: getCwd, ensure: async agent => getCwd(agent.session) }, subprocess }
   const observeProgramProfile = options.approvedProgramProviders && !options.noProfileObserver ? async (executable, signal) => {
     signal.throwIfAborted()
     assert.equal(executable, windowLauncher)
     return options.observedProfile ? { ...options.observedProfile } : approvedProgramProvider
   } : undefined
-  const host = createPreviewHost({ fs, sessions, workingDirectory: { get: getCwd, ensure: async agent => getCwd(agent.session) }, subprocess }, config,
-    { approvedProgramProviders: options.approvedProgramProviders, observeProgramProfile })
+  const host = options.mountRegisteredHost ? await options.mountRegisteredHost(services, config) : createPreviewHost(services, config, {
+    approvedPreviewSuppliers: managed && options.approved !== false ? [selection] : undefined,
+    approvedProgramProviders: options.approvedProgramProviders, observeProgramProfile,
+  })
   const control = data => host.control(new Request('http://unit/api/framivra/control', { method: 'POST', body: JSON.stringify({ sessionId: 'one', ...data }) }))
   const opened = await control({ op: 'open', timeline: 'timeline.json' }); assert.equal(opened.status, 200, await opened.clone().text())
   const opening = await opened.json()
@@ -96,7 +128,7 @@ async function bench(options = {}) {
   const window = (data = {}) => host.window(new Request('http://unit/api/framivra/window', { method: 'POST', body: JSON.stringify(data.op === 'cancel'
     ? { sessionId: 'one', grant, ...data }
     : { ...request, prepareInputs: true, operationId: randomUUID(), ...data }) }))
-  return { host, config, fs, cwd, sessions, calls, frame, window, control, grant, opening, request, expire: () => { now = 30 * 60 * 1000 } }
+  return { host, config, fs, cwd, sessions, calls, frame, window, control, grant, opening, request, installation, managed, expire: () => { now = 30 * 60 * 1000 } }
 }
 const prepareCapability = { flag: '--prepare-gfx', trust_flag: '--trust-html', kind: 'current-composite', preview_only: true }
 
@@ -503,6 +535,86 @@ test('frame + semantic mutual exclusion lasts through HTTP cancel until actual d
   } finally { doneResolve({ exitCode: 1 }); rangeResolve(true); await b.host.dispose() }
 })
 
+test('managed preview requires independent approval, the live managed ABI and both exact pins; no legacy fallback', linuxWindow, async t => {
+  for (const options of [
+    { approved: false, windowCapability: managedCapability },
+    { windowCapability },
+    { windowCapability: { ...managedCapability, managed_identity: 'wrong' } },
+    { windowCapability: { ...managedCapability, wheel_sha256: 'e'.repeat(64) } },
+    { windowCapability: { ...managedCapability, runtime_projection_sha256: 'e'.repeat(64) } },
+  ]) {
+    const b = await bench({ managed: true, ...options }); t.after(() => b.host.dispose())
+    assert.equal(b.opening.previewSession, undefined)
+    assert.equal((await b.window()).status, 422)
+    assert.equal(b.calls.filter(call => call.argv[0] === windowLauncher).length, 0)
+    assert.equal(b.calls.filter(call => call.argv[0] === b.managed).length, options.approved === false ? 0 : 1)
+    const check = await b.host.diagnostics(new Request('http://unit/api/framivra/diagnostics', { method: 'POST', body: '{}' }))
+    assert.equal(check.status, 200)
+    assert.equal((await check.json()).previewSupplier.ok, false)
+  }
+})
+
+test('approved managed short windows do not confer long-run authority, and pin removal retires short authority', linuxWindow, async t => {
+  const b = await bench({ managed: true, windowCapability: { ...managedCapability, input_epoch: true, ordinary_long_run: ORDINARY_PROGRAM_CAPABILITY },
+    windowResult: value => ({ ...value, input_epoch: nextVersion }) })
+  t.after(() => b.host.dispose())
+  const { ownerId, programRun, continuation } = b.opening.previewSession
+  assert.equal(programRun, undefined)
+  assert.deepEqual(continuation, { version: 1 })
+  const before = b.calls.length
+  const denied = await b.control({ op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 0, contentVersion: version,
+    authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' })
+  assert.equal(denied.status, 422)
+  assert.equal((await denied.json()).error, 'PROGRAM_RUN_UNSUPPORTED')
+  assert.equal(b.calls.length, before, 'a managed short approval and a self-report start no long-run work')
+  const scope = { op: 'authorize-preview-session', grant: b.grant, scope: 'current-project', continuation: true,
+    renderConsent: 'cache/preview-only', prepareInputs: true }
+  const auth = await b.control(scope); assert.equal(auth.status, 200, await auth.clone().text())
+  const { grant } = await auth.json()
+  const render = (frame = 0) => b.window({ op: 'session-render', frame, ownerId, previewGrant: grant.id, renderConsent: undefined, prepareInputs: undefined })
+  const first = await render(); assert.equal(first.status, 200, await first.clone().text()); await first.arrayBuffer()
+  const pin = join(b.installation.previewRoot, 'kernel.sha256')
+  const saved = b.fs.files.get(pin)
+  b.fs.files.delete(pin)
+  const refusal = await render(24)
+  assert.equal(refusal.status, 409)
+  assert.equal((await refusal.json()).error, 'EXECUTABLE_CHANGED')
+  b.fs.files.set(pin, saved)
+  assert.notEqual((await render(24)).status, 200, 'restoring bytes does not resurrect this lease')
+  assert.equal((await b.control(scope)).status, 409)
+  assert.equal(b.calls.filter(call => call.argv[0] === windowLauncher).length, 0)
+  assert.equal(b.calls.filter(call => call.argv.includes('preview-window')).length, 1)
+  const managedCalls = b.calls.filter(call => call.argv[0] === b.managed).map(call => call.argv)
+  assert.deepEqual(managedCalls.map(argv => argv[1]), Array(4).fill(managedPinsArg))
+  assert.deepEqual(managedCalls.map(argv => argv[2]), ['-t', '--first-frame-capabilities', '--formal-archive-capabilities', '-t'])
+})
+
+test('active managed window detects disk-only replacement and waits for exact managed-range cleanup', { ...linuxWindow, timeout: 7000 }, async t => {
+  let start, terminate, done, reap
+  const started = new Promise(resolve => { start = resolve })
+  const stopped = new Promise(resolve => { terminate = resolve })
+  const settled = new Promise(resolve => { done = resolve })
+  const range = new Promise(resolve => { reap = resolve })
+  const b = await bench({ managed: true, windowCapability: managedCapability, windowHandle() {
+    start()
+    return { stdout: new PassThrough(), done: settled, terminate() { terminate(); done({ exitCode: 1 }) }, waitForExit: () => range,
+      collected: { stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
+  } })
+  t.after(async () => { done({ exitCode: 1 }); reap(true); await b.host.dispose() })
+  let finished = false
+  const operationId = randomUUID(), pending = b.window({ operationId }).then(response => { finished = true; return response })
+  await started
+  b.fs.files.get(b.managed).data = '# changed content'
+  await stopped
+  assert.equal(finished, false)
+  reap(true)
+  const result = await pending
+  assert.notEqual(result.status, 200)
+  assert.equal((await b.window({ op: 'cancel', operationId })).status, 200)
+  assert.equal((await b.window()).status, 409)
+  assert.equal(b.calls.filter(call => call.argv[0] === windowLauncher).length, 0)
+})
+
 test('whole-timeline Host lease is separate, canonical, and freshness-fenced on cache reads', linuxWindow, async t => {
   const b = await bench({ ...programFixture,
     storageCapability: { schema: 'framivra.storage/v1', request_stdin: true, operations: ['inspect', 'plan', 'clean'] },
@@ -670,7 +782,7 @@ const warmEpoch = `sha256:${'f'.repeat(64)}`
 const warmWindowCapability = { ...windowCapability, input_epoch: true, warm_svg_media: true }
 const svgTracks = [{ kind: 'gfx', name: 'Titles', clips: [{ format: 'svg-sequence', src: 'gfx/sequence.json', dst_in: 24, dur: 12 }] }]
 const sessionConsent = grant => ({ op: 'authorize-preview-session', scope: 'current-project', grant, renderConsent: 'cache/preview-only', prepareInputs: true })
-const sessionWindow = (b, grant, data = {}) => b.host.window(new Request('http://unit/api/framivra/window', { method: 'POST', body: JSON.stringify({
+const sessionWindow = (b, grant, data = {}, signal) => b.host.window(new Request('http://unit/api/framivra/window', { method: 'POST', signal, body: JSON.stringify({
   op: 'session-render', sessionId: 'one', grant: b.grant, previewGrant: grant.id, ownerId: grant.ownerId,
   operationId: randomUUID(), frame: 1, contentVersion: version, ...data,
 }) }))
@@ -930,24 +1042,108 @@ function pack(kind, nonce, result) {
   return Buffer.concat([header, body])
 }
 function firstFrameChild(bytes) {
-  let start, finish, reaped, settling
+  let start, finish, reaped, settling, terminated = 0
   const started = new Promise(resolve => { start = resolve }), done = new Promise(resolve => { finish = resolve })
   const range = new Promise(resolve => { reaped = resolve }), settled = new Promise(resolve => { settling = resolve })
   const stdout = new PassThrough()
-  return { stdout, started, settled, finish, reaped, handle(spec, value) {
+  return { stdout, started, settled, finish, reaped, terminated: () => terminated, handle(spec, value) {
     const nonce = spec.argv.at(-1).slice('--nonce='.length)
     const first = { schema: firstFrameSchema, ...qualification, provisional: true, mime: 'image/png', frame: value.start, window: [value.start, value.end],
       segment: [value.start, value.end], fps: value.fps, width: 1920, height: 1080, content_version: version,
       byte_length: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), base64: bytes.toString('base64') }
     const { path, ...window } = value
-    start({ first, final: { ...window, input_epoch: warmEpoch }, nonce })
-    return { stdout, done, terminate() {}, waitForExit() { settling(); return range }, collected: {
+    start({ first, final: { ...window, input_epoch: warmEpoch }, nonce, signal: spec.signal })
+    return { stdout, done, terminate() { terminated++ }, waitForExit(signal) { settling(signal); return range }, collected: {
       stderr: { readFrom: () => { throw new Error('never read provisional stderr') } },
     } }
   } }
 }
 const poll = (b, grant, operationId, fields = {}) => sessionWindow(b, grant, { op: 'session-first-frame', operationId, project: grant.project, end: 25, ...fields })
 const firstFrameRenders = b => b.calls.filter(call => call.argv[4] === 'preview-window-first-frame')
+
+test('abort of the registered window request discards staged output and only reaps its own lease', { ...linuxWindow, timeout: 3500 }, async t => {
+  const bytes = rgbPng(), firstChild = firstFrameChild(bytes), secondChild = firstFrameChild(bytes)
+  const original = new AbortController(), other = new AbortController()
+  const { apply } = await import('../src/index.mjs')
+  const b = await bench({ windowCapability: warmWindowCapability, firstFrameCapability,
+    setup(_fs, sessions) { sessions.set('two', { id: 'two' }) },
+    mountRegisteredHost(services, config) {
+      const routes = new Map(), cleanup = []
+      apply({ ...services, effect: fn => cleanup.push(fn()), tools: { register: () => () => {} },
+        connection: { fetch: { register(route) { routes.set(route.path, route); return () => routes.delete(route.path) } } },
+      }, config)
+      const control = routes.get('/api/framivra/control'), window = routes.get('/api/framivra/window')
+      assert.deepEqual(window.methods, ['POST']); assert.equal(window.requestBody, 'streaming')
+      // Real registered functions; this fixture starts at owner admission.
+      return { control: control.fetch, window: window.fetch, async dispose() {
+        for (const dispose of cleanup.reverse()) await dispose()
+      } }
+    },
+    firstFrameHandle(spec, value) {
+      const count = firstFrameRenders(b).length
+      assert(count === 1 || count === 2)
+      return (count === 1 ? firstChild : secondChild).handle(spec, value)
+    },
+  })
+  t.after(async () => {
+    original.abort(); other.abort()
+    for (const child of [firstChild, secondChild]) {
+      child.stdout.destroy(); child.finish({ exitCode: 1 }); child.reaped(true)
+    }
+    await b.host.dispose()
+  })
+  const opened = await b.control({ op: 'open', sessionId: 'two', timeline: 'timeline.json' })
+  assert.equal(opened.status, 200)
+  const { grant: secondOpen } = await opened.json()
+  const authorize = async (sessionId, open) => {
+    const response = await b.control({ ...sessionConsent(open), sessionId, firstFrame: true })
+    assert.equal(response.status, 200, await response.clone().text())
+    return (await response.json()).grant
+  }
+  const first = await authorize('one', b.grant), second = await authorize('two', secondOpen)
+  assert.notEqual(first.ownerId, second.ownerId)
+  const firstId = randomUUID(), secondId = randomUUID(), secondScope = { sessionId: 'two', grant: secondOpen }
+  let returned = false
+  const terminal = sessionWindow(b, first, { firstFrame: true, operationId: firstId }, original.signal)
+    .then(response => { returned = true; return response })
+  const firstResult = await firstChild.started
+  firstChild.stdout.write(pack('F', firstResult.nonce, firstResult.first)); await turn()
+  assert.equal((await poll(b, first, firstId)).status, 200, 'the original provisional result is staged')
+  const firstEof = once(firstChild.stdout, 'end')
+  firstChild.stdout.end(pack('W', firstResult.nonce, firstResult.final)); await firstEof
+  const next = sessionWindow(b, second, { ...secondScope, firstFrame: true, operationId: secondId }, other.signal)
+  await turn()
+  assert.equal(firstFrameRenders(b).length, 1, 'the unrelated lease waits behind the held range')
+  assert.equal(firstChild.terminated(), 0, 'the original is still waiting for its direct outcome')
+
+  original.abort()
+  const cleanupSignal = await firstChild.settled
+  assert.equal(firstResult.signal.aborted, true)
+  assert.equal(cleanupSignal.aborted, false, 'reaping uses its own live signal')
+  assert.equal(firstChild.terminated(), 1)
+  assert.equal((await poll(b, first, firstId)).status, 204, 'abort withdraws staged bytes before reaping')
+  firstChild.finish({ exitCode: 0, signal: null }); await turn()
+  assert.equal(returned, false, 'direct success does not settle an aborted request or release the range')
+  assert.equal(firstFrameRenders(b).length, 1)
+  firstChild.reaped(true)
+  const cancelled = await terminal
+  assert.equal(cancelled.status, 499)
+  assert.equal(cancelled.headers.get('x-framivra-sha256'), null)
+
+  const secondResult = await secondChild.started
+  const cancel = (scope, lease, operationId, ownerId = lease.ownerId) => b.host.window(new Request('http://unit/api/framivra/window', {
+    method: 'POST', body: JSON.stringify({ ...scope, op: 'session-cancel', previewGrant: lease.id, operationId, ownerId }),
+  }))
+  assert.equal((await cancel(secondScope, second, secondId, first.ownerId)).status, 403)
+  assert.equal((await cancel({ sessionId: 'one', grant: b.grant }, first, firstId)).status, 200)
+  assert.equal(secondResult.signal.aborted, false)
+  assert.equal(secondChild.terminated(), 0)
+  secondChild.stdout.end(Buffer.concat([pack('F', secondResult.nonce, secondResult.first), pack('W', secondResult.nonce, secondResult.final)]))
+  secondChild.finish({ exitCode: 0, signal: null }); secondChild.reaped(true)
+  const completed = await next
+  assert.equal(completed.status, 200)
+  assert.deepEqual(Buffer.from(await completed.arrayBuffer()), windowBytes)
+})
 
 test('provisional visual qualifies only by the exact separate probe and mutually exclusive owner consent', linuxWindow, async t => {
   const legacy = await bench({ windowCapability: { ...warmWindowCapability, first_frame: { version: 1 } },

@@ -101,6 +101,155 @@ class PreviewWheelTests(unittest.TestCase):
             self.assertEqual(out.getvalue(), '')
             self.assertIn('preview wheel refused:', err.getvalue())
 
+    def _managed_fixture(self, root):
+        profile = root / 'profile'
+        profile.mkdir(mode=0o700)
+        script = profile / 'vtx-preview'
+        script.write_bytes(Path(launch.__file__).read_bytes())
+        sentinel = root / 'imported-vtx'
+        raw = archive({
+            'vtx/__init__.py': f'from pathlib import Path\nPath({str(sentinel)!r}).write_text("imported")\n'.encode(),
+            'vtx/cli/timeline_preview_window.py': b'''FIXED_WHEEL_LAUNCHER = 'framivra.preview-window.fixed-wheel/v1'
+INPUT_EPOCH_ABI = 'framivra.preview-window.inputs/v1'
+def run_preview_window_command(args, qualification):
+    import json
+    print(json.dumps(dict(qualification, operation=args[3])))
+    return 0
+''',
+            'vtx/runtime/stdio.py': b'def ensure_blocking_stdio(): pass\n',
+            'vtx/timeline.py': b'''def timeline_capabilities():
+    return {'capabilities': {'preview_window': {'schema': 'framivra.timeline.preview-window/v1'}}}
+''',
+        })
+        pin = launch._sha(raw)
+        _, runtime = launch._wheel(raw, pin)
+        (profile / 'kernel.whl').write_bytes(raw)
+        (profile / 'kernel.sha256').write_text(pin + '\n', encoding='ascii')
+        for member, data in runtime.items():
+            path = profile / 'runtime' / member
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        return script, sentinel, pin, launch._identity(runtime)
+
+    def _managed_subprocess(self, script, args):
+        # Run the actual counterpart; bypass only root/interpreter and ancestor
+        # permission preconditions of the isolated test's synthetic temp root.
+        bootstrap = '''import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader('managed_preview_test', sys.argv[1])
+spec = importlib.util.spec_from_loader(loader.name, loader)
+launcher = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(launcher)
+launcher._system_python = lambda: None
+launcher._trusted = lambda info: True
+sys.argv = sys.argv[1:]
+raise SystemExit(launcher.main())
+'''
+        return subprocess.run([sys.executable, '-IBS', '-c', bootstrap, str(script), *args],
+                              env={key: value for key, value in os.environ.items() if key != 'VTX_CONFIG'},
+                              capture_output=True, text=True, timeout=5)
+
+    def test_managed_refusals_precede_any_import_or_preview_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            script, sentinel, pin, projection = self._managed_fixture(root)
+            valid = f'--managed-preview-pins-v1={pin}:{projection}'
+            capabilities = ['-t', 'unused', 'capabilities']
+            render = ['-t', str(root / 'workspace/timeline.json'), 'timeline', 'preview-window',
+                      '--frame', '0', '--expected-content-version=sha256:' + 'a' * 64,
+                      '--render', '--include-media', '--prepare-inputs']
+            # The local pin, alternate wheel bytes and tree all match each
+            # other. The independent Host expectation must still refuse them.
+            cases = [
+                ([f'--managed-preview-pins-v1={"0" * 64}:{projection}', *capabilities], 'wheel pin differs'),
+                ([f'--managed-preview-pins-v1={pin}:{"0" * 64}', *render], 'runtime projection differs'),
+                ([f'--managed-preview-pins-v1={pin}:{"0" * 64}', '--first-frame-capabilities'], 'runtime projection differs'),
+                ([f'--managed-preview-pins-v1={pin}:{"0" * 64}', '--formal-archive-capabilities'], 'runtime projection differs'),
+                ([valid, valid, *capabilities], 'once as the leading argument'),
+                (['-t', valid, 'capabilities'], 'once as the leading argument'),
+                (['--verify', valid], 'once as the leading argument'),
+                ([*render, valid], 'once as the leading argument'),
+                ([valid.replace('v1=', 'v2='), *capabilities], 'malformed'),
+                ([valid.replace(pin, pin.upper()), '*'], 'malformed'),
+                ([valid + '\n', '--verify'], 'malformed'),
+                (['--managed-preview-pins-v1', '--verify'], 'malformed'),
+                ([valid, '--stage-from', str(root / 'site-packages')], 'cannot authorize staging'),
+                ([valid, '--verify', *capabilities], 'only the fixed isolated'),
+            ]
+            for args, reason in cases:
+                with self.subTest(args=args):
+                    refused = self._managed_subprocess(script, args)
+                    self.assertEqual(refused.returncode, 2, refused.stderr)
+                    self.assertEqual(refused.stdout, '')
+                    self.assertIn(reason, refused.stderr)
+                    self.assertFalse(sentinel.exists(), 'vtx imported before rejecting the identity')
+            # Correct prefix but altered projection tree still cannot import.
+            (script.parent / 'runtime/vtx/__init__.py').write_text('# unapproved file', encoding='ascii')
+            refused = self._managed_subprocess(script, [valid, *capabilities])
+            self.assertEqual((refused.returncode, refused.stdout), (2, ''))
+            self.assertFalse(sentinel.exists())
+
+    def test_managed_marker_is_limited_to_verified_verify_and_capability_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            script, sentinel, pin, projection = self._managed_fixture(root)
+            prefix = f'--managed-preview-pins-v1={pin}:{projection}'
+            expected = {'ok': True, 'wheel_sha256': pin, 'runtime_projection_sha256': projection}
+            marker = 'framivra.preview-window.managed-pins/v1'
+            for args, record in [(['--verify'], expected), ([prefix, '--verify'], {**expected, 'managed_identity': marker})]:
+                proc = self._managed_subprocess(script, args)
+                self.assertEqual((proc.returncode, proc.stderr), (0, ''))
+                self.assertEqual(json.loads(proc.stdout), record)
+                self.assertFalse(sentinel.exists(), '--verify must remain import-free')
+            capabilities = ['-t', 'unused', 'capabilities']
+            for args, extra in [(capabilities, {}), ([prefix, *capabilities], {'managed_identity': marker})]:
+                proc = self._managed_subprocess(script, args)
+                self.assertEqual((proc.returncode, proc.stderr), (0, ''))
+                self.assertEqual(json.loads(proc.stdout)['capabilities']['preview_window'], {
+                    'schema': 'framivra.timeline.preview-window/v1', 'launcher': launch._LAUNCHER,
+                    'wheel_sha256': pin, 'runtime_projection_sha256': projection, 'input_epoch': True, **extra})
+                self.assertTrue(sentinel.is_file(), 'fixture did not exercise the real import')
+            render = ['-t', str(root / 'workspace/timeline.json'), 'timeline', 'preview-window',
+                      '--frame', '0', '--expected-content-version=sha256:' + '0' * 64,
+                      '--render', '--include-media', '--prepare-inputs']
+            proc = self._managed_subprocess(script, [prefix, *render])
+            self.assertEqual((proc.returncode, proc.stderr), (0, ''))
+            self.assertEqual(json.loads(proc.stdout), {'launcher': launch._LAUNCHER, 'wheel_sha256': pin,
+                'runtime_projection_sha256': projection, 'operation': 'preview-window'})
+
+    @unittest.skipUnless(os.environ.get('FRAMIVRA_TEST_PRIVATE_PREVIEW_ROOT'),
+                         'requires an explicitly provisioned private system-Python fixture root')
+    def test_real_unprivileged_launcher_accepts_only_the_bound_managed_fixture(self):
+        trusted_root = Path(os.environ['FRAMIVRA_TEST_PRIVATE_PREVIEW_ROOT'])
+        with tempfile.TemporaryDirectory(dir=trusted_root) as tmp:
+            root = Path(tmp)
+            script, sentinel, wheel, runtime = self._managed_fixture(root)
+            script.chmod(0o700)
+
+            def invoke(*args):
+                return subprocess.run([str(script), *args], env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'},
+                                      capture_output=True, text=True, timeout=5, cwd=script.parent)
+
+            pins = f'--managed-preview-pins-v1={wheel}:{runtime}'
+            for invalid in (f'--managed-preview-pins-v1={"0" * 64}:{runtime}',
+                            f'--managed-preview-pins-v1={wheel}:{"0" * 64}'):
+                refused = invoke(invalid, '-t', 'unused', 'capabilities')
+                self.assertEqual((refused.returncode, refused.stdout), (2, ''))
+                self.assertFalse(sentinel.exists())
+            verify = invoke(pins, '--verify')
+            self.assertEqual((verify.returncode, verify.stderr), (0, ''))
+            self.assertEqual(json.loads(verify.stdout), {'ok': True, 'wheel_sha256': wheel,
+                'runtime_projection_sha256': runtime, 'managed_identity': launch._MANAGED_IDENTITY})
+            self.assertFalse(sentinel.exists())
+            legacy = invoke('-t', 'unused', 'capabilities')
+            self.assertEqual((legacy.returncode, legacy.stderr), (0, ''))
+            self.assertNotIn('managed_identity', json.loads(legacy.stdout)['capabilities']['preview_window'])
+            managed = invoke(pins, '-t', 'unused', 'capabilities')
+            self.assertEqual((managed.returncode, managed.stderr), (0, ''))
+            cap = json.loads(managed.stdout)['capabilities']['preview_window']
+            self.assertEqual((cap['managed_identity'], cap['wheel_sha256'], cap['runtime_projection_sha256']),
+                             (launch._MANAGED_IDENTITY, wheel, runtime))
+            self.assertTrue(sentinel.is_file())
+
     def test_formal_archive_probe_preserves_callers_nonblocking_stdout(self):
         repo = Path(launch.__file__).resolve().parents[1]
         # A verified older wheel still returns a real (disabled) archive probe.
