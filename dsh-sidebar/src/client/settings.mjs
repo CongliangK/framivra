@@ -200,7 +200,7 @@ export function BundleConfigForm({ form }) {
   return h('section', { className: 'fv-settings', 'aria-label': 'Framivra 插件配置' },
     h('style', null, SETTINGS_STYLE),
     h('h2', null, 'VTX 内核与配置'),
-    h('p', { className: 'fv-settings-muted' }, '按 README 安装环境，再扫描、保存并验证连接。插件不会默认下载或安装。'),
+    h('p', { className: 'fv-settings-muted' }, '一键安装环境后，扫描并选择内核，再保存配置。「检查」仅用于排查连接问题。'),
     h('nav', { className: 'fv-settings-nav', 'aria-label': 'VTX 设置分类' },
       ...[['kernel', '内核'], ['config', '配置文件'], ['check', '检查']].map(([key, label]) => h('button', { key, type: 'button', 'aria-pressed': tab === key, 'aria-controls': `fv-settings-${key}`, onClick: () => setTab(key) }, label))),
     h('form', { onSubmit: save },

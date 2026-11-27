@@ -92,6 +92,7 @@ test('managed selection drafts executable/config together, preserves callbacks a
   assert.equal(form.calls[0].revision, 7)
   assert(form.calls[0].ops.some(op => op.path[0] === 'vtxExecutable' && op.value === path))
   assert(form.calls[0].ops.some(op => op.path[0] === 'vtxConfigFile' && op.value === configFile))
+  assert.deepEqual(calls.map(item => item.payload), [{ op: 'scan' }], 'saving the selection must not launch diagnostics')
   await click(button('检查保存的配置'))
   assert.equal(calls.length, 2)
   assert.equal(calls[1].url, '/api/framivra/diagnostics')

@@ -20,7 +20,7 @@
 
 根内含 `source/`、`venv/`、`config.json`、`fonts/`、`verification/`、`installation.json` 和下载缓存；POSIX 入口 `bin/vtx`，Windows 入口 `venv/Scripts/vtx.exe`。配置、字体、验证产物在源码外。Linux 只用根内 fontconfig；macOS/Windows 另复制到用户字体目录，不覆盖不同字节的同名文件。已合格工具复用，缺失或 FFmpeg 能力不足才准备；keg-only/私有工具路径由受管 CLI 真实加载，重跑仍核验，不把登记路径当合格证明。
 
-登记 schema 为 `framivra.installation/v1`，含绝对 source/python/vtx/config 路径、完整 commit、版本、`non-ai`/`cdp`、工具与字体环境。DSH 先只读验证默认登记再扫描旧位置，候选不自动执行/切换，须选择、保存并检查真实 read/store。Windows 的 ExecutionPolicy Bypass 仅限子进程，不改持久策略或绕企业组策略；使用绝对 exe，不把 Windows 分号 PATH 填入 POSIX 受信 PATH。显式 `VTX_CONFIG` 仍优先。
+登记 schema 为 `framivra.installation/v1`，含绝对 source/python/vtx/config 路径、完整 commit、版本、`non-ai`/`cdp`、工具与字体环境。DSH 先只读验证默认登记再扫描旧位置，扫描不执行候选。选中内核并保存即完成配置；可用功能取决于内核实际能力，不以安装登记为准。Windows 的 ExecutionPolicy Bypass 仅限子进程，不改持久策略或绕企业组策略；使用绝对 exe，不把 Windows 分号 PATH 填入 POSIX 受信 PATH。显式 `VTX_CONFIG` 仍优先。
 
 Windows 主流程须普通非提升 PowerShell；提升写态在引导下载前拒绝，`--plan` 仍只读。新持久用户根继承可信父目录 ACL，不自动修既有 ACL。私有 Git 改用 MinGit ZIP，同主体解包完整运行库，不启动提权 Git 安装器。旧 Inno 目录原样保留，健康已登记工具仍复用；受限旧树不自动 takeown/reset、授 Everyone 或设置 `safe.directory=*`。
 

@@ -857,7 +857,7 @@ def install(args):
         if preview_status:
             return preview_status
     print('[install] CDP render verification: ' + ('passed (' + evidence + ')' if evidence is not None else 'skipped (opt in with --verify-render)'))
-    print('\nREADY: non-AI CDP environment. In DSH: scan installed kernels → select registered installation → save → check connection.\nVTX: ' + str(executable))
+    print('\nREADY: non-AI CDP environment. In DSH: scan installed kernels → select the registered installation → save. Use connection diagnostics only if needed.\nVTX: ' + str(executable))
     return 0
 
 
