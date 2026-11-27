@@ -759,6 +759,12 @@ def install(args):
     with installation_lock(root):
         previous = json_record(root / 'installation.json')
         validate_ownership(previous, root, args.repo)
+        # A settled channel mismatch needs no preparation. Leave source recovery
+        # (including any unexpected progress entry) to the existing Git path.
+        if (previous is not None and previous['status'] == 'ready' and not args.update
+                and isinstance(previous.get('ref'), str) and previous['ref'] and args.ref != previous['ref']
+                and not os.path.lexists(root / '.source-progress.json')):
+            raise InstallError('Changing source ref requires explicit --update')
         if previous is None:
             for name in ('source', 'venv', 'bin/vtx'):
                 if (root / name).exists():
