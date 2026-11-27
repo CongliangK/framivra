@@ -53,6 +53,8 @@ class PreparePreviewSupplierTest(unittest.TestCase):
                 self.assertEqual(expected_projection, 'a' * 64)
                 seen.append(fresh is not None)
                 if fresh is not None:
+                    self.assertEqual(profile, scratch / 'staged-preview')
+                    self.assertEqual(scratch.parent, root)
                     profile.mkdir(mode=0o700)
                     supplier._write(profile / 'vtx-preview', fresh[0], 0o500)
                     supplier._write(profile / 'kernel.whl', fresh[1])
@@ -60,6 +62,8 @@ class PreparePreviewSupplierTest(unittest.TestCase):
                     (profile / 'runtime').mkdir(mode=0o700)
                     self.assertFalse((root / 'preview').exists())
                     seen.append(profile.stat().st_ino)
+                else:
+                    self.assertEqual(profile, root / 'preview')
                 supplier._verified_profile(profile, pins['launcher_sha256'], pins['wheel_sha256'])
                 return {'runtimeProjectionSha256': expected_projection}
 

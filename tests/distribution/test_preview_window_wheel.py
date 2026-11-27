@@ -101,21 +101,26 @@ class PreviewWheelTests(unittest.TestCase):
             self.assertEqual(out.getvalue(), '')
             self.assertIn('preview wheel refused:', err.getvalue())
 
-    def _managed_fixture(self, root):
-        profile = root / 'profile'
+    def _managed_fixture(self, root, *, managed_fonts=False):
+        profile = root / 'preview'
+        ordinary = b'''FIXED_WHEEL_LAUNCHER = 'framivra.preview-window.fixed-wheel/v1'
+INPUT_EPOCH_ABI = 'framivra.preview-window.inputs/v1'
+def run_preview_window_command(args, qualification):
+    import json
+    print(json.dumps(dict(qualification, operation=args[3])))
+    return 0
+'''
+        if managed_fonts:
+            ordinary = ordinary.replace(b'args, qualification', b'args, qualification, managed_font_profile=None')
+            ordinary = ordinary.replace(b'operation=args[3]', b'operation=args[3], font_profile=str(managed_font_profile)')
+            ordinary += b"MANAGED_FONTS_ABI = 'framivra.preview-window.managed-fonts/v1'\nWARM_SVG_MEDIA_ABI = 'framivra.preview-window.warm-svg-media/v1'\n"
         profile.mkdir(mode=0o700)
         script = profile / 'vtx-preview'
         script.write_bytes(Path(launch.__file__).read_bytes())
         sentinel = root / 'imported-vtx'
         raw = archive({
             'vtx/__init__.py': f'from pathlib import Path\nPath({str(sentinel)!r}).write_text("imported")\n'.encode(),
-            'vtx/cli/timeline_preview_window.py': b'''FIXED_WHEEL_LAUNCHER = 'framivra.preview-window.fixed-wheel/v1'
-INPUT_EPOCH_ABI = 'framivra.preview-window.inputs/v1'
-def run_preview_window_command(args, qualification):
-    import json
-    print(json.dumps(dict(qualification, operation=args[3])))
-    return 0
-''',
+            'vtx/cli/timeline_preview_window.py': ordinary,
             'vtx/runtime/stdio.py': b'def ensure_blocking_stdio(): pass\n',
             'vtx/timeline.py': b'''def timeline_capabilities():
     return {'capabilities': {'preview_window': {'schema': 'framivra.timeline.preview-window/v1'}}}
@@ -215,6 +220,20 @@ raise SystemExit(launcher.main())
             self.assertEqual((proc.returncode, proc.stderr), (0, ''))
             self.assertEqual(json.loads(proc.stdout), {'launcher': launch._LAUNCHER, 'wheel_sha256': pin,
                 'runtime_projection_sha256': projection, 'operation': 'preview-window'})
+
+    def test_managed_fonts_are_only_forwarded_for_verified_ordinary_windows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            script, _, pin, projection = self._managed_fixture(root, managed_fonts=True)
+            prefix = f'--managed-preview-pins-v1={pin}:{projection}'
+            render = ['-t', str(root / 'workspace/timeline.json'), 'timeline', 'preview-window',
+                      '--frame', '0', '--expected-content-version=sha256:' + '0' * 64,
+                      '--render', '--include-media', '--prepare-inputs']
+            for args, expected in [([prefix, *render], str(script.parent)), (render, 'None'),
+                                   ([prefix, *render, '--read-warm-svg'], 'None')]:
+                proc = self._managed_subprocess(script, args)
+                self.assertEqual((proc.returncode, proc.stderr), (0, ''))
+                self.assertEqual(json.loads(proc.stdout)['font_profile'], expected)
 
     @unittest.skipUnless(os.environ.get('FRAMIVRA_TEST_PRIVATE_PREVIEW_ROOT'),
                          'requires an explicitly provisioned private system-Python fixture root')
