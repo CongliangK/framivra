@@ -17,7 +17,7 @@ const midpoint = (frame, num = 30, den = 1) => (frame + 0.5) * den / num
 // are adapted. These tests do not certify native browser decoding or seek accuracy.
 async function fixture(t, Component = RenderedPlayer, initial = {}, { quantizeToMicroseconds = false, mockBlobURLs = false, deferNativePins = false } = {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://monitor.invalid/' })
-  const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch', 'URL', 'Image'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
+  const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch', 'URL', 'Image', 'requestAnimationFrame', 'cancelAnimationFrame'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
   globalThis.window = dom.window; globalThis.document = dom.window.document
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   const requests = [], urls = [], revoked = []
@@ -316,6 +316,43 @@ async function untilWindow(predicate) {
   assert(predicate(), 'window DOM state did not settle')
 }
 
+test('preview Play waits for verified decode, handles browser refusal, and ignores a superseded rejection', async t => {
+  const f = await fixture(t, ProgramMonitor, { opened: windowOpened, timeline: 'timeline.json', frame: 25 }, { mockBlobURLs: true })
+  serveWindows(f, request => request.op === 'render' ? windowReply(request, request.frame + 30) : reaped())
+  await f.click('播放预览')
+  for (const input of windowInputs()) await toggle(input)
+  await f.click('播放预览')
+  await untilWindow(f.video)
+  const node = f.video(), denied = deferred(), nativePlay = node.play
+  let attempts = 0
+  node.play = () => { attempts++; return denied.promise.then(() => { throw new Error('NotAllowedError') }) }
+  assert.equal(attempts, 0, 'receiving verified bytes cannot play before decoder qualification')
+  Object.assign(f.state(node), { videoWidth: 1920, videoHeight: 1080, duration: 1, readyState: 3 })
+  await f.emit(node, 'loadeddata')
+  assert.equal(attempts, 1)
+  assert(f.button('取消待播放'))
+  assert.equal(node.muted, false, 'no silent autoplay fallback')
+  await act(async () => denied.resolve())
+  assert.match(document.body.textContent, /浏览器未开始播放；请手动播放/)
+  assert(node.paused && node.controls)
+  node.play = nativePlay
+  await f.click('播放预览')
+  assert.deepEqual(f.plays, [node])
+  assert.doesNotMatch(document.body.textContent, /浏览器未开始播放/)
+  await f.click('暂停预览')
+  assert(node.paused)
+
+  const stale = deferred()
+  node.play = () => stale.promise.then(() => { throw new Error('obsolete attempt') })
+  await f.click('播放预览')
+  await f.pin(26)
+  await act(async () => stale.resolve())
+  assert.equal(f.video(), null)
+  assert.equal(f.frame(), 26)
+  assert.doesNotMatch(document.body.textContent, /浏览器未开始播放/)
+  assert.deepEqual(f.requests.map(({ request }) => request.op), ['render', 'cancel'], 'no denial or pause retries the render')
+})
+
 test('audio window requires both capabilities and both click-time permissions; success uses one decoded Blob and shares the frame without echo seeking', async t => {
   const f = await fixture(t, ProgramMonitor, { opened: { ...windowOpened, host: { ops: [] } }, frame: 290 }, { mockBlobURLs: true, deferNativePins: true })
   assert.equal(f.button('音画窗口'), undefined, 'kernel advertisement alone is insufficient')
@@ -398,7 +435,8 @@ test('qualified archive is a default-off one-shot, plays in the window video and
   await f.render({ opened, sessionControls: { pending: true } })
   assert.equal(f.button(read).disabled, true)
   await f.render({ sessionControls: undefined })
-  assert.deepEqual(f.requests, [])
+  await f.click('播放预览')
+  assert.deepEqual(f.requests, [], 'ordinary Play cannot select an available archive')
   await f.click(read)
   const { request, signal } = f.requests[0], { operationId } = request
   assert.deepEqual(request, { op: 'formal-archive-read', grant: opened.grant, ownerId: 'owner', sessionId: 'session', operationId,
@@ -420,6 +458,7 @@ test('qualified archive is a default-off one-shot, plays in the window video and
   await f.emit(node, 'loadeddata')
   assert(node.controls && visible(node))
   assert.equal(node.getAttribute('aria-label'), '已核归档 A/V [25, 85)')
+  assert.equal(f.button('播放预览').disabled, true, 'archive playback stays with native controls')
   assert.equal(node.autoplay, false)
   assert.equal(node.muted, false)
   await act(async () => node.play())
@@ -643,6 +682,74 @@ for (const latest of [39, 10]) test(`pending auto render keeps its original wind
   assert.deepEqual(f.pins, pins, 'the initial seek and its observations never write the project cursor')
   assert.deepEqual(f.plays, [])
   assert.equal(calls.length, 1)
+})
+
+test('retargeted ordinary playback waits for target PTS and native seek; a revoked paint cannot play', async t => {
+  for (const ptsFirst of [true, false]) await t.test(ptsFirst ? 'PTS before seeked' : 'seeked before PTS', async t => {
+    const terminal = deferred(), calls = []
+    const { adapter, revoked } = sessionAdapter((op, request, signal) => {
+      calls.push({ op, request, signal })
+      return op === 'render' ? terminal.promise : sessionReap(request)
+    })
+    const f = await fixture(t, ProgramMonitor, { opened: windowOpened, timeline: 'timeline.json', frame: 10, previewSession: adapter }, { mockBlobURLs: true })
+    const paints = new Map(); let seq = 0
+    globalThis.requestAnimationFrame = callback => { paints.set(++seq, callback); return seq }
+    globalThis.cancelAnimationFrame = id => paints.delete(id)
+    async function paint() {
+      const [id, callback] = paints.entries().next().value
+      paints.delete(id)
+      await act(async () => callback())
+    }
+    await f.click('播放预览')
+    assert.deepEqual(calls.map(({ op }) => op), ['render'], 'existing consent starts playback without Generate click')
+    await f.pin(15)
+    assert.deepEqual(calls.map(({ op }) => op), ['render'])
+    await f.click('播放预览') // The new pin retired the old play intent, not the qualified render.
+    await act(async () => terminal.resolve(windowReply(calls[0].request, 40)))
+    await untilWindow(f.video)
+    const node = f.video(), time = midpoint(5)
+    await loadWindow(f, node)
+    assert.equal(node.currentTime, time)
+    await f.decoded(node, 0, time)
+    assert(!visible(node) && node.muted && node.paused)
+    if (ptsFirst) await f.decoded(node, 5 / 30, time)
+    else await f.settle(node)
+    assert(!visible(node) && node.muted && node.paused)
+    if (ptsFirst) await f.settle(node)
+    else await f.decoded(node, 5 / 30, time)
+    assert(visible(node) && node.muted && node.paused && !node.controls)
+    await paint()
+    assert(node.paused && node.muted)
+    if (ptsFirst) {
+      const late = paints.values().next().value
+      await act(async () => revoked.abort())
+      await act(async () => late())
+      assert.equal(f.video(), null)
+      assert.deepEqual(f.plays, [])
+      assert.deepEqual(calls.map(({ op }) => op), ['render', 'cancel'])
+    } else {
+      await paint()
+      assert.deepEqual(f.plays, [node]); assert(!node.muted && node.controls)
+      assert.equal(f.frame(), 15)
+      await f.click('暂停预览')
+      assert(node.paused)
+      await f.click('播放预览')
+      assert.deepEqual(f.plays, [node, node])
+      // A same-window drag and immediately queued Play also use the fence.
+      await f.pin(20)
+      await f.click('播放预览')
+      await f.settle(node)
+      assert(!visible(node) && node.muted && node.paused)
+      await f.decoded(node, 5 / 30, midpoint(10))
+      assert(!visible(node) && node.paused)
+      await f.decoded(node, 10 / 30, midpoint(10))
+      assert(visible(node) && node.muted && node.paused && !node.controls)
+      await paint()
+      await paint()
+      assert.deepEqual(f.plays, [node, node, node]); assert.equal(f.frame(), 20)
+      assert.deepEqual(calls.map(({ op }) => op), ['render'])
+    }
+  })
 })
 
 test('an off-target initial seek stays hidden; pinning the original start after receipt reaps the old operation', async t => {
