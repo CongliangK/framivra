@@ -972,9 +972,9 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None, staged_gfx=Non
     """全部视频轨 clip 的图层预处理 + seg 预编码（缓存命中即跳过），返回 layers 列表
     （每项 {cl, seg|source, x, y, w2, h2, gfx, ti}，顺序=图层序）。
 
-    自 build_video 提取（方案五阶段1 区间渲染）：seg 键与渲染窗口无关（内容寻址），
-    整片与区间共用同一份 cache/seg——区间渲染不得另造键或另写命名空间。本函数只做
-    seg/gfx 缓存侧副作用；manifest 记账与回执由调用方负责（区间渲染不记账不写回执）。
+    整片与 draft 区间保留原 cache/seg 内容键。只有独立 native 预览工作区的
+    alpha 子区间另用私有键，不能复用或覆盖整段。本函数只做 seg/gfx 中间物；
+    manifest 记账与回执由调用方负责。
     """
     if getattr(c, "_windows_svg_media", None) is None:
         fstxn.mkdir(c.cache / "seg", root=c.root)
@@ -986,6 +986,7 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None, staged_gfx=Non
     enc_tasks = []   # (label, cmd, nvenc)：待并行编码的 seg（缓存命中的不进列表）；
                      # nvenc=True 的任务在 run_ffmpeg_task 里占 NVENC 会话预算槽
     producers = {}   # 本次调用的目标 → 精确生产规范；逻辑 layers 不去重
+    native_alpha_slices = {}  # Private native preview intermediates require exact coverage.
     # seg 编码器判定（方案二阶段3）循环外算一次：无 alpha seg 默认 NVENC 化
     # （卸给 GPU，缓解波内与 gfx 的 CPU 竞争），VTX_SEG_NVENC=0 或探测失败回落
     # x264。判定单一来源 encoders.seg_encoder_kind——hygiene.gc 的键集重算共用
@@ -1036,9 +1037,25 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None, staged_gfx=Non
                     # x264 回退串保持原样（VTX_SEG_NVENC=0 显式回退或探测失败回落）
                     vcodec_seg = ["-c:v", "libx264", "-crf", "14", "-preset", "veryfast",
                                   "-pix_fmt", "yuv420p"]
-            label = f"seg t{ti:02d}c{ci:02d}（{cl['dur']} 帧）"
+            frames = cl['dur']
+            native_seg_span = None
+            if need_alpha and staged_gfx is not None:
+                # Native preview only. Decode, normalize CFR and run the exact
+                # original alpha/geometry chain *before* dropping frame ordinals.
+                # Starting the chain at the visible frame can rebase a fade or
+                # select different source frames on a rounded clock.
+                a, b = native_window
+                origin = cl['dst_in']
+                first, stop = max(a, origin) - origin, min(b - origin, frames)
+                if first < stop and (first, stop) != (0, frames):
+                    vf += [f'trim=start_frame={first}:end_frame={stop}', 'setpts=PTS-STARTPTS']
+                    native_seg_span = origin + first, origin + stop
+                    frames = stop - first
+                    seg = seg.with_name(f'native-alpha-v1-{skey}-{first}-{stop}.mov')
+                    native_alpha_slices[seg] = frames
+            label = f"seg t{ti:02d}c{ci:02d}（{frames} 帧）"
             cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(input_path),
-                   "-map", "0:v:0", "-vf", ",".join(vf), "-frames:v", str(cl["dur"]), "-an",
+                   "-map", "0:v:0", "-vf", ",".join(vf), "-frames:v", str(frames), "-an",
                    *vcodec_seg, str(seg)]
             nvenc = not need_alpha and seg_kind == "nvenc"
             signature = (tuple(cmd), nvenc)
@@ -1054,7 +1071,7 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None, staged_gfx=Non
                 eligible = not need_alpha and seg_kind == 'x264' and source_info.get('codec_name') == 'h264'
                 if producer.setdefault('eligible', eligible) != eligible:
                     raise ValueError('conflicting segment relay eligibility for the same producer')
-                producer['frames'] = cl['dur']
+                producer['frames'] = frames
                 if relay.wants_next(cl):
                     producer['relay_next'] = True
             # Only materialization is windowed. Qualify every source and reject
@@ -1064,21 +1081,24 @@ def prepare_layers(c: Ctx, *, run_tasks=None, native_window=None, staged_gfx=Non
                 continue
             # Verify a successful decode's digest/frame record, or fully decode
             # legacy media. Container header counts alone cannot certify a hit.
-            if relay is None and media_cache_valid(seg, cl['dur'], allow_short_verified=True, c=c):
-                events.cache_hit(c, "media_cache_valid", frames=[0, cl['dur']])
-                layers.append({"cl": cl, "seg": seg, "x": x, "y": y, "w2": w2, "h2": h2,
-                               "gfx": False, "ti": ti})
+            layer = {"cl": cl, "seg": seg, "x": x, "y": y, "w2": w2, "h2": h2, "gfx": False, "ti": ti}
+            if native_seg_span is not None:
+                layer['native_seg_span'] = native_seg_span
+            layers.append(layer)
+            if relay is None and media_cache_valid(seg, frames, allow_short_verified=native_seg_span is None, c=c):
+                events.cache_hit(c, "media_cache_valid", frames=[0, frames])
                 continue
-            # 阶段三（2026-09-10）：待编码任务不再就地串行执行——层对象先占位（顺序
-            # 不变，分段切片按 dst_in 过滤依赖顺序），收集到 enc_tasks 由线程池并行编。
-            L = {"cl": cl, "seg": seg, "x": x, "y": y, "w2": w2, "h2": h2, "gfx": False, "ti": ti}
-            layers.append(L)
+            # Preserve compositor layer order; only the independent encodes may run in parallel.
             if not producer["queued"]:
                 enc_tasks.append((label, cmd, nvenc))
                 producer["queued"] = True
     if relay is not None:
         enc_tasks = relay.prepare(c, enc_tasks, producers)
     (run_tasks or run_parallel)(c, enc_tasks, "seg 预编码")
+    if not c.dry:
+        for path, frames in native_alpha_slices.items():
+            if not media_cache_valid(path, frames, c=c):
+                raise RuntimeError(f'native alpha segment lacks {frames} decoded frames: {path.name}')
     # This task also runs independently in the all pipeline wave.
     stage = "video_draft" if getattr(c, "draft", False) else "video"
     c.verify_inputs(None if getattr(c, "range_window", None) else stage)
