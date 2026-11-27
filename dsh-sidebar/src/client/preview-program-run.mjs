@@ -324,7 +324,9 @@ export function usePreviewProgramRun({ opened, sessionId, project, tabSignal, ca
   const current = controller.run, run = current?.binding === binding ? current : undefined
   return { start: frame => controller.start(binding, frame), cancel: () => controller.cancel(),
     read: (frame, signal) => controller.read(binding, frame, signal),
-    recheck: (media, signal) => controller.recheck(binding, media, signal), signal: run?.controller.signal,
+    recheck: (media, signal) => controller.recheck(binding, media, signal),
+    canPlay: () => !!run?.grant && controller.run === run && !run.controller.signal.aborted && controller.now() < run.grant.expiresAt,
+    signal: run?.controller.signal,
     status: run?.status ?? 'idle', completedFrames: run?.completedFrames ?? 0, totalFrames: duration, code: run?.code,
     frame: run?.frame, pendingWindow: run?.pendingWindow, cleanupPending: !!current?.cleanup, cleanupFailed: !!current && !current.cleaned && current.code === 'PROGRAM_CLEANUP_UNCONFIRMED' }
 }

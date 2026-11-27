@@ -908,7 +908,7 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
         if (!successor || !proof || proof !== boundaryProof || proof.node !== node) {
           await item.program.recheck(item, attempt.controller.signal)
         }
-        if (!current() || !node.paused) {
+        if (!current() || !node.paused || !item.program.canPlay()) {
           if (item.resumeAttempt === attempt) { monitor.stopContinuation(item); monitor.refresh() }
           return
         }
@@ -996,18 +996,6 @@ function WindowPlayer({ monitor, state, owner, binding, frame, blocked, onFrame,
     }
     requestObservation()
   }
-  useLayoutEffect(() => {
-    const abandonPending = () => {
-      const item = monitor.state.active
-      if (item?.program && (item.resumeAttempt || item.resume || item.waiting || monitor.playOperation === item.operationId)) {
-        if (item.resumeAttempt && item.programAudible) item.node?.pause()
-        monitor.stopContinuation(item)
-        monitor.refresh()
-      }
-    }
-    window.addEventListener('blur', abandonPending)
-    return () => window.removeEventListener('blur', abandonPending)
-  }, [monitor])
   const epoch = owner.epoch
   return h('section', { className: 'fv-rendered', 'aria-label': '单窗口音画监看' },
     h('div', { className: 'fv-program-stage', 'data-mode': 'window' },
@@ -1132,7 +1120,12 @@ export function ProgramMonitor({ owner, opened, timeline, selectionDisplay, sess
   const unavailable = suspended || !!(owner.ghost || owner.edit.dirty || owner.edit.busy || owner.edit.unknown) || !clock ||
     !Number.isSafeInteger(duration) || !versionToken.test(contentVersion)
   const blocked = unavailable || !Number.isSafeInteger(frame) || frame < 0 || frame >= duration
-  const programDisclosure = useRef(), localProgram = useRef()
+  const programDisclosure = useRef(), localProgram = useRef(), programStart = useRef()
+  useLayoutEffect(() => {
+    const blur = () => { programStart.current = undefined }
+    window.addEventListener('blur', blur)
+    return () => window.removeEventListener('blur', blur)
+  }, [])
   useLayoutEffect(() => () => { void localProgram.current?.() }, [grant, contentVersion, tabSignal])
   const program = usePreviewProgramRun({ opened, sessionId, project: timeline, tabSignal, call, suspended: unavailable })
   const running = !!program?.signal && !program.signal.aborted
@@ -1146,7 +1139,10 @@ export function ProgramMonitor({ owner, opened, timeline, selectionDisplay, sess
   const otherLease = !!(sessionControls?.needsRevoke || sessionControls?.pending || previewSession)
   useLayoutEffect(() => {
     if (!running || unavailable || mode !== 'window') return
-    return connectProgramPlayback(monitor, owner, { project: timeline, sessionId, grant, contentVersion, duration, fps, clock, tabSignal }, program, blank ? 0 : frame)
+    const start = programStart.current
+    programStart.current = undefined
+    return connectProgramPlayback(monitor, owner, { project: timeline, sessionId, grant, contentVersion, duration, fps, clock, tabSignal },
+      program, blank ? 0 : frame, start?.stop === localProgram.current && start?.epoch === owner.epoch)
   }, [monitor, owner, program?.signal, unavailable, mode, timeline, sessionId, grant, contentVersion, duration, fps, tabSignal])
   function startProgram() {
     if (!program || monitor.stopProgram || programBusy || otherLease || unavailable || (blocked && !blank) || windowState.job || windowState.active || tabSignal.aborted) return
@@ -1156,6 +1152,7 @@ export function ProgramMonitor({ owner, opened, timeline, selectionDisplay, sess
     programDisclosure.current.closest('.fv-monitor')?.focus({ preventScroll: true })
     // Retain the cleanup fence even if invalidation unmounts the player before pointer-up.
     const stop = async () => {
+      if (programStart.current?.stop === stop) programStart.current = undefined
       const ok = await program.cancel().catch(() => false)
       stop.failed = !ok
       if (ok && monitor.stopProgram === stop) monitor.stopProgram = undefined
@@ -1164,6 +1161,7 @@ export function ProgramMonitor({ owner, opened, timeline, selectionDisplay, sess
       return ok
     }
     monitor.stopProgram = localProgram.current = stop
+    programStart.current = { stop, epoch: owner.epoch }
     void program.start(blank ? 0 : frame)
   }
   // PreviewBody mounts this only for a verified saved version (including the

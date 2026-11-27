@@ -4,11 +4,22 @@
 // pausing nor replacing it stops the separately authorized background worker.
 const HANDOFF_TIMEOUT = 15_000
 
-export function connectProgramPlayback(monitor, owner, binding, run, frame) {
-  const { signal, read, recheck } = run
+export function connectProgramPlayback(monitor, owner, binding, run, frame, playOnConnect = true) {
+  const { signal, read, recheck, canPlay } = run
   let pending, handoff, closed = false
   const live = () => !closed && !signal.aborted && !binding.tabSignal.aborted && monitor.program === player
   const current = () => monitor.state.active?.program === player ? monitor.state.active : undefined
+  function blur() {
+    // Keep the cache read (and the independent queue) alive, but a late read
+    // must attach a paused window instead of reviving the old play intent.
+    if (pending && !pending.previous) pending.wantPlay = false
+    const media = current()
+    if (media && (media.resumeAttempt || media.resume || media.waiting || monitor.playOperation === media.operationId)) {
+      if (media.resumeAttempt && media.programAudible) media.node?.pause()
+      monitor.stopContinuation(media)
+    }
+    monitor.refresh()
+  }
   function clearHandoff() {
     if (!handoff) return
     const attempt = handoff
@@ -74,7 +85,7 @@ export function connectProgramPlayback(monitor, owner, binding, run, frame) {
         await recheck(spare, attempt.controller.signal)
         if (!currentAttempt()) return
         clearHandoff()
-        if (!monitor.promoteProgramSuccessor(previous, attempt.node, spare, node, attempt.epoch)) {
+        if (!canPlay() || !monitor.promoteProgramSuccessor(previous, attempt.node, spare, node, attempt.epoch)) {
           monitor.failProgramHandoff(previous, '下一窗的播放状态已变化；音画已停止。')
         }
       } catch {
@@ -83,7 +94,7 @@ export function connectProgramPlayback(monitor, owner, binding, run, frame) {
     })()
   }
   const player = {
-    live, atBoundary, recheck, muted: false, get wantsPlayback() { return !!pending?.wantPlay },
+    live, atBoundary, recheck, canPlay, muted: false, get wantsPlayback() { return !!pending?.wantPlay },
     invalidate(pin) { if (pin) locate(pin.frame, false); else discard() },
     prefetch(previous) {
       if (!pending) void load(previous.end, false, previous)
@@ -126,10 +137,12 @@ export function connectProgramPlayback(monitor, owner, binding, run, frame) {
     if (monitor.program === player) monitor.program = undefined
     if (owner.programTransport === toggle) owner.programTransport = undefined
     signal.removeEventListener('abort', stop); binding.tabSignal.removeEventListener('abort', stop)
+    globalThis.window?.removeEventListener('blur', blur)
   }
   if (signal.aborted || binding.tabSignal.aborted || monitor.state.job || monitor.state.active) return
   monitor.program = player; owner.programTransport = toggle
   signal.addEventListener('abort', stop, { once: true }); binding.tabSignal.addEventListener('abort', stop, { once: true })
-  void locate(frame, true)
+  globalThis.window?.addEventListener('blur', blur)
+  void locate(frame, playOnConnect)
   return stop
 }

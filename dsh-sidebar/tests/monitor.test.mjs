@@ -863,16 +863,19 @@ async function endWindow(f, node) {
   await f.emit(node, 'ended')
 }
 
-async function programMonitor(t, { second, boundaryCheck, autoPlay = true, onCheck } = {}) {
+async function programMonitor(t, { second, boundaryCheck, autoPlay = true, onCheck, beforeMint, afterStart } = {}) {
   const commands = [], stored = new Map(), duration = 90, togglePreview = {}
   const opened = { ...continuationOpened, previewSession: { ...continuationQualification, programRun: { version: 1 } },
     snapshot: { ...windowOpened.snapshot, document: { project: { duration_frames: duration, fps: 30 } } } }
   const f = await fixture(t, ProgramMonitor, { opened, timeline: 'timeline.json', duration, togglePreview,
     async call(sessionId, request, signal) {
       commands.push({ request, signal })
-      if (request.op === 'authorize-preview-session') return { ok: true, grant: { id: 'program', ownerId: 'owner', openGrant: opened.grant,
-        sessionId, project: 'timeline.json', expiresAt: Date.now() + 60_000, maxWindows: 3,
-        programRun: { version: 1, contentVersion: version, duration, span: 30, frame: request.frame, maxBytes: 1024 } } }
+      if (request.op === 'authorize-preview-session') {
+        await beforeMint?.promise
+        return { ok: true, grant: { id: 'program', ownerId: 'owner', openGrant: opened.grant,
+          sessionId, project: 'timeline.json', expiresAt: Date.now() + 60_000, maxWindows: 3,
+          programRun: { version: 1, contentVersion: version, duration, span: 30, frame: request.frame, maxBytes: 1024 } } }
+      }
       if (request.op === 'program-check') {
         const refusal = await onCheck?.(request, signal)
         if (refusal) return refusal
@@ -899,6 +902,7 @@ async function programMonitor(t, { second, boundaryCheck, autoPlay = true, onChe
   })
   await f.render({})
   await f.click('允许并开始整片预览')
+  if (afterStart) await afterStart(f, commands)
   await untilWindow(f.video)
   const first = f.video()
   const loadPlayable = async node => {
@@ -957,6 +961,58 @@ test('an in-flight program play check cannot survive Space, stop, repin or blur'
     await act(async () => proof.resolve({ ok: true, grantId: 'program', frame: 0, sha256: check.request.sha256 }))
     assert.equal(f.plays.length, 0)
     assert(f.first.paused && f.first.muted)
+  })
+})
+
+test('blur while the first program mint or cache check is pending requires a fresh Space', async t => {
+  for (const stage of ['mint', 'read']) await t.test(stage, async t => {
+    const held = deferred()
+    let checks = 0
+    const f = await programMonitor(t, { autoPlay: false, beforeMint: stage === 'mint' ? held : undefined,
+      onCheck: () => stage === 'read' && ++checks === 1 ? held.promise : undefined,
+      async afterStart(f, commands) {
+        await untilWindow(() => commands.some(({ request }) => request.op === (stage === 'mint' ? 'authorize-preview-session' : 'program-check')))
+        assert(!f.video() && f.plays.length === 0)
+        await act(async () => f.dom.window.dispatchEvent(new f.dom.window.Event('blur')))
+        await act(async () => held.resolve())
+      },
+    })
+    await f.loadPlayable(f.first)
+    assert(f.first.paused && f.first.muted)
+    assert.equal(f.plays.length, 0)
+    assert(!f.commands.some(({ request }) => request.op === 'revoke-preview-session'))
+    await f.space()
+    await untilWindow(() => f.plays.length === 1)
+    assert(f.plays[0] === f.first)
+  })
+})
+
+test('program expiry blocks a resumed or adjacent window even before expiry timer delivery', async t => {
+  for (const mode of ['resume', 'handoff']) await t.test(mode, async t => {
+    const before = Date.now(), expiry = before + 60_000
+    let ticksUntilExpiry = -1, initialChecks = 0, boundaryChecks = 0
+    t.mock.method(Date, 'now', () => ticksUntilExpiry < 0 ? before : ticksUntilExpiry-- === 1 ? before : (ticksUntilExpiry = 0, expiry))
+    const f = await programMonitor(t, { onCheck: request => {
+      if (request.frame === 0 && ++initialChecks === 3 || request.frame === 30 && ++boundaryChecks === 2 && mode === 'handoff') {
+        // Let checkEntry's post-response clock pass, then expire at the
+        // synchronous playback/transfer gate. Real timers are not advanced.
+        ticksUntilExpiry = 1
+      }
+    } })
+    if (mode === 'resume') {
+      await f.space()
+      await f.space()
+      assert.deepEqual(f.checks().filter(frame => frame === 0), [0, 0, 0])
+    } else {
+      await untilWindow(f.spare)
+      await f.loadPlayable(f.spare())
+      await endWindow(f, f.first)
+      assert.equal(boundaryChecks, 2)
+      assert(f.video() === f.first)
+    }
+    assert.equal(f.plays.length, 1)
+    assert(f.first.paused && f.first.muted)
+    assert(!f.commands.some(({ request }) => request.op === 'revoke-preview-session'), 'the timer has not delivered')
   })
 })
 
