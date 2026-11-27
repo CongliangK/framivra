@@ -947,6 +947,17 @@ class PreviewWindowCandidate(unittest.TestCase):
         tail = {'stream_index': 1, 'pts': 1024, 'duration': 578}
         self.assertEqual(_probe_facts({'streams': streams, 'packets': [priming, vp, first, tail]}, rate, 1, 1602),
                          {'width': 1920, 'height': 1080, 'audio_sample_rate': 48000, 'audio_channels': 2})
+        # Same coded dimensions and exact clocks, but Chromium presents this
+        # anamorphic stream as 1920x1920 rather than the project's 1920x1080.
+        for sar, dar, accepted in [('1:1', '16:9', True), ('9:16', '1:1', False)]:
+            info = {'streams': [dict(streams[0], sample_aspect_ratio=sar, display_aspect_ratio=dar), streams[1]],
+                    'packets': [priming, vp, first, tail]}
+            if accepted:
+                self.assertEqual(_probe_facts(info, rate, 1, 1602)['width'], 1920)
+            else:
+                with self.assertRaises(WindowError) as caught:
+                    _probe_facts(info, rate, 1, 1602)
+                self.assertEqual(caught.exception.code, 'media.streams')
         for packets, code in (([priming, dict(vp, pts=1), first, tail], 'media.video_clock'),
                               ([priming, vp, first, dict(tail, duration=1024)], 'media.audio_clock'),
                               ([dict(priming, side_data_list=[]), vp, first, tail], 'media.audio_clock')):
