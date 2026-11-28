@@ -151,5 +151,78 @@ window.__vtx_export_png=()=>EXPORT;
             self.assertLess(sum(values) / len(values), 2, box)
 
 
+    @unittest.skipUnless(sys.platform == 'linux', 'requires the native Linux CDP supervisor')
+    def test_trusted_html_window_uses_only_intersecting_clip_local_frames(self):
+        import hashlib
+        import struct
+        from unittest import mock
+        from scripts.preview_trusted_html_window import _render
+        from vtx.render.gfx_render import Tab
+
+        def ff(*args):
+            return subprocess.run(['ffmpeg', '-v', 'error', '-nostdin', *args], check=True,
+                                  capture_output=True, timeout=60).stdout
+
+        with tempfile.TemporaryDirectory(prefix='vtx-html-window-') as directory:
+            root = Path(directory)
+            ff('-f', 'lavfi', '-i', 'color=blue:s=320x180:r=30:d=2',
+               '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=2',
+               '-c:v', 'libx264', '-c:a', 'aac', str(root / 'base.mp4'))
+            (root / 'overlay.html').write_text('''<!doctype html><div id="card"></div><script>
+const f = Number(new URLSearchParams(location.search).get('f'));
+window.__vtx_static_spans = [[0, 6]];
+card.style.cssText = `position:absolute;left:${f*300}px;top:120px;width:280px;height:360px;background:#f00`;
+</script>''')
+            (root / 'outside.html').write_text('<body style="background: lime"></body>')
+            path = root / 'timeline.json'
+            path.write_text(json.dumps({'version': 2, 'subtitles': [],
+                'project': {'fps': 30, 'width': 1920, 'height': 1080, 'duration_frames': 60},
+                'sources': [{'id': 'base', 'path': 'base.mp4'}],
+                'video_tracks': [
+                    {'kind': 'aroll', 'name': 'base', 'clips': [
+                        {'src': 'base', 'dst_in': 0, 'dur': 60, 'src_in': 0, 'src_out': 60}]},
+                    {'kind': 'gfx', 'name': 'overlay', 'clips': [
+                        {'src': 'overlay.html', 'dst_in': 1, 'dur': 6},
+                        {'src': 'outside.html', 'dst_in': 33, 'dur': 4}]}],
+                'audio_tracks': [{'name': 'voice', 'events': [
+                    {'src': 'base', 'in': 0, 'out': 60, 'volume': 1}]}]}))
+            version = 'sha256:' + hashlib.sha256(path.read_bytes()).hexdigest()
+            navigate = Tab.navigate
+            visited = []
+
+            def trace(tab, url):
+                if url.startswith('file:'):
+                    visited.append(url.split('/')[-1])
+                return navigate(tab, url)
+
+            with mock.patch.dict(os.environ, VTX_CHROME=os.environ['VTX_TEST_CHROME'],
+                                 VTX_SEG_NVENC='0', VTX_GFX='cdp', VTX_GFX_STATIC='1', VTX_GFX_NAVFREE='0'), \
+                    mock.patch.object(Tab, 'navigate', trace):
+                with self.assertRaisesRegex(ValueError, 'timeline changed'):
+                    _render(path, 3, 'sha256:' + '0' * 64, lambda: None)
+                self.assertEqual(visited, [])
+                data, facts = _render(path, 3, version, lambda: None)
+            self.assertEqual(set(visited), {f'overlay.html?f={i}' for i in range(2, 6)})
+            self.assertEqual((facts['start'], facts['end'], facts['content_version']), (3, 33, version))
+            self.assertEqual(list((root / 'cache/preview').iterdir()), [])
+            self.assertFalse((root / 'out').exists())
+            movie = root / 'window.mp4'
+            movie.write_bytes(data)
+            video = ff('-i', str(movie), '-vf', 'scale=16:9:flags=neighbor', '-pix_fmt', 'rgb24', '-threads:v', '1',
+                       '-f', 'rawvideo', '-')
+            self.assertEqual(len(video), 30 * 16 * 9 * 3)
+
+            def pixel(frame, x, y):
+                offset = (frame * 16 * 9 + y * 16 + x) * 3
+                return tuple(video[offset:offset + 3])
+
+            self.assertGreater(pixel(0, 6, 2)[0], 190)  # inside the red card at local frame 2
+            self.assertGreater(pixel(3, 13, 2)[0], 190)  # local frame 5, red at x=1500
+            self.assertGreater(pixel(4, 13, 2)[2], 190)  # clip ended; only blue base
+            self.assertGreater(pixel(0, 0, 0)[2], 190)  # transparent overlay preserves base
+            pcm = ff('-i', str(movie), '-map', '0:a', '-f', 's16le', '-')
+            self.assertGreater(len(pcm), 47000 * 4)
+            self.assertGreater(max(abs(v) for v, in struct.iter_unpack('<h', pcm)), 1000)
+
 if __name__ == '__main__':
     unittest.main()

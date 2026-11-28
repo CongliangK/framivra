@@ -99,26 +99,45 @@ class Producer:
                                    count=1, width=self.c.w, height=self.c.h,
                                    root=self.c.root, indices=[self.local])
         else:
-            from .gfx_render import render_page
-            ctx = copy.copy(self.c)
-            ctx.cache = directory
-            dependencies = self.record['dependencies']
-            kwargs = ({'dependency_record': dependencies}
-                      if dependencies['policy'] == 'strict' else {})
-            chrome = self.c._gfx_environment[2]  # exact pinned production selector
-            with redirect_stdout(sys.stderr):
-                stats = render_page(str(self.c.root / self.clip['src']), str(directory),
-                                    n_frames=self.clip['dur'], frames=[self.local], tabs=1,
-                                    width=self.c.w, height=self.c.h, chrome_path=chrome,
-                                    ctx=ctx, **kwargs)
-            if stats.get('failed'):
-                raise ValueError('native sparse HTML producer failed')
-            from ..runtime.proc_supervisor import WORKER_LEDGER
-            if any(directory.rglob(WORKER_LEDGER)):
-                raise ValueError('unsettled browser recovery ledger remains')
+            self._render_html(directory, [self.local])
         self.check()
+        return self._read_png(directory, self.local)
+
+    def _render_html(self, directory, frames, *, scoped=False):
+        from .gfx_render import render_page
+        from ..runtime.proc_supervisor import WORKER_LEDGER
+
+        ctx = copy.copy(self.c)
+        ctx.cache = directory
+        dependencies = self.record['dependencies']
+        kwargs = ({'dependency_record': dependencies}
+                  if dependencies['policy'] == 'strict' else {})
+        if scoped:
+            # A static span's head can sit outside the requested window.
+            kwargs['_allow_static_spans'] = False
+        chrome = self.c._gfx_environment[2]  # exact pinned production selector
+        with redirect_stdout(sys.stderr):
+            stats = render_page(str(self.c.root / self.clip['src']), str(directory),
+                                n_frames=self.clip['dur'], frames=frames, tabs=1,
+                                width=self.c.w, height=self.c.h, chrome_path=chrome,
+                                ctx=ctx, **kwargs)
+        if stats.get('failed'):
+            raise ValueError('native sparse HTML producer failed')
+        if any(directory.rglob(WORKER_LEDGER)):
+            raise ValueError('unsettled browser recovery ledger remains')
+
+    def _read_png(self, directory, index, limit=8 * 1024 * 1024):
         from .png_artifact import read_png
-        _, data = read_png(directory / f'f{self.local:04d}.png', root=self.c.root,
+        _, data = read_png(directory / f'f{index:04d}.png', root=self.c.root,
                            root_identity=self.c.frame_root_identity,
-                           width=self.c.w, height=self.c.h, limit=8 * 1024 * 1024)
+                           width=self.c.w, height=self.c.h, limit=min(limit, 8 * 1024 * 1024))
         return data
+
+    def _produce_html_span(self, directory, stop):
+        """Caller grants trusted HTML execution and supplies an owned directory."""
+        if self.route != 'html' or not 0 <= self.local < stop <= self.clip['dur']:
+            raise ValueError('expected a selected clip-local HTML interval')
+        self.check()
+        fstxn.mkdir(directory, root=self.c.root)
+        self._render_html(directory, list(range(self.local, stop)), scoped=True)
+        self.check()

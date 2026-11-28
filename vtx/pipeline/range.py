@@ -233,7 +233,7 @@ def _native_concat_clock(c, segments, parts):
     return ['-bsf:v', f'setts=pts=PTS:dts=round((N-{max(delays)})*{ticks}):duration=round({ticks})']
 
 
-def _stage_window_gfx(c, fa, fb, scratch, check_cancel, *, expected_svg_pack=None):
+def _stage_window_gfx(c, fa, fb, scratch, check_cancel, *, expected_svg_pack=None, trust_html=False):
     from ..render import gfx_packed_reader as reader
     from ..render.frame_source import PngSequence
 
@@ -264,20 +264,33 @@ def _stage_window_gfx(c, fa, fb, scratch, check_cancel, *, expected_svg_pack=Non
         check_cancel()
         if remaining <= 0:
             raise ValueError('1080p window exceeds aggregate graphics byte limit')
-        pack_option = {'expected_svg_pack': expected_svg_pack} if expected_svg_pack is not None else {}
-        frames = reader.read_frames(c, clip, start, stop, max_bytes=remaining,
-                                    check_cancel=check_cancel, keep_recheck=rechecks.append, **pack_option)
         directory = scratch / f'gfx-{ti}-{ci}'
-        fstxn.mkdir(directory, root=c.root)
         hashes = {}
-        for i, data in enumerate(frames, start):
-            check_cancel()
-            hashes[i] = hashlib.sha256(data).hexdigest()
-            fstxn.atomic_write(directory / f'f{i:04d}.png', data, root=c.root)
-            remaining -= len(data)
+        if trust_html:
+            from ..render.preview_gfx import Producer
+
+            producer = Producer(c, clip, start)
+            producer._produce_html_span(directory, stop)
+            for i in range(start, stop):
+                check_cancel()
+                data = producer._read_png(directory, i, remaining)
+                hashes[i] = hashlib.sha256(data).hexdigest()
+                remaining -= len(data)
+            rechecks.append(producer.check)
+        else:
+            pack_option = {'expected_svg_pack': expected_svg_pack} if expected_svg_pack is not None else {}
+            frames = reader.read_frames(c, clip, start, stop, max_bytes=remaining,
+                                        check_cancel=check_cancel, keep_recheck=rechecks.append, **pack_option)
+            fstxn.mkdir(directory, root=c.root)
+            for i, data in enumerate(frames, start):
+                check_cancel()
+                hashes[i] = hashlib.sha256(data).hexdigest()
+                fstxn.atomic_write(directory / f'f{i:04d}.png', data, root=c.root)
+                remaining -= len(data)
+            del frames
         # Only digests and paths survive to the next layer. The private image2
         # sequence ends at stop and uses the exact original clip-local numbers.
-        del frames, data
+        del data
         identity = hashlib.sha256(''.join(hashes.values()).encode('ascii')).hexdigest()
         source = PngSequence(directory, identity, clip['dur'], c.fps, c.w, c.h,
                              environment_check=lambda hashes=hashes: hashes)
@@ -376,7 +389,8 @@ def render_1080p_window(c, fa: int, fb: int, *, workspace: Path, check_cancel=No
 
 
 def _render_native_window(c, fa, fb, *, workspace, check_cancel, expected_svg_pack, program_sources=None,
-                          mux_concat=False, program_pcm=None, program_part_seconds=None, observe=None):
+                          mux_concat=False, program_pcm=None, program_part_seconds=None, observe=None,
+                          _trust_html=False):
     """Shared private implementation, including the transplanted staging logic.
 
     Caller supplies a trusted, validated Ctx (including trusted methods and
@@ -385,7 +399,8 @@ def _render_native_window(c, fa, fb, *, workspace, check_cancel, expected_svg_pa
     workspace isolates kernel output paths; this function is not a sandbox for
     arbitrary Ctx implementations. Caller handles cleanup and may consume the
     result only on success. Caller event sinks are not inherited. No resize,
-    timeline rewrite, cold graphics preparation, or formal gain/receipt access.
+    timeline rewrite or formal gain/receipt access. Cold HTML is private, explicit
+    operator trust only; the caller must separately confine browser execution.
     The optional cancellation callback raises at cooperative checkpoints; it
     does not supervise or interrupt a running media subprocess.
     """
@@ -408,6 +423,12 @@ def _render_native_window(c, fa, fb, *, workspace, check_cancel, expected_svg_pa
         if (type(program_pcm) is not _RunPCM or type(program_part_seconds) is not int
                 or program_part_seconds not in (1, 2, 4) or c.frame_rate != 30 or fb - fa != 30 * program_part_seconds):
             raise ValueError('experimental program window requires an exact private 30/1 part')
+    if _trust_html is not False:
+        from ..render import gfx_svg
+
+        if (_trust_html is not True or expected_svg_pack is not None or program_sources is not None
+                or observe is not None or gfx_svg.route(c) != 'html'):
+            raise ValueError('cold HTML requires a dedicated trusted HTML window')
     workspace = Path(workspace)
     physical = ensure_inside_project(workspace, c.root, what='1080p workspace')
     if (workspace != physical or c.root.resolve() / 'cache' / 'preview' not in physical.parents
@@ -431,7 +452,7 @@ def _render_native_window(c, fa, fb, *, workspace, check_cancel, expected_svg_pa
     read_ctx.verify_inputs(None)
     scratch = physical / 'work'
     staged, rechecks = _stage_window_gfx(read_ctx, fa, fb, scratch, check_cancel,
-                                         expected_svg_pack=expected_svg_pack)
+                                         expected_svg_pack=expected_svg_pack, trust_html=_trust_html)
 
     # Only the composing context is rebound. GFX rechecks still see real c.cache
     # routing through read_ctx; caller paths and event sinks are not modified.

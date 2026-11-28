@@ -919,7 +919,7 @@ def _atomic_write_bytes(path, data, *, root=None):
 
 def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 width=1920, height=1080, progress=None, frames=None, ctx=None,
-                dependency_record=None, cancel=None):
+                dependency_record=None, cancel=None, _allow_static_spans=True):
     """渲一页 → outdir/f{:04d}.png × n（已存在的帧跳过）。
 
     ctx（issue #103 可选）：vtx gfx 阶段传入 Ctx 后，常驻 Chrome 交
@@ -1219,7 +1219,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         # 完成（缺失头帧要并入 work 并重建队列）；声明是惰性数据，读取/解析失败
         # 只影响缩减不影响像素。复制在规划后立即做（头帧已缓存的成员）。——
         raw_spans = None
-        if os.environ.get("VTX_GFX_STATIC", "1") != "0":
+        if _allow_static_spans and os.environ.get("VTX_GFX_STATIC", "1") != "0":
             try:
                 raw_spans = pool[0].eval("window.__vtx_static_spans || null")
             except Exception:

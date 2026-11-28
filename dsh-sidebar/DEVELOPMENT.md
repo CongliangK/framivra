@@ -35,9 +35,46 @@ Evidence remains supplier- and artifact-specific. Acceptance sections dated befo
 
 **读代码**：前端从[空格入口](src/client/index.mjs)、[监视器](src/client/monitor.mjs)到[后台排队](src/client/preview-program-run.mjs)与[播放交接](src/client/preview-program-playback.mjs)；Host 看[许可、分发和回收](src/host.mjs)及[内核扫描保存](src/kernel-management.mjs)；内核看[窗口 CLI](../vtx/cli/timeline_preview_window.py)、[窗口合成](../vtx/timeline_preview_window.py)和[固定 wheel 启动器](../scripts/preview_window_wheel.py)。
 
-**干净构建与隔离验证**（依赖、构建产物、配置和缓存只写测试环境）：从本基线另开工作分支，不推回基线。用 Node ≥24.9.0 在 `dsh-sidebar/` 执行 `npm ci --ignore-scripts`、`npm run build:client`，按[打包](#packaging--upstream-requirements)用[实际清单版本](package.json)生成仓外候选包并记下 SHA-256，不发布。内核维护者在干净 checkout 用[供应器工具](../scripts/release/prepare_preview_supplier.py)的 `build --source . --commit "$(git rev-parse HEAD)" --output /absolute/new/candidate` 双构建比对（`--python` 选装好 pip/setuptools/wheel 的离线构建环境）；`qualify --help` 列出独立审定的摘要等入参，候选结果不写入批准表。
+**干净构建与隔离验证**（依赖、构建产物、配置和缓存只写测试环境）：从本基线固定提交另开工作分支；开发中不推回基线，验收和评审通过后只在远端仍为起点且规则允许时快进，否则走基线 PR。用 Node ≥24.9.0 在 `dsh-sidebar/` 执行 `npm ci --ignore-scripts`、`npm run build:client`，按[打包](#packaging--upstream-requirements)用[实际清单版本](package.json)生成仓外候选包并记下 SHA-256，不发布。内核维护者在干净 checkout 用[供应器工具](../scripts/release/prepare_preview_supplier.py)的 `build --source . --commit "$(git rev-parse HEAD)" --output /absolute/new/candidate` 双构建比对（`--python` 选装好 pip/setuptools/wheel 的离线构建环境）；`qualify --help` 列出独立审定的摘要等入参，候选结果不写入批准表。
 
 Linux 按[本机限额入口](../CONTRIBUTING.md#本机-linux先隔离再运行)跑 `npm run test:local`；[真实窗口冒烟](tests/real-runtime.test.mjs)在下文真实集成变量 `SIDEBAR_DSH_ROOT`、`SIDEBAR_REAL_VTX`、`SIDEBAR_EVIDENCE_DIR` 之外，另设 `SIDEBAR_PREVIEW_WINDOW_EXECUTABLE` 和 `SIDEBAR_PREVIEW_WINDOW_TIMELINE` 指向获准启动器和独立夹具。GUI 另用原版 DSH `0.2.2-rc.1`、全新 `DSH_HOME` 和空闲 loopback 端口，按[本地安装](#install-npm--github-release--local-archive)及[固定 wheel 隔离布置](README.md#音画窗口linux默认关闭)复验，不动 3080；真实工程验收从启动起把测试任务树置于 8 GiB、零 swap 的组内，不把此测试外壳当作生产作业隔离。缺批准或环境时记录 **UNRUN**，不绕过门控。
+
+#### 任务 03：脚本 HTML 首窗（仅内核）
+
+从 `d14b292ad187dd234d4002594d8048d206ba70bb` 出发。普通 `timeline preview-window --render --include-media --prepare-inputs` 对此窗仍报 `gfx.unsupported: preview window intersects a GFX clip`；固定 wheel、Host、能力声明和信任规则未变。新增[私有操作员入口](../scripts/preview_trusted_html_window.py)：仅对显式信任、版本匹配的工程，调用已有受监督 CDP 按片段局部帧号准备相交 HTML，复用原生区间的层序、字幕、混音和时钟校验。禁用可能额外渲染窗外头帧的静态跨度优化；不改严格 HTML 策略，legacy 脚本的动态依赖闭包仍未获证明。
+
+复现（从本分支根目录执行；会写仓外临时目录，预先设好 `ORIGINAL` 为获准的 `voice-ime` 原工程路径；需系统 FFmpeg/Chrome、NumPy、Bubblewrap 和 systemd 用户会话）：
+
+```bash
+umask 077
+s=$(mktemp -d "$HOME/.local/tmp/dsh/framivra-task03.XXXXXX")
+p="$s/voice-ime"
+v=sha256:fe98ac3611ddcc2e4dc85507f32824c50976d570c2bc65c595c391cfbcd9cee1
+mkdir -p "$p/cache/preview"
+cp -a --reflink=auto "$ORIGINAL/timeline.json" "$ORIGINAL/assets" "$ORIGINAL/gfx" "$p/"
+printf '%s  %s\n' "${v#sha256:}" "$p/timeline.json" | sha256sum -c - || exit 1
+# 复现普通入口拒绝（预期退出 1，见 baseline.log）：
+python3 scripts/run_local_tests.py --memory-mib 8192 -- python3 -m vtx -t "$p/timeline.json" \
+  timeline preview-window --frame 1037 --expected-content-version "$v" \
+  --render --include-media --prepare-inputs > "$s/baseline.log" 2>&1
+# 私有操作员渲染：
+python3 scripts/run_local_tests.py --memory-mib 8192 -- /usr/bin/time -p \
+  timeout --kill-after=10s 180s bwrap --unshare-net --ro-bind / / --dev /dev --proc /proc \
+  --tmpfs /tmp --tmpfs /run --tmpfs /var/lib \
+  --bind "$p/cache/preview" "$p/cache/preview" --die-with-parent \
+  --unsetenv PYTHONPATH --setenv TMPDIR /tmp --setenv XDG_CACHE_HOME /tmp/cache \
+  --setenv XDG_CONFIG_HOME /tmp/config --setenv VTX_SEG_NVENC 0 --setenv VTX_GFX_NAVFREE 0 \
+  --setenv no_proxy '*' -- /usr/bin/python3 -B -m scripts.preview_trusted_html_window \
+  "$p/timeline.json" --frame 1037 --expected-content-version "$v" --trust-html \
+  > "$s/window.mp4" 2> "$s/window.log" || exit 1
+ffmpeg -v error -xerror -i "$s/window.mp4" -map 0:v:0 -map 0:a:0 -f null -
+```
+
+只在退出码 0 时使用 MP4；stderr 有区间、版本、SHA-256 和请求耗时。拒绝时不裸跑。外层限额 8 GiB、零 swap；网络命名空间仅 loopback，主机文件树只读，只有副本的 `cache/preview` 持久可写，运行时另有临时挂载。这不是给不受信 HTML 的沙箱，也不是生产隔离、输入 epoch 或正式交付回执。参照可在同样的隔离入口中逐个运行 `python3 -B -m vtx -t "$p/timeline.json" timeline frame --frame N --expected-content-version "$v" --render --include-png --prepare-gfx --trust-html`，取 `N=1037,1052,1066`，比较窗口内解码帧 `0,15,29` 与相应 `image.inline.data`；参考 PNG 不用于产出窗口。
+
+**实测 PASS**：挂载核对确认原件只读且无缓存回写；无旧产物的 `[1037,1067)` 冷窗请求到 MP4 写出 28.476 s（外层 28.73 s）；1080p30 H.264 实解 30 帧，三次对照都保留底画、脚本动效和字幕，RGB 平均绝对差 1.61 / 1.67 / 1.73（8-bit 编码差）。48 kHz 双声道 AAC 呈现 48,000 采样，口播在预期源采样 91,200 处零偏移、波形相关系数 0.993；离线 ASR 确认中文口播。人工听审未做。独立评审复核了范围、输出认证、普通入口拒绝和隔离边界。[定向回归](../tests/gfx/test_html_preview_integration.py)与既有普通拒绝、暖缓存区间用例共 3 项通过；新用例为 `VTX_TEST_CHROME=/usr/bin/google-chrome python3 -m unittest -v tests.gfx.test_html_preview_integration.HtmlPreviewIntegration.test_trusted_html_window_uses_only_intersecting_clip_local_frames`（置于同一限额入口）。
+
+**下一棒 / UNRUN**：用同一保存版本验证连续供窗，先 `[1067,1097)` 再 `[1097,1127)`（跨 HTML 结束帧 1109）；核对相邻窗帧和音频样本不重不漏、切换处所有可见层与口播连续，分别记录首窗与后继等待。当前未验连续播放、实时达标、跨窗统一响度、快速取消与回收、DSH 接线、固定 wheel 或整片 QC；不把此次局部窗口外推为这些能力。
 
 ### 0.3.0 发行说明（候选，未发布）
 
