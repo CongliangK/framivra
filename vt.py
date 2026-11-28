@@ -48,8 +48,8 @@ import platform
 import shutil
 import subprocess
 import sys
-import tempfile
 import urllib.request
+import uuid
 from urllib.parse import urlparse
 from pathlib import Path
 
@@ -968,68 +968,54 @@ def _write_mount_symlink(link, target, want):
         os.symlink(want, link)
         return
 
-    def create(path):
-        try:
-            os.symlink(want, path, target_is_directory=target.is_dir())
-        except OSError as error:
-            if getattr(error, 'winerror', None) != 1314:
-                raise
-            raise _MountLinkWriteError(
-                f"无法创建挂载链接 {link}：Windows 当前进程没有创建符号链接的权限"
-                "（WinError 1314）。请由维护者检查系统策略或开发人员模式后重试。"
-            ) from error
-
-    if not link.is_symlink():
-        create(link)
-        return
-
-    # Stage in the final parent: Windows probes the referenced target to choose
-    # the link type. Keep the backup separately; os.replace cannot replace an
-    # existing directory symlink on Windows.
-    expected = os.readlink(link)
-    stage = Path(tempfile.mkdtemp(prefix='.vt-link-', dir=link.parent))
-    new, old = stage.with_name(stage.name + '-new'), stage / 'old'
-    created = backed_up = published = False
+    # Both temporary links stay in the final parent so their relative targets
+    # still work. Windows symlink creation and rename refuse occupied names.
+    # Replacing a directory symlink this way takes two renames, not one atomic
+    # swap: if publication fails, move the original back without overwriting.
+    prefix = f'.vt-link-{uuid.uuid4().hex}'
+    candidate = link.with_name(f'{prefix}-new')
+    backup = link.with_name(f'{prefix}-old')
+    staged = backed_up = published = False
     failure = None
     notes = []
     try:
-        create(new)
-        created = True
+        expected = os.readlink(link) if link.is_symlink() else None
+        os.symlink(want, link if expected is None else candidate,
+                   target_is_directory=target.is_dir())
+        if expected is None:
+            return
+        staged = True
         if not link.is_symlink() or os.readlink(link) != expected:
-            raise FileExistsError(f'挂载链接在修复期间变化：{link}')
-        link.rename(old)
+            raise FileExistsError('挂载链接在修复期间变化')
+        link.rename(backup)
         backed_up = True
-        new.rename(link)
+        candidate.rename(link)
         published = True
-        created = False  # The former staging name is no longer ours.
+        staged = False  # The former staging name is no longer ours.
     except OSError as error:
         failure = error
+        if getattr(error, 'winerror', None) == 1314 and not staged:
+            notes.append(f'无法创建挂载链接 {link}：Windows 当前进程没有创建符号链接的权限'
+                         '（WinError 1314）。请由维护者检查系统策略或开发人员模式。')
+        else:
+            notes.append(f'无法更新挂载链接 {link}：{error}')
         if backed_up:
             try:
-                old.rename(link)  # Windows rename will not replace a competing entry.
-                backed_up = False
+                backup.rename(link)
             except OSError as rollback:
-                notes.append(f'无法恢复挂载链接 {link}；原链接保留于 {old}：{rollback}')
+                notes.append(f'无法恢复挂载链接 {link}；原链接保留于 {backup}：{rollback}')
 
     if published:
         try:
-            old.unlink()
-            backed_up = False
+            backup.unlink()
         except OSError as error:
-            notes.append(f'链接已更新，原链接备份未能清理 {old}：{error}')
-    if created:
+            notes.append(f'挂载链接 {link} 已更新，原链接备份未能清理 {backup}：{error}')
+    if staged:
         try:
-            new.unlink(missing_ok=True)
+            candidate.unlink(missing_ok=True)
         except OSError as error:
-            notes.append(f'未能清理候选链接 {new}：{error}')
-    if not backed_up:
-        try:
-            stage.rmdir()
-        except OSError as error:
-            notes.append(f'未能清理暂存目录 {stage}：{error}')
-    if failure is not None or notes:
-        if failure is not None:
-            notes.insert(0, str(failure))
+            notes.append(f'未能清理候选链接 {candidate}：{error}')
+    if notes:
         raise _MountLinkWriteError('；'.join(notes), published=published) from failure
 
 
