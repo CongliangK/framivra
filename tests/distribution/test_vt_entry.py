@@ -347,6 +347,9 @@ class FixLinks(unittest.TestCase):
     def test_windows_symlink_privilege_denial_preserves_existing_link(self):
         import vt as vt_mod
 
+        checkout = self.mount.with_name('checkout')
+        target = checkout / 'vtx'
+        target.mkdir(parents=True)
         self.mount.mkdir()
         link = self.mount / 'vtx'
         link.write_bytes(b'existing link fixture')
@@ -356,11 +359,11 @@ class FixLinks(unittest.TestCase):
         with mock.patch.object(vt_mod.sys, 'platform', 'win32'), \
                 mock.patch.object(type(link), 'is_symlink', autospec=True,
                                  side_effect=lambda path: path == link or original_link_check(path)), \
-                mock.patch.object(vt_mod.os, 'readlink', return_value=str(REPO / 'vtx')), \
+                mock.patch.object(vt_mod.os, 'readlink', return_value=str(target)), \
                 mock.patch.object(vt_mod.os, 'symlink', side_effect=denial) as create, \
+                mock.patch.object(vt_mod, 'ROOT', checkout), \
                 mock.patch.object(vt_mod, 'MOUNT_LINKS', (('vtx', 'vtx'),)), \
                 mock.patch.object(vt_mod, 'mount_root', return_value=self.mount), \
-                mock.patch.object(vt_mod, '_registry_fix_plan', return_value=([], [])), \
                 contextlib.redirect_stdout(io.StringIO()), \
                 contextlib.redirect_stderr(io.StringIO()) as errors:
             self.assertEqual(vt_mod.cmd_fix_links(True), 0)
@@ -382,6 +385,10 @@ class FixLinks(unittest.TestCase):
     def test_windows_symlink_publish_and_cleanup_outcomes(self):
         import vt as vt_mod
 
+        checkout = self.mount.with_name('checkout')
+        checkout.mkdir()
+        target = checkout / 'SKILL.md'
+        target.write_bytes(b'skill')
         real_rename, real_unlink = type(self.mount).rename, type(self.mount).unlink
         for mode in ('rollback', 'backup_retained', 'published', 'published_cleanup', 'candidate_cleanup'):
             with self.subTest(mode=mode):
@@ -389,7 +396,6 @@ class FixLinks(unittest.TestCase):
                 mount.mkdir()
                 link = mount / 'SKILL.md'
                 link.write_bytes(b'original')
-                target = REPO / 'docs/skill/SKILL.md'
                 relative = os.path.relpath(target, mount)
 
                 def rename(path, destination):
@@ -424,9 +430,9 @@ class FixLinks(unittest.TestCase):
                         mock.patch.object(type(link), 'unlink', autospec=True, side_effect=unlink), \
                         mock.patch.object(vt_mod.os, 'readlink', return_value=str(target)), \
                         mock.patch.object(vt_mod.os, 'symlink', side_effect=create), \
-                        mock.patch.object(vt_mod, 'MOUNT_LINKS', (('SKILL.md', 'docs/skill/SKILL.md'),)), \
-                        mock.patch.object(vt_mod, 'mount_root', return_value=mount), \
-                        mock.patch.object(vt_mod, '_registry_fix_plan', return_value=([], [])):
+                        mock.patch.object(vt_mod, 'ROOT', checkout), \
+                        mock.patch.object(vt_mod, 'MOUNT_LINKS', (('SKILL.md', 'SKILL.md'),)), \
+                        mock.patch.object(vt_mod, 'mount_root', return_value=mount):
                     report = vt_mod._doctor_fix(True)['mount']
                 success = mode in ('published', 'published_cleanup')
                 self.assertEqual(report['applied'], [f'SKILL.md → {relative}'] if success else [])
