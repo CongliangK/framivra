@@ -560,6 +560,8 @@ class SafetyCommandHangGuard(unittest.TestCase):
         self.assertEqual(support.SandboxCase.vtx_timeout, 30)
         self.assertFalse(support.SandboxCase.vtx_diagnostics)
         self.assertFalse(support.SandboxCase.vtx_environment_fixture)
+        python = [sys.executable] if os.name == 'nt' else ['env', 'python3']
+        script = str(support.REPO / 'vtx/vtx.py')
         for case_type, timeout in ((support.SandboxCase, 30),
                                    (timeline.SnapshotTimelineEscape, 30),
                                    (timeline.WriteRootEscape, 30),
@@ -572,19 +574,20 @@ class SafetyCommandHangGuard(unittest.TestCase):
                 self.assertIs(case.run_vtx('validate'), completed)
                 command = run.call_args.args[0]
                 if case_type is support.SandboxCase:
-                    self.assertEqual(command[:2], ['env', 'python3'])
-                    self.assertEqual(command[2], str(support.REPO / 'vtx/vtx.py'))
-                    self.assertNotIn('-c', command)
+                    self.assertEqual(command[:-3], [*python, script])
                 else:
                     self.assertTrue(case.vtx_environment_fixture)
-                    self.assertEqual(command[:3], ['env', 'python3', '-c'])
-                    self.assertIn('from tests.gfx._environment import collect, find_chrome', command[3])
-                    self.assertIn("runpy.run_path(sys.argv[0], run_name='__main__')", command[3])
-                    self.assertEqual(command[4], str(support.REPO / 'vtx/vtx.py'))
+                    prefix = [*python, '-c']
+                    self.assertEqual(command[:len(prefix)], prefix)
+                    wrapper, script_arg = command[len(prefix):-3]
+                    self.assertIn('from tests.gfx._environment import collect, find_chrome', wrapper)
+                    self.assertIn("runpy.run_path(sys.argv[0], run_name='__main__')", wrapper)
+                    self.assertEqual(script_arg, script)
                 self.assertEqual(command[-3:], ['-t', str(case.timeline), 'validate'])
                 run.assert_called_once_with(
                     command,
                     cwd=case.root, env=case.env, capture_output=True, text=True,
+                    encoding='utf-8' if os.name == 'nt' else None,
                     timeout=timeout)
 
     def test_path_fixture_keeps_real_receipt_asset_identity_and_missing_asset_failure(self):
@@ -593,9 +596,10 @@ class SafetyCommandHangGuard(unittest.TestCase):
         case = self.sandbox(LegitUseControl)
         case.vtx_traceback_after = 45
         command = case._vtx_command(('validate',))
-        self.assertIn('after = 45', command[3])
-        self.assertIn('faulthandler.dump_traceback_later(after, repeat=False)', command[3])
-        self.assertIn('faulthandler.cancel_dump_traceback_later()', command[3])
+        wrapper = command[command.index('-c') + 1]
+        self.assertIn('after = 45', wrapper)
+        self.assertIn('faulthandler.dump_traceback_later(after, repeat=False)', wrapper)
+        self.assertIn('faulthandler.cancel_dump_traceback_later()', wrapper)
         self.assertEqual(case.vtx_timeout, 60)
         asset = case.put(case.sandbox / 'shared.html', b'<html>one</html>')
         case.tl['video_tracks'] = [{'name': 'gfx', 'kind': 'gfx', 'clips': [
@@ -608,19 +612,19 @@ class SafetyCommandHangGuard(unittest.TestCase):
             case.assert_ok(case.run_vtx('validate'))
         self.assertEqual(run.call_args.kwargs['env'], inherited_environment)
         receipt_path = case.root / 'out/receipt.json'
-        before = json.loads(receipt_path.read_text())
+        before = json.loads(receipt_path.read_text(encoding='utf-8'))
         self.assertTrue(before['stages']['validate']['ok'])
         self.assertTrue(before['gfx_backend']['environment_identity'].startswith('vtx.gfx-environment/1|'))
         asset.write_bytes(b'<html>two</html>')
         with contextlib.redirect_stderr(io.StringIO()):
             case.assert_ok(case.run_vtx('validate'))
-        after = json.loads(receipt_path.read_text())
+        after = json.loads(receipt_path.read_text(encoding='utf-8'))
         self.assertNotEqual(before['input_fingerprint'], after['input_fingerprint'])
         asset.unlink()
         with contextlib.redirect_stderr(io.StringIO()):
             failed = case.run_vtx('validate')
         self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
-        self.assertFalse(json.loads(receipt_path.read_text())['stages']['validate']['ok'])
+        self.assertFalse(json.loads(receipt_path.read_text(encoding='utf-8'))['stages']['validate']['ok'])
         case.assert_outside_unchanged()
 
     def test_positive_command_reports_real_elapsed_time_without_environment_dump(self):
