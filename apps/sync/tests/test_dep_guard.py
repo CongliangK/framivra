@@ -90,12 +90,14 @@ class MissingDepGuidanceTests(unittest.TestCase):
         self.assertIn("numpy", r.stdout + r.stderr)
 
     def test_repack_missing_numpy_guidance_exit_3(self):
-        r = run_cli(["repack_voice.py", "-t", "/nonexistent/timeline.json"], hide=("numpy",))
+        env = {"PYTHONIOENCODING": "cp1252:strict" if os.name == "nt" else "utf-8:strict"}
+        r = run_cli(["repack_voice.py", "-t", "/nonexistent/timeline.json"],
+                    hide=("numpy",), env_overrides=env)
         self.assertEqual(r.returncode, EXIT_MISSING_DEP, r.stdout + r.stderr)
-        combined = r.stdout + r.stderr
-        self.assertNotIn("Traceback", combined)
-        self.assertIn("numpy", combined)
-        self.assertIn("pip install", combined)
+        self.assertEqual(r.stdout, "")
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("缺少第三方依赖 numpy", r.stderr)
+        self.assertIn("pip install numpy", r.stderr)
 
 
 class RootConfigGuidanceTests(unittest.TestCase):

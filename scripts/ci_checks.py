@@ -46,6 +46,7 @@ MEDIA_TESTS = {
         'apps.gates.tests.test_qc_gates_opt.TestCountPacketsEquivalence',
         'apps.gates.tests.test_qc_gates_opt.TestQcSegmentExemption',
         'apps.gates.tests.test_qc_gates_opt.TestG7BlackSensitivity',
+        'apps.sync.tests.test_repack_voice.RepackVoice',
         'plugins.blender-bridge.tests.test_blender_bridge_plugin.'
         'SubsAlphaProbe.test_real_ffprobe_rejects_truncated_garbage',
         'tests.media.test_range_render.TestRangeIntegration',
