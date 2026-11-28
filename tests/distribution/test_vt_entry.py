@@ -344,6 +344,44 @@ class FixLinks(unittest.TestCase):
                 self.assertEqual(list(existing.iterdir()), [protected])
                 self.assertEqual(protected.read_bytes(), b'untouched')
 
+    def test_mount_path_comparison_unifies_windows_drive_and_unc_spellings(self):
+        from pathlib import PureWindowsPath
+        from vt import _mount_path_key as key
+
+        for ordinary, extended in ((r'C:\checkout', r'\\?\C:\checkout'),
+                                   (r'\\host\share\checkout', r'\\?\UNC\host\share\checkout')):
+            with self.subTest(root=ordinary):
+                root, extended = map(PureWindowsPath, (ordinary, extended))
+                self.assertEqual(key(root), key(extended))
+                self.assertTrue(key(extended / 'missing').is_relative_to(key(root)))
+                self.assertFalse(key(extended.with_name('checkout-other')).is_relative_to(key(root)))
+
+    def test_windows_doctor_only_trusts_verified_mount_ownership(self):
+        import vt as vt_mod
+
+        checkout = self.mount.with_name('checkout')
+        checkout.mkdir()
+        missing = checkout / 'unreadable' / 'missing'
+        link = self.mount / 'vtx'
+        items = [(link, checkout / 'vtx', 'wrong_target', '')]
+        resolve = type(missing).resolve
+
+        def resolve_unreadable(path, *, strict=False):
+            if path == missing and strict:
+                raise PermissionError('injected lookup denial')
+            return resolve(path, strict=strict)
+
+        with mock.patch.object(vt_mod.sys, 'platform', 'win32'), \
+                mock.patch.object(vt_mod, 'ROOT', checkout), \
+                mock.patch.object(vt_mod.os, 'readlink', return_value=str(missing)), \
+                mock.patch.dict(os.environ):
+            os.environ.pop('VT_MOUNT_ROOT', None)
+            self.assertTrue(vt_mod._mount_fix_safe(items)[0])  # known in-repo ancestor
+            with mock.patch.object(type(missing), 'resolve', autospec=True, side_effect=resolve_unreadable):
+                safe, note = vt_mod._mount_fix_safe(items)
+                self.assertFalse(safe)
+                self.assertIn('injected lookup denial', note)
+
     def test_windows_symlink_privilege_denial_preserves_existing_link(self):
         import vt as vt_mod
 
@@ -356,16 +394,19 @@ class FixLinks(unittest.TestCase):
         denial = OSError('not held')
         denial.winerror = 1314
         original_link_check = type(link).is_symlink
+        # Native Windows readlink() returns the substitute name of an absolute link.
+        raw_target = '\\\\?\\' + str(target) if os.name == 'nt' and len(target.drive) == 2 else str(target)
         with mock.patch.object(vt_mod.sys, 'platform', 'win32'), \
                 mock.patch.object(type(link), 'is_symlink', autospec=True,
                                  side_effect=lambda path: path == link or original_link_check(path)), \
-                mock.patch.object(vt_mod.os, 'readlink', return_value=str(target)), \
+                mock.patch.object(vt_mod.os, 'readlink', return_value=raw_target), \
                 mock.patch.object(vt_mod.os, 'symlink', side_effect=denial) as create, \
                 mock.patch.object(vt_mod, 'ROOT', checkout), \
                 mock.patch.object(vt_mod, 'MOUNT_LINKS', (('vtx', 'vtx'),)), \
                 mock.patch.object(vt_mod, 'mount_root', return_value=self.mount), \
                 contextlib.redirect_stdout(io.StringIO()), \
                 contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(vt_mod._mount_link_state()[0][2], 'absolute_form')
             self.assertEqual(vt_mod.cmd_fix_links(True), 0)
             create.assert_not_called()
             self.assertEqual(vt_mod.cmd_fix_links(False), 1)
@@ -481,8 +522,8 @@ class FixLinks(unittest.TestCase):
                 skill, refs, templates, occupied = (mount / name for name in names)
                 try:
                     skill.symlink_to(checkout / 'SKILL.md')  # absolute but correct
-                    refs.symlink_to(os.path.relpath(checkout / 'old-references', mount),
-                                    target_is_directory=True)  # relative but wrong
+                    refs.symlink_to(checkout / 'old-references',
+                                    target_is_directory=True)  # absolute, wrong, still in this checkout
                 except OSError as error:
                     if getattr(error, 'winerror', None) == 1314:
                         self.skipTest('native Windows process cannot create real symlinks (WinError 1314)')
@@ -493,11 +534,28 @@ class FixLinks(unittest.TestCase):
                 with mock.patch.object(vt_mod, 'ROOT', checkout), \
                         mock.patch.object(vt_mod, 'MOUNT_LINKS', tuple((name, name) for name in names)), \
                         mock.patch.object(vt_mod, 'mount_root', return_value=mount), \
+                        mock.patch.dict(os.environ), \
                         contextlib.redirect_stdout(io.StringIO()) as stdout:
+                    os.environ.pop('VT_MOUNT_ROOT', None)  # exercise default ownership checks on the fixture
+                    self.assertEqual(vt_mod._mount_link_state()[0][2], 'absolute_form')
                     self.assertEqual(vt_mod.cmd_fix_links(True), 0)
                     self.assertEqual({link: os.readlink(link) for link in before}, before)
                     self.assertFalse(templates.exists())
                     if doctor:
+                        foreign = checkout.with_name(checkout.name + '-other') / 'templates'
+                        foreign.mkdir(parents=True)
+                        templates.symlink_to(foreign, target_is_directory=True)
+                        foreign_raw = os.readlink(templates)
+                        for dangling in (False, True):
+                            with self.subTest(foreign_dangling=dangling):
+                                if dangling:
+                                    foreign.rmdir()
+                                refused = vt_mod._doctor_fix(True)['mount']
+                                self.assertEqual(refused['status'], 'manual', refused)
+                                self.assertIn('templates 指向本仓之外', refused['note'])
+                                self.assertEqual(os.readlink(templates), foreign_raw)
+                                self.assertEqual({link: os.readlink(link) for link in before}, before)
+                        templates.unlink()  # remove only the fixture link before testing valid repairs
                         report = vt_mod._doctor_fix(True)
                         self.assertEqual(report['mount']['status'], 'fixed', report)
                         self.assertEqual(report['mount']['applied'], [

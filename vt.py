@@ -874,6 +874,51 @@ def _doctor_skills(json_out: bool) -> dict:
     return out
 
 
+def _mount_path_key(path):
+    """Compare resolved paths using one spelling for Windows drive and UNC roots."""
+    # Windows readlink() returns absolute targets with an extended prefix, which
+    # resolve() preserves. Compare in that namespace instead of stripping a
+    # prefix that can change how the OS interprets a path. Never use the key for I/O.
+    drive = path.drive
+    if path.root and len(drive) == 2 and drive.endswith(':'):
+        return type(path)('\\\\?\\' + str(path))
+    if path.root and drive.startswith('\\\\') and not drive.startswith(('\\\\?\\', '\\\\.\\')):
+        return type(path)('\\\\?\\UNC\\' + str(path)[2:])
+    return path
+
+
+def _mount_link_target(link, target):
+    current = Path(os.readlink(link))
+    raw = link.parent / current
+    resolved = raw.resolve()
+    matches = resolved == target
+    if not matches and _mount_path_key(resolved) == _mount_path_key(target):
+        # A non-strict Windows lookup can return the input on access errors.
+        # Only accept an alternate spelling as equivalent after real resolution.
+        try:
+            matches = _mount_path_key(raw.resolve(strict=True)) == _mount_path_key(target)
+        except (OSError, RuntimeError):
+            pass
+    return current, resolved, matches
+
+
+def _windows_mount_owner_path(raw):
+    """Resolve a target or the nearest verifiable ancestor of a missing target."""
+    while True:
+        try:
+            return raw.resolve(strict=True)
+        except FileNotFoundError:
+            try:
+                raw.lstat()
+            except FileNotFoundError:
+                if raw != raw.parent:
+                    raw = raw.parent
+                    continue
+            # An existing but unresolvable entry (e.g. a dangling symlink) is
+            # not evidence that its parent owns the destination.
+            raise
+
+
 def _retired_skills_mount():
     """Only a direct symlink to this checkout's retired skills path is ours.
 
@@ -912,9 +957,8 @@ def _mount_link_state() -> list:
             continue
         link = mroot / link_name
         if link.is_symlink():
-            current = Path(os.readlink(link))
-            resolved = (link.parent / current).resolve() if not current.is_absolute() else current.resolve()
-            if resolved == target:
+            current, _, matches = _mount_link_target(link, target)
+            if matches:
                 if current.is_absolute():
                     out.append((link, target, "absolute_form", want))
                 continue
@@ -941,15 +985,18 @@ def _mount_fix_safe(items: list) -> tuple:
     is_relative_to 对不存在的目标同样成立）。"""
     if os.environ.get("VT_MOUNT_ROOT"):
         return True, "VT_MOUNT_ROOT 隔离环境"
-    root = ROOT.resolve()
+    root = _mount_path_key(ROOT.resolve())
     for link, _target, problem, _want in items:
         if problem == "retired_foreign":
             return False, f"{link.name} 非直接指向本仓退役 skills——保留，请人工处理"
         if problem != "wrong_target":
             continue
-        current = Path(os.readlink(link))
-        resolved = (link.parent / current).resolve() if not current.is_absolute() else current.resolve()
-        if not resolved.is_relative_to(root):
+        try:
+            raw = link.parent / os.readlink(link)
+            resolved = _windows_mount_owner_path(raw) if sys.platform == 'win32' else raw.resolve()
+        except (OSError, RuntimeError) as error:
+            return False, f"无法确认 {link.name} 的挂载归属（{error}）"
+        if not _mount_path_key(resolved).is_relative_to(root):
             return False, f"{link.name} 指向本仓之外（{resolved}）——挂载根属其他仓"
     return True, ""
 
@@ -1320,9 +1367,8 @@ def _fix_links(dry: bool) -> int:
             print(f"  ℹ {link_name}：目标不存在（{rel_target}）——跳过（P2 落地后再挂）")
             continue
         if link.is_symlink():
-            current = Path(os.readlink(link))
-            resolved = (link.parent / current).resolve() if not current.is_absolute() else current.resolve()
-            if resolved == target:
+            current, resolved, matches = _mount_link_target(link, target)
+            if matches:
                 mark = "绝对" if current.is_absolute() else "相对"
                 print(f"  ✓ {link_name}：已指向本仓目标（{mark}链接）")
                 if current.is_absolute() and not dry:
