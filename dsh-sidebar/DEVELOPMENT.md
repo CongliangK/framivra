@@ -171,7 +171,7 @@ Older semantic cores use plan → single-use commit → separate inspect and ful
 
 Regression entry points: [shortcuts and confirmation](tests/client-hardening.test.mjs), [gesture ownership](tests/gesture-epoch.test.mjs), [snapping and gap scope](tests/direct-edit.test.mjs), [edit-view receipt/fence](tests/host-hardening.test.mjs) and [legacy refresh version matching](tests/workbench.test.mjs).
 
-Topbar history provides explicit legacy adoption, current-head undo, status and recovery. Unknown writes report the original operation ID when available and block new edits until settled core status/recover and authoritative readback. A confirmed write whose refresh fails is reported as saved with a stale view, not recategorized as unknown. Undo is a real core transaction, not a browser inverse cache; redo is unsupported. The kernel remains responsible for validation and history.
+Topbar history provides explicit legacy adoption, current-head undo, status and recovery. Unknown writes report the original operation ID when available and block new edits until settled core status/recover and authoritative readback; only that same readback retires the stale timeline drag prompt, not a pending status or a revision change. A confirmed write whose refresh fails is reported as saved with a stale view, not recategorized as unknown. Undo is a real core transaction, not a browser inverse cache; redo is unsupported. The kernel remains responsible for validation and history.
 
 ### Read-only agent integration
 
