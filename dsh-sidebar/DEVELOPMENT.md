@@ -12,6 +12,21 @@ The conversation-draft bridge uses official `InputActions` plus public `Conversa
 
 Evidence remains supplier- and artifact-specific. Acceptance sections dated before this upgrade are preserved historical evidence for their original DSH and ZIP, **not certificates for the current release**. Agent-loop fixtures use a clearly labelled deterministic scripted model, not an external AI service or billing account.
 
+### 整片后台预览：已合入工作的交接（#570）
+
+截至主干 `4e31ea7a`，下列改动已合入。它们不是公开 npm 侧栏 `0.3.1` 的功能清单；安装、扫描和保存也不等于授权执行工程。
+
+| 已合入的行为 | 合并记录 |
+|---|---|
+| 匹配运行时随内核安装、按批准身份扫描并保存；拒绝未批准更新时保留可用安装；按实际构建工具版本选取批准项 | [#572](https://github.com/CongliangK/framivra/pull/572)、[#639](https://github.com/CongliangK/framivra/pull/639)、[#642](https://github.com/CongliangK/framivra/pull/642)、[#647](https://github.com/CongliangK/framivra/pull/647) |
+| 从播放头按空格播放或暂停；交给原生播放器前复查授权、保存版本和首个显示帧 | [#636](https://github.com/CongliangK/framivra/pull/636)、[#638](https://github.com/CongliangK/framivra/pull/638)、[#640](https://github.com/CongliangK/framivra/pull/640)、[#641](https://github.com/CongliangK/framivra/pull/641)、[#645](https://github.com/CongliangK/framivra/pull/645) |
+| 获得独立授权后从播放头优先排队，区分待处理与已缓存帧；到期停止接单，取消后等待撤权和缓存关闭再显示“已停止” | [#637](https://github.com/CongliangK/framivra/pull/637)、[#643](https://github.com/CongliangK/framivra/pull/643)、[#644](https://github.com/CongliangK/framivra/pull/644)、[#648](https://github.com/CongliangK/framivra/pull/648) |
+| 普通预览窗口保留透明叠层、拒绝矛盾的显示宽高比，并使用已校验的随包字体渲染字幕 | [#635](https://github.com/CongliangK/framivra/pull/635)、[#646](https://github.com/CongliangK/framivra/pull/646)、[#649](https://github.com/CongliangK/framivra/pull/649) |
+
+已分别验证：公开插件安装、内核扫描保存后的重启读回；私有安装钩子首次发布和原位复验不覆盖；合成素材两个相邻 30 帧窗口的首帧、中文字幕与 48 kHz 音频呈现时钟。原版 DSH `0.2.2-rc.1` 的 Linux 依赖树在两个空目录解析一致，不等于已经离线安装或运行。上述均非真实整片端到端验收。
+
+[跟踪问题 #570](https://github.com/CongliangK/framivra/issues/570) 保持开放，后续可独立拆分：**性能**测首窗、相邻窗等待和整片耗时；**安全边界**验证启动即限额、取消后整个任务的进程确实退出，不能用客机关机替代；**端到端验收**用干净环境和真实工程副本走完原三步，验证全轨音画、播放头优先、进度、取消和版本失效。本次不启用生产运行时，不发布 npm 包。
+
 ### 0.3.0 发行说明（候选，未发布）
 
 - 在主线轨道界面与显式语义编辑的基础上加入 Linux 固定 wheel 音画窗口、当前可播范围和独立的限时限次跟随许可。同一有效许可和保存版本内，尚未返回的请求可保留严格窗内的最新定位；完整原窗验证和定位解码仍是显示前提。编辑前等待真实回收，保存后只从回执匹配的权威视图恢复，冲突不自动恢复。
