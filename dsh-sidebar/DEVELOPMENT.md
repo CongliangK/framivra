@@ -27,6 +27,18 @@ Evidence remains supplier- and artifact-specific. Acceptance sections dated befo
 
 [跟踪问题 #570](https://github.com/CongliangK/framivra/issues/570) 保持开放，后续可独立拆分：**性能**测首窗、相邻窗等待和整片耗时；**安全边界**验证启动即限额、取消后整个任务的进程确实退出，不能用客机关机替代；**端到端验收**用干净环境和真实工程副本走完原三步，验证全轨音画、播放头优先、进度、取消和版本失效。本次不启用生产运行时，不发布 npm 包。
 
+### 实时渲染开发基线
+
+**目标（尚未验收）**：在单独授予预览许可后，从任意播放头按空格，对当前保存时间线边算边播，再按空格暂停；不拿旧成片补窗，不跳过轨道。上表是源码已合入的能力：当前依靠已校验的完整音画窗口，后继未就绪时音画一起等；固定帧 PNG 无声，不是实时播放。公开 npm 的安装与扫描保存只证明安装路径，不证明后台预览可用。
+
+**候选证据与断点**：[私有离线候选](https://github.com/CongliangK/framivra/issues/570#issuecomment-7227266365)验证过普通 1080p30 短窗解码（H.264 / 48 kHz 双声道 AAC），取消后的全域回收证据来自独立观察器，不是原版 DSH 的能力。基线的安装器、侧栏受管供应器和整片作业批准表均为空；固定 wheel 不宣告 `ordinary_long_run`，[插件入口](src/index.mjs)也未提供现场观察器。普通窗口成功不代表脚本 HTML 或全轨实时播放。后续先落实绑定会话、请求及保存版本的作业归属、启动即硬限额和取消后全进程回收，再用只读素材的真实工程副本验全轨（脚本图形、字幕、混音）、定位、进度、取消及版本失效；分别记录首窗、相邻窗等待和整片耗时。
+
+**读代码**：前端从[空格入口](src/client/index.mjs)、[监视器](src/client/monitor.mjs)到[后台排队](src/client/preview-program-run.mjs)与[播放交接](src/client/preview-program-playback.mjs)；Host 看[许可、分发和回收](src/host.mjs)及[内核扫描保存](src/kernel-management.mjs)；内核看[窗口 CLI](../vtx/cli/timeline_preview_window.py)、[窗口合成](../vtx/timeline_preview_window.py)和[固定 wheel 启动器](../scripts/preview_window_wheel.py)。
+
+**干净构建与隔离验证**（依赖、构建产物、配置和缓存只写测试环境）：从本基线另开工作分支，不推回基线。用 Node ≥24.9.0 在 `dsh-sidebar/` 执行 `npm ci --ignore-scripts`、`npm run build:client`，按[打包](#packaging--upstream-requirements)用[实际清单版本](package.json)生成仓外候选包并记下 SHA-256，不发布。内核维护者在干净 checkout 用[供应器工具](../scripts/release/prepare_preview_supplier.py)的 `build --source . --commit "$(git rev-parse HEAD)" --output /absolute/new/candidate` 双构建比对（`--python` 选装好 pip/setuptools/wheel 的离线构建环境）；`qualify --help` 列出独立审定的摘要等入参，候选结果不写入批准表。
+
+Linux 按[本机限额入口](../CONTRIBUTING.md#本机-linux先隔离再运行)跑 `npm run test:local`；[真实窗口冒烟](tests/real-runtime.test.mjs)在下文真实集成变量 `SIDEBAR_DSH_ROOT`、`SIDEBAR_REAL_VTX`、`SIDEBAR_EVIDENCE_DIR` 之外，另设 `SIDEBAR_PREVIEW_WINDOW_EXECUTABLE` 和 `SIDEBAR_PREVIEW_WINDOW_TIMELINE` 指向获准启动器和独立夹具。GUI 另用原版 DSH `0.2.2-rc.1`、全新 `DSH_HOME` 和空闲 loopback 端口，按[本地安装](#install-npm--github-release--local-archive)及[固定 wheel 隔离布置](README.md#音画窗口linux默认关闭)复验，不动 3080；真实工程验收从启动起把测试任务树置于 8 GiB、零 swap 的组内，不把此测试外壳当作生产作业隔离。缺批准或环境时记录 **UNRUN**，不绕过门控。
+
 ### 0.3.0 发行说明（候选，未发布）
 
 - 在主线轨道界面与显式语义编辑的基础上加入 Linux 固定 wheel 音画窗口、当前可播范围和独立的限时限次跟随许可。同一有效许可和保存版本内，尚未返回的请求可保留严格窗内的最新定位；完整原窗验证和定位解码仍是显示前提。编辑前等待真实回收，保存后只从回执匹配的权威视图恢复，冲突不自动恢复。
