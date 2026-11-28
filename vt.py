@@ -49,6 +49,7 @@ import shutil
 import subprocess
 import sys
 import urllib.request
+import uuid
 from urllib.parse import urlparse
 from pathlib import Path
 
@@ -873,6 +874,51 @@ def _doctor_skills(json_out: bool) -> dict:
     return out
 
 
+def _mount_path_key(path):
+    """Compare resolved paths using one spelling for Windows drive and UNC roots."""
+    # Windows readlink() returns absolute targets with an extended prefix, which
+    # resolve() preserves. Compare in that namespace instead of stripping a
+    # prefix that can change how the OS interprets a path. Never use the key for I/O.
+    drive = path.drive
+    if path.root and len(drive) == 2 and drive.endswith(':'):
+        return type(path)('\\\\?\\' + str(path))
+    if path.root and drive.startswith('\\\\') and not drive.startswith(('\\\\?\\', '\\\\.\\')):
+        return type(path)('\\\\?\\UNC\\' + str(path)[2:])
+    return path
+
+
+def _mount_link_target(link, target):
+    current = Path(os.readlink(link))
+    raw = link.parent / current
+    resolved = raw.resolve()
+    matches = resolved == target
+    if not matches and _mount_path_key(resolved) == _mount_path_key(target):
+        # A non-strict Windows lookup can return the input on access errors.
+        # Only accept an alternate spelling as equivalent after real resolution.
+        try:
+            matches = _mount_path_key(raw.resolve(strict=True)) == _mount_path_key(target)
+        except (OSError, RuntimeError):
+            pass
+    return current, resolved, matches
+
+
+def _windows_mount_owner_path(raw):
+    """Resolve a target or the nearest verifiable ancestor of a missing target."""
+    while True:
+        try:
+            return raw.resolve(strict=True)
+        except FileNotFoundError:
+            try:
+                raw.lstat()
+            except FileNotFoundError:
+                if raw != raw.parent:
+                    raw = raw.parent
+                    continue
+            # An existing but unresolvable entry (e.g. a dangling symlink) is
+            # not evidence that its parent owns the destination.
+            raise
+
+
 def _retired_skills_mount():
     """Only a direct symlink to this checkout's retired skills path is ours.
 
@@ -911,9 +957,8 @@ def _mount_link_state() -> list:
             continue
         link = mroot / link_name
         if link.is_symlink():
-            current = Path(os.readlink(link))
-            resolved = (link.parent / current).resolve() if not current.is_absolute() else current.resolve()
-            if resolved == target:
+            current, _, matches = _mount_link_target(link, target)
+            if matches:
                 if current.is_absolute():
                     out.append((link, target, "absolute_form", want))
                 continue
@@ -940,17 +985,85 @@ def _mount_fix_safe(items: list) -> tuple:
     is_relative_to 对不存在的目标同样成立）。"""
     if os.environ.get("VT_MOUNT_ROOT"):
         return True, "VT_MOUNT_ROOT 隔离环境"
-    root = ROOT.resolve()
+    root = _mount_path_key(ROOT.resolve())
     for link, _target, problem, _want in items:
         if problem == "retired_foreign":
             return False, f"{link.name} 非直接指向本仓退役 skills——保留，请人工处理"
         if problem != "wrong_target":
             continue
-        current = Path(os.readlink(link))
-        resolved = (link.parent / current).resolve() if not current.is_absolute() else current.resolve()
-        if not resolved.is_relative_to(root):
+        try:
+            raw = link.parent / os.readlink(link)
+            resolved = _windows_mount_owner_path(raw) if sys.platform == 'win32' else raw.resolve()
+        except (OSError, RuntimeError) as error:
+            return False, f"无法确认 {link.name} 的挂载归属（{error}）"
+        if not _mount_path_key(resolved).is_relative_to(root):
             return False, f"{link.name} 指向本仓之外（{resolved}）——挂载根属其他仓"
     return True, ""
+
+
+class _MountLinkWriteError(OSError):
+    def __init__(self, message, *, published=False):
+        super().__init__(message)
+        self.published = published
+        self.applied = []
+
+
+def _write_mount_symlink(link, target, want):
+    if sys.platform != 'win32':
+        if link.is_symlink():
+            link.unlink()
+        os.symlink(want, link)
+        return
+
+    # Both temporary links stay in the final parent so their relative targets
+    # still work. Windows symlink creation and rename refuse occupied names.
+    # Replacing a directory symlink this way takes two renames, not one atomic
+    # swap: if publication fails, move the original back without overwriting.
+    prefix = f'.vt-link-{uuid.uuid4().hex}'
+    candidate = link.with_name(f'{prefix}-new')
+    backup = link.with_name(f'{prefix}-old')
+    staged = backed_up = published = False
+    failure = None
+    notes = []
+    try:
+        expected = os.readlink(link) if link.is_symlink() else None
+        os.symlink(want, link if expected is None else candidate,
+                   target_is_directory=target.is_dir())
+        if expected is None:
+            return
+        staged = True
+        if not link.is_symlink() or os.readlink(link) != expected:
+            raise FileExistsError('挂载链接在修复期间变化')
+        link.rename(backup)
+        backed_up = True
+        candidate.rename(link)
+        published = True
+        staged = False  # The former staging name is no longer ours.
+    except OSError as error:
+        failure = error
+        if getattr(error, 'winerror', None) == 1314 and not staged:
+            notes.append(f'无法创建挂载链接 {link}：Windows 当前进程没有创建符号链接的权限'
+                         '（WinError 1314）。请由维护者检查系统策略或开发人员模式。')
+        else:
+            notes.append(f'无法更新挂载链接 {link}：{error}')
+        if backed_up:
+            try:
+                backup.rename(link)
+            except OSError as rollback:
+                notes.append(f'无法恢复挂载链接 {link}；原链接保留于 {backup}：{rollback}')
+
+    if published:
+        try:
+            backup.unlink()
+        except OSError as error:
+            notes.append(f'挂载链接 {link} 已更新，原链接备份未能清理 {backup}：{error}')
+    if staged:
+        try:
+            candidate.unlink(missing_ok=True)
+        except OSError as error:
+            notes.append(f'未能清理候选链接 {candidate}：{error}')
+    if notes:
+        raise _MountLinkWriteError('；'.join(notes), published=published) from failure
 
 
 def _apply_mount_link_fixes(items: list) -> list:
@@ -959,7 +1072,7 @@ def _apply_mount_link_fixes(items: list) -> list:
     mroot = mount_root()
     mroot.mkdir(parents=True, exist_ok=True)
     applied = []
-    for link, _target, problem, want in items:
+    for link, target, problem, want in items:
         if problem in ("occupied", "retired_foreign", "retired_occupied"):
             continue
         if problem == "retired":
@@ -969,9 +1082,13 @@ def _apply_mount_link_fixes(items: list) -> list:
                 link.unlink()
                 applied.append(f"{link.name}（已移除本仓退役链接）")
             continue
-        if link.is_symlink():
-            link.unlink()
-        os.symlink(want, link)
+        try:
+            _write_mount_symlink(link, target, want)
+        except _MountLinkWriteError as error:
+            if error.published:
+                applied.append(f"{link.name} → {want}")
+            error.applied = applied
+            raise
         applied.append(f"{link.name} → {want}")
     return applied
 
@@ -1058,10 +1175,15 @@ def _doctor_fix(json_out: bool) -> dict:
     else:
         safe, reason = _mount_fix_safe(items)
         if safe:
-            applied = _apply_mount_link_fixes(items)
-            report["mount"] = {"status": "fixed" if applied else "manual", "applied": applied}
-            if not applied:
-                report["mount"]["note"] = "挂载项需人工处理"
+            try:
+                applied = _apply_mount_link_fixes(items)
+            except _MountLinkWriteError as error:
+                report["mount"] = {"status": "manual", "note": str(error), "applied": error.applied}
+                report["manual"].append(f"挂载链接：{error}")
+            else:
+                report["mount"] = {"status": "fixed" if applied else "manual", "applied": applied}
+                if not applied:
+                    report["mount"]["note"] = "挂载项需人工处理"
         else:
             report["mount"] = {"status": "manual", "note": reason +
                                "——确认目标仓后跑 vt.py --fix-links"}
@@ -1079,11 +1201,10 @@ def _doctor_fix(json_out: bool) -> dict:
         m = report["mount"]
         if m.get("status") == "ok":
             print("  ✓ 挂载链接全部健康")
-        elif m.get("status") == "fixed":
-            for a in m["applied"]:
-                print(f"  · 已修复挂载链接 {a}")
-        else:
+        elif m.get("status") != "fixed":
             print(f"  ℹ 挂载链接：{m['note']}")
+        for action in m.get("applied", []):
+            print(f"  · 已修复挂载链接 {action}")
         r = report["registry"]
         if r["status"] == "ok":
             print("  ✓ registry.json 无缺字段")
@@ -1222,6 +1343,14 @@ def _mount_link_targets(mroot):
 
 
 def cmd_fix_links(dry: bool) -> int:
+    try:
+        return _fix_links(dry)
+    except _MountLinkWriteError as error:
+        print(f"✗ {error}", file=sys.stderr)
+        return 1
+
+
+def _fix_links(dry: bool) -> int:
     mroot = mount_root()
     print(f"挂载根：{mroot}（目标仓：{ROOT}）")
     try:
@@ -1238,13 +1367,12 @@ def cmd_fix_links(dry: bool) -> int:
             print(f"  ℹ {link_name}：目标不存在（{rel_target}）——跳过（P2 落地后再挂）")
             continue
         if link.is_symlink():
-            current = Path(os.readlink(link))
-            resolved = (link.parent / current).resolve() if not current.is_absolute() else current.resolve()
-            if resolved == target:
+            current, resolved, matches = _mount_link_target(link, target)
+            if matches:
                 mark = "绝对" if current.is_absolute() else "相对"
                 print(f"  ✓ {link_name}：已指向本仓目标（{mark}链接）")
                 if current.is_absolute() and not dry:
-                    link.unlink(); os.symlink(want, link)
+                    _write_mount_symlink(link, target, want)
                     print(f"    · 已规范化为相对链接 → {want}")
                     changed += 1
                 continue
@@ -1257,9 +1385,7 @@ def cmd_fix_links(dry: bool) -> int:
         if dry:
             print(f"    [dry] 将创建相对链接 {link_name} → {want}")
         else:
-            if link.is_symlink():
-                link.unlink()       # 指向错误目标的旧链接先摘除再重建
-            os.symlink(want, link)
+            _write_mount_symlink(link, target, want)
             print(f"    · 已创建相对链接 → {want}")
         changed += 1
     retired = _retired_skills_mount()

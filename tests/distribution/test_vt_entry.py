@@ -344,6 +344,237 @@ class FixLinks(unittest.TestCase):
                 self.assertEqual(list(existing.iterdir()), [protected])
                 self.assertEqual(protected.read_bytes(), b'untouched')
 
+    def test_mount_path_comparison_unifies_windows_drive_and_unc_spellings(self):
+        from pathlib import PureWindowsPath
+        from vt import _mount_path_key as key
+
+        for ordinary, extended in ((r'C:\checkout', r'\\?\C:\checkout'),
+                                   (r'\\host\share\checkout', r'\\?\UNC\host\share\checkout')):
+            with self.subTest(root=ordinary):
+                root, extended = map(PureWindowsPath, (ordinary, extended))
+                self.assertEqual(key(root), key(extended))
+                self.assertTrue(key(extended / 'missing').is_relative_to(key(root)))
+                self.assertFalse(key(extended.with_name('checkout-other')).is_relative_to(key(root)))
+
+    def test_windows_doctor_only_trusts_verified_mount_ownership(self):
+        import vt as vt_mod
+
+        checkout = self.mount.with_name('checkout')
+        checkout.mkdir()
+        missing = checkout / 'unreadable' / 'missing'
+        link = self.mount / 'vtx'
+        items = [(link, checkout / 'vtx', 'wrong_target', '')]
+        resolve = type(missing).resolve
+
+        def resolve_unreadable(path, *, strict=False):
+            if path == missing and strict:
+                raise PermissionError('injected lookup denial')
+            return resolve(path, strict=strict)
+
+        with mock.patch.object(vt_mod.sys, 'platform', 'win32'), \
+                mock.patch.object(vt_mod, 'ROOT', checkout), \
+                mock.patch.object(vt_mod.os, 'readlink', return_value=str(missing)), \
+                mock.patch.dict(os.environ):
+            os.environ.pop('VT_MOUNT_ROOT', None)
+            self.assertTrue(vt_mod._mount_fix_safe(items)[0])  # known in-repo ancestor
+            with mock.patch.object(type(missing), 'resolve', autospec=True, side_effect=resolve_unreadable):
+                safe, note = vt_mod._mount_fix_safe(items)
+                self.assertFalse(safe)
+                self.assertIn('injected lookup denial', note)
+
+    def test_windows_symlink_privilege_denial_preserves_existing_link(self):
+        import vt as vt_mod
+
+        checkout = self.mount.with_name('checkout')
+        target = checkout / 'vtx'
+        target.mkdir(parents=True)
+        self.mount.mkdir()
+        link = self.mount / 'vtx'
+        link.write_bytes(b'existing link fixture')
+        denial = OSError('not held')
+        denial.winerror = 1314
+        original_link_check = type(link).is_symlink
+        # Native Windows readlink() returns the substitute name of an absolute link.
+        raw_target = '\\\\?\\' + str(target) if os.name == 'nt' and len(target.drive) == 2 else str(target)
+        with mock.patch.object(vt_mod.sys, 'platform', 'win32'), \
+                mock.patch.object(type(link), 'is_symlink', autospec=True,
+                                 side_effect=lambda path: path == link or original_link_check(path)), \
+                mock.patch.object(vt_mod.os, 'readlink', return_value=raw_target), \
+                mock.patch.object(vt_mod.os, 'symlink', side_effect=denial) as create, \
+                mock.patch.object(vt_mod, 'ROOT', checkout), \
+                mock.patch.object(vt_mod, 'MOUNT_LINKS', (('vtx', 'vtx'),)), \
+                mock.patch.object(vt_mod, 'mount_root', return_value=self.mount), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(vt_mod._mount_link_state()[0][2], 'absolute_form')
+            self.assertEqual(vt_mod.cmd_fix_links(True), 0)
+            create.assert_not_called()
+            self.assertEqual(vt_mod.cmd_fix_links(False), 1)
+            self.assertIn('WinError 1314', errors.getvalue())
+            report = vt_mod._doctor_fix(True)
+            self.assertEqual(report['mount']['status'], 'manual')
+            self.assertIn('WinError 1314', report['mount']['note'])
+            self.assertEqual(create.call_count, 2)
+            for call in create.call_args_list:
+                want, candidate = call.args
+                self.assertFalse(Path(want).is_absolute())
+                self.assertNotEqual(candidate, link)
+                self.assertEqual(call.kwargs, {'target_is_directory': True})
+        self.assertEqual(link.read_bytes(), b'existing link fixture')
+        self.assertEqual(list(self.mount.iterdir()), [link])
+
+    def test_windows_symlink_publish_and_cleanup_outcomes(self):
+        import vt as vt_mod
+
+        checkout = self.mount.with_name('checkout')
+        checkout.mkdir()
+        target = checkout / 'SKILL.md'
+        target.write_bytes(b'skill')
+        real_rename, real_unlink = type(self.mount).rename, type(self.mount).unlink
+        for mode in ('rollback', 'backup_retained', 'published', 'published_cleanup', 'candidate_cleanup'):
+            with self.subTest(mode=mode):
+                mount = self.mount.with_name(mode)
+                mount.mkdir()
+                link = mount / 'SKILL.md'
+                link.write_bytes(b'original')
+                relative = os.path.relpath(target, mount)
+
+                def rename(path, destination):
+                    if mode in ('rollback', 'backup_retained', 'candidate_cleanup') and path.name.endswith('-new'):
+                        if mode == 'backup_retained':
+                            destination.write_bytes(b'competing occupant')
+                        raise OSError('injected publication failure')
+                    if mode == 'backup_retained' and path.name.endswith('-old'):
+                        self.assertEqual(destination.read_bytes(), b'competing occupant')
+                        raise FileExistsError('injected rollback conflict')
+                    result = real_rename(path, destination)
+                    if mode == 'published' and path.name.endswith('-new'):
+                        path.write_bytes(b'new occupant of vacated candidate name')
+                    return result
+
+                def unlink(path, **kwargs):
+                    if mode == 'published_cleanup' and path.name.endswith('-old'):
+                        raise PermissionError('injected backup cleanup failure')
+                    if mode == 'candidate_cleanup' and path.name.endswith('-new'):
+                        raise PermissionError('injected candidate cleanup failure')
+                    return real_unlink(path, **kwargs)
+
+                def create(want, candidate, *, target_is_directory):
+                    self.assertFalse(target_is_directory)
+                    self.assertEqual((candidate.parent / want).resolve(), target)
+                    candidate.write_bytes(b'new')
+
+                with mock.patch.object(vt_mod.sys, 'platform', 'win32'), \
+                        mock.patch.object(type(link), 'is_symlink', autospec=True,
+                                          side_effect=lambda path: path == link and path.is_file()), \
+                        mock.patch.object(type(link), 'rename', autospec=True, side_effect=rename), \
+                        mock.patch.object(type(link), 'unlink', autospec=True, side_effect=unlink), \
+                        mock.patch.object(vt_mod.os, 'readlink', return_value=str(target)), \
+                        mock.patch.object(vt_mod.os, 'symlink', side_effect=create), \
+                        mock.patch.object(vt_mod, 'ROOT', checkout), \
+                        mock.patch.object(vt_mod, 'MOUNT_LINKS', (('SKILL.md', 'SKILL.md'),)), \
+                        mock.patch.object(vt_mod, 'mount_root', return_value=mount):
+                    report = vt_mod._doctor_fix(True)['mount']
+                success = mode in ('published', 'published_cleanup')
+                self.assertEqual(report['applied'], [f'SKILL.md → {relative}'] if success else [])
+                self.assertEqual(report['status'], 'fixed' if mode == 'published' else 'manual')
+                for name, text in (('rollback', 'injected publication failure'),
+                                   ('backup_retained', 'injected rollback conflict'),
+                                   ('published_cleanup', 'injected backup cleanup failure'),
+                                   ('candidate_cleanup', 'injected candidate cleanup failure')):
+                    if mode == name:
+                        self.assertIn(text, report['note'])
+                if mode in ('published_cleanup', 'backup_retained'):
+                    backup, = mount.glob('.vt-link-*-old')
+                    self.assertIn(str(backup), report['note'])
+                    self.assertEqual(backup.read_bytes(), b'original')
+                    self.assertCountEqual(mount.iterdir(), [link, backup])
+                elif mode == 'candidate_cleanup':
+                    candidate, = mount.glob('.vt-link-*-new')
+                    self.assertIn(str(candidate), report['note'])
+                    self.assertEqual(candidate.read_bytes(), b'new')
+                    self.assertCountEqual(mount.iterdir(), [link, candidate])
+                elif mode == 'published':
+                    competing, = mount.glob('.vt-link-*-new')
+                    self.assertEqual(competing.read_bytes(), b'new occupant of vacated candidate name')
+                    self.assertCountEqual(mount.iterdir(), [link, competing])
+                else:
+                    self.assertEqual(list(mount.iterdir()), [link])
+                expected = b'competing occupant' if mode == 'backup_retained' else b'new' if success else b'original'
+                self.assertEqual(link.read_bytes(), expected)
+
+    def test_real_file_and_directory_links_are_replaced_and_remain_usable(self):
+        import vt as vt_mod
+
+        checkout = self.mount.with_name('checkout & sources')
+        checkout.mkdir()
+        (checkout / 'SKILL.md').write_bytes(b'skill')
+        (checkout / 'references').mkdir()
+        (checkout / 'references' / 'guide').write_bytes(b'guide')
+        (checkout / 'old-references').mkdir()
+        (checkout / 'templates').mkdir()
+        (checkout / 'assets').mkdir()
+        names = ('SKILL.md', 'references', 'templates', 'assets')
+        for doctor in (False, True):
+            with self.subTest(doctor=doctor):
+                mount = self.mount / ('doctor' if doctor else 'explicit')
+                mount.mkdir(parents=True)
+                skill, refs, templates, occupied = (mount / name for name in names)
+                try:
+                    skill.symlink_to(checkout / 'SKILL.md')  # absolute but correct
+                    refs.symlink_to(checkout / 'old-references',
+                                    target_is_directory=True)  # absolute, wrong, still in this checkout
+                except OSError as error:
+                    if getattr(error, 'winerror', None) == 1314:
+                        self.skipTest('native Windows process cannot create real symlinks (WinError 1314)')
+                    raise
+                occupied.mkdir()
+                (occupied / 'keep').write_bytes(b'occupied')
+                before = {link: os.readlink(link) for link in (skill, refs)}
+                with mock.patch.object(vt_mod, 'ROOT', checkout), \
+                        mock.patch.object(vt_mod, 'MOUNT_LINKS', tuple((name, name) for name in names)), \
+                        mock.patch.object(vt_mod, 'mount_root', return_value=mount), \
+                        mock.patch.dict(os.environ), \
+                        contextlib.redirect_stdout(io.StringIO()) as stdout:
+                    os.environ.pop('VT_MOUNT_ROOT', None)  # exercise default ownership checks on the fixture
+                    self.assertEqual(vt_mod._mount_link_state()[0][2], 'absolute_form')
+                    self.assertEqual(vt_mod.cmd_fix_links(True), 0)
+                    self.assertEqual({link: os.readlink(link) for link in before}, before)
+                    self.assertFalse(templates.exists())
+                    if doctor:
+                        foreign = checkout.with_name(checkout.name + '-other') / 'templates'
+                        foreign.mkdir(parents=True)
+                        templates.symlink_to(foreign, target_is_directory=True)
+                        foreign_raw = os.readlink(templates)
+                        for dangling in (False, True):
+                            with self.subTest(foreign_dangling=dangling):
+                                if dangling:
+                                    foreign.rmdir()
+                                refused = vt_mod._doctor_fix(True)['mount']
+                                self.assertEqual(refused['status'], 'manual', refused)
+                                self.assertIn('templates 指向本仓之外', refused['note'])
+                                self.assertEqual(os.readlink(templates), foreign_raw)
+                                self.assertEqual({link: os.readlink(link) for link in before}, before)
+                        templates.unlink()  # remove only the fixture link before testing valid repairs
+                        report = vt_mod._doctor_fix(True)
+                        self.assertEqual(report['mount']['status'], 'fixed', report)
+                        self.assertEqual(report['mount']['applied'], [
+                            f'{name} → {os.path.relpath(checkout / name, mount)}' for name in names[:3]
+                        ])
+                    else:
+                        self.assertEqual(vt_mod.cmd_fix_links(False), 0)
+                    self.assertEqual(vt_mod.cmd_fix_links(False), 0)
+                    self.assertIn('0 处变更', stdout.getvalue().splitlines()[-1])
+                self.assertCountEqual(mount.iterdir(), [skill, refs, templates, occupied])
+                for link in (skill, refs, templates):
+                    self.assertTrue(link.is_symlink(), link)
+                    self.assertEqual(os.readlink(link), os.path.relpath(checkout / link.name, mount))
+                self.assertEqual(skill.read_bytes(), b'skill')
+                self.assertEqual((refs / 'guide').read_bytes(), b'guide')
+                self.assertTrue(templates.is_dir())
+                self.assertFalse(occupied.is_symlink())
+                self.assertEqual((occupied / 'keep').read_bytes(), b'occupied')
+
     def test_wrong_target_repaired(self):
         env = {"VT_MOUNT_ROOT": str(self.mount)}
         _vt("--fix-links", env_extra=env)               # 先建正确链接
