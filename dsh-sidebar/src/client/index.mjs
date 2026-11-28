@@ -59,10 +59,10 @@ async function control(sessionId, payload, signal) {
 }
 
 /** Pure presentation: all addresses, ranges, selection and raw fields come from vtx. */
-export function TimelineView({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onOpenHistory, editActionLabel, onUndo, selectionTools, focusTool, previewCoverage, compact = false }) {
+export function TimelineView({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, recoveryPending, onOpenEdits, onOpenHistory, editActionLabel, onUndo, selectionTools, focusTool, previewCoverage, compact = false }) {
   if (snapshot.content_version !== result.content_version) return h('p', { role: 'alert' }, 'Timeline changed between reads. Reopen preview; mixed-version selection is not displayed.')
   return h(React.Fragment, null,
-    h(VisualTimeline, { snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, onOpenEdits, onOpenHistory, editActionLabel, onUndo, selectionTools, focusTool, previewCoverage, compact }),
+    h(VisualTimeline, { snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState, gestureUnavailable, recoveryPending, onOpenEdits, onOpenHistory, editActionLabel, onUndo, selectionTools, focusTool, previewCoverage, compact }),
     compact ? null : timelineData({ snapshot, result, hits, onSelect }))
 }
 function timelineData({ snapshot, result, hits, onSelect }) {
@@ -559,7 +559,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
          ready ? h(LayoutDivider, { value: timelineShare, onChange: setTimelineShare }) : null,
         ready ? h('section', { className: 'fv-timeline-pane', 'aria-label': '工程时间线' },
           state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请刷新保存版本。') : h(TimelineView, { key: state.opened.grant, compact: true, snapshot: state.opened.snapshot, result: state.result, hits: state.hits, frame: frameValue, onFrame: value => pin(String(value)), onSelect: pick, activeSelection: selection, selectionIntent, onGesture: canEditHere ? gesture?.callback : undefined, onGestureState: gestureState,
-             gestureUnavailable: grantDead ? '请刷新时间线后再编辑。' : storageBusy ? '请等待空间操作结束。' : editUnsupported ? '当前环境仅支持只读时间线。' : gesture?.reason, onOpenEdits: canEditHere && (enableEdit || ['请先接管旧工程', '请打开历史与恢复'].includes(gesture?.reason)) ? (enableEdit ? () => { void enableEdit().catch(reportEditFailure) } : showHistory) : undefined, onOpenHistory: canEditHere ? showHistory : undefined, editActionLabel: enableEdit ? '启用编辑' : '历史与恢复',
+             recoveryPending: frameOwner.edit.unknown, gestureUnavailable: grantDead ? '请刷新时间线后再编辑。' : storageBusy ? '请等待空间操作结束。' : editUnsupported ? '当前环境仅支持只读时间线。' : gesture?.reason, onOpenEdits: canEditHere && (enableEdit || ['请先接管旧工程', '请打开历史与恢复'].includes(gesture?.reason)) ? (enableEdit ? () => { void enableEdit().catch(reportEditFailure) } : showHistory) : undefined, onOpenHistory: canEditHere ? showHistory : undefined, editActionLabel: enableEdit ? '启用编辑' : '历史与恢复',
              onUndo: canEditHere ? undoEdit : undefined, previewCoverage,
              focusTool: h(ToolButton, { icon: timelineFocus ? 'collapse' : 'expand', label: '轨道专注视图', tooltip: timelineFocus ? '恢复画面和时间线' : '暂时隐藏画面和侧栏，为轨道腾出整个工作区', 'aria-pressed': timelineFocus, onClick: () => setTimelineFocus(value => !value) }),
              selectionTools: valid ? h(SelectionSummary, { selection, selected, result: state.result, frame: frameValue, fps, onFrame: pin, onClear: clearSelection, onProperties: () => showProperties(), quick: canEditHere && quickEdit ? runQuick : undefined }) : null })) : null)))
