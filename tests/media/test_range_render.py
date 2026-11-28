@@ -24,12 +24,30 @@ from pathlib import Path
 from fractions import Fraction
 from unittest import mock
 
+try:
+    import resource
+except ImportError:
+    resource = None
+
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
 from tests._support import cli_python
 from vtx.pipeline.range import (parse_timespec, range_label, window_from_clip,
                         window_from_track, select_segments)
+
+
+HAS_FILE_SIZE_LIMIT = hasattr(resource, 'RLIMIT_FSIZE')
+
+
+@contextlib.contextmanager
+def _file_size_limit(limit):
+    soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+    resource.setrlimit(resource.RLIMIT_FSIZE, (min(soft, limit) if soft != resource.RLIM_INFINITY else limit, hard))
+    try:
+        yield
+    finally:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (soft, hard))
 
 
 FPS = 30
@@ -765,6 +783,147 @@ class TestRangeIntegration(unittest.TestCase):
                              [frame / rate for frame in range(7)])
             self.assertEqual(int(video['duration_ts']) * Fraction(video['time_base']), 7 / rate)
             self.assertFalse((root / 'out').exists(), 'range must not publish formal outputs')
+
+    def test_native_faded_pip_slice_matches_full_prores_and_keeps_window_clocks(self):
+        import wave
+        from vtx.cache.hygiene import seg_key
+        from vtx.pipeline.composite import RenderPlan, prepare_layers
+        from vtx.pipeline.constraints import frame_sample
+        from vtx.pipeline.infra import Ctx
+        from vtx.pipeline.range import render_1080p_window, _NativeWindowPlan
+        from vtx.timeline_preview_window import _probe_facts
+
+        def ff(*args):
+            return subprocess.run(['ffmpeg', '-v', 'error', '-nostdin', *args], check=True,
+                                  capture_output=True, timeout=60).stdout
+
+        def pixels(path, fmt):
+            # Use identical decode/colour-conversion on both paths; hash each
+            # complete frame including its decoded native alpha plane.
+            raw = ff('-i', str(path), '-map', '0:v:0', '-pix_fmt', fmt, '-threads:v', '1', '-f', 'framehash', '-')
+            return [row.split(b',')[-1].strip() for row in raw.splitlines() if not row.startswith(b'#')]
+
+        def frame_pts(path):
+            result = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_frames',
+                                     '-show_streams', '-of', 'json', str(path)], check=True,
+                                    capture_output=True, timeout=30)
+            probe = json.loads(result.stdout)
+            tb = Fraction(probe['streams'][0]['time_base'])
+            return [frame['pts'] * tb for frame in probe['frames']]
+
+        rate = Fraction(30000, 1001)
+        with tempfile.TemporaryDirectory(prefix='vtx-native-pip-range-') as directory:
+            root = Path(directory)
+            # Deliberately use different input and timeline frame rates, source
+            # trim, native alpha, partial opacity, even rounded scale and odd x/y.
+            ff('-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=25:d=4,format=yuva444p10le',
+               '-c:v', 'prores_ks', '-profile:v', '4', '-threads:v', '1', str(root / 'pip.mov'))
+            clip = {'src': 'pip', 'src_in': 7, 'src_out': 43, 'dst_in': 51, 'dur': 36,
+                    'scale': 0.53, 'x': 17, 'y': 13, 'opacity': 0.78,
+                    'fade_in_frames': 8, 'fade_out_frames': 8}
+            path = root / 'timeline.json'
+            path.write_text(json.dumps({**TestCliGuards._min_tl(),
+                'project': {'fps': str(rate), 'width': 320, 'height': 180, 'duration_frames': 95},
+                'sources': [{'id': 'pip', 'path': 'pip.mov'}],
+                'video_tracks': [{'name': 'pip', 'kind': 'pip', 'clips': [clip]}],
+                'subtitles': [{'in': 51, 'out': 87, 'text': 'Synthetic PiP'}]}), encoding='utf-8')
+            c = Ctx(path)
+            def serial(ctx, jobs, _what):
+                for _label, argv, gpu in jobs:
+                    self.assertFalse(gpu)
+                    ctx.run(argv)
+            with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0', 'VTX_VIDEO_SEGMENTS': '1'}):
+                whole, = prepare_layers(c, run_tasks=serial)
+                legacy_key = seg_key(c, clip, 0, 0, True, True, 'prores')
+                self.assertEqual(whole['seg'].name, legacy_key + '.mov')
+                self.assertEqual(len(frame_pts(whole['seg'])), 36)
+                full_hashes = pixels(whole['seg'], 'yuva444p12le')
+                normal = RenderPlan(c=c, draft=False, f=1, W=c.w, H=c.h, layers=[whole])
+                test_dir = c.cache / 'preview'
+                test_dir.mkdir(parents=True)
+                sizes, sliced_hashes = [], {}
+                for a, b in ((51, 53), (53, 55), (51, 55), (58, 60), (59, 61), (72, 74), (78, 80), (85, 87)):
+                    with self.subTest(window=(a, b)):
+                        sliced, = prepare_layers(c, run_tasks=serial, native_window=(a, b), staged_gfx={})
+                        self.assertEqual(sliced['cl'], clip)
+                        self.assertEqual(sliced['native_seg_span'], (a, b))
+                        self.assertEqual((sliced['x'], sliced['y'], sliced['w2'], sliced['h2']), (17, 13, 168, 94))
+                        self.assertNotEqual(sliced['seg'].name, whole['seg'].name)
+                        self.assertEqual(frame_pts(sliced['seg']), [i / rate for i in range(b - a)])
+                        ordinal = a - clip['dst_in']
+                        sliced_hashes[a, b] = pixels(sliced['seg'], 'yuva444p12le')
+                        self.assertEqual(sliced_hashes[a, b], full_hashes[ordinal:ordinal + b - a])
+                        if b - a == 2:
+                            sizes.append(sliced['seg'].stat().st_size)
+                        # Real overlay and ASS burn, with identical native range
+                        # inputs except for the private pre-encode origin.
+                        ass = test_dir / f'{a}-{b}.ass'
+                        normal.write_seg_ass(ass, a, b)
+                        reference, actual = (test_dir / f'{name}-{a}-{b}.mp4' for name in ('full', 'native'))
+                        normal.composite([whole], reference, True, a=a, b=b, sub_file=ass)
+                        _NativeWindowPlan(c=c, draft=False, f=1, W=c.w, H=c.h, layers=[sliced]).composite(
+                            [sliced], actual, True, a=a, b=b, sub_file=ass)
+                        self.assertEqual(pixels(actual, 'yuv420p'), pixels(reference, 'yuv420p'))
+                        self.assertEqual(frame_pts(actual), [i / rate for i in range(b - a)])
+                self.assertEqual(sliced_hashes[51, 53] + sliced_hashes[53, 55], sliced_hashes[51, 55])
+                self.assertEqual([p.name for p in c.cache.joinpath('seg').glob(f'{legacy_key}*') if p.suffix == '.mov'], [whole['seg'].name])
+                print(f'native faded PiP two-frame ProRes bytes={sizes} full={whole["seg"].stat().st_size}')
+
+            # Actual wrapper with audio: choose endpoints whose absolute NTSC
+            # rounding differs from a reset-at-zero duration (3204 vs 3203).
+            content = json.loads(path.read_text())
+            content['project'].update(width=1920, height=1080)
+            content['subtitles'] = [{'in': 58, 'out': 64, 'text': 'Synthetic PiP'}]
+            path.write_text(json.dumps(content), encoding='utf-8')
+            c = Ctx(path)
+            a, b = 59, 61
+            self.assertEqual(frame_sample(b, rate) - frame_sample(a, rate), 3204)
+            workspace = c.cache / 'preview' / 'isolated-pip-window'
+            workspace.mkdir()
+            # Keep the real clock and decode checks even where RLIMIT_FSIZE is unavailable.
+            file_cap = _file_size_limit(32 << 20) if HAS_FILE_SIZE_LIMIT else contextlib.nullcontext()
+            with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0', 'VTX_VIDEO_SEGMENTS': '1'}), file_cap:
+                out = render_1080p_window(c, a, b, workspace=workspace)
+            part, = (workspace / 'work/seg').glob('native-alpha-v1-*.mov')
+            self.assertEqual(frame_pts(part), [0, 1 / rate])
+            self.assertEqual(frame_pts(out), [0, 1 / rate])
+            info = subprocess.run(['ffprobe', '-v', 'error', '-show_streams', '-show_packets', '-of', 'json', str(out)],
+                                  check=True, capture_output=True, timeout=30)
+            _probe_facts(json.loads(info.stdout), rate, b - a, 3204)
+            with wave.open(str(workspace / 'work/preview' / out.with_suffix('.wav').name), 'rb') as pcm:
+                self.assertEqual((pcm.getframerate(), pcm.getnframes()), (48000, 3204))
+            print(f'native faded PiP two-frame 1080p window intermediate={part.stat().st_size} bytes')
+
+    @unittest.skipUnless(HAS_FILE_SIZE_LIMIT, 'requires RLIMIT_FSIZE')
+    def test_native_alpha_slice_fits_original_file_limit_when_full_clip_does_not(self):
+        from vtx.pipeline.composite import prepare_layers
+        from vtx.pipeline.infra import Ctx
+
+        with tempfile.TemporaryDirectory(prefix='vtx-native-pip-cap-') as directory:
+            root = Path(directory)
+            source = root / 'pip.mp4'
+            subprocess.run(['ffmpeg', '-v', 'error', '-nostdin', '-f', 'lavfi', '-i',
+                'testsrc2=s=1280x720:r=30,noise=alls=38:allf=t+u:all_seed=77',
+                '-frames:v', '108', '-c:v', 'libx264', '-crf', '20', '-preset', 'ultrafast',
+                '-threads:v', '1', str(source)], check=True, capture_output=True, timeout=60)
+            clip = {'src': 'pip', 'src_in': 3, 'src_out': 103, 'dst_in': 31, 'dur': 100,
+                    'x': -13, 'y': 5, 'scale': 1, 'fade_in_frames': 12, 'fade_out_frames': 12}
+            timeline = root / 'timeline.json'
+            timeline.write_text(json.dumps({**TestCliGuards._min_tl(),
+                'project': {'fps': 30, 'width': 1920, 'height': 1080, 'duration_frames': 135},
+                'sources': [{'id': 'pip', 'path': source.name}],
+                'video_tracks': [{'name': 'pip', 'kind': 'pip', 'clips': [clip]}]}), encoding='utf-8')
+            c = Ctx(timeline)
+            limit = 32 << 20
+            with mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
+                # The reference is produced once unrestricted in fixture scratch
+                # solely to measure why the unmodified worker must refuse it.
+                whole, = prepare_layers(c)
+                self.assertGreater(whole['seg'].stat().st_size, limit)
+                with _file_size_limit(limit):
+                    two, = prepare_layers(c, native_window=(73, 75), staged_gfx={})
+            self.assertLess(two['seg'].stat().st_size, limit)
+            print(f'quota stress full PiP={whole["seg"].stat().st_size} bytes; two-frame PiP={two["seg"].stat().st_size} bytes')
 
     def test_native_mp4_preserves_short_window_presentation_clock(self):
         import wave

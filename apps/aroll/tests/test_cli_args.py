@@ -10,6 +10,7 @@
 import contextlib
 import io
 import json
+import os
 import sqlite3
 import struct
 import subprocess
@@ -26,8 +27,11 @@ from wav_float32 import read_wav_float32
 
 
 def run_cli(args):
+    env = dict(os.environ)
+    if os.name == "nt":
+        env.update(PYTHONUTF8="0", PYTHONIOENCODING="cp936:strict")
     return subprocess.run([sys.executable, *args], capture_output=True,
-                          encoding="utf-8", errors="replace", cwd=str(APP_DIR), timeout=60)
+                          encoding="utf-8", errors="replace", cwd=str(APP_DIR), env=env, timeout=60)
 
 
 class Aup3ExtractHelpTests(unittest.TestCase):
@@ -56,6 +60,45 @@ class TrimTakesHelpTests(unittest.TestCase):
 
 
 class FloatWavPipelineTests(unittest.TestCase):
+    def test_extract_and_trim_preserve_unicode_track_and_pcm(self):
+        np = trim_takes.np
+        track = '口播 🎵'
+        names = ('wavetrack', 'name', 'rate', 'waveclip', 'sequence', 'waveblock', 'blockid')
+        dictionary = b'\0\1' + b''.join(struct.pack('<BHH', 15, i, len(name)) + name.encode('ascii')
+                                       for i, name in enumerate(names, 1))
+        label = track.encode('utf-8')
+        document = (struct.pack('<BHBHi', 1, 1, 3, 2, len(label)) + label
+                    + struct.pack('<BHi', 4, 3, 48000)
+                    + b''.join(struct.pack('<BH', 1, i) for i in (4, 5, 6))
+                    + struct.pack('<BHi', 4, 7, 1)
+                    + b''.join(struct.pack('<BH', 2, i) for i in (6, 5, 4, 1)))
+        pcm = (.2 * np.sin(2 * np.pi * 1000 * np.arange(48000) / 48000)).astype('<f4').tobytes()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project, extracted, trimmed = (root / name for name in ('项目.aup3', '提取 🎵', '裁剪 🎵'))
+            with contextlib.closing(sqlite3.connect(project)) as con, con:
+                con.execute('CREATE TABLE project (id INTEGER, dict BLOB, doc BLOB)')
+                con.execute('INSERT INTO project VALUES (1, ?, ?)', (dictionary, document))
+                con.execute('CREATE TABLE sampleblocks (blockid INTEGER, sampleformat INTEGER, '
+                            'summin REAL, summax REAL, sumrms REAL, summary256 BLOB, summary64k BLOB, samples BLOB)')
+                con.execute('INSERT INTO sampleblocks (blockid, samples) VALUES (1, ?)', (pcm,))
+            r = run_cli(['aup3_extract.py', str(project), str(extracted), '--dump'])
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn(track, r.stdout)
+            for name, field in (('structure.json', 'name'), ('extract_report.json', 'track')):
+                report = json.loads((extracted / name).read_text(encoding='utf-8'))
+                item, = report['tracks']
+                self.assertEqual(item[field], track)
+            self.assertIn(track, (extracted / 'doc_events.txt').read_text(encoding='utf-8'))
+            self.assertEqual((extracted / f'track01_{track}.wav').read_bytes()[44:], pcm)
+            r = run_cli(['trim_takes.py', str(extracted), str(trimmed)])
+            self.assertEqual(r.returncode, 0, r.stderr)
+            take, = json.loads((trimmed / 'takes_index.json').read_text(encoding='utf-8'))
+            self.assertIn(take['file'], r.stdout)
+            self.assertEqual(take['source_track'], '口播🎵')
+            self.assertEqual(take['new_samples'], 48000)
+            self.assertEqual((trimmed / take['file']).read_bytes()[44:], pcm)
+
     def _trim(self, root, samples, rate):
         source, output = root / "source", root / "output"
         source.mkdir()
@@ -77,6 +120,24 @@ class FloatWavPipelineTests(unittest.TestCase):
                 self.assertEqual(raw[44:], samples.tobytes())
                 self.assertEqual(index["orig_s"], 1.0)
                 self.assertEqual(index["new_s"], 1.0)
+
+    def test_trim_uses_literal_directory_not_glob_matching_sibling(self):
+        np, rate = trim_takes.np, 48000
+        tone = (.2 * np.sin(2 * np.pi * 1000 * np.arange(rate) / rate)).astype('<f4')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, sibling = root / '录音 [12]', root / '录音 1'
+            source.mkdir()
+            sibling.mkdir()
+            aup3_extract.write_wav_float32(source / 'track01_voice.wav', tone, rate)
+            aup3_extract.write_wav_float32(sibling / 'track01_voice.wav', -tone, rate)
+            output = root / 'out'
+            r = run_cli(['trim_takes.py', str(source), str(output)])
+            self.assertEqual(r.returncode, 0, r.stderr)
+            take, = json.loads((output / 'takes_index.json').read_text(encoding='utf-8'))
+            self.assertEqual(take['file'], 'take01_voice.wav')
+            self.assertTrue((output / take['file']).read_bytes()[44:] == tone.tobytes(),
+                            'trim did not preserve PCM from the literal source directory')
 
     def test_padding_remains_in_seconds_at_48000(self):
         np, rate = trim_takes.np, 48000
@@ -122,6 +183,40 @@ class FloatWavPipelineTests(unittest.TestCase):
 
 
 class Aup3BadInputTests(unittest.TestCase):
+    def test_sqlite_path_treats_fragment_and_escape_as_literal(self):
+        def make_project(path, samples):
+            with contextlib.closing(sqlite3.connect(path)) as con, con:
+                con.execute('CREATE TABLE project (id INTEGER, dict BLOB, doc BLOB)')
+                con.execute('INSERT INTO project VALUES (1, ?, ?)', (b'\0\1', b''))
+                con.execute('CREATE TABLE sampleblocks (blockid INTEGER, sampleformat INTEGER, '
+                            'summin REAL, summax REAL, sumrms REAL, summary256 BLOB, summary64k BLOB, samples BLOB)')
+                con.execute('INSERT INTO sampleblocks (blockid, samples) VALUES (1, ?)', (samples,))
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            prefix = root / 'Recording'
+            source = root / 'Recording#第二段 %20.aup3'
+            expected = struct.pack('<3f', .125, -.5, .25)
+            make_project(prefix, struct.pack('<f', .75))
+            make_project(source, expected)
+            before = {path: path.read_bytes() for path in (prefix, source)}
+            out = root / 'out'
+            with contextlib.redirect_stdout(io.StringIO()):
+                aup3_extract.main(source, out)
+            info = json.loads((out / 'structure.json').read_text())
+            self.assertEqual(info['block_table']['1']['nbytes'], len(expected))
+            self.assertEqual((out / 'orphans' / 'orphan_block01.wav').read_bytes()[44:], expected)
+            self.assertEqual({path: path.read_bytes() for path in before}, before)
+            with contextlib.closing(aup3_extract._open_readonly(source)) as con:
+                with self.assertRaisesRegex(sqlite3.OperationalError, 'readonly'):
+                    con.execute('CREATE TABLE should_not_write (id INTEGER)')
+            missing = root / 'absent#take.aup3'
+            with self.assertRaises(sqlite3.OperationalError):
+                with contextlib.closing(aup3_extract._open_readonly(missing)):
+                    self.fail('read-only open accepted a missing project')
+            self.assertFalse(missing.exists())
+            self.assertFalse((root / 'absent').exists())
+
     def test_serialized_reads_reject_invalid_lengths_without_advancing(self):
         for length in (-5, -1, 2, 2**31 - 1):
             with self.subTest(length=length):
@@ -159,7 +254,7 @@ class Aup3BadInputTests(unittest.TestCase):
     def test_malformed_serialized_project_reports_clean_error(self):
         with tempfile.TemporaryDirectory() as td:
             project = Path(td) / 'malformed.aup3'
-            with sqlite3.connect(project) as con:
+            with contextlib.closing(sqlite3.connect(project)) as con, con:
                 con.execute('CREATE TABLE project (id INTEGER, dict BLOB, doc BLOB)')
                 con.execute('INSERT INTO project VALUES (1, ?, ?)',
                             (b'\0\1', bytes.fromhex('0bfbffffff')))

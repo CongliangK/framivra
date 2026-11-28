@@ -132,9 +132,11 @@ def atomic_media(c, target, producer, *, max_frames=None,
                              before_commit=before_commit, after_commit=after_commit)
 
     def publish_marker():
+        from ._formal_video import publish as publish_formal_video
         fstxn.atomic_write(completion_marker(target), json.dumps(rec, sort_keys=True), root=c.root)
         if after_commit is not None:
             after_commit()
+        publish_formal_video(c, target, rec)
 
     with fstxn.locked_staging(target, after_commit=publish_marker, root=c.root) as temporary:
         current = Path(temporary).resolve()

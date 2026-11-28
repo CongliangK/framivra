@@ -308,6 +308,65 @@ for (const observation of ['mixed', 'later', 'saved']) test(`post-edit reads: ${
   }
 })
 
+test('unknown drag retires its timeline warning only after settled recovery and matching readback', async t => {
+  const { root, button, submit, settle, Simulate } = await mount(t)
+  const oldFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = oldFetch })
+  const managed = { ...snapshot, document: { ...snapshot.document, _vtx: { protocol: 1, head: 'before' } } }
+  const editable = { ...full, tracks: [{ ...tracks[0], data: { id: 'track' } }], blocks: [{ ...blocks[0], data: { id: 'clip' } }] }
+  const savedVersion = `sha256:${'b'.repeat(64)}`
+  const saved = { ...managed, content_version: savedVersion, document: { ...managed.document, _vtx: { protocol: 1, head: 'lost-receipt' } } }
+  const reply = value => new Response(stringifyJSON(value))
+  const calls = []
+  let recovering = false, finishInspect
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(init.body)
+    calls.push(request)
+    switch (request.op) {
+      case 'open': return reply({ ...opened, snapshot: managed })
+      case 'query': return reply(recovering ? { ...editable, content_version: savedVersion, blocks: [{ ...editable.blocks[0], range: [5, 25] }] } : editable)
+      case 'inspect': return recovering ? new Promise(resolve => { finishInspect = () => resolve(reply(saved)) }) : reply(managed)
+      case 'authorize-write': return reply({ ok: true, writeGrant: 'write' })
+      case 'plan': return reply({ ok: true, planToken: 'plan', submitted_request: { op_id: 'lost-receipt' } })
+      case 'commit': throw new Error('lost response')
+      case 'status': return reply({ ok: true, pending: true, current_revision: version })
+      case 'recover': recovering = true; return reply({ ok: true, pending: false, current_revision: savedVersion })
+      default: return reply({ ok: true })
+    }
+  }
+  const tab = { signal: new AbortController().signal }
+  await act(async () => root.render(h(PreviewBody, { sessionId: 'one', useTabInfo: () => ({ tab }) })))
+  await submit(0)
+  await settle(() => document.querySelector('.fv-clip'))
+  const timelineNode = document.querySelector('.fv-timeline')
+  await act(async () => button('启用编辑').click())
+  const clip = document.querySelector('.fv-clip')
+  document.querySelector('.fv-ruler').getBoundingClientRect = () => ({ left: 0, width: 300 })
+  document.querySelector('.fv-track').getBoundingClientRect = () => ({ top: 0, bottom: 50 })
+  await act(async () => Simulate.pointerDown(clip, { pointerId: 1, button: 0, clientX: 0, clientY: 10 }))
+  await act(async () => Simulate.pointerUp(clip, { pointerId: 1, clientX: 50, clientY: 10, altKey: true }))
+  const feedback = () => document.querySelector('.fv-drag-feedback')?.textContent
+  const warning = /保存结果未知（lost-receipt），请先读取状态或恢复/
+  await settle(() => warning.test(feedback()))
+  assert.equal(button('撤销当前版本').disabled, true)
+  await act(async () => button('读取状态').click())
+  assert.match(feedback(), warning, 'pending status does not dismiss the warning')
+  assert.equal(button('撤销当前版本').disabled, true)
+
+  await act(async () => button('恢复').click())
+  await settle(() => finishInspect)
+  assert.match(feedback(), warning, 'settled store result alone does not dismiss the warning')
+  assert.equal(button('撤销当前版本').disabled, true)
+  assert.match(clip.getAttribute('aria-label'), /帧 \[0, 20\)/)
+  await act(async () => finishInspect())
+  await settle(() => !button('撤销当前版本').disabled)
+  assert.equal(feedback(), undefined)
+  assert.match(document.querySelector('.fv-clip').getAttribute('aria-label'), /帧 \[5, 25\)/)
+  assert.match(document.querySelector('.fv-edit-status').textContent, /原操作结果以历史为准/)
+  assert.equal(document.querySelector('.fv-timeline'), timelineNode, 'recovery updates the same timeline instance; the prompt must be retired in place')
+  assert.deepEqual(calls.filter(({ op }) => ['plan', 'commit'].includes(op)).map(({ op }) => op), ['plan', 'commit'])
+})
+
 function installDialogAdapter(dom) {
   const calls = []
   const proto = dom.window.HTMLDialogElement.prototype

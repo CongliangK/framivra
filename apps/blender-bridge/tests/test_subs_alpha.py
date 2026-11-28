@@ -33,14 +33,19 @@ def _write_timeline(root: Path, subs: bool = True):
 class MissingAssFailsHard(unittest.TestCase):
     def test_missing_ass_exits_nonzero_with_guidance(self):
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            _write_timeline(root)
-            r = subprocess.run([sys.executable, str(SCRIPT), str(root / "timeline.json")],
-                               capture_output=True, text=True, encoding="utf-8")
-            self.assertNotEqual(r.returncode, 0, "缺 subs.ass 必须 exit 非零（不吞）")
-            combined = r.stderr + r.stdout
-            self.assertIn("subs.ass", combined, "错误须点名缺失文件")
-            self.assertIn("字幕", combined, "错误须给出中文指引")
+            root = Path(d) / "字幕工程 🎵"
+            root.mkdir()
+            timeline = _write_timeline(root)
+            env = dict(os.environ, PYTHONUTF8="0",
+                       PYTHONIOENCODING="cp936:strict" if os.name == "nt" else "utf-8:strict")
+            r = subprocess.run([sys.executable, "-B", str(SCRIPT), str(timeline)],
+                               capture_output=True, env=env, timeout=30)
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertEqual(r.stdout, b"")
+            stderr = r.stderr.decode("utf-8")
+            self.assertIn(str(root / "cache" / "subs.ass"), stderr)
+            self.assertIn("字幕阶段", stderr)
+            self.assertFalse((root / "cache").exists())
 
 
 @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg required")

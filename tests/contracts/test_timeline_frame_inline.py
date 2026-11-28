@@ -947,6 +947,17 @@ class PreviewWindowCandidate(unittest.TestCase):
         tail = {'stream_index': 1, 'pts': 1024, 'duration': 578}
         self.assertEqual(_probe_facts({'streams': streams, 'packets': [priming, vp, first, tail]}, rate, 1, 1602),
                          {'width': 1920, 'height': 1080, 'audio_sample_rate': 48000, 'audio_channels': 2})
+        # Same coded dimensions and exact clocks, but Chromium presents this
+        # anamorphic stream as 1920x1920 rather than the project's 1920x1080.
+        for sar, dar, accepted in [('1:1', '16:9', True), ('9:16', '1:1', False)]:
+            info = {'streams': [dict(streams[0], sample_aspect_ratio=sar, display_aspect_ratio=dar), streams[1]],
+                    'packets': [priming, vp, first, tail]}
+            if accepted:
+                self.assertEqual(_probe_facts(info, rate, 1, 1602)['width'], 1920)
+            else:
+                with self.assertRaises(WindowError) as caught:
+                    _probe_facts(info, rate, 1, 1602)
+                self.assertEqual(caught.exception.code, 'media.streams')
         for packets, code in (([priming, dict(vp, pts=1), first, tail], 'media.video_clock'),
                               ([priming, vp, first, dict(tail, duration=1024)], 'media.audio_clock'),
                               ([dict(priming, side_data_list=[]), vp, first, tail], 'media.audio_clock')):
@@ -1299,9 +1310,9 @@ class PreviewWindowCandidate(unittest.TestCase):
             tool.write_bytes(b'tool')
             environment = {'VTX_FILTER_THREADS': '1', 'XDG_CACHE_HOME': '/project/cache/preview/window_input_v1/font-cache'}
 
-            def snapshot(address='0123'):
-                witness = epoch.EnvironmentWitness(lambda: None, 1024)
-                witness.observe(['fc-list'], f'{font}\n')
+            def snapshot(address='0123', *, font_listing=None):
+                witness = epoch.EnvironmentWitness(lambda: None, 1024, font_config=environment.get('FONTCONFIG_FILE'))
+                witness.observe(['fc-list'], f'{font}\n' if font_listing is None else font_listing)
                 witness.observe(['fc-conflist'], f'+ {config}: active configuration\n')
                 witness.observe(['ldd', str(tool)], f'libtest.so => {tool} (0x{address})\n')
                 with patch.object(epoch, '_PROVIDER_FILES', ()), patch.object(sys, 'executable', str(tool)), \
@@ -1318,6 +1329,69 @@ class PreviewWindowCandidate(unittest.TestCase):
             self.assertNotEqual(changed_font_config, changed_config)
             font.write_bytes(b'font B')
             self.assertNotEqual(snapshot(), changed_font_config)
+
+            system = root / 'system-fonts'; system.mkdir()
+            fallback = system / 'fallback.ttf'; fallback.write_bytes(b'fallback')
+            environment['FONTCONFIG_FILE'] = str(config)
+            with patch.object(epoch, '_MANAGED_FONTS', root), patch.object(epoch, '_DISTRIBUTION_FONTS', system), \
+                    patch.object(epoch, '_MANAGED_FONT_PINS', {font.name: 'unused by the inventory check'}):
+                self.assertNotEqual(snapshot(font_listing=f'{font}\n{fallback}\n'), changed_font_config)
+                # The approved file is present but is not recognized by fc-list.
+                with self.assertRaisesRegex(epoch.IsolationError, 'missing an approved font'):
+                    snapshot(font_listing=f'{fallback}\n')
+                with self.assertRaisesRegex(epoch.IsolationError, 'non-distribution font'):
+                    snapshot(font_listing=f'{font}\n{tool}\n')
+
+    @unittest.skipUnless(sys.platform == 'linux' and artifact.fstxn.directory_write_capability(),
+                         'requires Linux memfd and directory anchoring')
+    def test_managed_font_projection_reads_only_approved_leaves_and_seals_them(self):
+        from scripts.install_runtime_fonts import SOURCES
+        from vtx.runtime import preview_window_isolation as isolation
+
+        self.assertEqual(isolation._MANAGED_FONT_PINS, {s['filename']: s['sha256'] for s in SOURCES if s['kind'] == 'font'})
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve() / '.preview-enrollment-installation'; root.mkdir(mode=0o700)
+            fonts = root / 'fonts'; fonts.mkdir()
+            live = root / 'preview'; live.mkdir()
+            scratch = root / '.preview-enrollment-test'; scratch.mkdir(mode=0o700)
+            staged = scratch / 'staged-preview'; staged.mkdir()
+            font = fonts / 'Approved.ttf'; font.write_bytes(b'approved')
+            (fonts / 'other.ttf').symlink_to('/does-not-exist')
+            (fonts / 'fonts.conf').write_bytes(b'not an approved config')
+            pins = {font.name: hashlib.sha256(b'approved').hexdigest()}
+            with patch.object(isolation, '_MANAGED_FONT_PINS', pins), contextlib.ExitStack() as stack:
+                check = lambda: None
+                one = isolation._managed_font_projection(stack, live, check)
+                two = isolation._managed_font_projection(stack, staged, check)
+                self.assertEqual([row for _, _, row in one], [row for _, _, row in two])
+                self.assertEqual([dest.name for _, dest, _ in one], ['Approved.ttf', 'fonts.conf'])
+                font.write_bytes(b'changed')
+                self.assertEqual(os.pread(one[0][0], 64, 0), b'approved')
+                self.assertEqual(os.pread(one[1][0], 4096, 0), isolation._MANAGED_FONT_CONFIG)
+                with self.assertRaises(PermissionError):
+                    os.pwrite(one[0][0], b'changed', 0)
+                with self.assertRaisesRegex(isolation.IsolationError, 'approved bytes'):
+                    isolation._managed_font_projection(stack, live, check)
+                font.unlink(); font.symlink_to(fonts / 'fonts.conf')
+                with self.assertRaises((isolation.IsolationError, OSError, ValueError)):
+                    isolation._managed_font_projection(stack, live, check)
+
+    def test_managed_window_keeps_omitted_font_lookup_roots_reserved(self):
+        from vtx.runtime import preview_window_isolation as isolation
+
+        home, data = Path('/fixture/home'), Path('/fixture/data')
+        profile = (Path('/runtime'), '/usr/bin/python3', [], [], {'HOME': str(home), 'XDG_DATA_HOME': str(data)})
+        with patch.object(isolation, 'available', return_value=True), \
+                patch.object(isolation, '_profile', return_value=profile), \
+                patch.object(isolation, '_project_mounts') as mounts:
+            for root in (Path('/usr/local/share/fonts'), home / '.fonts', data / 'fonts'):
+                with self.subTest(root=root), contextlib.ExitStack() as stack:
+                    timeline = root / 'fixture' / 'timeline.json'
+                    with self.assertRaisesRegex(isolation.IsolationError, 'overlaps a fixed runtime mount'):
+                        isolation.execute(stack, timeline, {timeline: ()}, 0, 'sha256:' + '0' * 64,
+                                          None, 4096, 4096, lambda: None, root_identity=(),
+                                          qualification={}, managed_font_profile=Path('/install/preview'))
+            mounts.assert_not_called()
 
     @unittest.skipUnless(sys.platform == 'linux' and artifact.fstxn.directory_write_capability(),
                          'requires Linux directory anchoring')

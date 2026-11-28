@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, posix, win32 } from 'node:path'
-import { createKernelManagement, validateKernelConfigSelection, INSTALL_SCRIPT, KERNEL_CONFIG_LIMIT, KERNEL_WHEEL_LIMIT, INSTALLATION_LIMIT, managedInstallationPaths } from '../src/kernel-management.mjs'
+import { createKernelManagement, validateKernelConfigSelection, validateManagedPreviewSelection, INSTALL_SCRIPT, KERNEL_CONFIG_LIMIT, KERNEL_WHEEL_LIMIT, INSTALLATION_LIMIT, managedInstallationPaths } from '../src/kernel-management.mjs'
 import { readConfiguration, validateVtxConfigFile, isVolatileConfig } from '../src/configuration.mjs'
 import { updateKernelConfigField } from '../src/kernel-config.mjs'
 import { TimelineReader } from '../src/protocol.mjs'
@@ -57,7 +57,7 @@ function setup(options = {}) {
     return handle
   } }
   const ctx = { fs, subprocess, sessions: { list: () => [{ id: 'one' }] }, workingDirectory: { get: () => '/workspace' } }
-  const service = createKernelManagement(ctx, config)
+  const service = createKernelManagement(ctx, config, { approvedPreviewSuppliers: options.approvedPreviewSuppliers })
   const policy = { mode: options.policyMode ?? 'danger-full-access', workspaceRoot: '/workspace' }
   if (!options.noPolicy) service.setPolicyResolver(() => policy)
   const fetch = data => service.fetch(new Request('http://owner/api/framivra/kernel-management', { method: 'POST', body: JSON.stringify(data) }))
@@ -226,6 +226,68 @@ test('managed manifest is bounded, first, metadata-only and never executes, migr
   assert.equal(env.config.vtxExecutable, '/opt/trusted/bin/vtx')
   assert.equal(env.config.vtxConfigFile, '/settings/config.json')
   assert(!JSON.stringify(result).includes('/evil/'))
+})
+
+const syntheticLauncher = '#!/usr/bin/python3 -IBS\n# fixture only\n'
+const syntheticSupplier = { schema: 'framivra.preview-supplier/v1', abi: 'framivra.preview-window.fixed-wheel/v1',
+  launcherSha256: digest(syntheticLauncher).slice(7), wheelSha256: 'c'.repeat(64), runtimeProjectionSha256: 'd'.repeat(64) }
+const syntheticApproval = ['v1', 'a'.repeat(40), syntheticSupplier.launcherSha256,
+  syntheticSupplier.wheelSha256, syntheticSupplier.runtimeProjectionSha256].join(':')
+function managedPreview(env, patch = {}) {
+  const previewSupplier = { ...syntheticSupplier, ...patch }
+  const { paths, manifest } = managedInstall(env, { previewSupplier })
+  const executable = join(paths.previewRoot, 'vtx-preview')
+  const wheelPin = join(paths.previewRoot, 'kernel.sha256')
+  env.fs.add(executable, syntheticLauncher)
+  env.fs.add(wheelPin, `${previewSupplier.wheelSha256}\n`)
+  env.fs.add(join(paths.previewRoot, 'kernel.whl'), 'wheel bytes are the launcher’s responsibility')
+  env.fs.add(join(paths.previewRoot, 'runtime'), null, 'directory')
+  const pin = ['v1', manifest.commit, previewSupplier.launcherSha256, previewSupplier.wheelSha256, previewSupplier.runtimeProjectionSha256].join(':')
+  return { paths, manifest, executable, wheelPin, pin }
+}
+
+test('Linux scan enrolls fixed metadata only, and live binding rechecks the saved selection', { skip: process.platform !== 'linux' }, async t => {
+  const env = setup({ approvedPreviewSuppliers: [syntheticApproval] }); t.after(() => env.service.dispose())
+  const { paths, executable, wheelPin, pin, manifest } = managedPreview(env)
+  const result = await env.request({ op: 'scan' })
+  assert.equal(result.candidates[0].installation.previewSupplier, pin)
+  assert.deepEqual(result.warnings, [])
+  assert.deepEqual(env.fs.reads.map(row => row.path), [paths.manifest, executable, wheelPin])
+  assert.equal(env.calls.length + env.fs.writes.length, 0)
+  assert.equal(env.config.managedPreviewSupplier, undefined)
+  const selection = { vtxExecutable: paths.vtxExecutable, vtxConfigFile: paths.configFile, managedPreviewSupplier: pin }
+  const signal = new AbortController().signal
+  await assert.rejects(validateManagedPreviewSelection(env.ctx, selection, signal), { code: 'PREVIEW_SUPPLIER_UNAPPROVED' })
+  assert.equal((await validateManagedPreviewSelection(env.ctx, selection, signal, [syntheticApproval])).executable, executable)
+  await assert.rejects(validateManagedPreviewSelection(env.ctx, { ...selection, vtxConfigFile: '/elsewhere/config.json' }, signal, [syntheticApproval]), { code: 'PREVIEW_SUPPLIER_CHANGED' })
+  env.fs.add(paths.manifest, JSON.stringify({ ...manifest, commit: '0'.repeat(40) }))
+  await assert.rejects(validateManagedPreviewSelection(env.ctx, selection, signal, [syntheticApproval]), { code: 'PREVIEW_SUPPLIER_UNAPPROVED' })
+  assert.equal(env.calls.length + env.fs.writes.length, 0)
+})
+
+test('bad managed supplier records preserve normal discovery without advertising a window', { skip: process.platform !== 'linux' }, async t => {
+  for (const scenario of ['extra', 'abi', 'digest', 'link', 'pin', 'launcher', 'workspace', 'missing', 'oversized']) {
+    await t.test(scenario, async st => {
+      const env = setup({ approvedPreviewSuppliers: [syntheticApproval] }); st.after(() => env.service.dispose())
+      const { paths, executable, wheelPin } = managedPreview(env, {
+        ...(scenario === 'extra' && { executable: '/host/never' }),
+        ...(scenario === 'abi' && { abi: 'unknown' }),
+        ...(scenario === 'digest' && { runtimeProjectionSha256: 'd'.repeat(64) + '\n' }),
+      })
+      if (scenario === 'link') env.fs.links.set(executable, '/elsewhere/launcher')
+      if (scenario === 'pin') env.fs.add(wheelPin, 'e'.repeat(64) + '\n')
+      if (scenario === 'launcher') env.fs.add(executable, 'different bytes')
+      if (scenario === 'workspace') env.ctx.workingDirectory.get = () => join(paths.previewRoot, 'unsafe-workspace')
+      if (scenario === 'missing') env.fs.entries.delete(join(paths.previewRoot, 'runtime'))
+      if (scenario === 'oversized') env.fs.add(executable, 'x'.repeat(65 * 1024))
+      const result = await env.request({ op: 'scan' })
+      assert.equal(result.ok, true)
+      assert.equal(result.candidates[0].path, paths.vtxExecutable)
+      assert.equal(result.candidates[0].installation.previewSupplier, undefined)
+      assert.equal(result.warnings.length, 1)
+      assert.equal(env.calls.length + env.fs.writes.length, 0)
+    })
+  }
 })
 
 test('an absent receipt still allows strict discovery of the bare managed launcher', async t => {

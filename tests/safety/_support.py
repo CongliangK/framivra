@@ -19,6 +19,8 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from tests._support import cli_python
+
 EXPECT_FIXED = os.environ.get("VTX_SAFETY_EXPECT_FIXED") == "1"
 A01_FIXED = unittest.skipUnless(
     EXPECT_FIXED, "待修复 A01: dry-run 必须零写入/零删除; 设置 VTX_SAFETY_EXPECT_FIXED=1")
@@ -104,6 +106,8 @@ class SandboxCase(unittest.TestCase):
             result = subprocess.run(
                 command,
                 cwd=self.root, env=self.env, capture_output=True, text=True,
+                # vtx emits UTF-8 on Windows even when the host code page is not UTF-8.
+                encoding="utf-8" if os.name == "nt" else None,
                 timeout=self.vtx_timeout)
         except subprocess.TimeoutExpired as error:
             if self.vtx_diagnostics:
@@ -117,7 +121,7 @@ class SandboxCase(unittest.TestCase):
 
     def _vtx_command(self, args):
         script = str(REPO / "vtx/vtx.py")
-        command = ["env", "python3"]
+        command = cli_python()
         if self.vtx_environment_fixture:
             # Explicit dependency isolation for path-only controls. Keep the
             # real interpreter, inherited loader environment, CLI, filesystem

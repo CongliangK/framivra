@@ -1,6 +1,10 @@
 /** Feature-owned bounds, before text/JSON/base64 allocation. Shared by Host/browser. */
 export const FRAME_WIRE_LIMIT = 8 * 1024 * 1024
 export const FRAME_REQUEST_LIMIT = 16 * 1024
+export const PROGRAM_RUN_MAX_WINDOWS = 1024
+export const PROGRAM_RUN_MAX_BYTES = 512 * 1024 * 1024
+export const PROGRAM_RUN_WINDOW_BYTES = 5 * 1024 * 1024
+export const PROGRAM_RUN_TTL = 30 * 60 * 1000
 export const AGENT_INPUT_LIMIT = 128 * 1024
 export const AGENT_WIRE_LIMIT = 256 * 1024
 // Control must accept the largest valid plan/commit body: up to 256 semantic

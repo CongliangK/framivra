@@ -46,7 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/CongliangK/framivra/main/scripts/bo
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $p = Join-Path $env:TEMP ('framivra-' + [guid]::NewGuid().ToString('N') + '.ps1'); Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/CongliangK/framivra/main/scripts/bootstrap.ps1 -OutFile $p; powershell -NoProfile -ExecutionPolicy Bypass -File $p
 ```
 
-完成后在 DSH **插件 → Framivra → 内核**中点击**扫描已有安装**，选择已登记的非 AI/CDP 环境，**保存配置 → 检查连接**。扫描不执行候选、不自动切换连接；旧内核不搬迁、不覆盖。
+完成后，在 DSH **插件 → Framivra → 内核**中点击**扫描已安装内核**，选择已登记的非 AI/CDP 环境并**保存配置**，即可打开工程。遇到连接问题时再使用「检查」。扫描不执行候选，也不搬迁或覆盖旧内核。
 
 默认安装和更新不跑耗时的 CDP 端到端渲染；需要实测时加 `--verify-render`，用法与验证范围见[安装验证](<docs/guides/installation.md#安装验证>)。
 

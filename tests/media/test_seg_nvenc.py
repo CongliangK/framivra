@@ -374,6 +374,36 @@ class TestSegKeyEncoderToken(unittest.TestCase):
                     previous = seg_key(c, _CL, 0, 0, windowed, False, 'x264')
                 self.assertEqual(current == previous, windowed)
 
+    def test_quarter_turn_display_geometry_and_cache_epoch(self):
+        from vtx.pipeline.composite import _media_geometry
+        from vtx.pipeline.infra import Ctx
+
+        for angle in (None, 0, 90, -90, 180, 270, 45):
+            with self.subTest(angle=angle):
+                stream = {'side_data_list': [{'side_data_type': 'Display Matrix', 'rotation': angle}]}
+                info = dict(encoders.video_alpha_info(stream, []), w=640, h=360)
+                c = _KeyCtx()
+                c.probe = lambda _: info
+                c.crop169 = lambda sid: Ctx.crop169(c, sid)
+                rotated = angle in (90, -90, 270)
+                self.assertEqual(c.crop169(_CL['src']), 'crop=360:202:0:219' if rotated else 'crop=640:360:0:0')
+                self.assertEqual(_media_geometry(c, dict(_CL, scale=.5))[3:5],
+                                 (180, 320) if rotated else (320, 180))
+                for windowed in (False, True):
+                    self.assertEqual(seg_key(c, _CL, 0, 0, windowed, False, 'x264') !=
+                                     seg_key(c, _CL, 0, 0, windowed, False, 'x264', source_info=info), rotated)
+
+    def test_display_matrix_disambiguates_truncated_probe_rotation(self):
+        # Both first two cases have ffprobe's integer `rotation: 89`.
+        for a, b, reported, turned in ((571, -65533, 89, True), (1143, -65526, 89, True),
+                                       (1715, -65513, 88, False), (-1715, -65513, 91, False),
+                                       (571, 65533, -89, True)):
+            with self.subTest(a=a, b=b):
+                matrix = f'00000000: {a} {b} 0\n00000001: {-b} {a} 0\n00000002: 0 0 1073741824\n'
+                stream = {'side_data_list': [{'side_data_type': 'Display Matrix',
+                                            'displaymatrix': matrix, 'rotation': reported}]}
+                self.assertIs(encoders.has_quarter_turn(stream), turned)
+
     def test_alpha_bit_still_distinguishes(self):
         c = _KeyCtx()
         self.assertNotEqual(seg_key(c, _CL, 0, 0, False, True, "prores"),

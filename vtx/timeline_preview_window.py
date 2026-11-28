@@ -225,6 +225,12 @@ def _probe_facts(info, rate, frames, samples, *, verify_dts=False):
     sound = (int(audio['sample_rate']), audio['channels'])
     if video['codec_name'] != 'h264' or dims != (1920, 1080) or audio['codec_name'] != 'aac' or sound != (48000, 2):
         raise WindowError('media.streams', 'expected 1080p H.264 and 48 kHz stereo AAC')
+    # Coded dimensions alone also match anamorphic H.264. Do not certify a
+    # window whose declared ratios contradict the monitor's 1920x1080 canvas.
+    # ffprobe JSON omits unspecified ratios; the player still checks the actual
+    # decoded dimensions before displaying or playing the window.
+    if video.get('sample_aspect_ratio', '1:1') != '1:1' or video.get('display_aspect_ratio', '16:9') != '16:9':
+        raise WindowError('media.streams', 'window aspect ratio does not match the 1920x1080 display canvas')
     vt, at = Fraction(video['time_base']), Fraction(audio['time_base'])
     if (int(video['start_pts']) != 0 or int(video['duration_ts']) * vt != frames / rate
             or Fraction(video['avg_frame_rate']) != rate):
@@ -484,7 +490,7 @@ def _timeline_reader(path, root_identity, version, check_cancelled):
 
 
 def _dispatch(path, reference, root_identity, start, check_cancelled, qualification=None, *, svg_mode=None,
-              program_audio=False, first_frame=None):
+              program_audio=False, first_frame=None, managed_font_profile=None):
     from .cache.cache_state import receipt_fingerprint, verify_input_identity
     from .timeline_structure import strict_loads
 
@@ -495,7 +501,8 @@ def _dispatch(path, reference, root_identity, start, check_cancelled, qualificat
         raise WindowError('gfx.unsupported', 'warm SVG read requires an explicitly qualified fixed wheel')
     if program_audio and (qualification is None or svg_mode == 'svg-read'):
         raise WindowError('audio.program_unsupported', 'program audio requires qualified whole-program media')
-    end, rate = _preflight(stored, start, isolation.managed_font(), allow_svg=allow_svg,
+    font_config = isolation.managed_font() if managed_font_profile is None else None
+    end, rate = _preflight(stored, start, font_config, allow_svg=allow_svg,
                            svg_read_only=svg_mode == 'svg-read')
     if first_frame is not None:
         if allow_svg or program_audio or qualification is None:
@@ -556,6 +563,7 @@ def _dispatch(path, reference, root_identity, start, check_cancelled, qualificat
                                    root_identity=root_identity, qualification=qualification, recheck=recheck,
                                    svg_mode=svg_mode, caption=caption, read_caption=read_caption,
                                    program_paths=program_paths,
+                                    **({"managed_font_profile": managed_font_profile} if managed_font_profile is not None else {}),
                                    **({"first_frame": first_frame} if first_frame is not None else {}))
     schema = WARM_SVG_SCHEMA if svg_mode == 'svg-read' else SCHEMA
     if svg_mode == 'svg-media' and not result['ok'] and result.get('schema') == WARM_SVG_SCHEMA:
@@ -683,7 +691,8 @@ def _verified_media(output, workspace, request, identity, start, end, rate, chec
     packet_fields = 'stream_index,pts,duration' + (',dts' if verify_dts else '')
     probe = _process(['ffprobe', '-v', 'error', '-protocol_whitelist', 'pipe', '-f', 'mov',
                      '-show_streams', '-show_packets', '-show_entries',
-                     'stream=index,codec_type,codec_name,width,height,sample_rate,channels,time_base,start_pts,duration_ts,avg_frame_rate:'
+                     'stream=index,codec_type,codec_name,width,height,sample_aspect_ratio,display_aspect_ratio,'
+                     'sample_rate,channels,time_base,start_pts,duration_ts,avg_frame_rate:'
                      f'packet={packet_fields}:packet_side_data=side_data_type,skip_samples',
                      '-of', 'json', '-i', 'pipe:0'], check, data=data)
     if probe.returncode or probe.stderr.strip():
@@ -786,7 +795,8 @@ def _render(path, reference, root_identity, start, result, check_cancelled, expe
 
             def environment():
                 from .runtime.preview_window_epoch import EnvironmentWitness
-                witness = EnvironmentWitness(check_cancelled, _WORK_MEDIA_LIMIT) if epoch else None
+                witness = EnvironmentWitness(check_cancelled, _WORK_MEDIA_LIMIT,
+                    font_config=os.environ.get('FONTCONFIG_FILE')) if epoch else None
 
                 def environment_command(argv):
                     probe = _process(argv, check_cancelled, timeout=30)
@@ -1053,7 +1063,7 @@ def _run_operator_program(path, start, count, expected_content_version, expected
 def preview_window(path, *, start, expected_content_version, check_cancelled, _expected_inputs=None,
                    _qualification=None, _epoch=False, _svg_mode=None, _relative=None,
                    _program_audio=False, _program_manifest=None,
-                   _first_frame=None, _first_frame_ready=None):
+                   _first_frame=None, _first_frame_ready=None, _managed_font_profile=None):
     if type(start) is not int or not isinstance(expected_content_version, str) or not _VERSION.fullmatch(expected_content_version):
         return error_result('cli.arguments', 'integer --frame and lowercase sha256: --expected-content-version required')
     if _expected_inputs is None and not supported():
@@ -1074,6 +1084,7 @@ def preview_window(path, *, start, expected_content_version, check_cancelled, _e
             if _expected_inputs is None:
                 success = _dispatch(path, reference, identity, start, check_cancelled, _qualification,
                                     svg_mode=_svg_mode, program_audio=_program_audio,
+                                     **({"managed_font_profile": _managed_font_profile} if _managed_font_profile is not None else {}),
                                     **({"first_frame": _first_frame} if _first_frame is not None else {}))
             elif _svg_mode in ('svg-plan', 'svg-read'):
                 success = _svg_projection(path, reference, identity, start, check_cancelled,

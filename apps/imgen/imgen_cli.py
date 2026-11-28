@@ -806,6 +806,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if __name__ == '__main__' and os.name == 'nt' and args.command == 'postprocess':
+        # Keep the offline path result and media diagnostics intact in redirected pipes.
+        sys.stdout.reconfigure(encoding='utf-8', errors='strict')
+        sys.stderr.reconfigure(encoding='utf-8', errors='backslashreplace')
     cfg = _pluginlib_config().load_config()
     try:
         if args.command == "gen":

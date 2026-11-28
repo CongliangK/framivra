@@ -174,11 +174,12 @@ def _clip_seg_key(c, tr, ti, cl):
     源缺失（timeline 引用了不存在的媒体）返回 None——两侧同缺则视为相等，不多报。"""
     try:
         windowed = any(k in cl for k in ("scale", "x", "y"))
-        need_alpha = seg_needs_alpha(cl, c.probe(c.src_path(cl['src'])))
+        source_info = c.probe(c.src_path(cl['src']))
+        need_alpha = seg_needs_alpha(cl, source_info)
         # 编码器 token 与 composite.prepare_layers 同源（方案二阶段3）：两侧同一 env
         # 口径，token 同值不影响「改 clip → 键变」的失效判定。
         return seg_key(c, cl, ti, 0, windowed, need_alpha,
-                       "prores" if need_alpha else seg_encoder_kind(c))   # ci 不参与键，占位 0
+                       "prores" if need_alpha else seg_encoder_kind(c), source_info=source_info)
     except (OSError, ValueError) as error:
         c.identity_unknown.setdefault(str(c.src_path(cl['src'])), str(error))
         return None

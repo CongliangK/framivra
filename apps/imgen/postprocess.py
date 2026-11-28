@@ -56,6 +56,12 @@ def build_cover_crop_args(src: Path, dst: Path, width: int, height: int) -> List
     ]
 
 
+def _run_media(cmd):
+    # Native ffmpeg/ffprobe print UTF-8 filenames even under a legacy Windows code page.
+    codec = {"encoding": "utf-8", "errors": "replace"} if os.name == "nt" else {}
+    return subprocess.run(cmd, capture_output=True, text=True, **codec)
+
+
 def probe_image(path: Path) -> dict:
     """ffprobe 读取 width/height/pix_fmt；失败抛 PostprocessError。"""
     cmd = [
@@ -63,7 +69,7 @@ def probe_image(path: Path) -> dict:
         "-show_entries", "stream=width,height,pix_fmt",
         "-of", "json", str(path),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = _run_media(cmd)
     if proc.returncode != 0:
         raise PostprocessError(f"ffprobe 无法读取图片 {path}: {proc.stderr.strip()[:300]}")
     try:
@@ -140,7 +146,7 @@ def cover_crop(
             )
 
     dst.parent.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(build_cover_crop_args(src, dst, width, height), capture_output=True, text=True)
+    proc = _run_media(build_cover_crop_args(src, dst, width, height))
     if proc.returncode != 0:
         try:
             dst.unlink()
