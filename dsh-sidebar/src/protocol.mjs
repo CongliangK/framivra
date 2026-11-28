@@ -5,7 +5,7 @@ import { addAbortSignal, Readable } from 'node:stream'
 import { crc32, inflateSync } from 'node:zlib'
 import { boundedText, FRAME_WIRE_LIMIT } from './bounded.mjs'
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
-import { readConfiguration, isVolatileConfig, ConfigurationError } from './configuration.mjs'
+import { readConfiguration, isVolatileConfig, ConfigurationError, PREVIEW_SUPPLIER_ABI } from './configuration.mjs'
 
 export class PreviewError extends Error {
   constructor(code, message, status = 400) {
@@ -31,7 +31,7 @@ export const HOST_PROTOCOL_OPS = [
   'inspect', 'query', 'reference',
   'storage-inspect', 'storage-plan', 'storage-clean', 'storage-cancel', 'preview-window',
 ]
-export const HOST_IDENTITY = { plugin: '0.3.0', protocol: 1, ops: HOST_PROTOCOL_OPS }
+export const HOST_IDENTITY = { plugin: '0.3.1', protocol: 1, ops: HOST_PROTOCOL_OPS }
 
 /**
  * Deterministic build fingerprint inputs — the single home for WHICH source
@@ -52,7 +52,7 @@ export const HOST_LIB_MODULES = ['configuration', 'kernel-config', 'kernel-manag
 export const CLIENT_MODULES = [
   'icons', 'icon-controls', 'editor-controls', 'viewport', 'timeline', 'manual',
   'selection', 'reference', 'draft-summary', 'frame', 'edit-review', 'settings', 'kernel-settings', 'draft-services',
-  'grant-lifecycle', 'official-draft', 'timecode', 'monitor', 'preview-session', 'preview-session-access', 'workbench', 'storage', 'index',
+  'grant-lifecycle', 'official-draft', 'timecode', 'monitor', 'preview-session', 'preview-session-access', 'preview-program-run', 'preview-program-playback', 'workbench', 'storage', 'index',
 ]
 /** Stamp recipe: prefix + first 16 hex of sha256 over the per-file sha256
  *  digests of the modules above (joined with '\n'), in the listed order.
@@ -88,19 +88,29 @@ const WINDOW_DIAGNOSTICS = new Map([
   ['render.process', 'An audio/video render or verification tool failed.'],
   ['output.limit', 'The generated window exceeds the inline response limit.'],
 ])
-const WINDOW_LAUNCHER = 'framivra.preview-window.fixed-wheel/v1'
+const WINDOW_LAUNCHER = PREVIEW_SUPPLIER_ABI
+const MANAGED_WINDOW_IDENTITY = 'framivra.preview-window.managed-pins/v1'
+export const ORDINARY_PROGRAM_CAPABILITY = 'framivra.preview-window.ordinary-long-run/v1'
 const windowDigest = value => typeof value === 'string' && value.length === 64 && /^[a-f0-9]{64}$/.test(value)
 
-function decodePreviewWindowCapabilities(text) {
+function decodePreviewWindowCapabilities(text, managedSelection) {
   const capability = decodeEnvelope(text, 'capabilities').capabilities.preview_window
   if (capability?.schema !== WINDOW_SCHEMA || capability.inline_media !== true || capability.prepare_inputs !== true ||
       capability.launcher !== WINDOW_LAUNCHER || !windowDigest(capability.wheel_sha256) || !windowDigest(capability.runtime_projection_sha256)) {
     fail('WINDOW_UNSUPPORTED', 'The independent window launcher must advertise the fixed-wheel profile', 422)
   }
+  if (managedSelection) {
+    const [, , , wheel, projection] = managedSelection.split(':')
+    if (capability.managed_identity !== MANAGED_WINDOW_IDENTITY || capability.wheel_sha256 !== wheel ||
+        capability.runtime_projection_sha256 !== projection) {
+      fail('WINDOW_UNSUPPORTED', 'Live fixed-wheel capability did not confirm the owner-selected managed supplier and pre-import pins', 422)
+    }
+  }
   // Bind only the known capability and pin fields, never arbitrary launcher output.
   return Object.freeze({ schema: WINDOW_SCHEMA, inline_media: true, prepare_inputs: true, launcher: WINDOW_LAUNCHER,
     wheel_sha256: capability.wheel_sha256, runtime_projection_sha256: capability.runtime_projection_sha256,
     ...(capability.input_epoch === true ? { input_epoch: true } : {}),
+    ...(capability.ordinary_long_run === ORDINARY_PROGRAM_CAPABILITY ? { ordinary_long_run: ORDINARY_PROGRAM_CAPABILITY } : {}),
     ...(capability.warm_svg_media === true ? { warm_svg_media: true } : {}),
     ...(capability.program_audio === true ? { program_audio: true } : {}) })
 }
@@ -448,10 +458,11 @@ export function validateEnvelope(value, operation) {
 }
 
 export class TimelineReader {
-  constructor(subprocess, config = {}, validateConfigSelection) {
+  constructor(subprocess, config = {}, validateConfigSelection, validatePreviewSelection) {
     this.subprocess = subprocess
     this.configSource = config
     this.validateConfigSelection = validateConfigSelection
+    this.validatePreviewSelection = validatePreviewSelection
     // Plain (test/debug) sources keep fail-fast constructor validation; live
     // Volatile sources are validated on EVERY snapshot instead, because their
     // values can change at any time without a remount.
@@ -549,8 +560,20 @@ export class TimelineReader {
     if (!isAbsolute(path)) fail('BAD_EXECUTABLE', 'Resolver returned a nonabsolute executable', 502)
     return path
   }
+  async managedWindow(snapshot, signal) {
+    if (typeof this.validatePreviewSelection !== 'function') fail('WINDOW_UNSUPPORTED', 'Managed preview requires Host enrollment validation', 422)
+    try { return await this.validatePreviewSelection(snapshot, signal) }
+    catch (error) {
+      signal.throwIfAborted()
+      const mismatch = error instanceof SyntaxError || ['PREVIEW_SUPPLIER_UNAPPROVED', 'PREVIEW_SUPPLIER_CHANGED',
+        'BAD_PREVIEW_SUPPLIER', 'BAD_INSTALLATION', 'INSTALLATION_CHANGED', 'NOT_FOUND', 'FS_NOT_FOUND',
+        'UNSAFE_PATH', 'WORKSPACE_PATH', 'NOT_REGULAR', 'FILE_TOO_LARGE'].includes(error?.code)
+      if (mismatch) fail('EXECUTABLE_CHANGED', 'Managed preview enrollment changed; scan and save it again', 409)
+      fail('WINDOW_UNSUPPORTED', 'Managed preview enrollment could not be verified', 422)
+    }
+  }
   async windowExecutable(signal, snapshot) {
-    const selected = snapshot.previewWindowExecutable
+    const selected = snapshot.managedPreviewSupplier ? (await this.managedWindow(snapshot, signal)).executable : snapshot.previewWindowExecutable
     if (!selected) fail('WINDOW_UNSUPPORTED', 'No independent window launcher is configured', 422)
     try {
       const executable = await this.subprocess.resolveExecutable(selected, { PATH: snapshot.trustedPath }, signal)
@@ -576,7 +599,9 @@ export class TimelineReader {
     }, undefined, true, true, snapshot, owner)
   }
   async windowCapabilities(executable, timeline, signal, snapshot, owner) {
-    return this.command(executable, timeline, ['capabilities'], signal, decodePreviewWindowCapabilities, undefined, false, false, snapshot, owner, { isolatedWindow: true })
+    return this.command(executable, timeline, ['capabilities'], signal,
+      text => decodePreviewWindowCapabilities(text, snapshot.managedPreviewSupplier),
+      undefined, false, false, snapshot, owner, { isolatedWindow: true })
   }
   async firstFrameCapabilities(executable, capability, signal, snapshot, owner) {
     // The ordinary capabilities receipt cannot claim this transport. Probe
@@ -683,9 +708,9 @@ export class TimelineReader {
       const result = parseJSON(text)
       if (result?.schema !== 'framivra.timeline.store/v1' || typeof result.ok !== 'boolean') fail('PROTOCOL_MISMATCH', 'Installed vtx store/v1 required', 502)
       return result
-    }, input, true, undefined, snapshot, owner, operation === 'edit-view' ? { warm: { writeGrant, beforeSpawn } } : undefined)
+    }, input, true, undefined, snapshot, owner, { beforeSpawn, ...(operation === 'edit-view' && { warm: { writeGrant } }) })
   }
-  async command(executable, timeline, args, signal, decode, input, business = false, streaming = false, snapshot, owner, { warm, isolatedWindow = false } = {}) {
+  async command(executable, timeline, args, signal, decode, input, business = false, streaming = false, snapshot, owner, { warm, beforeSpawn = warm?.beforeSpawn, isolatedWindow = false } = {}) {
     signal = AbortSignal.any([signal, this.lifecycle.signal])
     signal.throwIfAborted()
     // One snapshot per command: a caller-supplied snapshot is compared against
@@ -702,7 +727,22 @@ export class TimelineReader {
       if (config.fingerprint !== snapshot.fingerprint) fail('CONFIG_CHANGED', 'Host plugin configuration changed; reopen this preview and re-authorize', 409)
       config = snapshot
     } else config = this.snapshotConfig()
-    if (isolatedWindow && executable !== config.previewWindowExecutable) fail('CONFIG_CHANGED', 'The configured independent window launcher changed; reopen preview', 409)
+    let managedArg = []
+    if (isolatedWindow) {
+      const supplier = config.managedPreviewSupplier ? await this.managedWindow(config, signal) : undefined
+      const selected = supplier ? supplier.executable : config.previewWindowExecutable
+      if (executable !== selected || this.snapshotConfig().fingerprint !== config.fingerprint) {
+        fail('CONFIG_CHANGED', 'The configured independent window launcher changed; reopen preview', 409)
+      }
+      if (config.managedPreviewSupplier) {
+        const [, , , wheel, projection] = config.managedPreviewSupplier.split(':')
+        if (!supplier || supplier.selection !== config.managedPreviewSupplier || supplier.wheelSha256 !== wheel ||
+            supplier.runtimeProjectionSha256 !== projection) {
+          fail('WINDOW_UNSUPPORTED', 'Managed preview requires the confirmed release and the owner-selected pins', 422)
+        }
+        managedArg = [`--managed-preview-pins-v1=${wheel}:${projection}`]
+      }
+    }
     if (!isolatedWindow && config.vtxConfigFile) {
       if (typeof this.validateConfigSelection !== 'function') fail('CONFIG_TRUST_REQUIRED', 'Explicit VTX_CONFIG requires Host path trust validation', 403)
       try { await this.validateConfigSelection(config, signal) }
@@ -714,9 +754,11 @@ export class TimelineReader {
       // Never spawn against a newer selection than the async path check used.
       if (this.snapshotConfig().fingerprint !== config.fingerprint) fail('CONFIG_CHANGED', 'Host configuration changed during VTX_CONFIG validation', 409)
     }
-    if (warm?.beforeSpawn) {
-      await warm.beforeSpawn(signal)
+    if (beforeSpawn) {
+      const admit = await beforeSpawn(signal)
       if (this.snapshotConfig().fingerprint !== config.fingerprint) fail('CONFIG_CHANGED', 'Host configuration changed during identity validation', 409)
+      signal.throwIfAborted()
+      if (typeof admit === 'function') admit()
     }
     signal.throwIfAborted()
     const framed = typeof streaming === 'object' ? streaming : undefined
@@ -731,7 +773,7 @@ export class TimelineReader {
     // throwing end() is ambiguous: use the SAME done/cleanup path, never spawn a fallback.
     if (take) { this.idleEditView = undefined; slot.state = 'taken'; this.detachIdle(slot) }
     const handle = take ? slot.handle : this.subprocess.spawn({
-      argv: [executable, ...(timeline === undefined ? [] : ['-t', timeline]), ...args],
+      argv: [executable, ...managedArg, ...(timeline === undefined ? [] : ['-t', timeline]), ...args],
       cwd: dirname(executable), // Never execute Python/imports from an untrusted project cwd.
       stdio: { stdin: prime ? 'pipe' : input === undefined ? 'ignore' : { data: input }, stdout: streaming ? 'pipe' : { maxBytes: 8 * 1024 * 1024 }, stderr: { maxBytes: 16 * 1024 } },
       graceMs: 1000, signal,

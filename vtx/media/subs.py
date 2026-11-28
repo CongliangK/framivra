@@ -264,9 +264,10 @@ def _layer_ready(c: Ctx, f: int):
                                "w2": None, "h2": None, "gfx": True, "ti": ti})
             else:
                 windowed = any(k in cl for k in ("scale", "x", "y"))
-                need_alpha = seg_needs_alpha(cl, c.probe(c.src_path(cl['src'])))
+                source_info = c.probe(c.src_path(cl['src']))
+                need_alpha = seg_needs_alpha(cl, source_info)
                 skey = seg_key(c, cl, ti, ci, windowed, need_alpha,
-                               "prores" if need_alpha else seg_kind)
+                               "prores" if need_alpha else seg_kind, source_info=source_info)
                 seg = c.cache / "seg" / f"{skey}.{'mov' if need_alpha else 'mp4'}"
                 if not media_cache_valid(seg, cl["dur"], allow_short_verified=True):
                     return None
@@ -281,7 +282,15 @@ def _bg_frame(c: Ctx, f: int, d: Path, dry: bool):
     返回 (png 路径|None, 来源描述)。dry 只返回描述不执行。"""
     policy = getattr(c, 'cache_policy', None)
     qc = c.cache / "qc_clean.mp4"
-    if (policy is None or policy.reuse_media) and media_cache_valid(qc, c.dur):
+    tracks = c.tl.get('video_tracks', [])
+    bottom = tracks[0] if tracks else None
+    reuse = (policy is None or policy.reuse_media) and media_cache_valid(qc, c.dur)
+    if reuse and bottom and bottom.get('kind') != 'gfx':
+        # Completion certifies bytes and frame count, not the display transform
+        # under which older flat qc_clean files were composed.
+        sources = dict.fromkeys(cl['src'] for cl in bottom['clips'])
+        reuse = not any(c.probe(c.src_path(sid)).get('quarter_turn') for sid in sources)
+    if reuse:
         p = d / "bg.png"
         if not dry:
             c.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{f * c.spf:.6f}", "-i", str(qc),

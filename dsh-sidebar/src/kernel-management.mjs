@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, posix, win32 } from 'node:path'
 import { boundedText } from './bounded.mjs'
-import { readConfiguration, invalidateConfiguration } from './configuration.mjs'
+import { readConfiguration, invalidateConfiguration, PREVIEW_SUPPLIER_ABI, validateManagedPreviewSupplier } from './configuration.mjs'
 import { checkKernelConfig } from './kernel-config.mjs'
 
 export const KERNEL_CONFIG_LIMIT = 1024 * 1024
@@ -17,6 +17,7 @@ export function managedInstallationPaths({ platform = process.platform, home = h
     : paths.join(home, '.local', 'share', 'framivra')
   return {
     root, manifest: paths.join(root, 'installation.json'), sourceRoot: paths.join(root, 'source'),
+    ...(platform === 'linux' && { previewRoot: paths.join(root, 'preview') }),
     venv: paths.join(root, 'venv'), configFile: paths.join(root, 'config.json'),
     vtxExecutable: platform === 'win32' ? paths.join(root, 'venv', 'Scripts', 'vtx.exe') : paths.join(root, 'bin', 'vtx'),
     pythonExecutable: platform === 'win32' ? paths.join(root, 'venv', 'Scripts', 'python.exe') : paths.join(root, 'venv', 'bin', 'python'),
@@ -112,15 +113,122 @@ async function rejectLinks(ctx, path, signal, allowMissing = false) {
     if (info.type === 'symlink' || (i < parts.length - 1 && info.type !== 'directory')) reject('UNSAFE_PATH', '管理路径不能包含符号链接或非目录父路径', 403)
   }
 }
-async function rejectWorkspaces(ctx, target, signal) {
+async function rejectWorkspaces(ctx, target, signal, { overlap = false } = {}) {
   if (typeof ctx.sessions?.list !== 'function' || typeof ctx.workingDirectory?.get !== 'function') reject('SESSION_STORE_UNAVAILABLE', '无法权威枚举会话工作区，已拒绝信任配置或安装路径', 503)
   const sessions = ctx.sessions.list()
   if (!Array.isArray(sessions)) reject('SESSION_STORE_UNAVAILABLE', '会话列表格式不可用，已拒绝信任路径', 503)
   for (const session of sessions) {
     const cwd = ctx.workingDirectory?.get?.(session)
-    if (cwd && ctx.fs.contains(await localTarget(ctx, cwd, signal), target)) reject('WORKSPACE_PATH', '配置文件和受管安装不能位于会话工作区内', 403)
+    if (!cwd) continue
+    const workspace = await localTarget(ctx, cwd, signal)
+    if (workspace.targetKey === target.targetKey || ctx.fs.contains(workspace, target) || (overlap && ctx.fs.contains(target, workspace))) reject('WORKSPACE_PATH', '配置文件和受管安装不能位于会话工作区内', 403)
   }
 }
+async function boundedBytes(ctx, target, signal, cap) {
+  if (typeof ctx.fs.readBytes !== 'function') reject('FS_UNSUPPORTED', '文件系统不支持有界读取', 502)
+  const data = await ctx.fs.readBytes(target, signal, cap)
+  if (data.byteLength > cap) reject('FILE_TOO_LARGE', '文件超过大小上限', 413)
+  return data
+}
+
+async function managedReceipt(ctx, installation, signal) {
+  try {
+    await rejectLinks(ctx, installation.manifest, signal)
+  } catch (error) {
+    signal.throwIfAborted()
+    // Only the initial no-follow check can establish absence. A missing
+    // receipt or referenced file after that check is a validation failure.
+    if (['FS_NOT_FOUND', 'NOT_FOUND'].includes(error?.code)) return { state: 'missing' }
+    throw error
+  }
+  const manifest = await localTarget(ctx, installation.manifest, signal)
+  if (ctx.fs.processPath(manifest) !== installation.manifest) reject('UNSAFE_PATH', '受管登记路径不符合固定安装布局')
+  const info = await ctx.fs.stat(manifest, signal)
+  if (!info) reject('INSTALLATION_CHANGED', '扫描期间受管登记发生变化')
+  await rejectWorkspaces(ctx, manifest, signal)
+  if (info.type !== 'file') reject('NOT_REGULAR', '受管登记必须是普通 JSON 文件')
+  if (info.size > INSTALLATION_LIMIT) reject('FILE_TOO_LARGE', '受管登记超过 64 KiB')
+  const content = await boundedBytes(ctx, manifest, signal, INSTALLATION_LIMIT)
+  const value = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(content))
+  const text = item => typeof item === 'string' && item.length > 0 && item.length <= 512 && !/[\x00-\x1f\x7f]/.test(item)
+  if (!object(value) || value.schema !== 'framivra.installation/v1' || typeof value.commit !== 'string' || value.commit.length !== 40 || !/^[a-f0-9]{40}$/.test(value.commit) || !text(value.version) || !text(value.installedAt) || value.profile !== 'non-ai' || value.renderer !== 'cdp' || value.status !== 'ready') reject('BAD_INSTALLATION', '受管登记格式或就绪状态无效')
+  for (const field of ['sourceRoot', 'vtxExecutable', 'pythonExecutable', 'configFile']) {
+    if (absolutePath(value[field]) !== installation[field]) reject('BAD_INSTALLATION', '受管登记路径不符合固定安装布局')
+    await rejectLinks(ctx, value[field], signal)
+    const target = await localTarget(ctx, value[field], signal)
+    await rejectWorkspaces(ctx, target, signal)
+    if (ctx.fs.processPath(target) !== value[field] || (await ctx.fs.stat(target, signal))?.type !== (field === 'sourceRoot' ? 'directory' : 'file')) reject('BAD_INSTALLATION', '受管登记目标不存在或不是预期的真实文件/目录')
+  }
+  await rejectLinks(ctx, installation.manifest, signal)
+  const after = await ctx.fs.stat(manifest, signal)
+  if (!after || after.version !== info.version) reject('INSTALLATION_CHANGED', '扫描期间受管登记发生变化')
+  return { state: 'ready', data: value, version: info.version, metadata: { commit: value.commit, version: value.version, renderer: value.renderer, profile: value.profile, configFile: value.configFile } }
+}
+
+const SUPPLIER_SCHEMA = 'framivra.preview-supplier/v1'
+const SUPPLIER_HASHES = ['launcherSha256', 'wheelSha256', 'runtimeProjectionSha256']
+const PREVIEW_LAUNCHER_LIMIT = 64 * 1024
+// Release-reviewed identities only. No installed or project record can enroll
+// itself. This reader-only change intentionally ships no approved supplier.
+const RELEASE_PREVIEW_SUPPLIERS = Object.freeze([])
+
+async function fixedPreview(ctx, installation, receipt, signal, approved) {
+  const fields = receipt.data.previewSupplier
+  if (!installation.previewRoot || !object(fields) || Object.keys(fields).length !== 5 ||
+      fields.schema !== SUPPLIER_SCHEMA || fields.abi !== PREVIEW_SUPPLIER_ABI ||
+      !SUPPLIER_HASHES.every(key => typeof fields[key] === 'string' && /^[a-f0-9]{64}$(?![\s\S])/.test(fields[key]))) {
+    reject('BAD_PREVIEW_SUPPLIER', '受管预览登记的版本、ABI 或摘要无效')
+  }
+  const selection = validateManagedPreviewSupplier(`v1:${receipt.data.commit}:${SUPPLIER_HASHES.map(key => fields[key]).join(':')}`)
+  if (!approved.includes(selection)) reject('PREVIEW_SUPPLIER_UNAPPROVED', '受管预览登记不在此侧栏的独立发布批准清单中')
+  const physical = async (path, type, bound) => {
+    await rejectLinks(ctx, path, signal)
+    const target = await localTarget(ctx, path, signal)
+    const info = await ctx.fs.stat(target, signal)
+    if (ctx.fs.processPath(target) !== path || info?.type !== type || typeof info.version !== 'string' || !info.version ||
+        (bound !== undefined && (!Number.isSafeInteger(info.size) || info.size < 1 || info.size > bound))) {
+      reject('BAD_PREVIEW_SUPPLIER', '受管预览文件不是固定布局中的有界物理文件')
+    }
+    return { path, target, version: info.version }
+  }
+  const profile = await physical(installation.previewRoot, 'directory')
+  await rejectWorkspaces(ctx, profile.target, signal, { overlap: true })
+  const paths = ['vtx-preview', 'kernel.sha256', 'kernel.whl', 'runtime'].map(leaf => posix.join(profile.path, leaf))
+  const launcher = await physical(paths[0], 'file', PREVIEW_LAUNCHER_LIMIT)
+  const pin = await physical(paths[1], 'file', 65)
+  const wheel = await physical(paths[2], 'file', KERNEL_WHEEL_LIMIT)
+  const runtime = await physical(paths[3], 'directory')
+  const raw = await boundedBytes(ctx, launcher.target, signal, PREVIEW_LAUNCHER_LIMIT)
+  const wheelPin = await boundedBytes(ctx, pin.target, signal, 65)
+  if (createHash('sha256').update(raw).digest('hex') !== fields.launcherSha256 ||
+      !Buffer.from(wheelPin).equals(Buffer.from(`${fields.wheelSha256}\n`, 'ascii'))) {
+    reject('PREVIEW_SUPPLIER_CHANGED', '受管预览启动器或 wheel 固定摘要已变更')
+  }
+  for (const entry of [launcher, pin, wheel, runtime, profile]) {
+    await rejectLinks(ctx, entry.path, signal)
+    if ((await ctx.fs.stat(entry.target, signal))?.version !== entry.version) reject('PREVIEW_SUPPLIER_CHANGED', '读取期间受管预览身份已变更')
+  }
+  await rejectLinks(ctx, installation.manifest, signal)
+  const manifest = await localTarget(ctx, installation.manifest, signal)
+  if (ctx.fs.processPath(manifest) !== installation.manifest || (await ctx.fs.stat(manifest, signal))?.version !== receipt.version) {
+    reject('PREVIEW_SUPPLIER_CHANGED', '读取期间受管登记已变更')
+  }
+  return Object.freeze({ selection, executable: launcher.path, wheelSha256: fields.wheelSha256,
+    runtimeProjectionSha256: fields.runtimeProjectionSha256 })
+}
+
+/** Re-read the owner-selected enrollment. No selection, path or pin comes from a render request. */
+export async function validateManagedPreviewSelection(ctx, snapshot, signal, approved = RELEASE_PREVIEW_SUPPLIERS) {
+  const installation = managedInstallationPaths()
+  if (!snapshot.managedPreviewSupplier || !installation.previewRoot || snapshot.vtxExecutable !== installation.vtxExecutable ||
+      snapshot.vtxConfigFile !== installation.configFile) reject('PREVIEW_SUPPLIER_CHANGED', '选定的受管预览不再匹配当前内核连接')
+  const receipt = await managedReceipt(ctx, installation, signal)
+  if (receipt.state !== 'ready') reject('PREVIEW_SUPPLIER_CHANGED', '选定的受管预览登记不存在')
+  const verified = await fixedPreview(ctx, installation, receipt, signal, approved)
+  if (verified.selection !== snapshot.managedPreviewSupplier) reject('PREVIEW_SUPPLIER_CHANGED', '受管预览安装已变更，请重新扫描、选择并保存')
+  return verified
+}
+
 /** Shared by the management editor AND every kernel spawn. Never accepts a request path. */
 export async function validateKernelConfigSelection(ctx, snapshot, signal, { allowMissing = false } = {}) {
   const path = snapshot.vtxConfigFile
@@ -161,7 +269,8 @@ export async function validateKernelConfigSelection(ctx, snapshot, signal, { all
 
 /** Owner service: no model tool, selected Session or browser-supplied root.
  * Public SessionStore enumeration is still required for workspace trust checks. */
-export function createKernelManagement(ctx, config = {}) {
+export function createKernelManagement(ctx, config = {}, { approvedPreviewSuppliers = RELEASE_PREVIEW_SUPPLIERS } = {}) {
+  const previewApprovals = Object.freeze([...approvedPreviewSuppliers])
   const home = homedir()
   const managedRoot = join(home, '.local', 'share', 'framivra-dsh', 'kernels')
   const installation = managedInstallationPaths()
@@ -185,12 +294,7 @@ export function createKernelManagement(ctx, config = {}) {
     if (info.size !== undefined && info.size > maxBytes) reject('FILE_TOO_LARGE', '文件超过管理界面大小上限', 413)
     return { target, info }
   }
-  async function bytes(target, signal, cap) {
-    if (typeof ctx.fs.readBytes !== 'function') reject('FS_UNSUPPORTED', '文件系统不支持有界读取', 502)
-    const data = await ctx.fs.readBytes(target, signal, cap)
-    if (data.byteLength > cap) reject('FILE_TOO_LARGE', '文件超过大小上限', 413)
-    return data
-  }
+  const bytes = (target, signal, cap) => boundedBytes(ctx, target, signal, cap)
   async function configTarget(signal) {
     const snapshot = readConfiguration(config)
     const path = snapshot.vtxConfigFile
@@ -276,48 +380,24 @@ export function createKernelManagement(ctx, config = {}) {
   // Never follow manifest-selected commands, roots or tool entries. Only the
   // fixed installer layout is eligible; even a valid receipt is not capability
   // evidence or permission to execute, save a setting, or change an old install.
-  async function managedReceipt(signal) {
-    try {
-      await noLinks(installation.manifest, signal)
-    } catch (error) {
-      signal.throwIfAborted()
-      // Only the initial no-follow check can establish absence. A missing
-      // receipt or referenced file after that check is a validation failure.
-      if (['FS_NOT_FOUND', 'NOT_FOUND'].includes(error?.code)) return { state: 'missing' }
-      throw error
-    }
-    const manifest = await local(installation.manifest, signal)
-    if (ctx.fs.processPath(manifest) !== installation.manifest) reject('UNSAFE_PATH', '受管登记路径不符合固定安装布局')
-    const info = await ctx.fs.stat(manifest, signal)
-    if (!info) reject('INSTALLATION_CHANGED', '扫描期间受管登记发生变化')
-    await outsideWorkspaces(manifest, signal)
-    if (info.type !== 'file') reject('NOT_REGULAR', '受管登记必须是普通 JSON 文件')
-    if (info.size > INSTALLATION_LIMIT) reject('FILE_TOO_LARGE', '受管登记超过 64 KiB')
-    const content = await bytes(manifest, signal, INSTALLATION_LIMIT)
-    const value = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(content))
-    const text = item => typeof item === 'string' && item.length > 0 && item.length <= 512 && !/[\x00-\x1f\x7f]/.test(item)
-    if (!object(value) || value.schema !== 'framivra.installation/v1' || typeof value.commit !== 'string' || value.commit.length !== 40 || !/^[a-f0-9]{40}$/.test(value.commit) || !text(value.version) || !text(value.installedAt) || value.profile !== 'non-ai' || value.renderer !== 'cdp' || value.status !== 'ready') reject('BAD_INSTALLATION', '受管登记格式或就绪状态无效')
-    for (const field of ['sourceRoot', 'vtxExecutable', 'pythonExecutable', 'configFile']) {
-      if (absolute(value[field]) !== installation[field]) reject('BAD_INSTALLATION', '受管登记路径不符合固定安装布局')
-      await noLinks(value[field], signal)
-      const target = await local(value[field], signal)
-      await outsideWorkspaces(target, signal)
-      if (ctx.fs.processPath(target) !== value[field] || (await ctx.fs.stat(target, signal))?.type !== (field === 'sourceRoot' ? 'directory' : 'file')) reject('BAD_INSTALLATION', '受管登记目标不存在或不是预期的真实文件/目录')
-    }
-    await noLinks(installation.manifest, signal)
-    const after = await ctx.fs.stat(manifest, signal)
-    if (!after || after.version !== info.version) reject('INSTALLATION_CHANGED', '扫描期间受管登记发生变化')
-    return { state: 'ready', metadata: { commit: value.commit, version: value.version, renderer: value.renderer, profile: value.profile, configFile: value.configFile } }
-  }
   async function scan(signal) {
     const snapshot = readConfiguration(config)
     const candidates = [], warnings = [], seen = new Set()
     let probes = 0, receipt = { state: 'unusable' }
     try {
-      receipt = await managedReceipt(signal)
+      receipt = await managedReceipt(ctx, installation, signal)
     } catch (error) {
       signal.throwIfAborted()
       warnings.push(`受管安装登记未通过验证（${error.code ?? 'BAD_INSTALLATION'}）；未推荐受管启动器，未执行登记内容。`)
+    }
+    if (receipt.state === 'ready' && installation.previewRoot && Object.hasOwn(receipt.data, 'previewSupplier')) {
+      try {
+        const supplier = await fixedPreview(ctx, installation, receipt, signal, previewApprovals)
+        receipt.metadata.previewSupplier = supplier.selection
+      } catch (error) {
+        signal.throwIfAborted()
+        warnings.push(`受管预览登记未通过验证（${error.code ?? 'BAD_PREVIEW_SUPPLIER'}）；普通内核仍可选择。`)
+      }
     }
     const paths = pathAPI(installation.vtxExecutable)
     // The bare launcher is only a fallback for an absent receipt. Neither an

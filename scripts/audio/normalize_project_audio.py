@@ -30,4 +30,8 @@ def main():
     return 0
 
 if __name__ == '__main__':
+    if os.name == 'nt':
+        # Redirected streams otherwise use the Windows active code page.
+        sys.stdout.reconfigure(encoding='utf-8', errors='strict')
+        sys.stderr.reconfigure(encoding='utf-8', errors='backslashreplace')
     sys.exit(main())

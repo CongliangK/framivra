@@ -9,7 +9,7 @@
 ## 依赖
 
 - ffmpeg / ffprobe（裁切、JPG 压制、亮度测量、尺寸探测）
-- Chrome/Chromium headless（render 截图：`google-chrome`/`google-chrome-stable`/`chromium-browser`/`chromium` 任一，或 `VTX_CHROME` 环境变量指定）
+- Chrome/Chromium headless（render 截图）。Windows 与内核共用原生浏览器发现，从 PATH 查找 Chrome、Chromium、Edge，也检查 Chrome 和 Edge 的已知安装位置；如显式设置 `VTX_CHROME`，须指向可用的 `.exe`，无效时不会改用其他浏览器。其他平台仍按 `google-chrome` / `google-chrome-stable` / `chromium-browser` / `chromium` 或 `VTX_CHROME` 查找。
 - Python 零第三方依赖（stdlib）
 - 背景图生成不在本 app 内（付费动作人工授权，走 imgen app）
 

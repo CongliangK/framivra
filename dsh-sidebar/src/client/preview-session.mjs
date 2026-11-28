@@ -114,6 +114,17 @@ export class PreviewSessionController {
     return true
   }
 
+  // Explicit Play may start the current window under the already qualified
+  // lease. This never creates a new lease, switches modes or extends its budget.
+  play(frame) {
+    const scope = this.#scope
+    if (!scope || !this.isLive(scope) || scope.canDispatch?.() === false || !Number.isSafeInteger(frame) ||
+        frame < 0 || frame >= scope.binding.duration || this.monitor.state.job || this.monitor.state.active) return false
+    this.discardIntent()
+    void this.monitor.start({ ...scope.binding, frame, automatic: scope }, undefined, true)
+    return true
+  }
+
   discardIntent() { this.#intent = undefined }
 
   holdForEdit(operation) {

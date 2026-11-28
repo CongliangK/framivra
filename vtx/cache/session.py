@@ -270,15 +270,20 @@ def _retire_stage_outputs(c, completed):
     """Successful full-build handoffs only; final/history/receipts never selected."""
     from .cleanup_protection import protection
     from .recovery import completion_marker
+    from ._formal_video import proof_name
     paths = []
     protected = protection(c)
     for stage, name in (('audio', 'audio.wav'), ('video', 'video_noaudio.mp4')):
         if stage not in completed:
             continue
         media = c.out / name
-        marker = completion_marker(media)
-        if not protected.protects(media) and not protected.protects(marker):
-            paths.extend((marker, media))
+        markers = [completion_marker(media)]
+        proof = proof_name(name)
+        if proof is not None:
+            markers.insert(0, c.out / proof)
+        pair = [*markers, media]
+        if not any(protected.protects(path) for path in pair):
+            paths.extend(pair)
     _retire(c, paths, 'successful full build; temporary stage handoff retired')
 
 
@@ -335,6 +340,8 @@ class CacheSession:
         if name in ('gfx', 'video', 'qc'):
             self.ensure_graphics()
         if self.policy.reuse_media:
+            if name == 'qc' and getattr(c, '_windows_svg_media', None) is None:
+                self._ensure_qc_clean(reuse=True)
             return
         if name == 'audio' and 'prepare' not in self.completed:
             from ..pipeline.stages import prepare
@@ -344,17 +351,32 @@ class CacheSession:
             from ..cli.commands import gfx
             gfx(c)
             self.completed.add('gfx')
-        if name == 'qc' and not self.completed.intersection(('video', 'qc_clean')):
-            from ..pipeline.composite import (prepare_layers, RenderPlan, render_qc_clean,
-                                              needs_qc_clean, DEFAULT_SEGMENTS)
-            from ..render.frame_source import png_consumer_scope
-            import os
-            if needs_qc_clean(c):
-                with png_consumer_scope(prepare_layers(c)) as layers:
-                    plan = RenderPlan(c, False, 1.0, c.w, c.h, layers=layers,
-                                      nseg=int(os.environ.get('VTX_VIDEO_SEGMENTS', str(DEFAULT_SEGMENTS))))
-                    render_qc_clean(c, plan, layers)
-            self.completed.add('qc_clean')
+        if name == 'qc':
+            self._ensure_qc_clean(reuse=False)
+
+    def _ensure_qc_clean(self, *, reuse):
+        if self.completed.intersection(('video', 'qc_clean')):
+            return
+        from ..pipeline.composite import (prepare_layers, RenderPlan, render_qc_clean,
+                                          needs_qc_clean, DEFAULT_SEGMENTS)
+        from ..render.frame_source import png_consumer_scope
+        from .recovery import media_cache_valid
+        import os
+        c = self.c
+        needed = needs_qc_clean(c)
+        if reuse and needed:
+            bottom = c.tl['video_tracks'][0]
+            if bottom.get('kind') != 'gfx':
+                # The legacy completion record doesn't prove display geometry.
+                # A current in-process video/reference is handled above.
+                sources = dict.fromkeys(cl['src'] for cl in bottom['clips'])
+                reuse = not any(c.probe(c.src_path(sid)).get('quarter_turn') for sid in sources)
+        if needed and not (reuse and media_cache_valid(c.cache / 'qc_clean.mp4', c.dur)):
+            with png_consumer_scope(prepare_layers(c)) as layers:
+                plan = RenderPlan(c, False, 1.0, c.w, c.h, layers=layers,
+                                  nseg=int(os.environ.get('VTX_VIDEO_SEGMENTS', str(DEFAULT_SEGMENTS))))
+                render_qc_clean(c, plan, layers)
+        self.completed.add('qc_clean')
 
     def _restore_context(self):
         if not self.entered:

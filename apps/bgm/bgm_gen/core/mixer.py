@@ -170,7 +170,7 @@ def _render_track_chain(proj, plan, t, idx, stems_dir):
     cmd = ["ffmpeg", "-y", "-hide_banner", "-nostats", "-loglevel", "error",
            "-i", src, "-filter_complex", ";".join(graph), "-map", "[out]",
            "-c:a", "pcm_f32le", "-ar", str(sr), "-ac", str(ch), out]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
     if r.returncode != 0:
         raise ProjectError(f"轨 {t['name']} 链渲染失败：{(r.stderr or '')[-1500:]}\n"
                            f"graph: {graph}")
@@ -189,7 +189,7 @@ def _sum_buses(paths, premix, sr, ch):
                  + f"amix=inputs={len(paths)}:duration=longest:normalize=0[premix]")
     cmd += ["-filter_complex", graph, "-map", "[premix]",
             "-c:a", "pcm_f32le", "-ar", str(sr), "-ac", str(ch), premix]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
     if r.returncode != 0:
         raise ProjectError(f"amix 求和失败：{(r.stderr or '')[-1500:]}")
 

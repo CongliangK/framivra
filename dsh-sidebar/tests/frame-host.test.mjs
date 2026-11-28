@@ -3,49 +3,96 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { PassThrough, Readable } from 'node:stream'
 import { createHash, randomUUID } from 'node:crypto'
+import { once } from 'node:events'
 import { crc32, deflateSync } from 'node:zlib'
+import { join } from 'node:path'
 import { createPreviewHost } from '../src/host.mjs'
+import { managedInstallationPaths } from '../src/kernel-management.mjs'
+import { PreviewProgramRun } from '../src/client/preview-program-run.mjs'
+import { ORDINARY_PROGRAM_CAPABILITY } from '../src/protocol.mjs'
 import { MemoryFs } from './helpers.mjs'
 import { FRAME_WIRE_LIMIT, FRAME_REQUEST_LIMIT } from '../src/bounded.mjs'
 const version = `sha256:${'a'.repeat(64)}`
 const nextVersion = `sha256:${'b'.repeat(64)}`
+const linuxWindow = { skip: process.platform !== 'linux' }
 const bareWindowCapability = { schema: 'framivra.timeline.preview-window/v1', inline_media: true, prepare_inputs: true }
 const qualification = { launcher: 'framivra.preview-window.fixed-wheel/v1', wheel_sha256: 'c'.repeat(64), runtime_projection_sha256: 'd'.repeat(64) }
 const windowCapability = { ...bareWindowCapability, ...qualification }
+const managedCapability = { ...windowCapability, managed_identity: 'framivra.preview-window.managed-pins/v1' }
+const managedPinsArg = `--managed-preview-pins-v1=${qualification.wheel_sha256}:${qualification.runtime_projection_sha256}`
 const windowLauncher = '/opt/private-window/preview_window_wheel.py'
 const windowBytes = Buffer.from('000000186674797069736f6d0000020069736f6d69736f32', 'hex') // synthetic fixture, not playable media
 const sha256 = createHash('sha256').update(windowBytes).digest('hex')
+const programLauncherBytes = Buffer.from('closed launcher fixture; never executed')
+const approvedProgramProvider = { launcherSha256: createHash('sha256').update(programLauncherBytes).digest('hex'),
+  wheelSha256: qualification.wheel_sha256, runtimeProjectionSha256: qualification.runtime_projection_sha256 }
+const programFixture = { approvedProgramProviders: [approvedProgramProvider],
+  windowCapability: { ...windowCapability, input_epoch: true, ordinary_long_run: ORDINARY_PROGRAM_CAPABILITY } }
 async function bench(options = {}) {
   const fs = new MemoryFs(), sessions = new Map([['one', { id: 'one' }]]), cwd = { value: '/workspace' }, calls = []
+  const installation = options.managed && managedInstallationPaths()
+  const managed = installation && join(installation.previewRoot, 'vtx-preview')
+  const fixed = managed || windowLauncher
+  let selection
+  if (managed) {
+    const set = (path, data) => fs.files.set(path, { type: 'file', version: `${path}:${data}`, size: Buffer.byteLength(data), data })
+    const launcher = '# synthetic approved launcher'
+    const supplier = { schema: 'framivra.preview-supplier/v1', abi: qualification.launcher, launcherSha256: createHash('sha256').update(launcher).digest('hex'),
+      wheelSha256: qualification.wheel_sha256, runtimeProjectionSha256: qualification.runtime_projection_sha256 }
+    const commit = '1'.repeat(40)
+    selection = ['v1', commit, supplier.launcherSha256, supplier.wheelSha256, supplier.runtimeProjectionSha256].join(':')
+    set(managed, launcher)
+    set(join(installation.previewRoot, 'kernel.sha256'), `${supplier.wheelSha256}\n`)
+    set(join(installation.previewRoot, 'kernel.whl'), 'mock wheel')
+    set(installation.vtxExecutable, 'ordinary')
+    set(installation.pythonExecutable, 'python')
+    set(installation.configFile, '{}')
+    set(installation.manifest, JSON.stringify({ ...installation, schema: 'framivra.installation/v1', commit, version: 'v1', installedAt: 'now', status: 'ready', profile: 'non-ai', renderer: 'cdp', previewSupplier: supplier }))
+    for (const p of [installation.previewRoot, join(installation.previewRoot, 'runtime'), installation.sourceRoot]) fs.files.set(p, { type: 'directory', version: p })
+    fs.lstat = async p => fs.files.get(p) ?? { type: 'directory' }
+    fs.readBytes = async ({ targetKey }) => Buffer.from(fs.files.get(targetKey).data)
+  }
   sessions.list = () => [...sessions.values()]
   fs.files.set(windowLauncher, { type: 'file', version: 'wheel-launcher' })
+  if (options.approvedProgramProviders || options.launcherBytes) fs.readBytes = async (target, signal, max) => {
+    signal.throwIfAborted()
+    assert.equal(target.targetKey, windowLauncher)
+    const bytes = options.launcherBytes ?? programLauncherBytes
+    assert(bytes.length <= max)
+    return bytes
+  }
   options.setup?.(fs, sessions)
   let now = 0
   const subprocess = { resolveExecutable: async command => command, spawn(spec) {
     calls.push(spec)
-    const optionalProbe = ['--first-frame-capabilities', '--formal-archive-capabilities'].includes(spec.argv[1])
-    const operation = optionalProbe ? spec.argv[1] : spec.argv[3] === 'timeline' ? spec.argv[4] : spec.argv[3]
+    const argv = spec.argv[1] === managedPinsArg ? [spec.argv[0], ...spec.argv.slice(2)] : spec.argv
+    const optionalProbe = ['--first-frame-capabilities', '--formal-archive-capabilities'].includes(argv[1])
+    const operation = optionalProbe ? argv[1] : argv[3] === 'timeline' ? argv[4] : argv[3]
     let value = operation === 'frame' ? { schema: 'framivra.timeline.frame/v1', operation, ok: true, diagnostics: [], content_version: version, image: { path: '/never/read.png' } }
-      : { schema: 'framivra.timeline.read/v1', operation, ok: true, diagnostics: [], content_version: options.saved?.() ?? version, document: { project: { duration_frames: 36, fps: 23.976 } }, coverage: { complete: true, scope: 'unit fixture', unexpanded: [] }, capabilities: { operations: ['inspect', 'query'], preview_window: spec.argv[0] === windowLauncher ? options.windowCapability : options.ordinaryWindowCapability, frame: options.unsupported ? {} : { schema: 'framivra.timeline.frame/v1', explicit_render_required: true, ...(options.prepareCapability ? { prepare_gfx: options.prepareCapability } : {}), inline_png: { flag: '--include-png', encoding: 'base64', wire_limit_bytes: FRAME_WIRE_LIMIT } } } }
+      : { schema: 'framivra.timeline.read/v1', operation, ok: true, diagnostics: [], content_version: options.saved?.() ?? version, document: { project: options.project ?? { duration_frames: 36, fps: 23.976 } }, coverage: { complete: true, scope: 'unit fixture', unexpanded: [] }, capabilities: { operations: ['inspect', 'query'], preview_window: spec.argv[0] === fixed ? (options.liveCapability?.() ?? options.windowCapability) : options.ordinaryWindowCapability, frame: options.unsupported ? {} : { schema: 'framivra.timeline.frame/v1', explicit_render_required: true, ...(options.prepareCapability ? { prepare_gfx: options.prepareCapability } : {}), inline_png: { flag: '--include-png', encoding: 'base64', wire_limit_bytes: FRAME_WIRE_LIMIT } } } }
     if (operation === 'inspect' && options.videoTracks) value.document.video_tracks = options.videoTracks
+    if (operation === 'capabilities' && options.storageCapability) value.capabilities.storage = options.storageCapability
     if (operation === '--first-frame-capabilities') value = options.firstFrameCapability ?? { ok: false }
     if (operation === '--formal-archive-capabilities') value = options.archiveCapability ?? { ok: false }
     if (operation === 'preview-formal-archive') {
-      const start = Number(spec.argv[6])
+      const start = Number(argv[6])
       value = { schema: 'framivra.preview-formal-archive/v1', ...qualification, ok: true, nonce: spec.argv.at(-1).slice('--nonce='.length),
         content_version: version, start, end: 36, fps: { num: 24000, den: 1001 }, width: 1920, height: 1080, audio_sample_rate: 48000,
         audio_channels: 2, mime: 'video/mp4', sha256, byte_length: windowBytes.length, base64: windowBytes.toString('base64'), manifest_sha256: 'e'.repeat(64) }
       if (options.archiveResult) value = options.archiveResult(value)
     }
     if (['preview-window', 'preview-window-first-frame'].includes(operation)) {
-      const start = Number(spec.argv[6])
+      const start = Number(argv[6])
       value = { schema: windowCapability.schema, ...qualification, ok: true, content_version: version, start, end: Math.min(36, start + 24), fps: { num: 24000, den: 1001 }, width: 1920, height: 1080,
         mime: 'video/mp4', audio_sample_rate: 48000, audio_channels: 2, byte_length: windowBytes.length, sha256, base64: windowBytes.toString('base64'), path: '/never/read.mp4' }
       value = options.windowResult ? options.windowResult(value, spec) : value
     }
     const text = JSON.stringify(value) + '\n'
     if (operation === 'frame' && options.handle) return options.handle(spec, text)
-    if (operation === 'preview-window' && options.windowHandle) return options.windowHandle(spec, text)
+    if (operation === 'preview-window' && options.windowHandle) {
+      const handle = options.windowHandle(spec, text)
+      if (handle) return handle
+    }
     if (operation === 'preview-window-first-frame') return options.firstFrameHandle(spec, value)
     if (operation === 'preview-formal-archive' && options.archiveHandle) return options.archiveHandle(spec, text)
     if (operation === 'inspect' && options.inspectHandle) {
@@ -55,13 +102,23 @@ async function bench(options = {}) {
     return { stdout: Readable.from([Buffer.from(text)]), done: Promise.resolve({ exitCode: optionalProbe || value.ok ? 0 : 1, signal: null }), terminate() {}, waitForExit: async () => true, collected: { stdout: { readFrom: () => ({ text, lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
   } }
   const config = { vtxExecutable: '/opt/trusted/vtx', previewWindowExecutable: options.windowExecutable ?? (options.windowCapability ? windowLauncher : ''), clock: () => now }
+  if (managed) Object.assign(config, { vtxExecutable: installation.vtxExecutable, vtxConfigFile: installation.configFile, managedPreviewSupplier: selection })
   if (options.ordinaryConfig) {
     config.vtxConfigFile = '/opt/settings/config.json'
     fs.files.set(config.vtxConfigFile, { type: 'file', version: 'ordinary-config' })
     fs.lstat = async path => fs.files.get(path) ?? { type: 'directory' }
   }
   const getCwd = session => session.cwd ?? cwd.value
-  const host = createPreviewHost({ fs, sessions, workingDirectory: { get: getCwd, ensure: async agent => getCwd(agent.session) }, subprocess }, config)
+  const services = { fs, sessions, workingDirectory: { get: getCwd, ensure: async agent => getCwd(agent.session) }, subprocess }
+  const observeProgramProfile = options.approvedProgramProviders && !options.noProfileObserver ? async (executable, signal) => {
+    signal.throwIfAborted()
+    assert.equal(executable, windowLauncher)
+    return options.observedProfile ? { ...options.observedProfile } : approvedProgramProvider
+  } : undefined
+  const host = options.mountRegisteredHost ? await options.mountRegisteredHost(services, config) : createPreviewHost(services, config, {
+    approvedPreviewSuppliers: managed && options.approved !== false ? [selection] : undefined,
+    approvedProgramProviders: options.approvedProgramProviders, observeProgramProfile,
+  })
   const control = data => host.control(new Request('http://unit/api/framivra/control', { method: 'POST', body: JSON.stringify({ sessionId: 'one', ...data }) }))
   const opened = await control({ op: 'open', timeline: 'timeline.json' }); assert.equal(opened.status, 200, await opened.clone().text())
   const opening = await opened.json()
@@ -71,9 +128,243 @@ async function bench(options = {}) {
   const window = (data = {}) => host.window(new Request('http://unit/api/framivra/window', { method: 'POST', body: JSON.stringify(data.op === 'cancel'
     ? { sessionId: 'one', grant, ...data }
     : { ...request, prepareInputs: true, operationId: randomUUID(), ...data }) }))
-  return { host, config, fs, cwd, sessions, calls, frame, window, control, grant, opening, request, expire: () => { now = 30 * 60 * 1000 } }
+  return { host, config, fs, cwd, sessions, calls, frame, window, control, grant, opening, request, installation, managed, expire: () => { now = 30 * 60 * 1000 } }
 }
 const prepareCapability = { flag: '--prepare-gfx', trust_flag: '--trust-html', kind: 'current-composite', preview_only: true }
+
+test('product Host and browser queue cover exactly 16746 ordinary fixture frames from pin 515', linuxWindow, async t => {
+  const duration = 16746, span = 30, pin = 515
+  const b = await bench({ ...programFixture, project: { duration_frames: duration, fps: 30 },
+    windowResult: value => ({ ...value, end: Math.min(duration, value.start + span), fps: { num: 30, den: 1 }, input_epoch: nextVersion }) })
+  t.after(() => b.host.dispose())
+  const requests = [], controls = [], entries = new Map()
+  // Both production Host handlers parse real Request/Response messages. Only
+  // the subprocess provider and browser storage are fixtures: no playable A/V.
+  t.mock.method(globalThis, 'fetch', (route, init) => {
+    assert.equal(route, '/api/framivra/window')
+    const request = JSON.parse(init.body)
+    requests.push(request)
+    return b.host.window(new Request(`http://unit${route}`, init))
+  })
+  const binding = { duration, span, contentVersion: version, ownerId: b.opening.previewSession.ownerId, sessionId: 'one',
+    tabSignal: new AbortController().signal, grant: b.grant, project: 'timeline.json', async call(sessionId, data, signal) {
+      controls.push(data.op)
+      const response = await b.host.control(new Request('http://unit/api/framivra/control', { method: 'POST', signal,
+        body: JSON.stringify({ ...data, sessionId }) }))
+      return response.json()
+    } }
+  const controller = new PreviewProgramRun(() => {}, { now: () => 0, open: async () => ({
+    async put(start, blob) { assert(!entries.has(start)); entries.set(start, blob) },
+    async get(start) { return new Response(entries.get(start)) },
+    async close() { entries.clear() },
+  }) })
+  t.after(() => controller.cancel())
+  assert(controller.start(binding, pin))
+  const first = await controller.read(binding, pin)
+  assert.deepEqual([first.start, first.end], [510, 540])
+  await controller.run.finished
+  assert.equal(controller.run.status, 'complete', controller.run.code)
+  assert.equal(controller.run.completedFrames, duration)
+  assert.equal(requests.length, 559)
+  const grid = Array.from({ length: 559 }, (_, i) => i * span)
+  const startIndex = Math.floor(pin / span)
+  assert.deepEqual(requests.map(r => r.frame), [...grid.slice(startIndex), ...grid.slice(0, startIndex)])
+  assert(requests.every(r => r.op === 'program-render' && r.contentVersion === version && r.previewGrant === controller.run.grant.id))
+  assert.equal(new Set(requests.map(r => r.operationId)).size, requests.length)
+  assert.equal(b.calls.filter(({ argv }) => argv.includes('preview-window')).length, 559)
+  const coverage = Array.from(controller.run.entries.values()).sort((a, b) => a.start - b.start)
+  let next = 0
+  for (const { start, end } of coverage) { assert.equal(start, next); assert(end > start); next = end }
+  assert.equal(next, duration)
+  assert.deepEqual([coverage.at(-1).start, coverage.at(-1).end], [16740, 16746])
+  const prefix = await controller.read(binding, 0)
+  assert.deepEqual([prefix.start, prefix.end, prefix.blob.size], [0, 30, windowBytes.length])
+  assert.deepEqual(controls, ['authorize-preview-session', 'program-check', 'program-check'])
+  assert(await controller.cancel())
+  assert.equal(controls.at(-1), 'revoke-preview-session'); assert.equal(entries.size, 0)
+})
+
+test('ordinary long-run admission needs both a separate capability and an independently pinned provider', linuxWindow, async t => {
+  for (const [name, options] of [
+    ['continuation only', { ...programFixture, windowCapability: { ...windowCapability, input_epoch: true } }],
+    ['self-report without production approval', { windowCapability: programFixture.windowCapability, launcherBytes: programLauncherBytes }],
+    ['pins without independent profile verifier', { ...programFixture, noProfileObserver: true }],
+    ['changed launcher', { ...programFixture, launcherBytes: Buffer.from('different launcher') }],
+    ['changed projection', { ...programFixture, windowCapability: { ...programFixture.windowCapability, runtime_projection_sha256: 'e'.repeat(64) } }],
+  ]) await t.test(name, async t => {
+    const b = await bench(options)
+    t.after(() => b.host.dispose())
+    assert.deepEqual(b.opening.previewSession.continuation, { version: 1 })
+    assert.equal(b.opening.previewSession.programRun, undefined)
+    const before = b.calls.length
+    const denied = await b.control({ op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 0,
+      contentVersion: version, authorizationId: randomUUID(), renderConsent: 'cache/preview-only',
+      prepareInputs: true, storageConsent: 'temporary-browser-cache' })
+    assert.equal(denied.status, 422)
+    assert.equal((await denied.json()).error, 'PROGRAM_RUN_UNSUPPORTED')
+    assert.equal(b.calls.length, before, 'denied long-run authorization starts neither inspect nor render')
+    const short = await b.control({ op: 'authorize-preview-session', grant: b.grant, scope: 'current-project',
+      renderConsent: 'cache/preview-only', prepareInputs: true, continuation: true })
+    assert.equal(short.status, 200, await short.clone().text())
+    assert.equal((await short.json()).grant.continuation, true)
+  })
+})
+
+test('program mint does not reuse the open capability claim', linuxWindow, async t => {
+  let live = programFixture.windowCapability
+  const b = await bench({ ...programFixture, liveCapability: () => live })
+  t.after(() => b.host.dispose())
+  assert.deepEqual(b.opening.previewSession.programRun, { version: 1 })
+  live = { ...windowCapability, input_epoch: true }
+  const authorization = { op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 0, contentVersion: version,
+    authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' }
+  assert.equal((await (await b.control(authorization)).json()).error, 'PROGRAM_PROVIDER_CHANGED')
+  live = programFixture.windowCapability
+  assert.equal((await (await b.control({ ...authorization, authorizationId: randomUUID() })).json()).error, 'PROGRAM_PROVIDER_CHANGED')
+  assert(!b.calls.some(({ argv }) => argv.includes('preview-window')))
+})
+
+test('a concurrent profile retirement wins over the final synchronous mint', { ...linuxWindow, timeout: 2500 }, async t => {
+  const waiting = Promise.withResolvers(), unblock = Promise.withResolvers()
+  let live = programFixture.windowCapability, probes = 0, intercept = false
+  const b = await bench({ ...programFixture, liveCapability() {
+    if (++probes === 2) intercept = true // first mint's fresh capability probe
+    return live
+  }, setup(fs) {
+    const stat = fs.stat.bind(fs)
+    fs.stat = async (target, signal) => {
+      if (intercept && target.targetKey === '/workspace/timeline.json') {
+        intercept = false
+        waiting.resolve()
+        await unblock.promise
+      }
+      return stat(target, signal)
+    }
+  } })
+  t.after(async () => { unblock.resolve(); await b.host.dispose() })
+  const authorize = () => b.control({ op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 0, contentVersion: version,
+    authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' })
+  const first = authorize()
+  const early = await Promise.race([first, waiting.promise])
+  assert.equal(early, undefined, 'first mint must reach its final timeline observation')
+  live = { ...windowCapability, input_epoch: true }
+  assert.equal((await (await authorize()).json()).error, 'PROGRAM_PROVIDER_CHANGED')
+  unblock.resolve()
+  assert.equal((await (await first).json()).error, 'PROGRAM_PROVIDER_CHANGED')
+  assert(!b.calls.some(({ argv }) => argv.includes('preview-window')))
+})
+
+test('a render decode failure preserves its error and retires only a confirmed changed provider', linuxWindow, async t => {
+  for (const change of ['confirmed', 'unknown']) await t.test(change, async t => {
+    const observedProfile = { ...approvedProgramProvider }
+    const b = await bench({ ...programFixture, observedProfile, windowHandle(spec) {
+      if (change === 'confirmed') observedProfile.wheelSha256 = 'f'.repeat(64)
+      else Object.defineProperty(observedProfile, 'wheelSha256', { configurable: true, get() { throw new Error('unavailable fixture observation') } })
+      const text = 'not JSON\n'
+      return { stdout: Readable.from([Buffer.from(text)]), done: Promise.resolve({ exitCode: 0 }), terminate() {},
+        waitForExit: async () => true, collected: { stdout: { readFrom: () => ({ text, lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
+    } })
+    t.after(() => b.host.dispose())
+    const auth = await b.control({ op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 0, contentVersion: version,
+      authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' })
+    assert.equal(auth.status, 200, await auth.clone().text())
+    const { grant } = await auth.json(), original = { previewGrant: grant.id, ownerId: b.opening.previewSession.ownerId }
+    const result = await b.window({ op: 'program-render', ...original, renderConsent: undefined, prepareInputs: undefined })
+    assert.equal(result.status, 502)
+    assert.equal((await result.json()).error, 'INVALID_JSON')
+    Object.defineProperty(observedProfile, 'wheelSha256', { value: approvedProgramProvider.wheelSha256 })
+    const check = await b.control({ op: 'program-check', grant: b.grant, ...original, frame: 0, sha256 })
+    assert.equal((await check.json()).error, change === 'confirmed' ? 'PROGRAM_RUN_EXPIRED' : 'BAD_PROGRAM_RUN')
+    assert.equal(b.calls.filter(({ argv }) => argv.includes('preview-window')).length, 1)
+    assert.equal(b.calls.filter(({ argv }) => argv[0] === windowLauncher && argv.includes('capabilities')).length, 2, 'no error-path subprocess or retry')
+  })
+})
+
+test('launcher, wheel and projection rotation revoke the exact long-run grant on cache or render admission', linuxWindow, async t => {
+  for (const changed of ['launcher', 'wheelSha256', 'runtimeProjectionSha256']) for (const entry of ['cache/hand-off', 'render']) {
+    await t.test(`${changed} at ${entry}`, async t => {
+      const launcherBytes = Buffer.from(programLauncherBytes), observedProfile = { ...approvedProgramProvider }
+      const b = await bench({ ...programFixture, launcherBytes, observedProfile,
+        windowResult: value => ({ ...value, input_epoch: nextVersion }) })
+      t.after(() => b.host.dispose())
+      const authorization = { op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 0, contentVersion: version,
+        authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' }
+      const response = await b.control(authorization)
+      assert.equal(response.status, 200, await response.clone().text())
+      const { grant } = await response.json(), ownerId = b.opening.previewSession.ownerId
+      const original = { previewGrant: grant.id, ownerId }
+      const render = frame => b.window({ op: 'program-render', frame, ...original, renderConsent: undefined, prepareInputs: undefined })
+      const check = () => b.control({ op: 'program-check', grant: b.grant, ...original, frame: 0, sha256 })
+      const first = await render(0)
+      assert.equal(first.status, 200, await first.clone().text())
+      await first.arrayBuffer()
+      assert.equal((await check()).status, 200)
+      const spawned = b.calls.length
+      if (changed === 'launcher') launcherBytes[0] ^= 1
+      else observedProfile[changed] = 'f'.repeat(64)
+      const denied = entry === 'render' ? await render(24) : await check()
+      assert.equal(denied.status, 409)
+      assert.equal((await denied.json()).error, 'PROGRAM_PROVIDER_CHANGED')
+      assert.equal(b.calls.length, spawned, 'identity rechecks dispatch no process, not even a probe')
+      programLauncherBytes.copy(launcherBytes)
+      Object.assign(observedProfile, approvedProgramProvider)
+      assert.equal((await check()).status, 403)
+      assert.equal((await render(24)).status, 403)
+      assert.equal((await (await b.control({ ...authorization, authorizationId: randomUUID() })).json()).error, 'PROGRAM_PROVIDER_CHANGED')
+      const revoke = await b.control({ op: 'revoke-preview-session', grant: b.grant, ...original })
+      assert.deepEqual(await revoke.json(), { ok: true, revoked: true, grantId: grant.id })
+      const short = await b.control({ op: 'authorize-preview-session', grant: b.grant, scope: 'current-project',
+        renderConsent: 'cache/preview-only', prepareInputs: true, continuation: true })
+      assert.equal(short.status, 200, await short.clone().text())
+    })
+  }
+})
+
+test('a cache profile mismatch aborts and reaps the exact held program worker', { ...linuxWindow, timeout: 3500 }, async t => {
+  const observedProfile = { ...approvedProgramProvider }
+  const started = Promise.withResolvers(), stopped = Promise.withResolvers()
+  const done = Promise.withResolvers(), exited = Promise.withResolvers()
+  const b = await bench({ ...programFixture, observedProfile,
+    windowResult: value => ({ ...value, input_epoch: nextVersion }), windowHandle(spec, text) {
+      if (Number(spec.argv[6]) === 0) return undefined
+      started.resolve()
+      return { stdout: new PassThrough(), done: done.promise,
+        terminate() { stopped.resolve(); done.resolve({ exitCode: 1 }) }, waitForExit: () => exited.promise,
+        collected: { stdout: { readFrom: () => ({ text, lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
+    } })
+  t.after(async () => { done.resolve({ exitCode: 1 }); exited.resolve(true); await b.host.dispose() })
+  const authorization = await b.control({ op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 0, contentVersion: version,
+    authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' })
+  assert.equal(authorization.status, 200, await authorization.clone().text())
+  const { grant } = await authorization.json()
+  const original = { previewGrant: grant.id, ownerId: b.opening.previewSession.ownerId }
+  const render = frame => b.window({ op: 'program-render', frame, ...original, renderConsent: undefined, prepareInputs: undefined })
+  const initial = await render(0); assert.equal(initial.status, 200); await initial.arrayBuffer()
+  const pending = render(24)
+  await started.promise
+  observedProfile.wheelSha256 = 'f'.repeat(64)
+  const cacheCheck = await b.control({ op: 'program-check', grant: b.grant, ...original, frame: 0, sha256 })
+  assert.equal((await cacheCheck.json()).error, 'PROGRAM_PROVIDER_CHANGED')
+  await stopped.promise
+  let settled = false
+  const cancel = b.control({ op: 'revoke-preview-session', grant: b.grant, ...original }).then(result => { settled = true; return result })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(settled, false, 'revocation receipt must wait for the exact provider range')
+  exited.resolve(true)
+  assert.notEqual((await pending).status, 200)
+  assert.deepEqual(await (await cancel).json(), { ok: true, revoked: true, grantId: grant.id })
+})
+
+test('ordinary program authorization refuses scripted graphics before it can launch a window', linuxWindow, async t => {
+  const b = await bench({ ...programFixture,
+    videoTracks: [{ kind: 'gfx', clips: [{ src: 'page.html', dst_in: 30, dur: 6 }] }] })
+  t.after(() => b.host.dispose())
+  const denied = await b.control({ op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 0, contentVersion: version,
+    authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' })
+  assert.equal(denied.status, 422)
+  assert.equal((await denied.json()).error, 'PROGRAM_GFX_UNSUPPORTED')
+  assert(!b.calls.some(({ argv }) => argv.includes('preview-window')))
+})
 test('Host prepare requires exact capability and consent, HTML trust remains independent and additive', async () => {
   const cases = [
     [undefined, { prepareGfx: true }, 422],
@@ -244,7 +535,185 @@ test('frame + semantic mutual exclusion lasts through HTTP cancel until actual d
   } finally { doneResolve({ exitCode: 1 }); rangeResolve(true); await b.host.dispose() }
 })
 
-const linuxWindow = { skip: process.platform !== 'linux' }
+test('managed preview requires independent approval, the live managed ABI and both exact pins; no legacy fallback', linuxWindow, async t => {
+  for (const options of [
+    { approved: false, windowCapability: managedCapability },
+    { windowCapability },
+    { windowCapability: { ...managedCapability, managed_identity: 'wrong' } },
+    { windowCapability: { ...managedCapability, wheel_sha256: 'e'.repeat(64) } },
+    { windowCapability: { ...managedCapability, runtime_projection_sha256: 'e'.repeat(64) } },
+  ]) {
+    const b = await bench({ managed: true, ...options }); t.after(() => b.host.dispose())
+    assert.equal(b.opening.previewSession, undefined)
+    assert.equal((await b.window()).status, 422)
+    assert.equal(b.calls.filter(call => call.argv[0] === windowLauncher).length, 0)
+    assert.equal(b.calls.filter(call => call.argv[0] === b.managed).length, options.approved === false ? 0 : 1)
+    const check = await b.host.diagnostics(new Request('http://unit/api/framivra/diagnostics', { method: 'POST', body: '{}' }))
+    assert.equal(check.status, 200)
+    assert.equal((await check.json()).previewSupplier.ok, false)
+  }
+})
+
+test('approved managed short windows do not confer long-run authority, and pin removal retires short authority', linuxWindow, async t => {
+  const b = await bench({ managed: true, windowCapability: { ...managedCapability, input_epoch: true, ordinary_long_run: ORDINARY_PROGRAM_CAPABILITY },
+    windowResult: value => ({ ...value, input_epoch: nextVersion }) })
+  t.after(() => b.host.dispose())
+  const { ownerId, programRun, continuation } = b.opening.previewSession
+  assert.equal(programRun, undefined)
+  assert.deepEqual(continuation, { version: 1 })
+  const before = b.calls.length
+  const denied = await b.control({ op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 0, contentVersion: version,
+    authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' })
+  assert.equal(denied.status, 422)
+  assert.equal((await denied.json()).error, 'PROGRAM_RUN_UNSUPPORTED')
+  assert.equal(b.calls.length, before, 'a managed short approval and a self-report start no long-run work')
+  const scope = { op: 'authorize-preview-session', grant: b.grant, scope: 'current-project', continuation: true,
+    renderConsent: 'cache/preview-only', prepareInputs: true }
+  const auth = await b.control(scope); assert.equal(auth.status, 200, await auth.clone().text())
+  const { grant } = await auth.json()
+  const render = (frame = 0) => b.window({ op: 'session-render', frame, ownerId, previewGrant: grant.id, renderConsent: undefined, prepareInputs: undefined })
+  const first = await render(); assert.equal(first.status, 200, await first.clone().text()); await first.arrayBuffer()
+  const pin = join(b.installation.previewRoot, 'kernel.sha256')
+  const saved = b.fs.files.get(pin)
+  b.fs.files.delete(pin)
+  const refusal = await render(24)
+  assert.equal(refusal.status, 409)
+  assert.equal((await refusal.json()).error, 'EXECUTABLE_CHANGED')
+  b.fs.files.set(pin, saved)
+  assert.notEqual((await render(24)).status, 200, 'restoring bytes does not resurrect this lease')
+  assert.equal((await b.control(scope)).status, 409)
+  assert.equal(b.calls.filter(call => call.argv[0] === windowLauncher).length, 0)
+  assert.equal(b.calls.filter(call => call.argv.includes('preview-window')).length, 1)
+  const managedCalls = b.calls.filter(call => call.argv[0] === b.managed).map(call => call.argv)
+  assert.deepEqual(managedCalls.map(argv => argv[1]), Array(4).fill(managedPinsArg))
+  assert.deepEqual(managedCalls.map(argv => argv[2]), ['-t', '--first-frame-capabilities', '--formal-archive-capabilities', '-t'])
+})
+
+test('active managed window detects disk-only replacement and waits for exact managed-range cleanup', { ...linuxWindow, timeout: 7000 }, async t => {
+  let start, terminate, done, reap
+  const started = new Promise(resolve => { start = resolve })
+  const stopped = new Promise(resolve => { terminate = resolve })
+  const settled = new Promise(resolve => { done = resolve })
+  const range = new Promise(resolve => { reap = resolve })
+  const b = await bench({ managed: true, windowCapability: managedCapability, windowHandle() {
+    start()
+    return { stdout: new PassThrough(), done: settled, terminate() { terminate(); done({ exitCode: 1 }) }, waitForExit: () => range,
+      collected: { stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
+  } })
+  t.after(async () => { done({ exitCode: 1 }); reap(true); await b.host.dispose() })
+  let finished = false
+  const operationId = randomUUID(), pending = b.window({ operationId }).then(response => { finished = true; return response })
+  await started
+  b.fs.files.get(b.managed).data = '# changed content'
+  await stopped
+  assert.equal(finished, false)
+  reap(true)
+  const result = await pending
+  assert.notEqual(result.status, 200)
+  assert.equal((await b.window({ op: 'cancel', operationId })).status, 200)
+  assert.equal((await b.window()).status, 409)
+  assert.equal(b.calls.filter(call => call.argv[0] === windowLauncher).length, 0)
+})
+
+for (const mutation of ['save', 'retarget']) test(`whole-timeline Host lease is separate, canonical, and freshness-fenced on cache reads (${mutation})`, linuxWindow, async t => {
+  const b = await bench({ ...programFixture,
+    storageCapability: { schema: 'framivra.storage/v1', request_stdin: true, operations: ['inspect', 'plan', 'clean'] },
+    windowResult: value => ({ ...value, input_epoch: nextVersion }) })
+  t.after(() => b.host.dispose())
+  const ownerId = b.opening.previewSession.ownerId
+  assert.deepEqual(b.opening.previewSession.programRun, { version: 1 })
+  const scope = { op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 28, contentVersion: version,
+    authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' }
+  const stopAttempt = { op: 'cancel-program-authorization', grant: b.grant, ownerId, authorizationId: scope.authorizationId }
+  assert.equal((await b.control(stopAttempt)).status, 200)
+  assert.equal((await b.control(scope)).status, 409, 'cancel can overtake its authorization POST')
+  scope.authorizationId = randomUUID()
+  const auth = await b.control(scope); assert.equal(auth.status, 200, await auth.clone().text())
+  const { grant } = await auth.json()
+  assert.equal(grant.maxWindows, 1024)
+  assert.deepEqual(grant.programRun, { version: 1, contentVersion: version, frame: 28, duration: 36, span: 24, maxBytes: 512 * 1024 * 1024 })
+  assert.equal((await b.window()).status, 409, 'manual window must not compete with the whole-timeline queue')
+  assert.equal((await b.control({ op: 'authorize-write', grant: b.grant })).status, 409)
+  const clean = await b.control({ op: 'storage-clean', grant: b.grant, confirm: 'stopped-writers-and-cleanup', planToken: 'irrelevant' })
+  assert.equal((await clean.json()).error, 'PROGRAM_RUN_BUSY')
+  const render = (frame, op = 'program-render') => b.window({ op, frame, ownerId, previewGrant: grant.id, renderConsent: undefined, prepareInputs: undefined })
+  assert.equal((await render(0, 'session-render')).status, 403)
+  assert.equal((await render(0)).status, 409, 'first window is the one containing the explicit playhead')
+  const first = await render(24); assert.equal(first.status, 200, await first.clone().text())
+  assert.equal(first.headers.get('X-Framivra-End'), '36')
+  assert.equal(first.headers.get('X-Framivra-Media-Kind'), 'program-preview-window/v1')
+  assert.equal((await render(24)).status, 409, 'a completed window cannot be rerendered on the same lease')
+  const check = { op: 'program-check', grant: b.grant, previewGrant: grant.id, ownerId, frame: 24, sha256 }
+  assert.equal((await b.control(check)).status, 200)
+  // Save while the Host is awaiting the provider identity read, after its
+  // first timeline observation. The in-flight cache check must not return OK.
+  const readLauncher = b.fs.readBytes
+  b.fs.readBytes = async (...args) => {
+    const bytes = await readLauncher(...args)
+    assert.equal(args[0].targetKey, windowLauncher)
+    if (mutation === 'save') b.fs.files.get('/workspace/timeline.json').version = 'changed'
+    else b.fs.aliases.set('/workspace/timeline.json', '/workspace/sub/nested.json')
+    return bytes
+  }
+  const stale = await b.control(check)
+  assert.equal(stale.status, 409, 'a save during the hand-off check invalidates retained bytes')
+  assert.equal((await stale.json()).error, 'STALE_WINDOW')
+  b.fs.readBytes = readLauncher
+  b.fs.aliases.delete('/workspace/timeline.json')
+  assert.equal((await render(0)).status, 403)
+  assert.equal((await b.control({ ...stopAttempt, authorizationId: scope.authorizationId })).status, 200)
+
+  scope.authorizationId = randomUUID()
+  const replacement = await b.control(scope)
+  assert.equal(replacement.status, 200)
+  b.fs.files.set('/elsewhere', { type: 'directory', version: 'other-root' })
+  b.fs.files.set('/elsewhere/timeline.json', { type: 'file', version: 'other-timeline' })
+  b.cwd.value = '/elsewhere'
+  const moved = await b.control({ op: 'open', timeline: 'timeline.json' })
+  assert.equal(moved.status, 200, await moved.clone().text())
+  assert.equal((await b.window({ grant: (await moved.json()).grant })).status, 200, 'abandoned workspace cannot block the new preview')
+  assert.equal((await b.control({ ...stopAttempt, authorizationId: scope.authorizationId })).status, 200, 'exact stale-scope cleanup still works')
+})
+test('another open preview taking ownership during authorization prevents whole-timeline mint', { ...linuxWindow, timeout: 2500 }, async t => {
+  const beforeFinal = Promise.withResolvers(), finishAuthorization = Promise.withResolvers()
+  const started = Promise.withResolvers(), finishWindow = Promise.withResolvers()
+  let expectInspect = false, inspected = false
+  const b = await bench({ ...programFixture,
+    windowResult: value => ({ ...value, input_epoch: nextVersion }),
+    inspectHandle() { if (expectInspect) inspected = true },
+    windowHandle(spec, text) {
+      started.resolve()
+      return { stdout: Readable.from([Buffer.from(text)]), done: finishWindow.promise, terminate() {}, waitForExit: async () => true }
+    } })
+  t.after(async () => { finishAuthorization.resolve(); finishWindow.resolve({ exitCode: 0 }); await b.host.dispose() })
+  const other = await (await b.control({ op: 'open', timeline: 'timeline.json' })).json()
+  const stat = b.fs.stat.bind(b.fs)
+  b.fs.stat = async (target, signal) => {
+    // Fire after the authoritative inspect has returned and its child has
+    // been reaped; an ordinary read still holding ownership would mask the race.
+    if (expectInspect && inspected && target.targetKey === '/workspace/timeline.json') {
+      expectInspect = false
+      beforeFinal.resolve()
+      await finishAuthorization.promise
+    }
+    return stat(target, signal)
+  }
+  expectInspect = true
+  const authorizing = b.control({ op: 'authorize-preview-session', grant: b.grant, scope: 'whole-timeline', frame: 28, contentVersion: version,
+    authorizationId: randomUUID(), renderConsent: 'cache/preview-only', prepareInputs: true, storageConsent: 'temporary-browser-cache' })
+  const earlyAuthorization = await Promise.race([beforeFinal.promise, authorizing])
+  if (earlyAuthorization) assert.fail(`Authorization skipped the final checkpoint: ${await earlyAuthorization.text()}`)
+  const competing = b.window({ grant: other.grant })
+  const earlyCompeting = await Promise.race([started.promise, competing])
+  if (earlyCompeting) assert.fail(`Competing worker did not start: ${await earlyCompeting.text()}`)
+  finishAuthorization.resolve()
+  const refused = await authorizing
+  assert.equal(refused.status, 409)
+  assert.equal((await refused.json()).error, 'PROGRAM_RUN_BUSY')
+  finishWindow.resolve({ exitCode: 0 })
+  assert.equal((await competing).status, 200)
+})
+
 test('window uses separate owner POST, actual capability and two consents; only verified bytes leave Host', linuxWindow, async t => {
   for (const [options, probeCount] of [[{ ordinaryWindowCapability: windowCapability }, 0], [{ windowCapability: bareWindowCapability }, 1],
     [{ windowCapability: { ...windowCapability, prepare_inputs: false } }, 1]]) {
@@ -326,7 +795,7 @@ const warmEpoch = `sha256:${'f'.repeat(64)}`
 const warmWindowCapability = { ...windowCapability, input_epoch: true, warm_svg_media: true }
 const svgTracks = [{ kind: 'gfx', name: 'Titles', clips: [{ format: 'svg-sequence', src: 'gfx/sequence.json', dst_in: 24, dur: 12 }] }]
 const sessionConsent = grant => ({ op: 'authorize-preview-session', scope: 'current-project', grant, renderConsent: 'cache/preview-only', prepareInputs: true })
-const sessionWindow = (b, grant, data = {}) => b.host.window(new Request('http://unit/api/framivra/window', { method: 'POST', body: JSON.stringify({
+const sessionWindow = (b, grant, data = {}, signal) => b.host.window(new Request('http://unit/api/framivra/window', { method: 'POST', signal, body: JSON.stringify({
   op: 'session-render', sessionId: 'one', grant: b.grant, previewGrant: grant.id, ownerId: grant.ownerId,
   operationId: randomUUID(), frame: 1, contentVersion: version, ...data,
 }) }))
@@ -586,24 +1055,108 @@ function pack(kind, nonce, result) {
   return Buffer.concat([header, body])
 }
 function firstFrameChild(bytes) {
-  let start, finish, reaped, settling
+  let start, finish, reaped, settling, terminated = 0
   const started = new Promise(resolve => { start = resolve }), done = new Promise(resolve => { finish = resolve })
   const range = new Promise(resolve => { reaped = resolve }), settled = new Promise(resolve => { settling = resolve })
   const stdout = new PassThrough()
-  return { stdout, started, settled, finish, reaped, handle(spec, value) {
+  return { stdout, started, settled, finish, reaped, terminated: () => terminated, handle(spec, value) {
     const nonce = spec.argv.at(-1).slice('--nonce='.length)
     const first = { schema: firstFrameSchema, ...qualification, provisional: true, mime: 'image/png', frame: value.start, window: [value.start, value.end],
       segment: [value.start, value.end], fps: value.fps, width: 1920, height: 1080, content_version: version,
       byte_length: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), base64: bytes.toString('base64') }
     const { path, ...window } = value
-    start({ first, final: { ...window, input_epoch: warmEpoch }, nonce })
-    return { stdout, done, terminate() {}, waitForExit() { settling(); return range }, collected: {
+    start({ first, final: { ...window, input_epoch: warmEpoch }, nonce, signal: spec.signal })
+    return { stdout, done, terminate() { terminated++ }, waitForExit(signal) { settling(signal); return range }, collected: {
       stderr: { readFrom: () => { throw new Error('never read provisional stderr') } },
     } }
   } }
 }
 const poll = (b, grant, operationId, fields = {}) => sessionWindow(b, grant, { op: 'session-first-frame', operationId, project: grant.project, end: 25, ...fields })
 const firstFrameRenders = b => b.calls.filter(call => call.argv[4] === 'preview-window-first-frame')
+
+test('abort of the registered window request discards staged output and only reaps its own lease', { ...linuxWindow, timeout: 3500 }, async t => {
+  const bytes = rgbPng(), firstChild = firstFrameChild(bytes), secondChild = firstFrameChild(bytes)
+  const original = new AbortController(), other = new AbortController()
+  const { apply } = await import('../src/index.mjs')
+  const b = await bench({ windowCapability: warmWindowCapability, firstFrameCapability,
+    setup(_fs, sessions) { sessions.set('two', { id: 'two' }) },
+    mountRegisteredHost(services, config) {
+      const routes = new Map(), cleanup = []
+      apply({ ...services, effect: fn => cleanup.push(fn()), tools: { register: () => () => {} },
+        connection: { fetch: { register(route) { routes.set(route.path, route); return () => routes.delete(route.path) } } },
+      }, config)
+      const control = routes.get('/api/framivra/control'), window = routes.get('/api/framivra/window')
+      assert.deepEqual(window.methods, ['POST']); assert.equal(window.requestBody, 'streaming')
+      // Real registered functions; this fixture starts at owner admission.
+      return { control: control.fetch, window: window.fetch, async dispose() {
+        for (const dispose of cleanup.reverse()) await dispose()
+      } }
+    },
+    firstFrameHandle(spec, value) {
+      const count = firstFrameRenders(b).length
+      assert(count === 1 || count === 2)
+      return (count === 1 ? firstChild : secondChild).handle(spec, value)
+    },
+  })
+  t.after(async () => {
+    original.abort(); other.abort()
+    for (const child of [firstChild, secondChild]) {
+      child.stdout.destroy(); child.finish({ exitCode: 1 }); child.reaped(true)
+    }
+    await b.host.dispose()
+  })
+  const opened = await b.control({ op: 'open', sessionId: 'two', timeline: 'timeline.json' })
+  assert.equal(opened.status, 200)
+  const { grant: secondOpen } = await opened.json()
+  const authorize = async (sessionId, open) => {
+    const response = await b.control({ ...sessionConsent(open), sessionId, firstFrame: true })
+    assert.equal(response.status, 200, await response.clone().text())
+    return (await response.json()).grant
+  }
+  const first = await authorize('one', b.grant), second = await authorize('two', secondOpen)
+  assert.notEqual(first.ownerId, second.ownerId)
+  const firstId = randomUUID(), secondId = randomUUID(), secondScope = { sessionId: 'two', grant: secondOpen }
+  let returned = false
+  const terminal = sessionWindow(b, first, { firstFrame: true, operationId: firstId }, original.signal)
+    .then(response => { returned = true; return response })
+  const firstResult = await firstChild.started
+  firstChild.stdout.write(pack('F', firstResult.nonce, firstResult.first)); await turn()
+  assert.equal((await poll(b, first, firstId)).status, 200, 'the original provisional result is staged')
+  const firstEof = once(firstChild.stdout, 'end')
+  firstChild.stdout.end(pack('W', firstResult.nonce, firstResult.final)); await firstEof
+  const next = sessionWindow(b, second, { ...secondScope, firstFrame: true, operationId: secondId }, other.signal)
+  await turn()
+  assert.equal(firstFrameRenders(b).length, 1, 'the unrelated lease waits behind the held range')
+  assert.equal(firstChild.terminated(), 0, 'the original is still waiting for its direct outcome')
+
+  original.abort()
+  const cleanupSignal = await firstChild.settled
+  assert.equal(firstResult.signal.aborted, true)
+  assert.equal(cleanupSignal.aborted, false, 'reaping uses its own live signal')
+  assert.equal(firstChild.terminated(), 1)
+  assert.equal((await poll(b, first, firstId)).status, 204, 'abort withdraws staged bytes before reaping')
+  firstChild.finish({ exitCode: 0, signal: null }); await turn()
+  assert.equal(returned, false, 'direct success does not settle an aborted request or release the range')
+  assert.equal(firstFrameRenders(b).length, 1)
+  firstChild.reaped(true)
+  const cancelled = await terminal
+  assert.equal(cancelled.status, 499)
+  assert.equal(cancelled.headers.get('x-framivra-sha256'), null)
+
+  const secondResult = await secondChild.started
+  const cancel = (scope, lease, operationId, ownerId = lease.ownerId) => b.host.window(new Request('http://unit/api/framivra/window', {
+    method: 'POST', body: JSON.stringify({ ...scope, op: 'session-cancel', previewGrant: lease.id, operationId, ownerId }),
+  }))
+  assert.equal((await cancel(secondScope, second, secondId, first.ownerId)).status, 403)
+  assert.equal((await cancel({ sessionId: 'one', grant: b.grant }, first, firstId)).status, 200)
+  assert.equal(secondResult.signal.aborted, false)
+  assert.equal(secondChild.terminated(), 0)
+  secondChild.stdout.end(Buffer.concat([pack('F', secondResult.nonce, secondResult.first), pack('W', secondResult.nonce, secondResult.final)]))
+  secondChild.finish({ exitCode: 0, signal: null }); secondChild.reaped(true)
+  const completed = await next
+  assert.equal(completed.status, 200)
+  assert.deepEqual(Buffer.from(await completed.arrayBuffer()), windowBytes)
+})
 
 test('provisional visual qualifies only by the exact separate probe and mutually exclusive owner consent', linuxWindow, async t => {
   const legacy = await bench({ windowCapability: { ...warmWindowCapability, first_frame: { version: 1 } },

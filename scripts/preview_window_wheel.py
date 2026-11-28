@@ -12,7 +12,9 @@ Offline, --stage-from /absolute/site-packages checks the installed wheel members
 and creates a new runtime/ projection from the approved bytes. It never uses
 pip, installed RECORD, a venv interpreter, or installed bytecode. --verify checks
 the staged artifact without importing it. Normal Host invocations recheck it
-before importing anything from the wheel. The launch directory and its contents
+before importing anything from the wheel. The optional leading managed pins
+argument also requires the trusted Host's expected wheel and projection digests.
+The launch directory and its contents
 must stay under the trusted operator's control, including against same-UID writes;
 this is not isolation from arbitrary code already running as that operator.
 """
@@ -37,6 +39,8 @@ _LIMIT = 64 * 1024 * 1024
 _NAME = re.compile(r'[A-Za-z0-9_+.-]+')
 _DIST = re.compile(r'framivra-([A-Za-z0-9_.+]+)\.dist-info')
 _LAUNCHER = 'framivra.preview-window.fixed-wheel/v1'
+_MANAGED_IDENTITY = 'framivra.preview-window.managed-pins/v1'
+_MANAGED_PINS = re.compile(r'--managed-preview-pins-v1=([0-9a-f]{64}):([0-9a-f]{64})')
 _INPUT_EPOCH_ABI = 'framivra.preview-window.inputs/v1'
 _WARM_SVG_MEDIA_ABI = 'framivra.preview-window.warm-svg-media/v1'
 _PROGRAM_AUDIO_ABI = 'framivra.preview-window.program-audio/v1'
@@ -194,6 +198,18 @@ def _stage(site, target, installed, runtime):
         os.umask(original_umask)
 
 
+def _managed_request(args):
+    # Reserve the prefix everywhere, including the otherwise unused capability
+    # placeholder. A misplaced/unknown token must not select the legacy path.
+    positions = [i for i, arg in enumerate(args) if arg.startswith('--managed-preview-pins')]
+    if not positions:
+        return None, args
+    _require(positions == [0], 'managed preview pins must appear once as the leading argument')
+    match = _MANAGED_PINS.fullmatch(args[0])
+    _require(match is not None, 'malformed managed preview pins')
+    return match.groups(), args[1:]
+
+
 def _operation(args, profile):
     if len(args) == 3 and args[0] == '-t' and args[2] == 'capabilities':
         return 'capabilities'  # Host may supply a placeholder; never open it.
@@ -274,7 +290,19 @@ def _write_record(data, check):
         os.set_blocking(fd, old)
 
 
-def _dispatch_first_frame(op, args, proof, reverify):
+def _managed_fonts(profile):
+    if profile is None:
+        return {}
+    from vtx.cli import timeline_preview_window
+
+    # Older fixed wheels keep their exact stock invocation. Only this verified
+    # launcher passes the layout to an opted-in wheel, never argv or environment.
+    if getattr(timeline_preview_window, 'MANAGED_FONTS_ABI', None) != 'framivra.preview-window.managed-fonts/v1':
+        return {}
+    return {'managed_font_profile': profile}
+
+
+def _dispatch_first_frame(op, args, proof, reverify, *, managed_profile=None):
     from vtx.timeline_preview_window import WIRE_LIMIT, supported
 
     command = _qualified_first_frame_command()
@@ -302,7 +330,7 @@ def _dispatch_first_frame(op, args, proof, reverify):
 
     normalized = [*args[:3], 'preview-window', *args[4:10]]
     status, result = command(normalized, qualification=proof, nonce=nonce,
-                             reverify_profile=reverify, emit=first)
+                             reverify_profile=reverify, emit=first, **_managed_fonts(managed_profile))
     if broken:
         return 1
     if status == 0:
@@ -379,7 +407,7 @@ def _dispatch_formal_archive(op, args, profile, proof, reverify, runtime):
     return 0
 
 
-def _dispatch(op, args, proof):
+def _dispatch(op, args, proof, *, managed=False, managed_profile=None):
     from vtx.cli import timeline_preview_window
 
     warm_media = getattr(timeline_preview_window, 'WARM_SVG_MEDIA_ABI', None) == _WARM_SVG_MEDIA_ABI
@@ -399,6 +427,9 @@ def _dispatch(op, args, proof):
                 capabilities.pop('preview_window')
             else:
                 window.update(proof, input_epoch=True)
+                window.pop('managed_identity', None)  # Reserved for this launcher, not the wheel.
+                if managed:
+                    window['managed_identity'] = _MANAGED_IDENTITY
                 if warm_media:
                     window['warm_svg_media'] = True
                 if program_audio:
@@ -414,7 +445,8 @@ def _dispatch(op, args, proof):
     if command is None:
         print('preview wheel refused: wheel does not support launcher qualification', file=sys.stderr)
         return 2
-    return command(args, qualification=proof)
+    return command(args, qualification=proof,
+                   **(_managed_fonts(managed_profile) if op == 'preview-window' else {}))
 
 
 def main():
@@ -427,14 +459,20 @@ def main():
         _require(stat.S_ISREG(info.st_mode) and _trusted(info) and not profile.stat().st_mode & 0o077,
                  'launcher must be in a private trusted Host configuration directory')
         _require('VTX_CONFIG' not in os.environ, 'the isolated Host profile does not accept VTX_CONFIG')
-        args = sys.argv[1:]
+        expected, args = _managed_request(sys.argv[1:])
         staging = len(args) == 2 and args[0] == '--stage-from'
         verify = args == ['--verify']
+        _require(not (staging and expected), 'managed preview pins cannot authorize staging')
         op = None if staging or verify else _operation(args, profile)
         pin_line = _read(profile / 'kernel.sha256', 65, trusted=True).decode('ascii')
         _require(re.fullmatch(r'[0-9a-f]{64}\n', pin_line) is not None, 'expected one fixed wheel SHA-256 line')
         pin = pin_line[:-1]
+        if expected:
+            _require(pin == expected[0], 'wheel pin differs from trusted managed expectation')
         installed, runtime = _wheel(_read(profile / 'kernel.whl', _LIMIT, trusted=True), pin)
+        projection = _identity(runtime)
+        if expected:
+            _require(projection == expected[1], 'runtime projection differs from trusted managed expectation')
         target = profile / 'runtime'
         if staging:
             site = Path(args[1])
@@ -443,9 +481,11 @@ def main():
                      'installed site-packages must be separate from the trusted Host profile')
             _stage(site, target, installed, runtime)
         _tree(target, runtime)
-        proof = {'launcher': _LAUNCHER, 'wheel_sha256': pin, 'runtime_projection_sha256': _identity(runtime)}
+        proof = {'launcher': _LAUNCHER, 'wheel_sha256': pin, 'runtime_projection_sha256': projection}
         if staging or verify:
-            result = {'ok': True, 'wheel_sha256': pin, 'runtime_projection_sha256': proof['runtime_projection_sha256']}
+            result = {'ok': True, 'wheel_sha256': pin, 'runtime_projection_sha256': projection}
+            if expected:
+                result['managed_identity'] = _MANAGED_IDENTITY
             if staging:
                 result['installed_member_sha256'] = _identity(installed)
             print(json.dumps(result, sort_keys=True))
@@ -482,19 +522,20 @@ def main():
     from vtx.runtime.stdio import ensure_blocking_stdio
 
     ensure_blocking_stdio()  # Same transport preparation as the normal CLI.
+    managed_profile = profile if expected is not None else None
     if op in (_FIRST_FRAME, _FIRST_FRAME_PROBE):
         try:
             if op == _FIRST_FRAME_PROBE:
                 reverify()
-            return _dispatch_first_frame(op, args, proof, reverify)
+            return _dispatch_first_frame(op, args, proof, reverify, managed_profile=managed_profile)
         except (OSError, ProfileError):
             print('preview wheel refused: first-frame wire or wheel profile unavailable', file=sys.stderr)
             return 2
     if op == 'capabilities':
-        return _dispatch(op, args, proof)
+        return _dispatch(op, args, proof, managed=expected is not None)
     wire = io.StringIO()
     with redirect_stdout(wire):
-        status = _dispatch(op, args, proof)
+        status = _dispatch(op, args, proof, managed_profile=managed_profile)
     if status == 0:
         try:
             reverify()

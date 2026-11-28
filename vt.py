@@ -906,12 +906,10 @@ def _mount_link_state() -> list:
     """
     mroot = mount_root()
     out = []
-    for link_name, rel_target in MOUNT_LINKS:
-        target = (ROOT / rel_target).resolve()
-        link = mroot / link_name
-        if not target.exists():
+    for link_name, _rel_target, target, want in _mount_link_targets(mroot):
+        if want is None:
             continue
-        want = os.path.relpath(target, mroot)
+        link = mroot / link_name
         if link.is_symlink():
             current = Path(os.readlink(link))
             resolved = (link.parent / current).resolve() if not current.is_absolute() else current.resolve()
@@ -1036,7 +1034,12 @@ def _doctor_fix(json_out: bool) -> dict:
     """doctor --fix 修复通道：挂载链接（联动 --fix-links 同表）+ registry.json
     缺字段。返回报告 dict；无可自动修复项时 applied 空 + 说明齐全。"""
     report = {"mount": {}, "registry": {}, "manual": []}
-    items = _mount_link_state()
+    mount_error = None
+    try:
+        items = _mount_link_state()
+    except _MountRelativePathError as error:
+        items = []
+        mount_error = str(error)
     # occupied 项任何分支都列人工（P6 修复 C-P2-3：v1 在 safe 分支跳过修复也不进
     # manual，全部为 occupied 时报 status="fixed", applied=[] ——问题在文本与 JSON
     # 双侧静默消失）
@@ -1047,7 +1050,10 @@ def _doctor_fix(json_out: bool) -> dict:
     occupied_notes.extend(
         f"退役挂载 {lk.name} 非直接指向本仓 skills 的符号链接——保留，请人工处理"
         for lk, _t, prob, _w in items if prob == "retired_foreign")
-    if not items:
+    if mount_error is not None:
+        report["mount"] = {"status": "manual", "note": mount_error}
+        report["manual"].append(f"挂载链接：{mount_error}")
+    elif not items:
         report["mount"] = {"status": "ok", "note": "挂载链接全部健康"}
     else:
         safe, reason = _mount_fix_safe(items)
@@ -1190,19 +1196,47 @@ def mount_root() -> Path:
     return Path(os.environ.get("VT_MOUNT_ROOT", "~/.agents/skills/video")).expanduser()
 
 
+class _MountRelativePathError(ValueError):
+    pass
+
+
+def _mount_link_targets(mroot):
+    """Compute all relative targets before any mount-directory changes."""
+    targets = []
+    for link_name, rel_target in MOUNT_LINKS:
+        target = (ROOT / rel_target).resolve()
+        want = None
+        if target.exists():
+            try:
+                want = os.path.relpath(target, mroot)
+            except ValueError as error:
+                # Windows cannot express a relative path between drive/share roots.
+                if sys.platform != 'win32':
+                    raise
+                raise _MountRelativePathError(
+                    f"无法从 {mroot} 到 {target} 生成相对挂载链接；"
+                    "请将 VT_MOUNT_ROOT 设置到目标同一盘符或 UNC 共享。"
+                ) from error
+        targets.append((link_name, rel_target, target, want))
+    return targets
+
+
 def cmd_fix_links(dry: bool) -> int:
     mroot = mount_root()
     print(f"挂载根：{mroot}（目标仓：{ROOT}）")
+    try:
+        targets = _mount_link_targets(mroot)
+    except _MountRelativePathError as error:
+        print(f"✗ {error}", file=sys.stderr)
+        return 1
     if not dry:
         mroot.mkdir(parents=True, exist_ok=True)
     changed = 0
-    for link_name, rel_target in MOUNT_LINKS:
-        target = (ROOT / rel_target).resolve()
+    for link_name, rel_target, target, want in targets:
         link = mroot / link_name
-        if not target.exists():
+        if want is None:
             print(f"  ℹ {link_name}：目标不存在（{rel_target}）——跳过（P2 落地后再挂）")
             continue
-        want = os.path.relpath(target, mroot)   # 相对链接（可移植）
         if link.is_symlink():
             current = Path(os.readlink(link))
             resolved = (link.parent / current).resolve() if not current.is_absolute() else current.resolve()

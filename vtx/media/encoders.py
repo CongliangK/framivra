@@ -2,10 +2,47 @@
 
 无副作用（除探测子进程本身）；全部行为与拆分前逐字一致。
 """
-import contextlib, json, os, subprocess, sys, threading, time
+import contextlib, json, math, os, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from ..render.browser_paths import find_chrome_candidate
+
+
+def has_quarter_turn(stream):
+    """Match FFmpeg autorotation's transpose threshold for a stream display matrix."""
+    side_data = stream.get('side_data_list', [])
+    if not isinstance(side_data, list) or any(not isinstance(side, dict) or
+            not isinstance(side.get('side_data_type'), str) for side in side_data):
+        return None
+    for side in side_data:
+        if side['side_data_type'] != 'Display Matrix':
+            continue
+        # ffprobe prints the angle as an integer. Reconstruct av_display_rotation_get
+        # from its fixed-point matrix to distinguish e.g. 89.5 from 88.5 degrees.
+        matrix = side.get('displaymatrix')
+        if isinstance(matrix, str):
+            try:
+                rows = [tuple(map(int, line.split(':', 1)[1].split()))
+                        for line in matrix.splitlines() if line.strip()]
+                (a, b, _), (c, d, _), _ = rows
+                sx, sy = math.hypot(a, c), math.hypot(b, d)
+                if not sx or not sy:
+                    return None
+                angle = math.degrees(math.atan2(b / sy, a / sx))
+                return abs(angle % 180 - 90) < 1
+            except (IndexError, ValueError, OverflowError):
+                return None
+        angle = side.get('rotation')
+        if type(angle) not in (int, float) or not math.isfinite(angle):
+            return None
+        delta = abs(angle % 180 - 90)
+        return True if delta < 1 else None if delta <= 1 else False
+    return False
+
+
+def display_video_size(info):
+    width, height = info['w'], info['h']
+    return (height, width) if info.get('quarter_turn') else (width, height)
 
 
 def video_alpha_info(stream, pixel_formats):
@@ -26,7 +63,11 @@ def video_alpha_info(stream, pixel_formats):
                                                for key, value in tags.items())
     if declared and alpha is False:
         alpha = None
-    return {'pix_fmt': name, 'codec_name': stream.get('codec_name'), 'has_alpha': alpha}
+    info = {'pix_fmt': name, 'codec_name': stream.get('codec_name'), 'has_alpha': alpha}
+    turn = has_quarter_turn(stream)
+    if turn is not False:
+        info['quarter_turn'] = turn
+    return info
 
 
 def seg_needs_alpha(clip, source_info):
@@ -54,7 +95,8 @@ def probe_video_alpha(path):
         raise ValueError(f'video source metadata unavailable: {path}')
     data = json.loads(result.stdout)
     streams = data.get('streams', []) if isinstance(data, dict) else []
-    if not isinstance(streams, list) or not streams or not isinstance(streams[0], dict):
+    if (not isinstance(streams, list) or not streams or not isinstance(streams[0], dict)
+            or streams[0].get('codec_type') != 'video'):
         raise ValueError(f'video stream unavailable: {path}')
     return video_alpha_info(streams[0], data.get('pixel_formats', []))
 
